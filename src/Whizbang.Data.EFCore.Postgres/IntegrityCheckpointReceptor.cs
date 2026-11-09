@@ -75,6 +75,10 @@ public sealed partial class IntegrityCheckpointReceptor(
     // #2008: the origin's announced domains replace its claims; the map built from every claim decides which buckets
     // this origin is authoritative for (#2032).
     var ownership = await _recordOwnershipAsync(services, coordinator, metrics, message, cancellationToken).ConfigureAwait(false);
+    // #2186: judged by the one rule the manifest comparison and the ledger sweep use, so a type in this service's own
+    // owned domains is no other origin's to count, even when the map is silent about it.
+    var ownDomains = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains
+      ?? (IReadOnlyCollection<string>)[];
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
 
     // MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch. Checkpoints fire every
@@ -118,8 +122,8 @@ public sealed partial class IntegrityCheckpointReceptor(
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
-      if (ownership.IsOwnedByAnother(pending.EventType, pending.OriginServiceId)) {
-        continue;   // #2032: another service owns the type; this origin's count is not authoritative for it.
+      if (ownership.IsNotAuthoritative(pending.EventType, pending.OriginServiceId, ownDomains)) {
+        continue;   // #2032, #2186: this origin does not own the type, so its count is not authoritative for it.
       }
       // Recount governor (#634). Repair is bounded per window; the recount that CONFIRMS the gap
       // was not, so an unhealable gap paid a full event-store scan on every checkpoint forever.
@@ -266,10 +270,11 @@ public sealed partial class IntegrityCheckpointReceptor(
     // 2) Evaluate THIS window: deficits become pendings the NEXT checkpoint confirms or clears.
     // #2058: only what the receive boundary keeps is this service's contract (what it consumes, or a namespace it
     // absorbs). A type it only knows is never stored here, so a count against it is a deficit that cannot heal.
-    // #2032: and a type another service owns is asked of its owner, not counted against an older origin still counting it.
+    // #2032: and a type another service owns (or this service owns, #2186) is asked of its owner, not counted against an
+    // older origin still counting it.
     var keeps = ConsumedMessageTypes.Keeps(services);
     var verified = message.Buckets
-      .Where(b => keeps(b.EventType) && !ownership.IsOwnedByAnother(b.EventType, message.OriginServiceId))
+      .Where(b => keeps(b.EventType) && !ownership.IsNotAuthoritative(b.EventType, message.OriginServiceId, ownDomains))
       .ToList();
     if (verified.Count == 0) {
       await _keepPendingAsync(coordinator, tracker, message.OriginServiceId, pendingBefore, cancellationToken).ConfigureAwait(false);

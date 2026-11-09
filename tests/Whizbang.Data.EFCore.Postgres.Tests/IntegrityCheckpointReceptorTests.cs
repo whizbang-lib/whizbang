@@ -436,7 +436,8 @@ public class IntegrityCheckpointReceptorTests {
       IntegrityRepairPolicy? policy = null,
       Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null,
       bool withMetrics = true,
-      VerifyCoordinator? coordinator = null) {
+      VerifyCoordinator? coordinator = null,
+      string[]? ownedDomains = null) {
     coordinator ??= new VerifyCoordinator();
     var dispatcher = new CaptureDispatcher();
     var transport = new CaptureTransport();
@@ -449,6 +450,9 @@ public class IntegrityCheckpointReceptorTests {
         ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     }
     services.AddSingleton(new IntegrityGapTracker());
+    if (ownedDomains is not null) {
+      services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().OwnDomains(ownedDomains)));
+    }
     // A fresh warn-once memory per fixture: the receptor's process-wide fallback would leak between tests.
     services.AddSingleton(new IntegrityOwnershipConflicts());
     var ledger = new RecordingIntegrityRepairLedger();
@@ -1056,6 +1060,42 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(fx.Transport.Published).IsEmpty().Because("nothing is missing, so nothing is redelivered");
     await Assert.That(await fx.Ledger.TryBeginRepairAsync(key, _fixedNow, TimeSpan.FromHours(1), 1)).IsTrue()
       .Because("the type lane healed, so its spent attempt is forgotten");
+  }
+
+  // ── #2186: the gap tracker judges ownership by the same rule as the ledger ──
+
+  [Test]
+  public async Task Checkpoint_ABucketOfATypeThisServiceOwns_IsNotVerifiedAgainstAnotherOriginAsync() {
+    // The map names no owner (a service never announces its own domains to itself), but the type is in this service's
+    // own owned domains: another origin's count of it does not stand, exactly as the manifest comparison and the
+    // ledger sweep judge it (IntegrityDomainOwnership.IsNotAuthoritative).
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      ownedDomains: [VERIFIED_DOMAIN]);
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty()
+      .Because("an origin's count of a type this service owns is not authoritative, so no gap is confirmed against it");
+    await Assert.That(fx.Transport.Published).IsEmpty()
+      .Because("no repair is asked of an origin that only received the type's events");
+  }
+
+  [Test]
+  public async Task Checkpoint_APendingGapOfATypeThisServiceOwns_IsDroppedAsync() {
+    // A gap recorded before this service owned the domain (kept across the restart that brought the new ownership) is
+    // judged by the same rule when its confirmation comes due.
+    var options = new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true };
+    var before = _fixture(options);
+    before.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+    await before.Receptor.HandleAsync(_checkpoint(before, from: 0, to: 5, count: 3));   // deficit: pending, kept
+
+    var after = _fixture(options, coordinator: before.Coordinator, ownedDomains: [VERIFIED_DOMAIN]);
+    await after.Receptor.HandleAsync(_checkpoint(before, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    await Assert.That(after.Dispatcher.Published).IsEmpty()
+      .Because("the pending gap is not confirmed against an origin that does not own the type");
   }
 
   // ── #2104: the tracker's origins and pending gaps survive a restart ────

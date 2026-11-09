@@ -186,6 +186,14 @@ public sealed class StreamIntegrityMetrics {
   /// </summary>
   public PassiveCounter<long> RepairsDeferred { get; }
 
+  /// <summary>
+  /// #2184: each time the paced repair drain starts holding because <c>MaxOutstandingRepairAnswers</c> buckets await
+  /// their answer; counted once per hold, not per tick. A rising count means answers lag the requests: the drain is
+  /// pacing itself to the rate they land at.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  public PassiveCounter<long> RepairDrainHolds { get; }
+
   /// <summary>Integrity deliveries recorded for the maintainer's drain (#2001); a copy already recorded is not counted
   /// again. Tagged by type.</summary>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
@@ -337,6 +345,9 @@ public sealed class StreamIntegrityMetrics {
     RepairsDeferred = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repairs_deferred",
       description: "Deficit buckets a comparison deferred instead of adding to the paced repair drain's ledger; tagged by origin + reason (per_audit_cap | backlog_cap)");
+    RepairDrainHolds = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.repair_drain_holds",
+      description: "Times the paced repair drain stopped claiming because MaxOutstandingRepairAnswers buckets awaited their answer; once per hold");
     RepairTrafficDiscarded = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repair_traffic_discarded",
       description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
