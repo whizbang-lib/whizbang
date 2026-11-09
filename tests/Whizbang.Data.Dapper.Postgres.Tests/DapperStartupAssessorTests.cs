@@ -252,9 +252,8 @@ public class DapperStartupAssessorTests {
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).Contains(
-      "1 schema change(s) were applied by a newer version that this version did not make, and a migration cannot be "
-      + "reversed yet (down migrations: whizbang-lib/whizbang#2122): perspective:AssessProbe (applied by library "
-      + $"{BuildInfo.Version}, application 2.0.0)");
+      "1 schema change(s) were applied by a newer version that this version did not make, and 1 cannot be reversed: "
+      + $"perspective:AssessProbe (applied by library {BuildInfo.Version}, application 2.0.0)");
   }
 
   [Test]
