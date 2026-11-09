@@ -36,7 +36,8 @@ public static class HotChocolateWhizbangExtensions {
   /// <summary>
   /// Adds Whizbang Lens support to HotChocolate with custom options.
   /// Registers filter, sort, and projection conventions for <see cref="Whizbang.Core.Lenses.PerspectiveRow{TModel}"/> types,
-  /// and the <see cref="FieldPermissionTypeInterceptor"/> that enforces <c>[FieldPermission]</c>.
+  /// the <see cref="FieldPermissionTypeInterceptor"/> that enforces <c>[FieldPermission]</c>, and a scalar for each
+  /// <c>[WhizbangId]</c> type the schema uses (<see cref="HotChocolateWhizbangIdExtensions.AddWhizbangIds"/>).
   /// </summary>
   /// <param name="builder">The HotChocolate request executor builder.</param>
   /// <param name="configure">Action to configure <see cref="WhizbangGraphQLOptions"/>.</param>
@@ -60,6 +61,9 @@ public static class HotChocolateWhizbangExtensions {
     // [FieldPermission] is enforced wherever a lens type is built: protected fields are masked for a caller
     // without the permission and are not offered for filtering or sorting.
     builder.TryAddTypeInterceptor<FieldPermissionTypeInterceptor>();
+
+    // A [WhizbangId] the schema uses is a UUID-string scalar named after the id (#2073).
+    builder.AddWhizbangIds();
 
     return builder;
   }

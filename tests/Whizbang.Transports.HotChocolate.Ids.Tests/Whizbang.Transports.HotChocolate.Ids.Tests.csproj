@@ -26,6 +26,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- Ids in an assembly no code has run in when the schema is built (WhizbangIdSchemaTimingTests). -->
+    <ProjectReference Include="../Whizbang.Transports.HotChocolate.Ids.Fixtures/Whizbang.Transports.HotChocolate.Ids.Fixtures.csproj" />
     <!-- Generates the [WhizbangId] types the GraphQL id tests take as arguments and input fields. -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>

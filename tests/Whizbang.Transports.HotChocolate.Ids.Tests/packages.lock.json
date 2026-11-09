@@ -640,6 +640,12 @@
           "SoftwareExtravaganza.Whizbang.Transports.Mutations": "[0.100.0-local.111, )"
         }
       },
+      "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Ids.Fixtures": {
+        "type": "Project",
+        "dependencies": {
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
+      },
       "SoftwareExtravaganza.Whizbang.Transports.Mutations": {
         "type": "Project",
         "dependencies": {
