@@ -38,10 +38,14 @@ public partial class MigrationReversalDeclarationGuardTests {
 
   [Test]
   public async Task EveryNewMigration_DeclaresHowItIsReversedAsync() {
-    var undeclared = _forward()
-      .Where(f => _numbered().Match(f) is { Success: true } m && int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) > MigrationReversal.UNDECLARED_THROUGH)
-      .Where(f => MigrationReversal.DeclaredBy(File.ReadAllText(Path.Combine(_migrationsDirectory(), f))) is null)
-      .ToList();
+    var undeclared = new List<string>();
+    foreach (var file in _forward()) {
+      if (_numbered().Match(file) is { Success: true } m
+          && int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) > MigrationReversal.UNDECLARED_THROUGH
+          && MigrationReversal.DeclaredBy(await File.ReadAllTextAsync(Path.Combine(_migrationsDirectory(), file))) is null) {
+        undeclared.Add(file);
+      }
+    }
 
     await Assert.That(undeclared).IsEmpty()
       .Because("a migration after " + MigrationReversal.UNDECLARED_THROUGH + " declares '-- Reversal: reversible', 'lossy' or 'irreversible' in its header");
@@ -52,7 +56,7 @@ public partial class MigrationReversalDeclarationGuardTests {
     var downs = _files("*.down.sql").ToHashSet(StringComparer.Ordinal);
     var wrong = new List<string>();
     foreach (var file in _forward()) {
-      var kind = MigrationReversal.DeclaredBy(File.ReadAllText(Path.Combine(_migrationsDirectory(), file)));
+      var kind = MigrationReversal.DeclaredBy(await File.ReadAllTextAsync(Path.Combine(_migrationsDirectory(), file)));
       var down = file[..^".sql".Length] + ".down.sql";
       var needsOne = kind is SchemaChangeReversal.Reversible or SchemaChangeReversal.Lossy;
       if (needsOne != downs.Remove(down)) {
