@@ -46,7 +46,9 @@ public static class RetentionSettingsBridge {
   private const string POINTER_PRUNE_ENABLED_KEY = "ephemeral_deep_maintenance_enabled";
   private const string PARTITIONING_ENABLED_KEY = "partition_maintenance_enabled";
 
-  private sealed record IntegerSetting<TSource>(string Key, string Source, Func<TSource, int?> Read);
+  // Minimum is the smallest value accepted at startup; BelowMinimum is what a smaller value would do, for the message.
+  private sealed record IntegerSetting<TSource>(
+    string Key, string Source, Func<TSource, int?> Read, int Minimum = 0, string? BelowMinimum = null);
 
   private static readonly IntegerSetting<MaintenanceRetentionOptions>[] _maintenance = [
     new("dedup_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.DeduplicationDays), o => o.DeduplicationDays),
@@ -63,6 +65,8 @@ public static class RetentionSettingsBridge {
     new("collective_apply_progress_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.CollectiveApplyProgressDays), o => o.CollectiveApplyProgressDays),
     new("trace_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.TraceDays), o => o.TraceDays),
     new("route_idle_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.RouteIdleDays), o => o.RouteIdleDays),
+    new("completed_inbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedInboxPurgeBatchSize),
+      o => o.CompletedInboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges completed inbox rows"),
   ];
 
   private static readonly IntegerSetting<EphemeralOptions>[] _ephemeral = [
@@ -162,14 +166,15 @@ public static class RetentionSettingsBridge {
     return null;
   }
 
-  /// <summary>Configuration errors in the maintenance retention options: each negative value, by its key.</summary>
+  /// <summary>Configuration errors in the maintenance retention options: each value below its minimum, by its key.</summary>
   /// <param name="retention">The bound options.</param>
   /// <returns>One message per invalid value; empty when the options are valid.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:ANegativeMaintenanceRetention_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   internal static List<string> Validate(MaintenanceRetentionOptions? retention) =>
     retention is null
       ? [$"{MAINTENANCE.TrimEnd(':')} must not be null."]
-      : _negatives(_maintenance, retention);
+      : _belowMinimum(_maintenance, retention);
 
   /// <summary>Configuration errors in the ephemeral options: each negative value, by its key.</summary>
   /// <param name="ephemeral">The bound options.</param>
@@ -178,7 +183,7 @@ public static class RetentionSettingsBridge {
   internal static List<string> Validate(EphemeralOptions ephemeral) =>
     ephemeral.PointerPrune is null
       ? [$"{POINTER_PRUNE.TrimEnd(':')} must not be null."]
-      : _negatives(_ephemeral, ephemeral);
+      : _belowMinimum(_ephemeral, ephemeral);
 
   private static void _addSet<TSource>(List<RetentionSetting> settings, IntegerSetting<TSource>[] table, TSource source) {
     foreach (var entry in table) {
@@ -189,13 +194,16 @@ public static class RetentionSettingsBridge {
   }
 
   // A negative window puts the sweep's cutoff (NOW() - n * INTERVAL) in the future, so every row of the table
-  // would become eligible at once. Zero is allowed: it deliberately keeps nothing past the current cycle.
-  private static List<string> _negatives<TSource>(IntegerSetting<TSource>[] table, TSource source) {
+  // would become eligible at once. Zero is allowed for a window: it deliberately keeps nothing past the current cycle.
+  // A batch size declares its own minimum of one, since a batch of zero does nothing at all.
+  private static List<string> _belowMinimum<TSource>(IntegerSetting<TSource>[] table, TSource source) {
     var failures = new List<string>();
     foreach (var entry in table) {
-      if (entry.Read(source) is int value && value < 0) {
-        failures.Add($"{entry.Source} must be zero or greater (was {value.ToString(CultureInfo.InvariantCulture)}); "
-                   + $"it sets wh_settings.{entry.Key}, and a negative window makes every row of that table eligible at once.");
+      if (entry.Read(source) is int value && value < entry.Minimum) {
+        var floor = entry.Minimum == 0 ? "zero" : entry.Minimum.ToString(CultureInfo.InvariantCulture);
+        failures.Add($"{entry.Source} must be {floor} or greater (was {value.ToString(CultureInfo.InvariantCulture)}); "
+                   + $"it sets wh_settings.{entry.Key}, and "
+                   + $"{entry.BelowMinimum ?? "a negative window makes every row of that table eligible at once"}.");
       }
     }
     return failures;
