@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// Rejects a <see cref="StreamIntegrityOptions.MaxRepairDrainBacklog"/> below one, and a
 /// <see cref="StreamIntegrityOptions.RepairAnswerTimeoutMinutes"/> below one, and a re-attribution interval, batch size
 /// or batches-per-pass bound below one (#2008), a paced backfill setting below one (#2092), an audit window cap below one
-/// sequence or an audit window budget below one (#2107), and an idle ledger re-check bound below one (#2115), where the options are read,
+/// sequence or an audit window budget below one (#2107), an idle ledger re-check bound below one (#2115), and a negative outstanding repair-answer cap (#2184), where the options are read,
 /// naming the configuration key.
 /// </summary>
 /// <remarks>
@@ -61,6 +61,11 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
       "it bounds the ledger rows one re-check tick claims, and a bound below one re-checks nothing (#2115)");
     _atLeastOne(failures, "LedgerRecheckAfterMinutes", options.LedgerRecheckAfterMinutes,
       "it is how stale a row's report must be before it is re-checked, and below one minute a row just reported is asked again (#2115)");
+    if (options.MaxOutstandingRepairAnswers < 0) {
+      failures.Add(
+        $"Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers must not be negative (was {options.MaxOutstandingRepairAnswers}); " +
+        "it caps the repair answers awaited at once, and 0 turns the cap off (#2184).");
+    }
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 

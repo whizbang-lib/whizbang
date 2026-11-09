@@ -25,10 +25,13 @@ namespace Whizbang.Core.Workers;
 /// group, then records each sent bucket's answer as pending so it is not claimed again while the answer is on its
 /// way (#2029). Inert without a drain-capable coordinator, a transport, or learned origins. Runs on the instance holding the
 /// maintainer duty, and only once the housekeeping idle gate admits integrity work (forced through after
-/// <c>Whizbang:Housekeeping:MaxDeferral</c>); tokens keep accruing, up to the burst cap, while it waits (#2001).
+/// <c>Whizbang:Housekeeping:MaxDeferral</c>); tokens keep accruing, up to the burst cap, while it waits (#2001). It claims
+/// nothing while <see cref="StreamIntegrityOptions.MaxOutstandingRepairAnswers"/> buckets await their answer, and never
+/// more than the room left under that cap (#2184).
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
 /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+/// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
 public sealed partial class RepairDrainWorker(
     IServiceScopeFactory scopeFactory,
@@ -40,6 +43,7 @@ public sealed partial class RepairDrainWorker(
   private readonly ILogger<RepairDrainWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   private double _tokens;
+  private bool _heldByAnswerCap;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -123,6 +127,26 @@ public sealed partial class RepairDrainWorker(
     }
 
     var budget = (int)Math.Min(Math.Floor(_tokens), _options.RepairDrainBatchSize);
+    // #2184: answers land up to the answer timeout after their requests, so the rate alone does not bound the load they
+    // put on this store. While the cap's worth of buckets await an answer, nothing new is claimed.
+    var cap = _options.MaxOutstandingRepairAnswers;
+    var metrics = services.GetService<StreamIntegrityMetrics>();
+    if (cap > 0) {
+      var pending = await coordinator.IntegrityCountAnswerPendingAsync(now, cap, cancellationToken).ConfigureAwait(false);
+      if (pending >= cap) {
+        if (!_heldByAnswerCap) {
+          _heldByAnswerCap = true;
+          metrics?.RepairDrainHolds.Add(1);
+          LogHeldByAnswerCap(_logger, pending, cap);
+        }
+        return;
+      }
+      if (_heldByAnswerCap) {
+        _heldByAnswerCap = false;
+        LogResumedUnderAnswerCap(_logger, pending, cap);
+      }
+      budget = Math.Min(budget, cap - pending);
+    }
     var claimed = await coordinator.IntegrityClaimRepairDrainAsync(
       [.. origins.Select(o => o.OriginServiceId)], now,
       TimeSpan.FromSeconds(_options.RepairRequestBackoffSeconds), _options.MaxRepairAttemptsPerBucket,
@@ -132,7 +156,6 @@ public sealed partial class RepairDrainWorker(
     }
     _tokens -= claimed.Count;
 
-    var metrics = services.GetService<StreamIntegrityMetrics>();
     var byOrigin = origins.ToDictionary(o => o.OriginServiceId, o => (o.OriginServiceName, o.RequestTopic));
     var sent = new Dictionary<Guid, List<IntegrityRepairLedger.DivergenceKey>>();
     // #2034: grouped by window too, so no stream is re-shipped over a wider range than its own divergence. Rows a
@@ -192,6 +215,15 @@ public sealed partial class RepairDrainWorker(
         .ConfigureAwait(false);
     }
   }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Paced repair drain holding: {Pending} repair-ledger bucket(s) await their answer, at the cap of {Cap} "
+            + "(Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers); no new repair is requested until answers land or time out")]
+  private static partial void LogHeldByAnswerCap(ILogger logger, int pending, int cap);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Paced repair drain resumed: {Pending} repair-ledger bucket(s) await their answer, under the cap of {Cap}")]
+  private static partial void LogResumedUnderAnswerCap(ILogger logger, int pending, int cap);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Paced repair drain disabled — repair dispatch falls to whatever discovery-side path remains")]

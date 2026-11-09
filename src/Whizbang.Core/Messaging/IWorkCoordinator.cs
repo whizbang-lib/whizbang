@@ -2130,6 +2130,23 @@ public interface IWorkCoordinator {
     Task.FromResult(0);
 
   /// <summary>
+  /// Counts the repair-ledger buckets whose answer is on its way at <paramref name="now"/> (a request left for them and
+  /// neither its answer landed nor its timeout passed), reading no further than <paramref name="limit"/> (#2184). The
+  /// paced repair drain stops claiming while the count is at <c>MaxOutstandingRepairAnswers</c>, because answers can land
+  /// hours after their requests and a burst of late answers loads this service's store however slowly they were asked.
+  /// Defaults to none for engines with no ledger.
+  /// </summary>
+  /// <param name="now">The drain's instant.</param>
+  /// <param name="limit">The most the caller needs counted: its cap.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The buckets awaiting an answer, at most <paramref name="limit"/>.</returns>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync</tests>
+  Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// Records a committed redelivery bundle's answer when its children commit (#2029, #2033): the buckets it covered,
   /// and their type lane, stop waiting for it and are not asked for again until the next comparison; the buckets of a
   /// bundle that changed nothing (every event already stored and none adoptable), and any bucket with an event the

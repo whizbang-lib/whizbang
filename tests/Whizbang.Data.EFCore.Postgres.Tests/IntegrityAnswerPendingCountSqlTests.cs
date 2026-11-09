@@ -111,8 +111,10 @@ public class IntegrityAnswerPendingCountSqlTests : EFCoreTestBase {
       body = (string)(await source.ExecuteScalarAsync())!;
     }
     await using var explain = db.CreateCommand();
+#pragma warning disable S2077 // EXPLAIN of the framework's own deployed function body; no input reaches it.
     explain.CommandText = "EXPLAIN " + body.Trim().TrimEnd(';')
       .Replace("p_now", "now()", StringComparison.Ordinal).Replace("p_limit", "500", StringComparison.Ordinal);
+#pragma warning restore S2077
     var plan = new List<string>();
     await using (var reader = await explain.ExecuteReaderAsync()) {
       while (await reader.ReadAsync()) {

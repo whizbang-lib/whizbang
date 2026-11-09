@@ -1225,6 +1225,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>One bounded read (<c>wh_integrity_count_answer_pending</c>, migration 371), answered from
+  /// <c>idx_integrity_ledger_answer_pending</c> once the maintenance pass has built it. Not best-effort: a count that
+  /// cannot be read fails the drain's tick, which claims nothing and retries, so the cap never opens on a failure.</remarks>
+  public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT {schema}.wh_integrity_count_answer_pending(@p_now, @p_limit)";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_limit", limit));
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+        System.Globalization.CultureInfo.InvariantCulture);
+    }, cancellationToken);
+
+  /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
   /// out their backoff only, as before.</remarks>
   public async Task<int> IntegrityMarkAnswerPendingAsync(

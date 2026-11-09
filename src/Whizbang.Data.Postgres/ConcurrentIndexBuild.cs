@@ -60,11 +60,13 @@ public enum ConcurrentIndexOutcome {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ConcurrentIndexBuildTests.cs</tests>
 public static partial class ConcurrentIndexBuild {
   /// <summary>
-  /// The framework indexes built this way: the paced backfill's read of one type in commit order (#2092). Its predicate
-  /// also names <c>event_type IS NOT NULL</c>, which every row satisfies (the column is NOT NULL) but only a query
-  /// filtering on the type implies, so the planner never offers it to a commit-sequence probe that names no type.
+  /// The framework indexes built this way: the paced backfill's read of one type in commit order (#2092), and the
+  /// paced repair drain's count of the answers it is waiting for (#2184). The first one's predicate also names
+  /// <c>event_type IS NOT NULL</c>, which every row satisfies (the column is NOT NULL) but only a query filtering on the
+  /// type implies, so the planner never offers it to a commit-sequence probe that names no type.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PacedBackfillIndexTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs:Count_OnceTheIndexIsBuilt_IsAnsweredFromItAsync</tests>
   public static IReadOnlyList<ConcurrentIndexDefinition> FrameworkIndexes { get; } = [
     new ConcurrentIndexDefinition(
       "wh_event_store",
@@ -72,6 +74,12 @@ public static partial class ConcurrentIndexBuild {
       "(event_type, commit_sequence)",
       "commit_sequence IS NOT NULL AND event_type IS NOT NULL",
       "One type's stamped events in commit order (#2092): a paced backfill window reads from a commit sequence onward under a limit, and a window answer reads the type's head. Built concurrently after the migrations."),
+    new ConcurrentIndexDefinition(
+      "wh_integrity_ledger",
+      "idx_integrity_ledger_answer_pending",
+      "(answer_pending_until)",
+      "answer_pending_until IS NOT NULL",
+      "The repair-ledger buckets a request was sent for (#2184): the paced drain counts those still awaiting their answer, up to its cap, on every tick it has tokens to spend. Built concurrently after the migrations."),
   ];
 
   /// <summary>Ensures <paramref name="index"/> exists in <paramref name="schema"/> and is valid, building it concurrently.</summary>
