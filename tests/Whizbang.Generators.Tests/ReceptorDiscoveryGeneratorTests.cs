@@ -1559,6 +1559,10 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
       "global::Whizbang.Core.Messaging.ReceptorRegistryServiceCollectionExtensions.AddReceptorRegistryContribution<GeneratedReceptorRegistry>(services);");
     await Assert.That(registrations).DoesNotContain("AddSingleton<IReceptorRegistry");
     await Assert.That(registrations).Contains("AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(");
+    // #2200: the perspective invoker is a contribution to the one the host serves, never the invoker itself
+    await Assert.That(registrations).Contains(
+      "global::Whizbang.Core.Perspectives.PerspectiveInvokerServiceCollectionExtensions.AddPerspectiveInvokerContribution<GeneratedPerspectiveInvoker>(services);");
+    await Assert.That(registrations).DoesNotContain("AddScoped<IPerspectiveInvoker, GeneratedPerspectiveInvoker>");
     await Assert.That(registrations).Contains("TryAddSingleton<global::Whizbang.Core.Messaging.IEventCascader>")
       .Because("the invoker cascades what a receptor returns at a worker stage in every host, not only one with a transport consumer");
   }
