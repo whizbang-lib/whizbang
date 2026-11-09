@@ -68,6 +68,7 @@ public class RetentionSettingsBindingTests {
       ["Whizbang__Workers__Maintenance__Retention__InstanceEvictionTombstoneHours"] = "25",
       ["Whizbang__Workers__Maintenance__Retention__OrphanPerspectiveEventGraceHours"] = "26",
       ["Whizbang__Workers__Maintenance__Retention__CollectiveOrderingHeadDays"] = "27",
+      ["Whizbang__Workers__Maintenance__Retention__CompletedInboxPurgeBatchSize"] = "28",
     }, p => p.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.Retention);
 
     await Assert.That(retention.DeduplicationDays).IsEqualTo(21)
@@ -78,6 +79,7 @@ public class RetentionSettingsBindingTests {
     await Assert.That(retention.InstanceEvictionTombstoneHours).IsEqualTo(25);
     await Assert.That(retention.OrphanPerspectiveEventGraceHours).IsEqualTo(26);
     await Assert.That(retention.CollectiveOrderingHeadDays).IsEqualTo(27);
+    await Assert.That(retention.CompletedInboxPurgeBatchSize).IsEqualTo(28);
   }
 
   [Test]

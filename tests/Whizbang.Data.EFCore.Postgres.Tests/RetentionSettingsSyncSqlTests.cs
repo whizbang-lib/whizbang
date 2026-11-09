@@ -42,6 +42,7 @@ public class RetentionSettingsSyncSqlTests : EFCoreTestBase {
     ["Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours"] = "45",
     ["Whizbang:Workers:Maintenance:Retention:OrphanPerspectiveEventGraceHours"] = "46",
     ["Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays"] = "47",
+    ["Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize"] = "51",
     ["Whizbang:Ephemeral:RewindGraceSeconds"] = "48",
     ["Whizbang:Ephemeral:PointerPrune:Enabled"] = "true",
     ["Whizbang:Ephemeral:PointerPrune:RetentionDays"] = "49",
@@ -87,7 +88,7 @@ public class RetentionSettingsSyncSqlTests : EFCoreTestBase {
       WHERE setting_key IN ('dedup_retention_days', 'stuck_inbox_retention_days', 'dead_letter_retention_days',
         'abandoned_stream_hours', 'instance_eviction_retention_hours', 'orphan_perspective_grace_hours',
         'collective_ordering_head_retention_days', 'ephemeral_rewind_grace_seconds',
-        'ephemeral_pointer_retention_days', 'ephemeral_pointer_prune_interval_days')"))
+        'ephemeral_pointer_retention_days', 'ephemeral_pointer_prune_interval_days', 'completed_inbox_purge_batch_size')"))
       .Select(r => r.Split('='))
       .ToDictionary(r => r[0], r => int.Parse(r[1], System.Globalization.CultureInfo.InvariantCulture), StringComparer.Ordinal);
     await Assert.That(integers).IsEquivalentTo(new Dictionary<string, int> {
@@ -101,6 +102,7 @@ public class RetentionSettingsSyncSqlTests : EFCoreTestBase {
       ["ephemeral_rewind_grace_seconds"] = 48,
       ["ephemeral_pointer_retention_days"] = 49,
       ["ephemeral_pointer_prune_interval_days"] = 50,
+      ["completed_inbox_purge_batch_size"] = 51,
     }).Because("the sweep reads each key with ::INTEGER; a row under another name, or text the cast rejects, "
              + "leaves the default in force or fails the whole sweep");
 

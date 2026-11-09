@@ -268,6 +268,94 @@ public class MaintenanceTests : EFCoreTestBase {
     await Assert.That(remaining).IsEqualTo(0);
   }
 
+  // ================================================================
+  // Task 2: the completed-inbox purge is bounded per cycle (366)
+  //
+  // The purge was one unbounded DELETE inside the single maintenance call, which runs under a fixed
+  // command budget. A consumer that stores many arrivals settled (a message discarded on receive is
+  // stored processed, and only this purge removes it) can accumulate more completed rows than one
+  // DELETE finishes inside that budget. The call then times out, the whole cycle rolls back, and
+  // the backlog only grows: every later cycle has more to delete and fails the same way, and every
+  // sweep that runs after the call in the cycle is skipped with it.
+  // ================================================================
+
+  private static Task _insertInboxRowAsync(NpgsqlConnection conn, Guid id, bool processed) =>
+    conn.ExecuteAsync($@"
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{id}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW())
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts, processed_at)
+      SELECT message_id, stream_id, received_at, priority, is_event, 5, 0, {(processed ? "NOW()" : "NULL")} FROM m");
+
+  private static Task _setCompletedInboxPurgeBatchAsync(NpgsqlConnection conn, string value) =>
+    conn.ExecuteAsync($@"
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('completed_inbox_purge_batch_size', '{value}', 'integer', 'test override')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value");
+
+  private static async Task<long> _purgedCompletedInboxAsync(NpgsqlConnection conn) =>
+    (await _runMaintenanceAsync(conn)).Single(r => r.TaskName == "purge_completed_inbox").RowsAffected;
+
+  [Test]
+  public async Task PerformMaintenance_PurgesAtMostTheBatchOfCompletedInboxRows_AndTheRestOnTheNextCycleAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setCompletedInboxPurgeBatchAsync(conn, "3");
+    for (var i = 0; i < 5; i++) {
+      await _insertInboxRowAsync(conn, Guid.CreateVersion7(), processed: true);
+    }
+    var unprocessedId = Guid.CreateVersion7();
+    await _insertInboxRowAsync(conn, unprocessedId, processed: false);
+
+    await Assert.That(await _purgedCompletedInboxAsync(conn)).IsEqualTo(3L)
+      .Because("one cycle deletes at most the batch, so the call fits its budget however large the backlog is");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NOT NULL"))
+      .IsEqualTo(2L);
+
+    await Assert.That(await _purgedCompletedInboxAsync(conn)).IsEqualTo(2L)
+      .Because("the rest of the backlog goes on the next cycle");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NOT NULL"))
+      .IsEqualTo(0L);
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox"))
+      .IsEqualTo(1L).Because("the message row of a completed row goes with it, and an unprocessed row is never purged");
+    await Assert.That(await conn.ExecuteScalarAsync<long>($"SELECT COUNT(*) FROM wh_inbox WHERE message_id = '{unprocessedId}'"))
+      .IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_ABatchSetBelowOne_StillPurgesOneRowPerCycleAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setCompletedInboxPurgeBatchAsync(conn, "0");
+    await _insertInboxRowAsync(conn, Guid.CreateVersion7(), processed: true);
+    await _insertInboxRowAsync(conn, Guid.CreateVersion7(), processed: true);
+
+    await Assert.That(await _purgedCompletedInboxAsync(conn)).IsEqualTo(1L)
+      .Because("a batch of zero written by hand would stop the purge for good; debug_mode is the only off switch");
+  }
+
+  [Test]
+  public async Task PerformMaintenance_WithNoBatchSetting_PurgesUpToTheDefaultAsync() {
+    await using var conn = await _openConnectionAsync();
+    await conn.ExecuteAsync("DELETE FROM wh_settings WHERE setting_key = 'completed_inbox_purge_batch_size'");
+    await _insertInboxRowAsync(conn, Guid.CreateVersion7(), processed: true);
+    await _insertInboxRowAsync(conn, Guid.CreateVersion7(), processed: true);
+
+    await Assert.That(await _purgedCompletedInboxAsync(conn)).IsEqualTo(2L)
+      .Because("a database without the row uses the default, which is far above two rows");
+  }
+
+  [Test]
+  public async Task Migration_SeedsTheCompletedInboxPurgeBatchDefaultAsync() {
+    await using var conn = await _openConnectionAsync();
+
+    var value = await conn.ExecuteScalarAsync<string>(
+      "SELECT setting_value FROM wh_settings WHERE setting_key = 'completed_inbox_purge_batch_size'");
+
+    await Assert.That(value).IsEqualTo("50000")
+      .Because("the knob is visible to an operator reading wh_settings, at the value the function falls back to");
+  }
+
   [Test]
   public async Task PerformMaintenance_RespectsConfigurableStuckRetention_ViaWhSettingsAsync() {
     // Arrange — set stuck retention to 1 day, insert 2-day-old stuck row
