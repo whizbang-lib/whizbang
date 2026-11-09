@@ -91,7 +91,7 @@ public class BatchReceiveLifecycleTests {
       InitialStock = i + 1
     }).ToList();
 
-    // Act — send 3 commands, wait for all perspectives on these products' streams
+    // Act: send 3 commands, wait for all perspectives on these products' streams
     // (3 commands x 3 events each: ProductCreated x2 perspectives + InventoryRestocked x1 = 9)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
       expectedCompletions: 9, streamIds: [.. productIds.Select(id => id.Value)], timeoutMilliseconds: 120000, hostFilter: "inventory");
