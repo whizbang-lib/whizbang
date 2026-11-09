@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -292,6 +293,58 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     await Assert.That(logger.Saw("does not own")).IsFalse();
   }
 
+  // ── #2185: a type no service owns, from an origin that stopped reporting ─────
+
+  private static readonly DateTimeOffset _auditNow = new(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
+  private static readonly Guid _silentSvc = Guid.Parse("0c000000-0000-0000-0000-0000000000c3");
+  private static readonly Guid _edgeSvc = Guid.Parse("0d000000-0000-0000-0000-0000000000d4");
+
+  [Test]
+  public async Task RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync() {
+    var coordinator = new AuditCoordinator {
+      Claims = [new IntegrityDomainClaim { Domain = "app.contracts.orders", OwnerServiceId = _ownerSvc, OwnerServiceName = "orders-svc" }],
+      LedgerPairs = [
+        (_silentSvc, UNCLAIMED_TYPE),   // nobody owns it, and its origin has been silent past the threshold
+        (_copySvc, UNCLAIMED_TYPE),     // nobody owns it, but its origin still reports
+        (_edgeSvc, UNCLAIMED_TYPE),     // nobody owns it, and its origin went silent exactly the threshold ago
+        (_ownerSvc, ORDERS_TYPE),       // a silent origin's own type: its owner may come back and answer
+      ],
+      OriginLastReported = new() {
+        [_silentSvc] = _auditNow.AddDays(-8),
+        [_copySvc] = _auditNow.AddDays(-6),
+        [_edgeSvc] = _auditNow.AddDays(-7),
+        [_ownerSvc] = _auditNow.AddDays(-30),
+      },
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, UnownedTypeOriginSilenceDays = 7 },
+      logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEquivalentTo([(_silentSvc, UNCLAIMED_TYPE)])
+      .Because("no owner can confirm or repair a type nobody owns once the origin that reported it stopped reporting; "
+             + "an origin that still reports, or that owns the type, keeps its rows");
+    await Assert.That(logger.Saw("from an origin silent for over 7 day(s)")).IsTrue()
+      .Because("rows removed from the ledger move the unhealed gauge, so the audit says why");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_UnownedTypeRowsOfThisServicesOwnDomain_AreForgottenWhateverTheOriginsSilenceAsync() {
+    var coordinator = new AuditCoordinator {
+      LedgerPairs = [(_copySvc, OWN_TYPE)],
+      OriginLastReported = new() { [_copySvc] = _auditNow },
+    };
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, ownedDomains: ["App.Contracts.Self"]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEquivalentTo([(_copySvc, OWN_TYPE)])
+      .Because("a type in this service's own domains has an owner, this service, so the non-owner rule forgets it at once");
+  }
+
   [Test]
   public async Task RunAuditOnce_TheManifestRequest_ExpiresWithTheIntegrityTimeToLiveAsync() {
     var transport = new CaptureTransport();
@@ -347,6 +400,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       string[]? absorbedNamespaces = null,
       string[]? ownedDomains = null) {
     var services = new ServiceCollection();
+    services.AddSingleton<TimeProvider>(new FakeTimeProvider(_auditNow));
     if (absorbedNamespaces is not null || ownedDomains is not null) {
       services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions()
         .AbsorbNamespaces(absorbedNamespaces ?? []).OwnDomains(ownedDomains ?? [])));
@@ -443,9 +497,14 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(Claims);
 
+    /// <summary>When each origin last reported (#2185); an origin not listed reported at the audit's instant.</summary>
+    public Dictionary<Guid, DateTimeOffset> OriginLastReported { get; init; } = [];
+
     public Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
-        Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
-      var gone = LedgerPairs.Where(p => isNotAuthoritative(p.Origin, p.EventType)).ToList();
+        Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+      var gone = LedgerPairs
+        .Where(p => isNotAuthoritative(p.Origin, p.EventType, OriginLastReported.GetValueOrDefault(p.Origin, _auditNow)))
+        .ToList();
       ForgottenPairs.AddRange(gone);
       return Task.FromResult(gone.Count);
     }

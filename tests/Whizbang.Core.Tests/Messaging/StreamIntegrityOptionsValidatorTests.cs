@@ -224,4 +224,22 @@ public class StreamIntegrityOptionsValidatorTests {
 
     await Assert.That(result.Succeeded).IsTrue().Because("0 turns the cap off; any positive bound is a cap");
   }
+
+  // ── #2185: ledger rows for a type no service owns age out with their origin's silence ──
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task Validate_AnUnownedTypeSilenceBelowOneDay_FailsNamingTheKeyAsync(int days) {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { UnownedTypeOriginSilenceDays = days });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("below a day, an origin between two checkpoints would read as silent and lose rows it still answers for");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:UnownedTypeOriginSilenceDays");
+  }
+
+  [Test]
+  public async Task UnownedTypeOriginSilence_DefaultsToSevenDaysAsync() =>
+    await Assert.That(new StreamIntegrityOptions().UnownedTypeOriginSilenceDays).IsEqualTo(7)
+      .Because("a week outlasts a weekend outage or a paused deployment, and no live origin is silent that long");
 }

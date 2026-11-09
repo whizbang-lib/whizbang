@@ -122,6 +122,24 @@ public class IntegrityDomainOwnershipTests {
   }
 
   [Test]
+  public async Task HasNoOwner_ATypeNoClaimAndNoOwnDomainContains_HasNoOwnerAsync() {
+    var ownership = new IntegrityDomainOwnership([_claim("app.contracts.orders", _orders, "orders-svc")]);
+
+    await Assert.That(ownership.HasNoOwner("App.Contracts.Loose.Happened, App.Contracts", ["App.Contracts.Self"])).IsTrue()
+      .Because("#2185: neither the map nor this service's own domains name an owner");
+    await Assert.That(ownership.HasNoOwner("App.Contracts.Orders.OrderPlaced, App.Contracts", [])).IsFalse()
+      .Because("the map names orders-svc");
+    await Assert.That(ownership.HasNoOwner("App.Contracts.Self.Started, App.Contracts", ["App.Contracts.Self"])).IsFalse()
+      .Because("this service owns it");
+  }
+
+  [Test]
+  public async Task HasNoOwner_WithoutTheLocalDomains_ThrowsAsync() {
+    await Assert.That(() => IntegrityDomainOwnership.Empty.HasNoOwner("App.Contracts.Loose.Happened, App.Contracts", null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task IsNotAuthoritative_WithoutTheLocalDomains_ThrowsAsync() {
     var ownership = new IntegrityDomainOwnership([]);
 

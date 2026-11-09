@@ -683,6 +683,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var forgotten = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => true);
+
+    await Assert.That(forgotten).IsEqualTo(0).Because("#2185: an engine without the ledger has no row to forget");
+  }
+
+  [Test]
   public async Task IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
