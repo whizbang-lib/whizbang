@@ -60,7 +60,7 @@ public class ClaimFixedCostSqlTests : EFCoreTestBase {
 
     var claim = await _claimAsync(conn, instance, commit: false);
 
-    await Assert.That(claim.Offered("inbox")).IsEquivalentTo(new[] { stream })
+    await Assert.That(claim.Offered("inbox")).IsEquivalentTo([stream])
       .Because("the one stream the instance holds is offered whichever lane it is in");
     await Assert.That(claim.Ran(INBOX_WALK)).IsEqualTo(1)
       .Because("only the lane holding a row is walked; an empty lane's walk finds nothing and costs a plan");
@@ -118,7 +118,7 @@ public class ClaimFixedCostSqlTests : EFCoreTestBase {
 
     var claim = await _claimAsync(conn, instance, commit: false, idleSettled: idleSettled);
 
-    await Assert.That(claim.Offered("perspective_stream")).IsEquivalentTo(new[] { stream });
+    await Assert.That(claim.Offered("perspective_stream")).IsEquivalentTo([stream]);
     await Assert.That(claim.Ran(PERSPECTIVE_WALK)).IsEqualTo(1);
   }
 
@@ -163,7 +163,7 @@ public class ClaimFixedCostSqlTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync<bool>(conn,
         $"SELECT chain_emitted_at IS NOT NULL FROM wh_inbox_state WHERE message_id = '{message}'"))
       .IsTrue().Because("the stamp still runs, so the drain can fetch the row");
-    await Assert.That(claim.Offered("inbox")).IsEquivalentTo(new[] { stream });
+    await Assert.That(claim.Offered("inbox")).IsEquivalentTo([stream]);
     await Assert.That(await _scalarAsync<long>(conn, $"SELECT count(*) FROM wh_event_store WHERE event_id = '{message}'"))
       .IsEqualTo(1);
   }
