@@ -62,7 +62,7 @@ public class IntegrityLedgerForgetNonOwnerSqlTests : EFCoreTestBase {
     await _trackAsync(owner, ORDERS);
     var judged = new List<(Guid, string)>();
 
-    var forgotten = await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((origin, type) => {
+    var forgotten = await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((origin, type, _) => {
       judged.Add((origin, type));
       return origin == copyHolder && type == ORDERS;
     });
@@ -80,7 +80,7 @@ public class IntegrityLedgerForgetNonOwnerSqlTests : EFCoreTestBase {
     var origin = TrackedGuid.New().Value;
     await _trackAsync(origin, ORDERS);
 
-    var forgotten = await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((_, _) => false);
+    var forgotten = await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => false);
 
     await Assert.That(forgotten).IsEqualTo(0);
     await Assert.That(await _ledgerAsync()).IsEquivalentTo([$"{origin}|{ORDERS}"]);
@@ -114,7 +114,7 @@ public class IntegrityLedgerForgetNonOwnerSqlTests : EFCoreTestBase {
     using var canceled = new CancellationTokenSource();
     await canceled.CancelAsync();
 
-    await Assert.That(async () => await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((_, _) => true, canceled.Token))
+    await Assert.That(async () => await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => true, canceled.Token))
       .Throws<OperationCanceledException>()
       .Because("a canceled audit stops; it is not a failed prune to log and shrug off");
   }
@@ -128,7 +128,7 @@ public class IntegrityLedgerForgetNonOwnerSqlTests : EFCoreTestBase {
     IWorkCoordinator coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), gate: gate);
 
-    var forgotten = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync((_, _) => true);
+    var forgotten = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => true);
 
     await Assert.That(forgotten).IsEqualTo(1);
   }
@@ -140,7 +140,7 @@ public class IntegrityLedgerForgetNonOwnerSqlTests : EFCoreTestBase {
       await ctx.Database.ExecuteSqlRawAsync("DROP FUNCTION IF EXISTS wh_integrity_ledger_origin_types()");
     }
 
-    var forgotten = await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((_, _) => true);
+    var forgotten = await _coordinator().IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => true);
 
     await Assert.That(forgotten).IsEqualTo(0)
       .Because("a ledger that cannot be pruned this cycle is pruned on the next; the audit must not fail over it");

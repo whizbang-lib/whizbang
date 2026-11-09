@@ -319,6 +319,7 @@ Whizbang:StreamIntegrity:MaxGapReportsPerCheckpoint
 Whizbang:StreamIntegrity:MaxIntegrityDeliveriesPerPass
 Whizbang:StreamIntegrity:MaxIntegrityDeliveryAttempts
 Whizbang:StreamIntegrity:MaxManifestPagesPerAudit
+Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers
 Whizbang:StreamIntegrity:MaxReattributionBatchesPerPass
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket
 Whizbang:StreamIntegrity:MaxRepairDrainBacklog
@@ -334,6 +335,7 @@ Whizbang:StreamIntegrity:RepairMode
 Whizbang:StreamIntegrity:RepairRequestBackoffSeconds
 Whizbang:StreamIntegrity:RepairTopic
 Whizbang:StreamIntegrity:StartupAuditMaxJitterSeconds
+Whizbang:StreamIntegrity:UnownedTypeOriginSilenceDays
 Whizbang:StreamLifecycle:Enabled
 Whizbang:StreamLifecycle:FinalizeGrace
 Whizbang:StreamLifecycle:SweepBatchSize

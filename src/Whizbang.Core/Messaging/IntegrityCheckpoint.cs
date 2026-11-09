@@ -706,6 +706,54 @@ public sealed class StreamIntegrityOptions {
   public int RepairDrainBatchSize { get; set; } = 50;
 
   /// <summary>
+  /// The most repair-ledger buckets that may await an answer at once (default 500); 0 turns the cap off. While this many
+  /// requested buckets have their answer on the way, the paced repair drain claims no new row, and it resumes as answers
+  /// land or time out (#2184).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An answer can land up to <see cref="RepairAnswerTimeoutMinutes"/> after its request, so the request rate alone
+  /// does not bound the load answers put on this service's store: at the default 5 rows a second, three hours of
+  /// requests is 54,000 buckets whose answers could arrive together. The cap bounds that to its own size. At the
+  /// default rate, 500 answers is 100 seconds of requests: while answers land within that, the cap is never reached and
+  /// the drain runs at <see cref="RepairDrainRatePerSecond"/>; when they lag, the drain is paced to the rate they land at.
+  /// A drain holding at the cap is logged once as a warning when the hold starts and once when it ends, and counted
+  /// (<c>whizbang.stream_integrity.repair_drain_holds</c>); <c>repair_answer_pending_buckets</c> shows the count.
+  /// </para>
+  /// <para>
+  /// The count covers every origin, because every answer lands in this service's store. Must not be negative; host
+  /// start fails otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:DrainTick_AtTheOutstandingAnswerCap_ClaimsNothing_AndSaysSoOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:Validate_ANegativeOutstandingAnswerCap_FailsNamingTheKeyAsync</tests>
+  public int MaxOutstandingRepairAnswers { get; set; } = 500;
+
+  /// <summary>
+  /// How long, in days, the origin that reported a repair-ledger row for a type no service owns may be silent before the
+  /// integrity audit forgets the row (default 7, #2185).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A type no service owns (no claim in the ownership map, and outside this service's own owned domains) is compared
+  /// against the origin that reports it, so while that origin reports, its next comparison heals or refreshes the row.
+  /// Once it stops, nothing compares the row again and no owner exists to repair it, so the row would hold
+  /// <c>whizbang.stream_integrity.unhealed_buckets</c> up for good. The audit forgets it once the origin's last report
+  /// (the later of its last checkpoint and the row's last report) is older than this. A week outlasts a weekend outage or
+  /// a paused deployment; an origin that comes back after it simply has its divergence found again by the next audit.
+  /// </para>
+  /// <para>
+  /// Rows recorded under an origin that does not own the type are forgotten at once, whatever this says. Must be at least
+  /// 1; host start fails otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerBranchCoverageTests.cs:RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:UnownedTypeOriginSilence_DefaultsToSevenDaysAsync</tests>
+  public int UnownedTypeOriginSilenceDays { get; set; } = 7;
+
+  /// <summary>
   /// How often the maintainer's integrity delivery drain runs, in seconds (default 15). Integrity deliveries (received
   /// checkpoints, manifest requests and chunks, redelivery requests, bundle reconciles) are recorded where they arrive
   /// and handled by the instance holding the maintainer duty on this cadence, under the housekeeping idle gate (#2001).

@@ -1175,12 +1175,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs
-  /// (<c>wh_integrity_ledger_origin_types</c>, migration 370), then the judged ones forgotten
+  /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs with their origin's last report
+  /// (<c>wh_integrity_ledger_origin_types</c>, migrations 370 and 372), then the judged ones forgotten
   /// (<c>wh_integrity_forget_origin_types</c>); the second is skipped when nothing is judged. Best-effort: a prune that
   /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
   public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
-      Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+      Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(isNotAuthoritative);
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
@@ -1192,12 +1192,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await using (var read = __scope.Connection.CreateCommand().WithCoordinatorTimeout()) {
 #pragma warning disable S2077 // Function name is a compile-time constant; there are no arguments.
         read.CommandText =
-          $"SELECT origin_service_id, event_type FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_origin_types")}()";
+          $"SELECT origin_service_id, event_type, origin_last_reported_at FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_origin_types")}()";
 #pragma warning restore S2077
         await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
           var (origin, type) = (reader.GetGuid(0), reader.GetString(1));
-          if (isNotAuthoritative(origin, type)) {
+          var lastReported = await reader.GetFieldValueAsync<DateTimeOffset>(2, cancellationToken).ConfigureAwait(false);
+          if (isNotAuthoritative(origin, type, lastReported)) {
             origins.Add(origin);
             types.Add(type);
           }
@@ -1223,6 +1224,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return 0;
     }
   }
+
+  /// <inheritdoc />
+  /// <remarks>One bounded read (<c>wh_integrity_count_answer_pending</c>, migration 371), answered from
+  /// <c>idx_integrity_ledger_answer_pending</c> once the maintenance pass has built it. Not best-effort: a count that
+  /// cannot be read fails the drain's tick, which claims nothing and retries, so the cap never opens on a failure.</remarks>
+  public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT {schema}.wh_integrity_count_answer_pending(@p_now, @p_limit)";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_limit", limit));
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+        System.Globalization.CultureInfo.InvariantCulture);
+    }, cancellationToken);
 
   /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait

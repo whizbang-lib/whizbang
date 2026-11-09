@@ -249,10 +249,16 @@ public sealed partial class IntegrityAuditWorker(
       await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false));
     var ownDomains = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains
       ?? (IReadOnlyCollection<string>)[];
+    // #2185: in the same sweep, a row for a type no service owns goes once the origin that reported it has been silent
+    // past the threshold: no owner can repair it, and its origin no longer answers.
+    var silenceDays = _options.UnownedTypeOriginSilenceDays;
+    var silentBefore = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().AddDays(-silenceDays);
     var forgottenNonOwner = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync(
-      (origin, eventType) => ownership.IsNotAuthoritative(eventType, origin, ownDomains), cancellationToken).ConfigureAwait(false);
+      (origin, eventType, lastReportedAt) => ownership.IsNotAuthoritative(eventType, origin, ownDomains)
+        || (lastReportedAt < silentBefore && ownership.HasNoOwner(eventType, ownDomains)),
+      cancellationToken).ConfigureAwait(false);
     if (forgottenNonOwner > 0) {
-      LogForgotNonOwnerLedgerRows(_logger, forgottenNonOwner);
+      LogForgotNonOwnerLedgerRows(_logger, forgottenNonOwner, silenceDays);
     }
     if (consumed.Count == 0 && absorbed.Count == 0) {
       LogNothingConsumed(_logger);
@@ -341,9 +347,10 @@ public sealed partial class IntegrityAuditWorker(
   static partial void LogForgotUnconsumedLedgerRows(ILogger logger, int rowCount);
 
   [LoggerMessage(EventId = 99, Level = LogLevel.Information,
-    Message = "Integrity audit forgot {RowCount} repair-ledger row(s) recorded under an origin that does not own the event type: "
-            + "that origin's answers leave the type out, so the rows could never heal or clear.")]
-  static partial void LogForgotNonOwnerLedgerRows(ILogger logger, int rowCount);
+    Message = "Integrity audit forgot {RowCount} repair-ledger row(s) recorded under an origin that does not own the event type, "
+            + "or for a type no service owns from an origin silent for over {SilenceDays} day(s): no owner will ever answer them, "
+            + "so the rows could never heal or clear.")]
+  static partial void LogForgotNonOwnerLedgerRows(ILogger logger, int rowCount, int silenceDays);
 
   [LoggerMessage(EventId = 98, Level = LogLevel.Debug,
     Message = "Integrity audit asked no origin: this service consumes no events and absorbs no namespace.")]
