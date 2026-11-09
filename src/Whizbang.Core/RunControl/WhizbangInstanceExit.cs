@@ -355,11 +355,15 @@ public sealed partial class WhizbangInstanceExit : IWhizbangInstanceExit {
       return InstanceExitRecordResult.NotWritten("this host has no instance identity to record the exit against");
     }
     try {
-      await using var scope = _services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
-      if (scope.ServiceProvider.GetService<IWorkCoordinator>() is not { } coordinator) {
-        return InstanceExitRecordResult.NotWritten("this host has no work coordinator, so it keeps no instance records");
+      // The answer is returned after the scope's block, not from inside it: a return inside an await-using block leaves
+      // the block's end as a path the lowered code never takes.
+      InstanceExitRecordResult result;
+      await using (var scope = _services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope()) {
+        result = scope.ServiceProvider.GetService<IWorkCoordinator>() is { } coordinator
+          ? await coordinator.RecordInstanceExitAsync(record, cancellationToken).ConfigureAwait(false)
+          : InstanceExitRecordResult.NotWritten("this host has no work coordinator, so it keeps no instance records");
       }
-      return await coordinator.RecordInstanceExitAsync(record, cancellationToken).ConfigureAwait(false);
+      return result;
     }
 #pragma warning disable CA1031 // not swallowed: the entry says the record could not be written, and why
     catch (Exception ex) {
