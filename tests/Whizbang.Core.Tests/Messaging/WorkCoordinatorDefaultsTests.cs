@@ -182,6 +182,8 @@ public class WorkCoordinatorDefaultsTests {
 
     await coordinator.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, "Contracts.A")]);
     await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, now, now.AddMinutes(1));
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(
+      new SubscriptionBackfillCursor { BackfillId = id, OwnerServiceId = Guid.Empty, OwnerServiceName = string.Empty, EventType = "Contracts.A" }, 1);
     await coordinator.EndSubscriptionBackfillAsync(id, SubscriptionBackfillOutcome.Unanswered, now);
 
     await Assert.That(await coordinator.GetSubscriptionBackfillsAsync()).IsEmpty()
