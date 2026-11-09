@@ -181,6 +181,78 @@ public class SubscriptionBackfillStoreTests : EFCoreTestBase {
     await Assert.That(row.AnswerDueBy).IsNull();
   }
 
+  [Test]
+  public async Task Withdraw_PutsANewWindowThatNeverLeftBack_AsTheAnsweredStateItWasAskedFromAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var id = await _queueAsync(coordinator);
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now, _now.AddMinutes(180));
+    await coordinator.RecordSubscriptionBackfillAnswerAsync(
+      new BackfillWindowAnswer { BackfillId = id, Window = 1, EventCount = 3, StoppedAtCommitSequence = 30, HasMore = true }, _now);
+    var askedFrom = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 2, _now.AddMinutes(1), _now.AddMinutes(181));
+
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(askedFrom, 2);
+    var row = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+
+    await Assert.That(row).IsEqualTo(askedFrom)
+      .Because("a window whose send failed never reached the owner, so nothing about it is left awaiting an answer");
+  }
+
+  [Test]
+  public async Task Withdraw_PutsAReAskThatNeverLeftBack_AsTheUnansweredStateItWasAskedFromAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var id = await _queueAsync(coordinator);
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now, _now.AddMinutes(180));
+    var askedFrom = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now.AddHours(3), _now.AddHours(6));
+
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(askedFrom, 1);
+    var row = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+
+    await Assert.That(row).IsEqualTo(askedFrom)
+      .Because("the failed re-ask costs no attempt, and the window stays past its answer timeout, so a later tick asks it again");
+  }
+
+  [Test]
+  public async Task Withdraw_AfterAnAnswerLandedMeanwhile_LeavesTheAnswerAsItAppliedAsync() {
+    // A re-ask fails to send, but the first attempt's answer lands between the record and the withdrawal: the answer
+    // stands, and the withdrawal finds nothing of its own to take back.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var id = await _queueAsync(coordinator);
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now, _now.AddMinutes(180));
+    var askedFrom = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now.AddHours(3), _now.AddHours(6));
+    var answered = await coordinator.RecordSubscriptionBackfillAnswerAsync(
+      new BackfillWindowAnswer { BackfillId = id, Window = 1, EventCount = 3, StoppedAtCommitSequence = 30, HasMore = false },
+      _now.AddHours(4));
+
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(askedFrom, 1);
+    var row = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+
+    await Assert.That(row).IsEqualTo(answered);
+    await Assert.That(row.Outcome).IsEqualTo(SubscriptionBackfillOutcome.Complete);
+  }
+
+  [Test]
+  public async Task Withdraw_AfterALaterRequestFollowed_LeavesTheLaterRequestAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var id = await _queueAsync(coordinator);
+    var askedFrom = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now, _now.AddMinutes(180));
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, _now.AddHours(3), _now.AddHours(6));
+    var later = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(askedFrom, 1);
+    var row = (await coordinator.GetSubscriptionBackfillsAsync()).Single();
+
+    await Assert.That(row).IsEqualTo(later)
+      .Because("only the request recorded from that exact state is withdrawn; a request recorded after it stands");
+  }
+
   private static async Task<Guid> _queueAsync(IWorkCoordinator coordinator) {
     await coordinator.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(_orders, "orders-svc", PLACED)]);
     return (await coordinator.GetSubscriptionBackfillsAsync()).Single().BackfillId;
