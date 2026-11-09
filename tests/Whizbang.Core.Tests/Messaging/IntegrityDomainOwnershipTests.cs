@@ -93,6 +93,46 @@ public class IntegrityDomainOwnershipTests {
   }
 
   [Test]
+  public async Task IsNotAuthoritative_ATypeAnotherServiceOwns_IsNotTheAdvertisingOriginsAsync() {
+    var ownership = new IntegrityDomainOwnership([_claim("app.contracts.orders", _orders, "orders-svc")]);
+    const string placed = "App.Contracts.Orders.OrderPlaced, App.Contracts";
+
+    await Assert.That(ownership.IsNotAuthoritative(placed, _billing, [])).IsTrue()
+      .Because("billing reporting an orders event received it; orders is the one whose count stands");
+    await Assert.That(ownership.IsNotAuthoritative(placed, _orders, [])).IsFalse()
+      .Because("the control: the owner's own count stands");
+  }
+
+  [Test]
+  public async Task IsNotAuthoritative_ATypeThisServiceOwns_IsNoOtherOriginsAsync() {
+    var ownership = new IntegrityDomainOwnership([_claim("app.contracts.billing", _billing, "billing-svc")]);
+    const string placed = "App.Contracts.Orders.OrderPlaced, App.Contracts";
+
+    await Assert.That(ownership.IsNotAuthoritative(placed, _billing, ["App.Contracts.Orders"])).IsTrue()
+      .Because("this service authors its own domain's events, so another origin reporting them only received them; "
+             + "a service never announces its own domains to itself, so the map alone cannot say so");
+    await Assert.That(ownership.IsNotAuthoritative(placed, _billing, [])).IsFalse()
+      .Because("the control: with no owner known anywhere, the reporting origin is taken at its word, as before");
+  }
+
+  [Test]
+  public async Task IsNotAuthoritative_AnOriginTheMapNamesAsOwner_StandsEvenInADomainThisServiceAlsoOwnsAsync() {
+    var ownership = new IntegrityDomainOwnership([_claim("app.contracts.orders", _orders, "orders-svc")]);
+
+    await Assert.That(ownership.IsNotAuthoritative("App.Contracts.Orders.OrderPlaced, App.Contracts", _orders, ["App.Contracts.Orders"]))
+      .IsFalse()
+      .Because("two services claiming one domain is a contest the map reports, not a verdict that the claimant's count is false");
+  }
+
+  [Test]
+  public async Task IsNotAuthoritative_WithoutTheLocalDomains_ThrowsAsync() {
+    var ownership = new IntegrityDomainOwnership([]);
+
+    await Assert.That(() => ownership.IsNotAuthoritative("App.Contracts.Orders.OrderPlaced, App.Contracts", _orders, null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task Fingerprint_IsOrderIndependent_AndMovesWithTheMapAndTheOwnDomainsAsync() {
     var a = new IntegrityDomainOwnership([_claim("x", _orders, "o"), _claim("y", _billing, "b")]);
     var b = new IntegrityDomainOwnership([_claim("Y", _billing, "b"), _claim("x", _orders, "o")]);

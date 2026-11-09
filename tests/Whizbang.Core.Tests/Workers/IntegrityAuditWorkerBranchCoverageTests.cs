@@ -245,6 +245,53 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       .Because("rows removed from the ledger change the unhealed gauge, so the audit says why it moved");
   }
 
+  // ── a ledger row filed under an origin that does not own its type ─────
+
+  private static readonly Guid _ownerSvc = Guid.Parse("0a000000-0000-0000-0000-0000000000a1");
+  private static readonly Guid _copySvc = Guid.Parse("0b000000-0000-0000-0000-0000000000b2");
+  private const string ORDERS_TYPE = "App.Contracts.Orders.Placed, App.Contracts";
+  private const string OWN_TYPE = "App.Contracts.Self.Started, App.Contracts";
+  private const string UNCLAIMED_TYPE = "App.Contracts.Loose.Happened, App.Contracts";
+
+  [Test]
+  public async Task RunAuditOnce_LedgerRowsOfAnOriginThatDoesNotOwnTheType_AreForgottenAsync() {
+    var coordinator = new AuditCoordinator {
+      Claims = [new IntegrityDomainClaim { Domain = "app.contracts.orders", OwnerServiceId = _ownerSvc, OwnerServiceName = "orders-svc" }],
+      LedgerPairs = [
+        (_copySvc, ORDERS_TYPE),     // a copy-holder's report of the owner's type
+        (_ownerSvc, ORDERS_TYPE),    // the owner's own report
+        (_copySvc, OWN_TYPE),        // another origin's report of this service's own type
+        (_copySvc, UNCLAIMED_TYPE),  // nobody claims the type: the origin is taken at its word
+      ],
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger: logger,
+      ownedDomains: ["App.Contracts.Self"]);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEquivalentTo([(_copySvc, ORDERS_TYPE), (_copySvc, OWN_TYPE)])
+      .Because("a non-owner's answer leaves out every type it does not own, so its rows are never compared again and "
+             + "can never heal or clear; they are false differences, and the owner's own rows stay");
+    await Assert.That(logger.Saw("forgot 2 repair-ledger row(s) recorded under an origin that does not own")).IsTrue()
+      .Because("rows removed from the ledger move the unhealed gauge, so the audit says why");
+  }
+
+  [Test]
+  public async Task RunAuditOnce_WithNoNonOwnerRows_LogsNothingAboutThemAsync() {
+    var coordinator = new AuditCoordinator { LedgerPairs = [(_copySvc, UNCLAIMED_TYPE)] };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ForgottenPairs).IsEmpty()
+      .Because("with no owner known and no domain of its own, this service takes every origin at its word, as before");
+    await Assert.That(logger.Saw("does not own")).IsFalse();
+  }
+
   [Test]
   public async Task RunAuditOnce_TheManifestRequest_ExpiresWithTheIntegrityTimeToLiveAsync() {
     var transport = new CaptureTransport();
@@ -297,10 +344,12 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       IEventTypeProvider? typeProvider = null,
       bool registerTypeProvider = false,
       ConsumedMessageInfo[]? consumed = null,
-      string[]? absorbedNamespaces = null) {
+      string[]? absorbedNamespaces = null,
+      string[]? ownedDomains = null) {
     var services = new ServiceCollection();
-    if (absorbedNamespaces is not null) {
-      services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces(absorbedNamespaces)));
+    if (absorbedNamespaces is not null || ownedDomains is not null) {
+      services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions()
+        .AbsorbNamespaces(absorbedNamespaces ?? []).OwnDomains(ownedDomains ?? [])));
     }
     services.AddSingleton<IConsumerRegistry>(new ConsumedRegistry(consumed ?? [_event(TYPE_A)]));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -385,6 +434,20 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       ForgetCalls.Add(consumedEventTypes);
       ForgetNamespaces.Add(absorbedNamespaces);
       return Task.FromResult(ForgetResult);
+    }
+
+    public IReadOnlyList<IntegrityDomainClaim> Claims { get; init; } = [];
+    public List<(Guid Origin, string EventType)> LedgerPairs { get; init; } = [];
+    public List<(Guid Origin, string EventType)> ForgottenPairs { get; } = [];
+
+    public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Claims);
+
+    public Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+        Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+      var gone = LedgerPairs.Where(p => isNotAuthoritative(p.Origin, p.EventType)).ToList();
+      ForgottenPairs.AddRange(gone);
+      return Task.FromResult(gone.Count);
     }
 
     public EpochVerificationResult EpochResult { get; init; } = new(0, 0);

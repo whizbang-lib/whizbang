@@ -101,6 +101,32 @@ public sealed class IntegrityDomainOwnership {
     FindOwner(storedEventType) is { } owner && owner.OwnerServiceId != originServiceId;
 
   /// <summary>
+  /// True when <paramref name="originServiceId"/>'s counts and digests for <paramref name="storedEventType"/> do not
+  /// stand: a known owner other than that origin owns the type, or, when the map names no owner, the type is in one of
+  /// this service's own owned domains (a service never announces its own domains to itself, so the map alone cannot
+  /// say so). Such an origin only received the type's events; it is not compared against, repair is not asked of it, and
+  /// a ledger row recorded under it is forgotten, because its answers leave the type out and the row can never clear.
+  /// </summary>
+  /// <remarks>
+  /// An origin the map names as the type's owner stands even when this service also owns the domain: two services
+  /// claiming one domain is a contest the checkpoint reports (<see cref="IntegrityOwnershipConflicts"/>), not a verdict.
+  /// </remarks>
+  /// <param name="storedEventType">A stored type name.</param>
+  /// <param name="originServiceId">The origin that reported the type.</param>
+  /// <param name="localOwnedDomains">This service's own owned domains.</param>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="localOwnedDomains"/> is null.</exception>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs:IsNotAuthoritative_ATypeThisServiceOwns_IsNoOtherOriginsAsync</tests>
+  public bool IsNotAuthoritative(string storedEventType, Guid originServiceId, IReadOnlyCollection<string> localOwnedDomains) {
+    ArgumentNullException.ThrowIfNull(localOwnedDomains);
+    if (FindOwner(storedEventType) is { } owner) {
+      return owner.OwnerServiceId != originServiceId;
+    }
+    return localOwnedDomains.Count > 0
+      && OwnedNamespaceMatcher.IsOwned(TypeNameFormatter.GetNamespace(storedEventType), localOwnedDomains);
+  }
+
+  /// <summary>
   /// A stable fingerprint of the map together with this service's own owned domains, independent of order and case.
   /// Re-attribution rewalks the store from the start whenever it changes, so history parked as unattributed reaches an
   /// owner learned later.
