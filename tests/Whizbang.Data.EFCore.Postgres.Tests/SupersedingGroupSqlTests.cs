@@ -56,6 +56,7 @@ public sealed record SupersedingGroupProbeRevised : IEvent {
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/352_SupersedingGroups.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/365_TheTypeKeyedSupersedingIndexIsDropped.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/374_HistoryWalksReadTheirOwnType.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public class SupersedingGroupSqlTests : EFCoreTestBase {
@@ -221,11 +222,12 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
     // As the write paths stored them before the group: flagged, keyed, no group.
     var created = await _appendAsync(conn, stream, _createdType, SUPERSEDING, "m", new SupersedingGroupProbeCreated { DocumentId = stream, Model = "m" });
     var revised = await _appendAsync(conn, stream, _revisedType, SUPERSEDING, "m", new SupersedingGroupProbeRevised { DocumentId = stream, Model = "m" });
+    await _stampAsync(conn);
     // And walked to the end then, under no group.
     foreach (var type in new[] { _createdType, _revisedType }) {
-      await _executeAsync(conn, "SELECT wh_superseding_history_ensure(@t, @d)", ("t", type), ("d", type));
+      await _executeAsync(conn, "SELECT wh_type_history_ensure('superseding', @t, @d)", ("t", type), ("d", type));
       await _executeAsync(conn,
-        "UPDATE wh_superseding_history SET completed_at = NOW(), last_event_id = 'ffffffff-ffff-ffff-ffff-ffffffffffff' WHERE event_type = @t",
+        "UPDATE wh_type_history_walks SET completed_at = NOW(), last_commit_sequence = 9223372036854775807 WHERE operation = 'superseding' AND event_type = @t",
         ("t", type));
     }
     await Assert.That(await _queuedAsync(conn)).IsEmpty();
@@ -250,6 +252,7 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
     var stream = (Guid)TrackedGuid.New();
     var created = await _appendAsync(conn, stream, _createdType, 0, null, new SupersedingGroupProbeCreated { DocumentId = stream, Model = "m" });
     var revised = await _appendAsync(conn, stream, _revisedType, 0, null, new SupersedingGroupProbeRevised { DocumentId = stream, Model = "m" });
+    await _stampAsync(conn);
 
     await _step().ReconcileAsync(_services(), CancellationToken.None);
 
@@ -262,22 +265,22 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
   public async Task Ensure_AChangedGroup_RestartsTheWalk_TheSameGroupDoesNotAsync() {
     await using var conn = await _openAsync();
     const string TYPE = "Probe.Contracts.EnsureProbe, Probe.Contracts";
-    await _executeAsync(conn, "SELECT wh_superseding_history_ensure(@t, @t, @g)", ("t", TYPE), ("g", GROUP));
+    await _executeAsync(conn, "SELECT wh_type_history_ensure('superseding', @t, @t, @g)", ("t", TYPE), ("g", GROUP));
     await _executeAsync(conn,
-      "UPDATE wh_superseding_history SET completed_at = NOW(), last_event_id = 'ffffffff-ffff-ffff-ffff-ffffffffffff', events_matched = 3 WHERE event_type = @t",
+      "UPDATE wh_type_history_walks SET completed_at = NOW(), last_commit_sequence = 9223372036854775807, events_matched = 3 WHERE operation = 'superseding' AND event_type = @t",
       ("t", TYPE));
 
-    await _executeAsync(conn, "SELECT wh_superseding_history_ensure(@t, @t, @g)", ("t", TYPE), ("g", GROUP));
-    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_superseding_history WHERE event_type = @t AND completed_at IS NOT NULL",
+    await _executeAsync(conn, "SELECT wh_type_history_ensure('superseding', @t, @t, @g)", ("t", TYPE), ("g", GROUP));
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_type_history_walks WHERE event_type = @t AND completed_at IS NOT NULL",
       ("t", TYPE))).IsEqualTo(1L).Because("the same group leaves a finished walk finished");
 
-    await _executeAsync(conn, "SELECT wh_superseding_history_ensure(@t, @t, @g)", ("t", TYPE), ("g", "renamed"));
+    await _executeAsync(conn, "SELECT wh_type_history_ensure('superseding', @t, @t, @g)", ("t", TYPE), ("g", "renamed"));
     await Assert.That(await _scalarAsync(conn,
-      "SELECT count(*) FROM wh_superseding_history WHERE event_type = @t AND completed_at IS NULL AND last_event_id IS NULL AND events_matched = 0 AND supersede_group = 'renamed'",
+      "SELECT count(*) FROM wh_type_history_walks WHERE event_type = @t AND completed_at IS NULL AND last_commit_sequence IS NULL AND events_matched = 0 AND variant = 'renamed'",
       ("t", TYPE))).IsEqualTo(1L).Because("a new group walks the type again from its first event");
 
-    await _executeAsync(conn, "SELECT wh_superseding_history_ensure(@t, @t)", ("t", TYPE));
-    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_superseding_history WHERE event_type = @t AND supersede_group IS NULL",
+    await _executeAsync(conn, "SELECT wh_type_history_ensure('superseding', @t, @t)", ("t", TYPE));
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_type_history_walks WHERE event_type = @t AND variant IS NULL",
       ("t", TYPE))).IsEqualTo(1L).Because("leaving a group is a change of group too");
   }
 
