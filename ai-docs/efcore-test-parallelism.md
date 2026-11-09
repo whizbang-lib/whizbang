@@ -21,7 +21,13 @@ suite to finish in every CI run.
    orders the tests that hold it, and every database test reads these registries, so no key is narrow enough.
 5. **A database is created and dropped through `PerTestDatabaseFactory`**, which retries the template contention
    (55006) that concurrent `CREATE DATABASE` produces. Never issue your own.
-6. **A read of a cluster-wide catalog view names the database** (`pg_locks.database`, `pg_stat_activity.datname`,
+6. **A test that needs the migrated framework schema copies it** (`EFCoreSchemaTemplate.CreateDatabaseAsync`, which
+   `EFCoreTestBase` does for every test) rather than migrating an empty database itself (#2167). See
+   [The schema template](#the-schema-template).
+7. **A test registers its own models in a shared registry; it does not clear the registry.** The physical field
+   registry is keyed by model type, so a class that registers a test-local model touches nothing another test reads
+   and runs in parallel. Clearing it is what sends a class to the serial phase.
+8. **A read of a cluster-wide catalog view names the database** (`pg_locks.database`, `pg_stat_activity.datname`,
    `current_database()`): every test database has the same tables, and a sibling's lock or session otherwise answers
    for yours.
 
@@ -40,6 +46,38 @@ keyed tests with other keys; only the keyless attribute guarantees nothing else 
 | `TestIsolation/SharedRegistryResetIsolationTests` | a test resets a registry, coalescer, hydrator or test seam without running alone |
 | `TestIsolation/ScratchDatabaseLifecycleGuardTests` | a fixture issues its own `CREATE DATABASE` (two deliberate exceptions) |
 | `TestIsolation/BackendTerminationScopeTests` | a test ends backends without naming its database |
+| `TestIsolation/SchemaTemplateGuardTests` | the base class migrates for itself or stops copying the template; a fixture creates a database and migrates the framework context in it from scratch without being on the reasoned list (which only shrinks); a base-class test's database lacks the current template's marker |
+| `ParallelismPolicyGuardTests.TheClassesThatRegisterTheirOwnModels_StayParallelAndNeverClearTheRegistryAsync` | a class that registers its own physical-field models clears the registry or serializes again |
+
+## The schema template
+
+Until #2167 every `EFCoreTestBase` test created an empty database and ran the whole schema pass in it: core tables,
+every migration, perspective tables, constraints, associations and the reconcile. That was most of a shard's time.
+`EFCoreSchemaTemplate` builds the schema once as a PostgreSQL template database and every test gets
+`CREATE DATABASE ... TEMPLATE` of it, a file-level clone with the template's indexes and statistics.
+
+- **Name and rebuild.** The template is `eftmpl_<hash>`, the hash taken over the migration texts as the ledger hashes
+  them, the bootstrap scripts (with the core tables) and the physical-column rewrites, so worktrees with different
+  migrations sharing a container keep separate templates. The hash cannot see the perspective DDL or the associations
+  (private to the generated class), so once per process the schema pass is run on a copy of the template: the pass
+  rewrites a ledger row whenever what the code builds differs, so an unchanged ledger is a current template. The
+  copy's marker (a comment on the `public` schema) must also match the fingerprint. A stale template is dropped and
+  built again. (`IsWhizbangSchemaCurrentAsync` cannot serve: it answers false on a database one pass has just built,
+  because the stored-form rewrite runs before the perspective tables exist and settles nothing until a second start.)
+- **Per-database values.** A copy shares every row the template has, so a value a migration seeds per database is
+  renewed in each copy: `wh_service_config.service_id`, the service identity that rides on outgoing envelopes (an
+  origin and a consumer store in one test would otherwise read each other's events as their own). A test migrates
+  two databases from scratch and compares every column, date and time columns left out; what differs must be exactly
+  the renewed columns plus two random row keys that never leave a database.
+- **Concurrency.** One build per process (`TemplateGate`, which does not remember a failure). Across processes, a
+  session advisory lock keyed by the template's name, on a connection without pooling. The schema is migrated in a
+  scratch database and renamed to the template's name only when complete, so the name never holds a half-built
+  template. The template refuses connections (`ALLOW_CONNECTIONS false`), because one open connection makes every copy
+  fail with 55006, and the build ends any backend left in the scratch database before the rename.
+- **Leftovers.** A failed build drops its scratch database. Every use stamps the template's database comment, and the
+  run's other `eftmpl_` templates unused for a day are dropped.
+- **From scratch on purpose.** A test of the schema pass itself still migrates an empty database; such a fixture is on
+  the reasoned list in `SchemaTemplateGuardTests`.
 
 ## Classification (#2069)
 
@@ -57,6 +95,11 @@ files, child processes and wall-clock assertions; every hit was read.
 | Runs alone (measurement) | 24 | 23 `Benchmark` classes (no shard, never in CI) and one test asserting an unscaled wall-clock latency budget |
 | Narrow key | 1 | `BaseUpsertStrategyCoverageIntegrationTests`: two tests register a TTL for the widget model that the others need absent |
 | Kept on the blanket key | 0 | |
+
+Since #2167, four of the 18 registry-reset classes run in parallel: `FullLinqSupportTests`, `UnifiedQuerySyntaxTests`,
+`ComplexTypeJsonMappingTests` and `PhysicalJsonbContainmentRewriterTests` cleared the physical field registry before
+registering models of their own, and now only register. The one rewrite test that clears the registry on purpose moved
+to `PhysicalJsonbContainmentRegistryResetTests`, which runs alone.
 
 Shared state that was isolated instead of serialized:
 
