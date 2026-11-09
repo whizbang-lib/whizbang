@@ -51,6 +51,18 @@ public class ServiceRegistrationCallbacksAccumulateTests {
       static (order, name) => _ => order.Add(name));
 
   [Test]
+  public async Task LensServices_RunsEveryAssemblysCallback_InTheOrderSetAsync() =>
+    await _everyCallbackRunsAsync(
+      () => ServiceRegistrationCallbacks.LensServices, v => ServiceRegistrationCallbacks.LensServices = v,
+      static (order, name) => (_, _) => order.Add(name));
+
+  [Test]
+  public async Task PerspectiveServices_RunsEveryAssemblysCallback_InTheOrderSetAsync() =>
+    await _everyCallbackRunsAsync(
+      () => ServiceRegistrationCallbacks.PerspectiveServices, v => ServiceRegistrationCallbacks.PerspectiveServices = v,
+      static (order, name) => (_, _) => order.Add(name));
+
+  [Test]
   public async Task PinnedIdRegistry_RunsEveryAssemblysCallback_InTheOrderSetAsync() =>
     await _everyCallbackRunsAsync(
       () => ServiceRegistrationCallbacks.PinnedIdRegistry, v => ServiceRegistrationCallbacks.PinnedIdRegistry = v,
