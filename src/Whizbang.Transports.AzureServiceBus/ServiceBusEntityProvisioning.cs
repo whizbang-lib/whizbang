@@ -276,11 +276,7 @@ internal static partial class ServiceBusEntityProvisioning {
 
       // The filter is in place, so the match-all rule can go. Another instance may have removed it already.
       if (matchAllDefault is not null) {
-        try {
-          await adminClient.DeleteRuleAsync(topicName, subscriptionName, DEFAULT_RULE_NAME, cancellationToken);
-        } catch (RequestFailedException ex) when (ex.Status == 404) {
-          // Removed by another instance between the read and the delete: the state this call wanted.
-        }
+        await _removeMatchAllDefaultAsync(adminClient, topicName, subscriptionName, cancellationToken);
       }
 
       foreach (var foreign in existing.Where(rule => rule.Name is not (EXCLUDED_EVENT_TYPES_RULE_NAME or DEFAULT_RULE_NAME))) {
@@ -294,6 +290,19 @@ internal static partial class ServiceBusEntityProvisioning {
 
   /// <summary>The match-all <c>$Default</c> rule every subscription is created with.</summary>
   private const string DEFAULT_RULE_NAME = "$Default";
+
+  /// <summary>Removes the match-all <c>$Default</c> rule; one another instance already removed is the state wanted.</summary>
+  private static async Task _removeMatchAllDefaultAsync(
+      IServiceBusAdminClient adminClient,
+      string topicName,
+      string subscriptionName,
+      CancellationToken cancellationToken) {
+    try {
+      await adminClient.DeleteRuleAsync(topicName, subscriptionName, DEFAULT_RULE_NAME, cancellationToken);
+    } catch (RequestFailedException ex) when (ex.Status == 404) {
+      // Removed by another instance between the read and the delete: the state this call wanted.
+    }
+  }
 
   /// <summary>Creates the excluded-event-types rule, or replaces it in place when another instance created it first.</summary>
   private static async Task _createOrUpdateAsync(
