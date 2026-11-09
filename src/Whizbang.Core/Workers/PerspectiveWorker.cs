@@ -1114,7 +1114,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
   private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
@@ -6132,7 +6132,7 @@ public partial class PerspectiveWorker(
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,
