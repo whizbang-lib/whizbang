@@ -32,6 +32,7 @@ public sealed class RoutingOptions {
   private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _absorbedNamespaces = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _commandNamespacesToInbox = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _excludedEventTypes = new(StringComparer.Ordinal);
 
   // Tri-state: null = "the consumer never said", so the DEFAULT rule below decides. Explicit
   // true/false always win, whatever order the fluent calls arrive in.
@@ -230,6 +231,55 @@ public sealed class RoutingOptions {
         namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
 
     return this;
+  }
+
+  /// <summary>
+  /// The event types this service opts out of (#2175): names in the normalized wire form
+  /// (<c>"MyApp.Events.Outer+Noisy, MyApp"</c>) when given by type, or as written (version details stripped) when given
+  /// by name. Empty by default, and an empty list changes nothing: every event on a subscribed topic is delivered and an
+  /// event with no local consumer is discarded at the receive boundary and recorded. Each listed type is excluded at the
+  /// broker instead, on the subscription of the topic it is published to.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludedEventTypes_ByDefault_IsEmptyAsync</tests>
+  public IReadOnlySet<string> ExcludedEventTypes => _excludedEventTypes;
+
+  /// <summary>
+  /// Opts this service out of an event type (#2175): the broker stops delivering it to this service's subscription of
+  /// the topic it is published to. Startup fails when this service consumes the type, since an excluded type is never
+  /// delivered.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type to opt out of.</typeparam>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_Generic_RecordsTheWireFormAsync</tests>
+  public RoutingOptions ExcludeEventType<TEvent>() where TEvent : IEvent => ExcludeEventType(typeof(TEvent));
+
+  /// <summary>Opts this service out of an event type given as a <see cref="Type"/>; see
+  /// <see cref="ExcludeEventType{TEvent}"/>.</summary>
+  /// <param name="eventType">The event type to opt out of.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="eventType"/> is null.</exception>
+  /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_NestedType_RecordsTheWireFormAsync</tests>
+  public RoutingOptions ExcludeEventType(Type eventType) {
+    _ = (_excludedEventTypes, eventType);
+    throw new NotImplementedException();
+  }
+
+  /// <summary>
+  /// Opts this service out of event types given by name, in the wire form (<c>"MyApp.Events.Noisy, MyApp"</c>) or the
+  /// CLR form (<c>"MyApp.Events.Outer+Noisy"</c>); the form the configuration key
+  /// <c>Whizbang:Routing:ExcludedEventTypes</c> binds. Blank entries are skipped and version details are stripped.
+  /// </summary>
+  /// <param name="typeNames">The event type names.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="typeNames"/> is null.</exception>
+  /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventTypes_Names_StripVersionAndSkipBlankAsync</tests>
+  public RoutingOptions ExcludeEventTypes(params string[] typeNames) {
+    _ = (_excludedEventTypes, typeNames);
+    throw new NotImplementedException();
   }
 
   /// <summary>

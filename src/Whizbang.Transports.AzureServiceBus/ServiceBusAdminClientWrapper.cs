@@ -172,5 +172,14 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     await _adminClient.CreateRuleAsync(topicName, subscriptionName, options, cancellationToken);
   }
 
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusAdminClientWrapperTests.cs:UpdateRuleAsync_PassesTheRuleThroughAsync</tests>
+  public Task UpdateRuleAsync(
+    string topicName,
+    string subscriptionName,
+    RuleProperties rule,
+    CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
   #endregion
 }

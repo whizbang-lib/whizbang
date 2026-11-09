@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Transports;
@@ -32,6 +34,8 @@ public sealed class TransportSubscriptionBuilder {
   private readonly string _serviceName;
   private readonly IInboxRoutingStrategy? _inboxStrategy;
   private readonly Messaging.IReceptorRegistryQuery _receptorRegistry;
+  private readonly IMessageTypeCatalog? _messageCatalog;
+  private readonly ILogger _logger;
 
   /// <summary>
   /// Creates a new transport subscription builder.
@@ -51,7 +55,34 @@ public sealed class TransportSubscriptionBuilder {
       EventSubscriptionDiscovery discovery,
       string serviceName,
       IInboxRoutingStrategy? inboxStrategy,
-      Messaging.IReceptorRegistryQuery receptorRegistry) {
+      Messaging.IReceptorRegistryQuery receptorRegistry)
+    : this(routingOptions, discovery, serviceName, inboxStrategy, receptorRegistry, null, null) {
+  }
+
+  /// <summary>
+  /// Creates a new transport subscription builder that checks the opt-out list of event types (#2175) against the
+  /// application's message types and logs what it excludes.
+  /// </summary>
+  /// <param name="routingOptions">Routing options containing owned domains, inbox strategy and excluded event types.</param>
+  /// <param name="discovery">Event subscription discovery service.</param>
+  /// <param name="serviceName">Name of this service (used for subscription naming).</param>
+  /// <param name="inboxStrategy">DI-resolved inbox routing strategy; null falls back to the options strategy.</param>
+  /// <param name="receptorRegistry">Receptor registry query: the handled-message enumeration and what this service
+  /// consumes.</param>
+  /// <param name="messageCatalog">The application's message types; an excluded type missing from it is a warning.
+  /// Null skips that check.</param>
+  /// <param name="logger">Receives the excluded-event-types warnings and the effective exclusions; null discards
+  /// them.</param>
+  /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_ExcludedType_IsOnlyOnItsOwnTopicAsync</tests>
+  public TransportSubscriptionBuilder(
+      IOptions<RoutingOptions> routingOptions,
+      EventSubscriptionDiscovery discovery,
+      string serviceName,
+      IInboxRoutingStrategy? inboxStrategy,
+      Messaging.IReceptorRegistryQuery receptorRegistry,
+      IMessageTypeCatalog? messageCatalog,
+      ILogger? logger) {
     ArgumentNullException.ThrowIfNull(routingOptions);
     ArgumentNullException.ThrowIfNull(discovery);
     ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
@@ -62,7 +93,21 @@ public sealed class TransportSubscriptionBuilder {
     _serviceName = serviceName;
     _inboxStrategy = inboxStrategy;
     _receptorRegistry = receptorRegistry;
+    _messageCatalog = messageCatalog;
+    _logger = logger ?? NullLogger.Instance;
   }
+
+  /// <summary>
+  /// The metadata key every event destination carries (#2175): the subjects (<see cref="EventSubject"/>) its
+  /// subscription excludes, as a string array, empty when it excludes nothing. A transport that filters at the broker
+  /// converges the subscription to it; an empty list means deliver every event on the topic.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_NothingExcluded_EveryDestinationCarriesAnEmptyListAsync</tests>
+  public static string ExcludedEventSubjectsMetadataKey => EXCLUDED_EVENT_SUBJECTS_METADATA_KEY;
+
+  /// <summary>Backing constant for <see cref="ExcludedEventSubjectsMetadataKey"/>.</summary>
+  private const string EXCLUDED_EVENT_SUBJECTS_METADATA_KEY = "ExcludedEventSubjects";
 
   /// <summary>
   /// Builds all transport destinations for subscription.
@@ -146,9 +191,18 @@ public sealed class TransportSubscriptionBuilder {
   /// Combines auto-discovered and manually configured namespaces.
   /// </summary>
   /// <returns>List of event transport destinations.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when an excluded event type is one this service consumes
+  /// (#2175).</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_ExcludedType_IsOnlyOnItsOwnTopicAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildDestinations_ExcludedTypeThisServiceConsumes_FailsAsync</tests>
   public IReadOnlyList<TransportDestination> BuildEventDestinations() {
     var eventNamespaces = _discovery.DiscoverEventNamespaces();
     var destinations = new List<TransportDestination>();
+
+    // The opt-out list (#2175), checked here so every path that builds event destinations refuses an excluded type
+    // this service consumes. Each destination carries its subjects, empty when it excludes nothing, so a transport
+    // converges a subscription back to delivering everything when a type leaves the list.
+    _ = (_messageCatalog, _logger);
 
     foreach (var ns in eventNamespaces) {
       // Add SubscriberName for deterministic queue naming (critical for competing consumers)
@@ -224,7 +278,9 @@ public static class TransportSubscriptionBuilderExtensions {
         sp.GetRequiredService<EventSubscriptionDiscovery>(),
         serviceName,
         sp.GetService<IInboxRoutingStrategy>(),
-        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>()));
+        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>(),
+        sp.GetService<IMessageTypeCatalog>(),
+        sp.GetService<ILogger<TransportSubscriptionBuilder>>()));
 
     TryAddTopologyManifest(services, _ => serviceName);
 

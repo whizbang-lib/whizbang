@@ -197,6 +197,43 @@ internal static class ServiceBusEntityProvisioning {
     return [.. expressions.Select((expression, i) => (i == 0 ? ROUTING_PATTERN_RULE_NAME : $"{ROUTING_PATTERN_RULE_NAME}-{i + 1}", expression))];
   }
 
+  /// <summary>The rule an event subscription excludes its opted-out event types with (#2175).</summary>
+  internal const string EXCLUDED_EVENT_TYPES_RULE_NAME = "ExcludedEventTypes";
+
+  /// <summary>
+  /// The SQL filter of the excluded-event-types rule (#2175):
+  /// <c>sys.Label IS NULL OR NOT (sys.Label IN ('a', 'b'))</c> over the subjects, quotes doubled. The null guard keeps a
+  /// message published without a subject delivered, as the match-all rule did (in SQL, <c>NULL IN (...)</c> is unknown,
+  /// and a filter that is unknown drops the message).
+  /// </summary>
+  /// <param name="subjects">The excluded subjects, at least one.</param>
+  /// <returns>The filter expression.</returns>
+  internal static string BuildExcludedEventTypesExpression(IReadOnlyList<string> subjects) =>
+    throw new NotImplementedException();
+
+  /// <summary>
+  /// Converges an event subscription on its opt-out list (#2175), idempotently. With subjects, the
+  /// <see cref="EXCLUDED_EVENT_TYPES_RULE_NAME"/> rule carries the filter and the match-all <c>$Default</c> rule is
+  /// removed once it does. With none, a subscription that never excluded anything is not touched at all, and one that
+  /// did has its rule replaced in place by a match-all filter. Rules are only ever created or replaced in place before
+  /// anything is removed, so the subscription is never without a rule that delivers.
+  /// </summary>
+  /// <param name="adminClient">The management-plane client.</param>
+  /// <param name="topicName">The topic.</param>
+  /// <param name="subscriptionName">The subscription.</param>
+  /// <param name="subjects">The excluded subjects; empty to deliver every event.</param>
+  /// <param name="logger">Logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task completing when the subscription has converged, or the failure has been logged.</returns>
+  internal static Task ApplyExcludedEventTypesAsync(
+      IServiceBusAdminClient adminClient,
+      string topicName,
+      string subscriptionName,
+      IReadOnlyList<string> subjects,
+      ILogger logger,
+      CancellationToken cancellationToken) =>
+    throw new NotImplementedException();
+
   /// <summary>True when the subscription's rules are exactly the desired SqlFilter rules, and nothing else.</summary>
   private static bool _alreadyConverged(List<RuleProperties> existingRules, List<(string Name, string Expression)> desired) =>
     existingRules.Count == desired.Count

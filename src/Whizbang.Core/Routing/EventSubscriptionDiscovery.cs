@@ -120,6 +120,10 @@ public sealed class EventSubscriptionDiscovery {
     return namespaces;
   }
 
+  /// <summary>The events consumed through receptors registered at startup (<see cref="IRuntimeEventSubscription"/>):
+  /// consumed types the excluded-event-types check (#2175) must refuse to exclude.</summary>
+  internal IEnumerable<Type> RuntimeEventTypes => _runtimeSubscriptions.Select(subscription => subscription.EventType);
+
   /// <summary>
   /// Gets only the auto-discovered event namespaces (from perspectives and receptors).
   /// </summary>
