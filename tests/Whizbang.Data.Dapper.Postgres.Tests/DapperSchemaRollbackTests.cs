@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -73,5 +76,41 @@ public class DapperSchemaRollbackTests {
     await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = 'perspective:Newer'"))
       .IsEqualTo(0L);
     await Assert.That(async () => await rolling.RollBackSchemaAsync(null!)).Throws<ArgumentNullException>();
+  }
+
+  /// <summary>An assessor that answers the one verdict it was given.</summary>
+  private sealed class FixedAssessor(StartupAssessment assessment) : IStartupAssessor {
+    public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) => Task.FromResult(assessment);
+  }
+
+  [Test]
+  public async Task TheRunner_RunsTheRollbackTheVerdictOwes_BeforeThePassAsync() {
+    await new PostgresSchemaInitializer(_database.ConnectionString, _entries).InitializeSchemaAsync();
+    await using var db = _open();
+    var library = new PostgresMigrationProvider().Version;
+    var newer = await db.ExecuteScalarAsync<int>(
+      "INSERT INTO wh_schema_versions (library_version, application_version) VALUES (@library, '2.0.0') RETURNING id", new { library });
+    await db.ExecuteAsync("CREATE TABLE rb_runner (id int)");
+    await db.ExecuteAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, reversal, down_sql)
+      VALUES ('perspective:RunnerNewer', 'h', @newer, 1, 'reversible', 'DROP TABLE rb_runner;')
+      """, new { newer });
+    var change = new AppliedSchemaChange("perspective:RunnerNewer", SchemaChangeKind.Application, library, "2.0.0") {
+      Reversal = SchemaChangeReversal.Reversible,
+    };
+    var services = new ServiceCollection();
+    services.AddSingleton(new StartupAssessmentSource(
+      new FixedAssessor(new StartupAssessment(StartupVerdict.Migrate, "owed") { Rollback = new RollbackPlan([change], false) }),
+      new NullStartupStageReporter(), new FakeTimeProvider(), NullLogger<StartupAssessmentSource>.Instance));
+    var runner = new DapperSchemaInitializationRunner(
+      _database.ConnectionString, new PostgresOptions(),
+      () => new PostgresSchemaInitializer(_database.ConnectionString, _entries, applicationVersion: "1.9.0"),
+      NullLogger<DapperSchemaInitializationRunner>.Instance, services.BuildServiceProvider());
+
+    await runner.RunAsync(CancellationToken.None);
+
+    await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM pg_class WHERE relname = 'rb_runner'")).IsEqualTo(0L);
+    await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = 'perspective:RunnerNewer'"))
+      .IsEqualTo(0L);
   }
 }
