@@ -18,4 +18,7 @@ logo/**
 .vscode/**
 *.md
 .github/*.md
+# Changelog fragments: read only by the release cut's gather and its tests (Test · Pipeline scripts, which
+# runs on every event, docs-only included).
+changelog.d/**
 LICENSE
