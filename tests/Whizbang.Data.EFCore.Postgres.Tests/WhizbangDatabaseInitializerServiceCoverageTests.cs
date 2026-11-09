@@ -44,6 +44,44 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
       .Because("Dispose must actually dispose the stop-loop's CancellationTokenSource, not no-op");
   }
 
+  /// <summary>
+  /// A background initialization whose attempt fails while the host is being disposed ends quietly, rather than
+  /// faulting on the disposed stop-loop token and surfacing as an unobserved task exception.
+  /// </summary>
+  /// <remarks>
+  /// The retry loop read <c>_stopCts.Token</c> after each failed attempt. A host stopped and disposed while an attempt
+  /// was in flight (its database gone, its provider disposed) made that read throw <see cref="ObjectDisposedException"/>,
+  /// which no one awaited: the process-wide unobserved-task hook then reported it into whichever host had registered
+  /// the hook, failing an unrelated test that asserts its host logged no errors.
+  /// </remarks>
+  [Test]
+  public async Task BackgroundInit_AnAttemptFailingAfterDispose_EndsTheLoopWithoutFaultingAsync() {
+    WhizbangDatabaseInitializerService? service = null;
+    var runner = new CallbackRunner(() => {
+      // The host is disposed while this attempt is in flight; the attempt then fails, as it would on a dropped database.
+      service!.Dispose();
+      throw new InvalidOperationException("the database went away");
+    });
+    service = _create(runner: runner, nonBlocking: true);
+
+    await service.StartAsync(CancellationToken.None);
+    var loop = service.BackgroundInitTask!;
+    await Assert.That(async () => await loop).ThrowsNothing()
+      .Because("disposing the service ends its retry loop; a fault here is never observed and escapes on the finalizer");
+    await Assert.That(runner.Calls).IsEqualTo(1)
+      .Because("a disposed service makes no further attempt");
+  }
+
+  /// <summary>Disposing twice is harmless: the second call does not cancel a source the first disposed.</summary>
+  [Test]
+  public async Task Dispose_Twice_DoesNotThrowAsync() {
+    var service = _create();
+    service.Dispose();
+
+    await Assert.That(service.Dispose).ThrowsNothing()
+      .Because("a host may dispose a service more than once, and Dispose cancels before it disposes");
+  }
+
   // Partition recompute is best-effort self-healing: when a redeploy crossed a PartitionCount
   // boundary and rows were ACTUALLY fixed, an operator needs that visible in the logs. A recompute
   // that silently fixes real drift is indistinguishable from one that found nothing to do, and a
@@ -75,7 +113,9 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
   private static WhizbangDatabaseInitializerService _create(
       IWorkCoordinator? coordinator = null,
       ILogger<WhizbangDatabaseInitializerService>? logger = null,
-      int partitionCount = 10_000) {
+      int partitionCount = 10_000,
+      ISchemaInitializationRunner? runner = null,
+      bool nonBlocking = false) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     if (coordinator is not null) {
@@ -84,10 +124,10 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
       provider,
-      [new NoOpRunner()],
+      [runner ?? new NoOpRunner()],
       new SchemaReadyGate(),
       Options.Create(new ClaimWorkerOptions { PartitionCount = partitionCount }),
-      Options.Create(new SchemaInitializationOptions()),
+      Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = nonBlocking, InitRetryDelay = TimeSpan.FromHours(1) }),
       TimeProvider.System,
       logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance,
       []);
@@ -96,6 +136,17 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
   /// <summary>Runner that completes immediately; StartAsync/StopAsync are not under test here.</summary>
   private sealed class NoOpRunner : ISchemaInitializationRunner {
     public Task RunAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+  }
+
+  /// <summary>Runner that runs a callback per attempt and counts the attempts.</summary>
+  private sealed class CallbackRunner(Action onAttempt) : ISchemaInitializationRunner {
+    public int Calls { get; private set; }
+
+    public Task RunAsync(CancellationToken cancellationToken) {
+      Calls++;
+      onAttempt();
+      return Task.CompletedTask;
+    }
   }
 
   /// <summary>Captures the fully-formatted messages emitted through the source-generated LoggerMessage methods.</summary>
