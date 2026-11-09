@@ -73,7 +73,7 @@ public sealed record SupersedingHistoryProbePlain : IEvent {
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/345_SupersedingHistoryReconcile.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/374_HistoryWalksReadTheirOwnType.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/380_HistoryWalksReadTheirOwnType.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {

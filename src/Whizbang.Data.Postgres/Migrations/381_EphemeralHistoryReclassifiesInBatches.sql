@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 375_EphemeralHistoryReclassifiesInBatches.sql
+-- Migration: 381_EphemeralHistoryReclassifiesInBatches.sql
 -- Date: 2026-11-09
 -- Description: The history of a type made [Ephemeral] is reclassified in bounded batches by the maintenance cycle,
 --              through the per-type history walker (#2206).
@@ -12,7 +12,7 @@
 --              store), one burst of WAL, a lock on every touched row for its whole length, and a statement that could
 --              run into the command timeout, after which nothing was reclassified and the next startup tried again.
 --
---              The reclassification is now an operation on the walker 374 introduced ('ephemeral'): the type's own
+--              The reclassification is now an operation on the walker 380 introduced ('ephemeral'): the type's own
 --              stamped events in commit order, a window per batch, each batch its own short transaction, one instance per
 --              type, resumable from the last committed cursor, and complete only once nothing of the type is unstamped.
 --              The maintenance step that drives it (EphemeralHistoryReclassifyStep) runs in the maintenance cycle, so
@@ -27,14 +27,14 @@
 --                                                 reclassify_events_ephemeral, narrowed to the given events.
 --                wh_ephemeral_history_apply       one window of the walk: the window's Sourced events of the type, under
 --                                                 the emit chains' per-stream locks (stream id order), handed to the body,
---                                                 then the walk's cursor moved by _wh_type_history_advance (374).
+--                                                 then the walk's cursor moved by _wh_type_history_advance (380).
 --                reclassify_events_ephemeral      kept for an explicit, one-statement reclassification; now the body
 --                                                 over every Sourced event of the names, so the two cannot drift. Its
 --                                                 streams_blocked counts the streams of the events it left Sourced.
 --
---              Number 375: 374 is #2205's.
+--              Number 381: 380 is #2205's.
 --
--- Dependencies: 374 (wh_type_history_walks, _wh_type_history_window_is_mine, _wh_type_history_advance), 336
+-- Dependencies: 380 (wh_type_history_walks, _wh_type_history_window_is_mine, _wh_type_history_advance), 336
 --               (reclassify_events_ephemeral, _wh_fold_stream_digests), 093 (_wh_refold_epochs_covering,
 --               _wh_bump_origin_generation), 214 (EventFlags.AtMostOnce), 006 (normalize_event_type)
 -- Objects: _wh_reclassify_ephemeral_events, wh_ephemeral_history_apply, reclassify_events_ephemeral
@@ -292,6 +292,6 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.reclassify_events_ephemeral(TEXT[]) IS
   'Stamps EventFlags.Ephemeral on the historical rows of the named types in homogeneous streams, subtracts them from the '
   'stream digests, refolds the sealed epochs they were in and bumps the origin generation (093). 214: at-most-once '
-  'events (flags & 32), never folded, are never subtracted. 375 (#2206): one statement over every event of the names, '
+  'events (flags & 32), never folded, are never subtracted. 381 (#2206): one statement over every event of the names, '
   'through _wh_reclassify_ephemeral_events, the body the batched maintenance walk (wh_ephemeral_history_apply) runs '
   'per window; startup no longer calls it.';

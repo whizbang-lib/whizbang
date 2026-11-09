@@ -34,7 +34,7 @@ public sealed record TypeHistoryWalkProbeOther : IEvent {
 /// store where the type is a small part of it.
 /// </summary>
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/374_HistoryWalksReadTheirOwnType.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/380_HistoryWalksReadTheirOwnType.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/TypeHistoryWalker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
 [Category("Integration")]
@@ -243,7 +243,7 @@ public class TypeHistoryWalkSqlTests : EFCoreTestBase {
       "INSERT INTO wh_superseding_history (event_type, last_event_id, completed_at) VALUES (@t, 'ffffffff-ffff-ffff-ffff-ffffffffffff', NOW())",
       ("t", _embedded));
 
-    await _executeAsync(conn, _migrationSql("374_HistoryWalksReadTheirOwnType"));
+    await _executeAsync(conn, _migrationSql("380_HistoryWalksReadTheirOwnType"));
     var result = await _step(100, 10, typeof(SupersedingProbeEmbedded)).ReconcileAsync(_services(), CancellationToken.None);
 
     await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_superseding_history")).IsEqualTo(0L)

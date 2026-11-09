@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// reason, in <see cref="_storeWide"/>.
 /// </remarks>
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/374_HistoryWalksReadTheirOwnType.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/380_HistoryWalksReadTheirOwnType.sql</code-under-test>
 [Category("Migrations")]
 [Category("Shard3")]
 public partial class TypeHistoryWalkGuardTests {

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 374_HistoryWalksReadTheirOwnType.sql
+-- Migration: 380_HistoryWalksReadTheirOwnType.sql
 -- Date: 2026-11-09
 -- Description: A change to the stored history of one event type reads that type's events, not the whole store (#2205).
 --
@@ -52,8 +52,8 @@
 --
 --              Nothing on the append path changes: no index is added, and no write path is redefined.
 --
---              Number 374: 372 is the highest on develop, 373 is taken by a change in flight, and 359 to 364 by an open
---              pull request.
+--              Number 380: 372 is the highest on develop, and 373 to 375 are taken by changes in flight; migrations are
+--              tracked by name, so the gap is safe.
 --
 -- Dependencies: 345 and 352 (the superseding reconcile this replaces: wh_superseding_history, its functions, the group),
 --               295 (wh_superseded_events), 046 (commit_sequence), 195 (idx_event_store_type_tenant), 075
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_type_history_walks (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_type_history_walks IS
-  'One walk of one event type''s stored history by one operation (374, #2205): superseding (the history stored before '
+  'One walk of one event type''s stored history by one operation (380, #2205): superseding (the history stored before '
   'a type was declared [Superseding]) or ephemeral (the history stored before a type was declared [Ephemeral]). The '
   'last commit sequence passed, the newest type definition and the variant (the superseding group) the walk started '
   'under, the type''s events when it started and how many it has read, changed, queued and left blocked, and when it '
@@ -108,7 +108,7 @@ COMMENT ON TABLE __SCHEMA__.wh_type_history_walks IS
 DELETE FROM __SCHEMA__.wh_superseding_history;
 
 COMMENT ON TABLE __SCHEMA__.wh_superseding_history IS
-  'Retired by 374 (#2205): the superseding history walk keeps its cursor in wh_type_history_walks. Kept, empty, so a '
+  'Retired by 380 (#2205): the superseding history walk keeps its cursor in wh_type_history_walks. Kept, empty, so a '
   're-run of 345 and 352 finds the table they create and alter.';
 
 -- ===========================================================================================
@@ -424,7 +424,7 @@ $$;
 COMMENT ON FUNCTION __SCHEMA__.wh_superseding_history_rows(TEXT, BIGINT, BIGINT) IS
   'Issue #2110: the events of the type in the window (p_after, p_through] of commit sequences that carry no superseding '
   'flag and are Sourced, with their payloads, for the maintenance step to read each key from. 352 (#2124): and the '
-  'flagged ones stamped under another group than the walk''s. 374 (#2205): the window is the type''s own, in commit order.';
+  'flagged ones stamped under another group than the walk''s. 380 (#2205): the window is the type''s own, in commit order.';
 
 -- <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs:Reconcile_HistoryStoredBeforeTheDeclaration_IsReapedDownToTheNewestOfEachKey_OnceConsumedAsync</tests>
@@ -591,5 +591,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_superseding_history_apply(TEXT, BIGINT, BIGINT
   'Issue #2110: under the emit chains'' per-stream locks, stamps EventFlags.Superseding, the given keys and the walk''s '
   'group on the given unflagged events of the type (SKIP LOCKED), queues every event a newer one of its stream, group '
   'and key supersedes, and moves the type''s walk past the window or to just before the first held row. Deletes nothing: '
-  'the reaper''s gates remain the only path to deletion. 374 (#2205): the window is a range of the type''s commit '
+  'the reaper''s gates remain the only path to deletion. 380 (#2205): the window is a range of the type''s commit '
   'sequences, and the walk ends through _wh_type_history_advance.';

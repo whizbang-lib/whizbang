@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/EphemeralHistoryReclassifyStep.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/375_EphemeralHistoryReclassifiesInBatches.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/381_EphemeralHistoryReclassifiesInBatches.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class EphemeralHistoryReclassifySqlTests : EFCoreTestBase {
