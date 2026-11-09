@@ -108,13 +108,18 @@ public class ExcludedEventTypePlannerTests {
   }
 
   [Test]
-  public async Task Plan_ExcludedTypeOnAnAbsorbedNamespace_FailsStartupAsync() {
+  public async Task Plan_ExcludedTypeOnAnAbsorbedNamespace_IsAllowedWithAWarningAndExcludedAsync() {
+    // Absorbing keeps unconsumed events of a namespace; excluding one noisy type of it is a deliberate refinement, so
+    // it is allowed, and the warning says that type will not be stored.
+    var logger = new RecordingRoutingLogger();
     var options = new RoutingOptions().AbsorbNamespaces(FIXTURE_TOPIC).ExcludeEventType<NoisyEvent>();
 
-    var thrown = await Assert.That(() => _plan(options, new RecordingRoutingLogger()))
-      .Throws<InvalidOperationException>();
+    var plan = _plan(options, logger);
 
-    await Assert.That(thrown!.Message).Contains("absorbed");
+    await Assert.That(plan[FIXTURE_TOPIC]).IsEquivalentTo([_noisySubject]);
+    await Assert.That(logger.Has(LogLevel.Warning,
+      $"absorbed namespace {FIXTURE_TOPIC}: event type {TypeNameFormatter.Format(typeof(NoisyEvent))} is excluded at the broker and will not be delivered"))
+      .IsTrue();
   }
 
   [Test]
