@@ -2130,6 +2130,23 @@ public interface IWorkCoordinator {
     Task.FromResult(0);
 
   /// <summary>
+  /// Counts the repair-ledger buckets whose answer is on its way at <paramref name="now"/> (a request left for them and
+  /// neither its answer landed nor its timeout passed), reading no further than <paramref name="limit"/> (#2184). The
+  /// paced repair drain stops claiming while the count is at <c>MaxOutstandingRepairAnswers</c>, because answers can land
+  /// hours after their requests and a burst of late answers loads this service's store however slowly they were asked.
+  /// Defaults to none for engines with no ledger.
+  /// </summary>
+  /// <param name="now">The drain's instant.</param>
+  /// <param name="limit">The most the caller needs counted: its cap.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The buckets awaiting an answer, at most <paramref name="limit"/>.</returns>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync</tests>
+  Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// Records a committed redelivery bundle's answer when its children commit (#2029, #2033): the buckets it covered,
   /// and their type lane, stop waiting for it and are not asked for again until the next comparison; the buckets of a
   /// bundle that changed nothing (every event already stored and none adoptable), and any bucket with an event the
@@ -2414,16 +2431,23 @@ public interface IWorkCoordinator {
   /// before comparisons ignored a non-owner's digests (#2032), when a service still reported events it had only received
   /// as its own. Run by the integrity audit each cycle: every distinct (origin, type) pair the ledger holds is judged
   /// once by <paramref name="isNotAuthoritative"/> (the audit passes
-  /// <see cref="IntegrityDomainOwnership.IsNotAuthoritative"/>), and every row of a judged pair is forgotten. Defaults to
-  /// nothing forgotten for engines with no ledger.
+  /// <see cref="IntegrityDomainOwnership.IsNotAuthoritative"/>), and every row of a judged pair is forgotten. The judge
+  /// also receives the origin's last report (the later of its last checkpoint and the pair's last report on the ledger),
+  /// so the audit forgets the rows of a type no service owns once their origin has been silent past
+  /// <c>UnownedTypeOriginSilenceDays</c> (#2185): no owner can repair them and their origin no longer answers. Defaults
+  /// to nothing forgotten for engines with no ledger.
   /// </summary>
-  /// <param name="isNotAuthoritative">The judge: true when the origin's count of the type does not stand.</param>
+  /// <param name="isNotAuthoritative">The judge, given the origin, the type and the origin's last report: true when no
+  /// owner will ever answer the pair's rows.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The ledger rows forgotten.</returns>
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetNonOwnerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnownedAgeOutSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync</tests>
   Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
-    Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
+    Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
     Task.FromResult(0);
 
   /// <summary>
