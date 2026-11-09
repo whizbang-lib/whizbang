@@ -46,7 +46,8 @@ public enum ConcurrentIndexOutcome {
 /// Idempotent and restart-safe: a valid index is left alone, so once built each run is one catalog read. It runs on the
 /// maintainer's turn (the maintenance step), so one instance builds; and while any index build is in progress on the
 /// table (<c>pg_stat_progress_create_index</c>) it steps aside, because an invalid index under the name may then be that
-/// build's work in progress. A build that races another for the name fails on the name and leaves that build alone: the
+/// build's work in progress. The view lists every database's builds and a relation id is unique only within its
+/// database (two databases created from one template give a table the same id), so only this database's builds count. A build that races another for the name fails on the name and leaves that build alone: the
 /// cleanup after a failure drops only an invalid index no build is working on.
 /// </para>
 /// <para>
@@ -143,7 +144,8 @@ public static partial class ConcurrentIndexBuild {
       SELECT CASE
         WHEN to_regclass(format('%I.%I', $1, $2)) IS NULL THEN 'table-absent'
         WHEN EXISTS (SELECT 1 FROM pg_stat_progress_create_index p
-                     WHERE p.relid = to_regclass(format('%I.%I', $1, $2))) THEN 'building'
+                     WHERE p.datid = (SELECT d.oid FROM pg_database d WHERE d.datname = current_database())
+                       AND p.relid = to_regclass(format('%I.%I', $1, $2))) THEN 'building'
         ELSE COALESCE((SELECT CASE WHEN i.indisvalid THEN 'valid' ELSE 'invalid' END
                        FROM pg_class c
                        JOIN pg_namespace n ON n.oid = c.relnamespace

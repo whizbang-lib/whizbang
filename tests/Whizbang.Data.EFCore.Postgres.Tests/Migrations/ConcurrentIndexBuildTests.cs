@@ -12,6 +12,7 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
+using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
@@ -114,6 +115,58 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
     await Assert.That(during).IsEqualTo(false)
       .Because("an invalid index during another build is its work in progress, never a leftover to drop");
     await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true).Because("the other build finished undisturbed");
+  }
+
+  /// <summary>
+  /// A build in progress in another database does not make this one step aside, even on a table with the same
+  /// relation id.
+  /// </summary>
+  /// <remarks>
+  /// <c>pg_stat_progress_create_index</c> lists every database's builds, and a relation id is unique only within its
+  /// database: two databases created from one template (every copy of the test template, or databases cloned for
+  /// tenants) give the same table the same id. Matched on the id alone, a sibling database's build read as this one's,
+  /// and the index here was never built while the sibling's ran.
+  /// </remarks>
+  [Test]
+  [Timeout(120_000)]
+  public async Task Ensure_ABuildInAnotherDatabaseOnTheSameRelationId_DoesNotStepAsideAsync(CancellationToken testToken) {
+    var sibling = await EFCoreSchemaTemplate.CreateDatabaseAsync("idxsibling", testToken);
+    try {
+      await using var conn = await _openAsync();
+      await using var blocker = new NpgsqlConnection(sibling.ConnectionString);
+      await blocker.OpenAsync(testToken);
+      await using var builder = new NpgsqlConnection(sibling.ConnectionString);
+      await builder.OpenAsync(testToken);
+      // Watches the sibling's catalog from outside the held snapshot, which would never see the index arrive.
+      await using var watcher = new NpgsqlConnection(sibling.ConnectionString);
+      await watcher.OpenAsync(testToken);
+      var oidHere = await _scalarAsync(conn, "SELECT 'wh_event_store'::regclass::oid");
+      await Assert.That(await _scalarAsync(blocker, "SELECT 'wh_event_store'::regclass::oid")).IsEqualTo(oidHere)
+        .Because("the sibling is a copy of the same template, so its table has the same relation id");
+
+      // The sibling's build held in its wait phase by an open snapshot in the sibling, as in the in-progress test.
+      await using var snapshot = await blocker.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, testToken);
+      await using (var read = new NpgsqlCommand("SELECT count(*) FROM wh_event_store", blocker, snapshot)) {
+        await read.ExecuteScalarAsync(testToken);
+      }
+      await using var build = new NpgsqlCommand(
+        $"CREATE INDEX CONCURRENTLY {INDEX} ON wh_event_store (event_type, commit_sequence)", builder) { CommandTimeout = 0 };
+      var building = build.ExecuteNonQueryAsync(testToken);
+      while (await _validityAsync(watcher, INDEX) is not false) {
+        testToken.ThrowIfCancellationRequested();
+        await Task.Yield();
+      }
+
+      var outcome = await ConcurrentIndexBuild.EnsureAsync(conn, "public", _definition(), 120, cancellationToken: testToken);
+      await snapshot.CommitAsync(testToken);
+      await building;
+
+      await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Built)
+        .Because("a build in another database is not work in progress on this database's table");
+      await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true);
+    } finally {
+      await PerTestDatabaseFactory.DropAsync(sibling.Name, cancellationToken: CancellationToken.None);
+    }
   }
 
   [Test]
