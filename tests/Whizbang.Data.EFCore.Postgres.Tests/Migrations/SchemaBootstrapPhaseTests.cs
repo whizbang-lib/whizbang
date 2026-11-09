@@ -236,6 +236,72 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
+  /// An empty database beats a starting instance once the bootstrap has run, before any migration (#2126). The
+  /// heartbeat starts at registration, at the end of Preflight, so the function a starting instance beats through is a
+  /// pre-migration script: <c>record_heartbeat</c> is not, and does not exist yet. The beat refreshes the heartbeat and
+  /// the declared mode and window, and leaves the stage and the phase to the stage record.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptyDatabase_BeatsAStartingInstanceAfterTheBootstrap_BeforeAnyMigrationAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var instance = new Instance();
+    await SchemaBootstrapPhase.RegisterInstanceAsync(_connect, SCHEMA, instance, cancellationToken: cancellationToken);
+    await _scalarAsync<bool>(
+      $"SELECT wh_record_instance_transition('{instance.InstanceId}'::uuid, 30::smallint, 'applying', 'Migrating', NULL)");
+    await _scalarAsync<int>(
+      "WITH aged AS (UPDATE wh_service_instances SET last_heartbeat_at = NOW() - INTERVAL '200 seconds' "
+      + $"WHERE instance_id = '{instance.InstanceId}' RETURNING 1) SELECT count(*)::int FROM aged");
+    var staleBeforeTheBeat = !await _scalarAsync<bool>($"SELECT wh_instance_is_live('{instance.InstanceId}'::uuid)");
+
+    var accepted = await _scalarAsync<bool>(
+      $"SELECT wh_record_startup_heartbeat('{instance.InstanceId}'::uuid, 'pooled', 150)");
+
+    await Assert.That(await _scalarAsync<bool>("SELECT to_regproc('record_heartbeat') IS NULL")).IsTrue()
+      .Because("the full heartbeat arrives with the main pass, so it cannot be what a starting instance beats through");
+    await Assert.That(staleBeforeTheBeat).IsTrue();
+    await Assert.That(accepted).IsTrue();
+    await Assert.That(await _scalarAsync<bool>($"SELECT wh_instance_is_live('{instance.InstanceId}'::uuid)")).IsTrue()
+      .Because("the startup beat is a real heartbeat, judged by the one rule");
+    await Assert.That(await _scalarAsync<string>(
+        $"""
+        SELECT startup_stage || ' ' || lifecycle_phase || ' ' || connection_mode || ' ' || liveness_window_seconds
+        FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'
+        """))
+      .IsEqualTo("30 Migrating pooled 150")
+      .Because("the beat records the mode and the window and never moves the stage or the phase");
+  }
+
+  /// <summary>
+  /// The registration records the instance's connection mode and liveness window (#2126), so the one liveness rule
+  /// judges the row by its own window from the moment it exists rather than by the 30 seconds it gives a row that
+  /// records none. A registration that declares neither keeps what is recorded.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ARegistration_RecordsTheConnectionModeAndTheLivenessWindowAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var instance = new Instance();
+
+    await SchemaBootstrapPhase.RegisterInstanceAsync(_connect, SCHEMA, instance,
+      liveness: new InstanceRegistrationLiveness(Whizbang.Core.Workers.InstanceConnectionMode.Pooled, 150),
+      cancellationToken: cancellationToken);
+    await _scalarAsync<int>(
+      "WITH aged AS (UPDATE wh_service_instances SET last_heartbeat_at = NOW() - INTERVAL '45 seconds' "
+      + $"WHERE instance_id = '{instance.InstanceId}' RETURNING 1) SELECT count(*)::int FROM aged");
+    var liveAtFortyFive = await _scalarAsync<bool>($"SELECT wh_instance_is_live('{instance.InstanceId}'::uuid)");
+    await SchemaBootstrapPhase.RegisterInstanceAsync(_connect, SCHEMA, instance, cancellationToken: cancellationToken);
+
+    await Assert.That(liveAtFortyFive).IsTrue()
+      .Because("45 seconds is inside the 150 second window the registration recorded");
+    await Assert.That(await _scalarAsync<string>(
+        $"SELECT connection_mode || ' ' || liveness_window_seconds FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'"))
+      .IsEqualTo("pooled 150").Because("a registration that declares nothing keeps what was recorded");
+  }
+
+  /// <summary>
   /// The columns the bootstrap adds to the instance tables carry their descriptions. Migration 231 describes its
   /// stage columns only when it is the one adding them, and on a database the bootstrap brought up it no longer is.
   /// </summary>

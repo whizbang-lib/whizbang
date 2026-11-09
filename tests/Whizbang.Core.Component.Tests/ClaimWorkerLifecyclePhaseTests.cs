@@ -48,7 +48,7 @@ public class ClaimWorkerLifecyclePhaseTests {
   /// Completes a signal with the first claim and with each registration. The first claim reports the registration
   /// stale when told to, so the loop registers again after it.
   /// </summary>
-  private sealed class Coordinator(bool firstClaimStale) : IWorkCoordinator {
+  private sealed class Coordinator(bool firstClaimStale, bool accept = true) : IWorkCoordinator {
     private readonly TaskCompletionSource<ClaimWorkRequest> _firstClaim = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<HeartbeatRequest> _initialRegistration = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<HeartbeatRequest> _refreshRegistration = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -73,7 +73,7 @@ public class ClaimWorkerLifecyclePhaseTests {
       } else {
         _refreshRegistration.TrySetResult(request);
       }
-      return Task.FromResult(true);
+      return Task.FromResult(accept);
     }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -85,9 +85,13 @@ public class ClaimWorkerLifecyclePhaseTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private static ClaimWorker _worker(IWorkCoordinator coordinator, IWhizbangLifecycleState? lifecycle) {
+  private static ClaimWorker _worker(
+      IWorkCoordinator coordinator, IWhizbangLifecycleState? lifecycle, IWhizbangInstanceExit? instanceExit = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
+    if (instanceExit is not null) {
+      services.AddSingleton(instanceExit);
+    }
     // Resolved from the claim's scope, as the coordinator is; a host without a lifecycle says nothing of its phase.
     if (lifecycle is not null) {
       services.AddSingleton(lifecycle);
@@ -110,8 +114,10 @@ public class ClaimWorkerLifecyclePhaseTests {
       signalBus: NullSignalBus.Instance);
   }
 
-  private static async Task<T> _runUntilAsync<T>(Coordinator coordinator, IWhizbangLifecycleState? lifecycle, Func<Coordinator, Task<T>> signal) {
-    var worker = _worker(coordinator, lifecycle);
+  private static async Task<T> _runUntilAsync<T>(
+      Coordinator coordinator, IWhizbangLifecycleState? lifecycle, Func<Coordinator, Task<T>> signal,
+      IWhizbangInstanceExit? instanceExit = null) {
+    var worker = _worker(coordinator, lifecycle, instanceExit);
     await worker.StartAsync(CancellationToken.None);
     try {
       return await signal(coordinator).WaitAsync(_deadline);
@@ -163,5 +169,30 @@ public class ClaimWorkerLifecyclePhaseTests {
 
     await Assert.That(request.LifecyclePhase).IsNull()
       .Because("a registration without a phase keeps whatever the row records");
+  }
+
+  /// <summary>
+  /// #2126: a registration the registry refuses means the fleet evicted this instance. It exits through the one exit
+  /// path, code 3, rather than claiming on as an instance nobody counts.
+  /// </summary>
+  [Test]
+  public async Task ARefusedRegistration_ExitsAsAClusterEvictionAsync() {
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+
+    var request = await _runUntilAsync(new Coordinator(firstClaimStale: false, accept: false), lifecycle: null,
+      _ => exit.FirstRequest, exit);
+
+    await Assert.That(request.Cause).IsEqualTo(ExitCause.ClusterEviction);
+    await Assert.That(request.Reason).Contains("the claim worker's registration was refused");
+  }
+
+  [Test]
+  public async Task ARefusedRegistration_InAHostWithoutAnExitPath_IsNotAFailureOfTheLoopAsync() {
+    var coordinator = new Coordinator(firstClaimStale: true, accept: false);
+
+    var claimed = await _runUntilAsync(coordinator, lifecycle: null, c => c.RefreshRegistration);
+
+    await Assert.That(claimed.InstanceId).IsNotEqualTo(Guid.Empty)
+      .Because("the loop went on to claim and register again: a host with no exit path only logs nothing more");
   }
 }

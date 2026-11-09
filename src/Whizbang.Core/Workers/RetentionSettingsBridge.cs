@@ -65,6 +65,7 @@ public static class RetentionSettingsBridge {
     new("collective_apply_progress_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.CollectiveApplyProgressDays), o => o.CollectiveApplyProgressDays),
     new("trace_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.TraceDays), o => o.TraceDays),
     new("route_idle_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.RouteIdleDays), o => o.RouteIdleDays),
+    new("instance_exit_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.InstanceExitDays), o => o.InstanceExitDays),
     new("completed_inbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedInboxPurgeBatchSize),
       o => o.CompletedInboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges completed inbox rows"),
   ];

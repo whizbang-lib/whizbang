@@ -278,6 +278,59 @@ public class MappedPathDiscoveryTests {
   }
 
   /// <summary>
+  /// A struct's constructors are judged like a class's, and a struct always has its public parameterless constructor,
+  /// so one that also declares a collection constructor is still constructible and is not named.
+  /// </summary>
+  [Test]
+  public async Task ANestedStructWithACollectionConstructorIsNotReportedAsync() {
+    var member = _unmappable(_modelWith("""
+        public Pocket Item { get; init; }
+      }
+
+      public struct Pocket {
+        public Pocket(IReadOnlyList<Tag> tags) { Label = ""; }
+        public string Label { get; init; }
+      """));
+
+    await Assert.That(member).IsNull()
+      .Because("the parameterless constructor every struct has binds nothing, so the mapped path can construct it");
+  }
+
+  /// <summary>
+  /// An abstract nested type is never constructed as itself, so its constructors say nothing about whether the mapped
+  /// path can build what is stored there, and it is not named.
+  /// </summary>
+  [Test]
+  public async Task AnAbstractNestedTypeIsNotJudgedByItsConstructorsAsync() {
+    var member = _unmappable(_modelWith("""
+        public Shape Item { get; init; } = null!;
+      }
+
+      public abstract class Shape {
+        public Shape(IReadOnlyList<Tag> tags) { }
+        public string Label { get; init; } = "";
+      """));
+
+    await Assert.That(member).IsNull()
+      .Because("an abstract type has no instance of its own to construct; its constructors are its derived types' business");
+  }
+
+  /// <summary>An interface-typed nested member has no constructors to judge, and is not named for them.</summary>
+  [Test]
+  public async Task AnInterfaceNestedTypeIsNotJudgedByConstructorsAsync() {
+    var member = _unmappable(_modelWith("""
+        public ILabelled Item { get; init; } = null!;
+      }
+
+      public interface ILabelled {
+        string Label { get; }
+      """));
+
+    await Assert.That(member).IsNull()
+      .Because("an interface declares no constructor, so the constructor check has nothing to judge");
+  }
+
+  /// <summary>
   /// An array of a complex element is named (#1910): Entity Framework accepts it while building the model, then
   /// refuses it at the first read ("Collection navigations cannot be arrays") and on the change tracker's snapshot
   /// ("Collection was of a fixed size"), so the model takes the opaque form instead.

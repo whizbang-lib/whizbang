@@ -130,6 +130,16 @@ public sealed class MaintenanceRetentionOptions {
   public int? RouteIdleDays { get; set; }
 
   /// <summary>
+  /// Days the record of an instance's exits (<c>wh_instance_exits</c>) is kept. Publishes
+  /// <c>instance_exit_retention_days</c>; the database default is 30.
+  /// </summary>
+  /// <remarks>Exits are rare, so rows past the window are removed by the next exit's write, not by the sweep.</remarks>
+  /// <docs>operations/startup/instance-exits#the-exit-record</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceExitRecordSqlTests.cs:AWrite_RemovesRowsOlderThanTheConfiguredRetentionAsync</tests>
+  public int? InstanceExitDays { get; set; }
+
+  /// <summary>
   /// The most completed inbox rows one maintenance cycle purges. Publishes <c>completed_inbox_purge_batch_size</c>; the
   /// database default is 50000.
   /// </summary>

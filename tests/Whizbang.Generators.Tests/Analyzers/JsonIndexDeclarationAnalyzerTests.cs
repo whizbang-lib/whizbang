@@ -426,4 +426,45 @@ public class JsonIndexDeclarationAnalyzerTests {
     await Assert.That(message).DoesNotContain("polymorphic", StringComparison.Ordinal)
       .Because("there is no polymorphic member here");
   }
+
+  /// <summary>
+  /// A model stored opaquely because it holds a recursive type is told so, not that the mapped path cannot construct
+  /// it: the mapped path builds it and keeps one level of it, which is the reason to know (#2112).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Whiz304_OnARecursiveModel_SaysTheMemberIsRecursiveAsync() {
+    const string SOURCE = """
+      using System;
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public sealed record Node {
+        public string Label { get; init; } = "";
+        public List<Node>? Children { get; init; }
+      }
+
+      public record TreeModel {
+        [StreamId]
+        public Guid TreeId { get; init; }
+
+        [Indexed]
+        public string Title { get; init; } = string.Empty;
+
+        public List<Node>? Skeleton { get; init; }
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(SOURCE);
+    var message = diagnostics.First(d => d.Id == "WHIZ304").GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+
+    await Assert.That(message).Contains(
+      "the model holds 'Skeleton.Children', which is recursive (Entity Framework maps a self-reference only one level deep)",
+      StringComparison.Ordinal);
+    await Assert.That(message).DoesNotContain("cannot construct", StringComparison.Ordinal)
+      .Because("the mapped path constructs a recursive type; it keeps only its first level");
+  }
 }

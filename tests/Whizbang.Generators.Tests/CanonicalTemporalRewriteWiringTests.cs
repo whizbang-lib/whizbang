@@ -137,7 +137,7 @@ public class CanonicalTemporalRewriteWiringTests {
     var output = await _generatedAsync(TEMPORAL_MODEL);
 
     var election = output.IndexOf("MigratorDutyStaging.ElectAsync(", StringComparison.Ordinal);
-    var grant = output.IndexOf("await using var migratorGrant = staging.Grant;", StringComparison.Ordinal);
+    var grant = output.IndexOf("await migratorDuty.HoldAsync(staging);", StringComparison.Ordinal);
     var rewrite = output.IndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal);
     var wait = output.IndexOf("SchemaMigrationDeferral.DeferAsync(", StringComparison.Ordinal);
 
@@ -146,8 +146,8 @@ public class CanonicalTemporalRewriteWiringTests {
       .Because("the rewrite needs the bootstrap's ledger and function, and one instance's duty");
     await Assert.That(rewrite).IsLessThan(wait)
       .Because("a waiter never rewrites; it waits for the migrator's result");
-    await Assert.That(output).Contains(
-      "staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter", StringComparison.Ordinal);
+    await Assert.That(output).Contains("Whizbang.Data.Postgres.MigratorPreLockPhase.RunAsync(", StringComparison.Ordinal)
+      .Because("the phases before the schema lock run only on the instance holding the migrator role (#2127)");
   }
 
   /// <summary>
@@ -167,7 +167,7 @@ public class CanonicalTemporalRewriteWiringTests {
     var wait = output.IndexOf("SchemaMigrationDeferral.DeferAsync(", StringComparison.Ordinal);
     var takeover = output.IndexOf("Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone", wait, StringComparison.Ordinal);
     var ddl = output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal);
-    var rewrite = output.IndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal);
+    var rewrite = output.IndexOf("rewriteStoredFormsAsync(segmentConnectionFactory)", StringComparison.Ordinal);
 
     await Assert.That(wait).IsGreaterThan(-1);
     await Assert.That(takeover).IsGreaterThan(wait)
@@ -176,13 +176,15 @@ public class CanonicalTemporalRewriteWiringTests {
       .Because("whoever does the schema work rewrites after the wait has decided that it does, and "
         + "before the transaction that indexes the result");
     await Assert.That(rewrite)
-      .IsEqualTo(output.LastIndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal))
+      .IsEqualTo(output.LastIndexOf("rewriteStoredFormsAsync(segmentConnectionFactory)", StringComparison.Ordinal))
       .Because("one call site: the migrator, an instance that could not be staged, and a waiter taking "
         + "over all reach the rewrite through it");
     await Assert.That(output).Contains(
-      "doesTheWork = !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;",
+      "return !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;",
       StringComparison.Ordinal)
-      .Because("a waiter rewrites only when it takes the work over; any other instance rewrites once its wait ends");
+      .Because("a waiter's work remains only when the migrator is gone; any other instance's once its wait ends");
+    await Assert.That(output).Contains("ElectAsync: ct => Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(", StringComparison.Ordinal)
+      .Because("a waiter taking the work over votes for the role first, and rewrites only once it holds it (#2127)");
     await Assert.That(output.IndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal))
       .IsEqualTo(output.LastIndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal))
       .Because("both paths share one body, so a change to one cannot drift from the other");
@@ -207,10 +209,10 @@ public class CanonicalTemporalRewriteWiringTests {
     var output = await _generatedAsync(TEMPORAL_MODEL);
 
     var probe = output.IndexOf(
-      "Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)",
+      "Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct)",
       StringComparison.Ordinal);
     var wait = output.IndexOf("SchemaMigrationDeferral.DeferAsync(", StringComparison.Ordinal);
-    var rewrite = output.IndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal);
+    var rewrite = output.IndexOf("rewriteStoredFormsAsync(segmentConnectionFactory)", StringComparison.Ordinal);
 
     await Assert.That(probe).IsGreaterThan(-1)
       .Because("a schema lock held by another session is what sends an instance that would rewrite into the wait");

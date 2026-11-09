@@ -67,6 +67,35 @@ public class SchemaInitializationObserversTests {
   }
 
   [Test]
+  public async Task PreLockPhasesStarting_TellsEveryRegisteredObserverAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+
+    await SchemaInitializationObservers.PreLockPhasesStartingAsync(provider, "orders", CancellationToken.None);
+
+    await Assert.That(first.PreLock).IsEquivalentTo(["orders"]);
+    await Assert.That(second.PreLock).IsEquivalentTo(["orders"]);
+  }
+
+  [Test]
+  public async Task PreLockPhasesStarting_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.PreLockPhasesStartingAsync(null, "orders", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task PreLockPhasesStarting_IsANoOpForAnObserverThatDoesNotWatchItAsync() {
+    ISchemaInitializationObserver observer = new Silent();
+
+    await Assert.That(async () => await observer.OnPreLockPhasesStartingAsync("orders", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
   public async Task BootstrapRetryScheduled_TellsEveryRegisteredObserverTheAttemptAndTheDelayAsync() {
     var first = new Recorder();
     var second = new Recorder();
@@ -104,6 +133,12 @@ public class SchemaInitializationObserversTests {
     public List<string> Schemas { get; } = [];
     public List<string> Steps { get; } = [];
     public List<string> Retries { get; } = [];
+    public List<string> PreLock { get; } = [];
+
+    public ValueTask OnPreLockPhasesStartingAsync(string schema, CancellationToken cancellationToken) {
+      PreLock.Add(schema);
+      return ValueTask.CompletedTask;
+    }
 
     public ValueTask OnBootstrapRetryScheduledAsync(
         string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) {

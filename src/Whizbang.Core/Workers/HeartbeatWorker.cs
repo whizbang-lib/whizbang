@@ -33,9 +33,24 @@ namespace Whizbang.Core.Workers;
 /// when one is available. A watchdog beat is logged and counted so an operator can see how often
 /// the regular cadence needed rescuing.
 /// </para>
+/// <para>
+/// The heartbeat starts at registration (#2126): the host starts it at <see cref="StartsAt"/>, right after Preflight
+/// registers the instance, not when the schema is ready. Until the schema-ready gate opens a beat goes through
+/// <see cref="IWorkCoordinator.RecordStartupHeartbeatAsync"/>, which needs only what Preflight created, carries the
+/// instance's connection mode and liveness window, and never writes the stage or the lifecycle phase; it writes no held
+/// stage and announces no join. The first beat after the gate opens is due at once and is the full heartbeat.
+/// </para>
+/// <para>
+/// A refused beat, startup or full, means the fleet evicted this instance (a peer reaped it and tombstoned it). The
+/// instance exits through the one exit path (#2126) with <see cref="ExitCause.ClusterEviction"/>, exit code 3, so its
+/// host restarts it under a new instance id; nothing keeps running sidelined, and nothing re-registers in place.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/HeartbeatWorkerStartupBeatTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileStarting_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileRunning_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public partial class HeartbeatWorker(
   IServiceScopeFactory scopeFactory,
@@ -48,9 +63,27 @@ public partial class HeartbeatWorker(
   IPinnedConnectionPool pinnedPool,
   IInstanceAliveLockSource aliveLockSource,
   ISignalBus signalBus,
+  ISchemaReadyGate schemaReady,
+  IWhizbangInstanceExit instanceExit,
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null
-) : BackgroundService {
+) : BackgroundService, ILastAcceptedHeartbeat {
+  /// <summary>
+  /// Where the host starts the heartbeat (#2126): <see cref="Startup.StartupStage.Elect"/>, the first stage after
+  /// Preflight, whose last step registers the instance. A starting instance beats through Elect, Migrate, Converge and
+  /// Coordinate, so a peer's reap judges it by beats it really sends. The worker pipeline hosts it here.
+  /// </summary>
+  /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/HeartbeatStartPointTests.cs</tests>
+  public static Startup.StartupStage StartsAt => Startup.StartupStage.Elect;
+
+  // #2126: until this gate opens a beat is the startup beat. A host with no schema to wait for passes an open gate.
+  private readonly ISchemaReadyGate _schemaReady = ArgumentGuard.NotNull(schemaReady);
+  // #2126: an evicted instance exits through the one exit path, so its host restarts it under a new instance id.
+  private readonly IWhizbangInstanceExit _instanceExit = ArgumentGuard.NotNull(instanceExit);
+  // The last accepted beat was a startup beat, so the first beat after the gate opens is due at once.
+  private bool _lastBeatWasStartupBeat;
+
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -121,7 +154,8 @@ public partial class HeartbeatWorker(
   /// </summary>
   /// <remarks>
   /// Rules, in order: a failed attempt is not retried tighter than half the smaller of the fast
-  /// interval and the cadence; before any accepted beat the first beat is immediate; a row whose
+  /// interval and the cadence; once the schema-ready gate has opened after a startup beat, the full beat is immediate;
+  /// before any accepted beat the first beat is immediate; a row whose
   /// age has reached the stale threshold minus one fast interval is beaten immediately as a
   /// watchdog; a row older than the cadence is beaten as a regular tick; otherwise wait until the
   /// earlier of the cadence boundary and the watchdog deadline, capped at one fast interval so a
@@ -141,6 +175,12 @@ public partial class HeartbeatWorker(
       if (sinceAttempt < retrySpacing) {
         return new HeartbeatTickPlan(false, retrySpacing - sinceAttempt, HeartbeatBeatReason.Regular);
       }
+    }
+
+    // #2126: the gate opened after a startup beat. The full heartbeat registers the row and writes any held stage, so
+    // it is not left to the next cadence boundary.
+    if (_lastBeatWasStartupBeat && _isSchemaReady) {
+      return new HeartbeatTickPlan(true, TimeSpan.Zero, HeartbeatBeatReason.SchemaReady);
     }
 
     if (_lastAcceptedAt is not { } acceptedAt) {
@@ -183,15 +223,23 @@ public partial class HeartbeatWorker(
       return;
     }
 
-    var lead = HeartbeatLivenessThreshold.WatchdogLead(_options);
+    await _beatUntilStoppedOrEvictedAsync(HeartbeatLivenessThreshold.WatchdogLead(_options), stoppingToken);
 
+    LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// The beat loop: plans each tick, waits or beats, and returns when the host stops or the registry refuses a beat
+  /// (the instance was evicted and has asked to exit).
+  /// </summary>
+  private async Task _beatUntilStoppedOrEvictedAsync(TimeSpan lead, CancellationToken stoppingToken) {
     while (!stoppingToken.IsCancellationRequested) {
       var plan = PlanNextTick(_time.GetUtcNow());
       if (!plan.BeatNow) {
         try {
-          await Task.Delay(plan.Wait, _time, stoppingToken);
+          await WaitForNextTickAsync(plan.Wait, stoppingToken);
         } catch (OperationCanceledException) {
-          break;
+          return;
         }
         continue;
       }
@@ -200,19 +248,48 @@ public partial class HeartbeatWorker(
       try {
         accepted = await _beatAsync(plan, lead, stoppingToken);
       } catch (OperationCanceledException) {
-        break;
+        return;
       }
 
       if (!accepted) {
-        // This instance was reaped and tombstoned (migration 106): record_heartbeat refused it.
-        // Retrying can never succeed (the tombstone does not expire on this instance's clock),
-        // so continuing to call would just be a heartbeat that is guaranteed to be rejected forever.
-        LogEvicted(_logger, _instanceProvider.InstanceId);
-        break;
+        // This instance was reaped and tombstoned (migration 106): the beat was refused. Retrying can never succeed (the
+        // tombstone does not expire on this instance's clock), and nothing may keep running sidelined: #2126, the
+        // instance exits with ClusterEviction (code 3) so its host restarts it, and the new process registers under a
+        // new instance id. The exit's one entry says when, by which peer and why.
+        _instanceExit.RequestExit(new InstanceExitRequest(ExitCause.ClusterEviction,
+          _isSchemaReady
+            ? "its heartbeat was refused: the fleet evicted this instance (a peer reaped it and tombstoned it)"
+            : "its startup heartbeat was refused: the fleet evicted this instance while it was still starting (a peer reaped it and tombstoned it)"));
+        return;
       }
     }
+  }
 
-    LogStopped(_logger);
+  /// <summary>Whether the schema-ready gate has opened.</summary>
+  private bool _isSchemaReady => _schemaReady.IsReady;
+
+  /// <summary>
+  /// The wait between two plans: <paramref name="wait"/> on the injected clock, ended early when the schema-ready gate
+  /// opens while it is still closed (#2126), so the first full beat follows the gate rather than the cadence.
+  /// </summary>
+  /// <param name="wait">How long the plan says to wait.</param>
+  /// <param name="cancellationToken">Ends the wait when the host stops.</param>
+  /// <returns>A task that completes when the wait is over, or is canceled with the token.</returns>
+  internal async Task WaitForNextTickAsync(TimeSpan wait, CancellationToken cancellationToken) {
+    if (_schemaReady.IsReady) {
+      if (_lastBeatWasStartupBeat) {
+        // The gate opened between the plan and this wait: the full beat it owes is due now, so the loop plans again.
+        return;
+      }
+      await Task.Delay(wait, _time, cancellationToken).ConfigureAwait(false);
+      return;
+    }
+    using var either = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var ended = await Task.WhenAny(Task.Delay(wait, _time, either.Token), _schemaReady.WaitForReadyAsync(either.Token))
+      .ConfigureAwait(false);
+    await either.CancelAsync().ConfigureAwait(false);
+    // Rethrows the stop's cancellation; a delay or a gate that ended normally completes the wait.
+    await ended.ConfigureAwait(false);
   }
 
   /// <summary>
@@ -276,10 +353,22 @@ public partial class HeartbeatWorker(
     // coordinator is. A host whose driver does not say registers pooled.
     var connectionMode = scope.ServiceProvider.GetService<IInstanceConnectionModeSource>()?.ConnectionMode
       ?? InstanceConnectionMode.Pooled;
-    var accepted = await coordinator.RecordHeartbeatAsync(BuildRequest() with { ConnectionMode = connectionMode }, ct);
+    var request = BuildRequest() with { ConnectionMode = connectionMode };
+    if (!_isSchemaReady) {
+      // #2126: still starting. The beat needs only what Preflight created; it writes no stage (it does not prove the row
+      // exists) and announces no join (the instance joins the working fleet once its schema is ready).
+      var acceptedWhileStarting = await coordinator.RecordStartupHeartbeatAsync(request, ct);
+      if (acceptedWhileStarting) {
+        _lastBeatWasStartupBeat = true;
+        OnHeartbeatRecorded?.Invoke();
+      }
+      return acceptedWhileStarting;
+    }
+    var accepted = await coordinator.RecordHeartbeatAsync(request, ct);
     if (!accepted) {
       return false;
     }
+    _lastBeatWasStartupBeat = false;
     OnHeartbeatRecorded?.Invoke();
     // #1636: an accepted beat means the row exists, so a startup stage held since before it did, or since its write
     // was lost, is written now. Nothing to do (and no wait) when nothing is held.
@@ -366,9 +455,7 @@ public partial class HeartbeatWorker(
     Message = "HeartbeatWorker failed to publish InstanceLeavingSignal on graceful stop; peers will detect via heartbeat expiry")]
   static partial void LogLeavingPublishFailed(ILogger logger, Exception ex);
 
-  [LoggerMessage(EventId = 8, Level = LogLevel.Error,
-    Message = "Instance {InstanceId} has been evicted (reaped as stale, then tombstoned); heartbeat refused. Stopping the heartbeat loop; this instance must not consider itself part of the fleet.")]
-  static partial void LogEvicted(ILogger logger, Guid instanceId);
+  // EventId 8 was the eviction's own entry; since #2126 the exit's one entry (WhizbangInstanceExit) states the eviction.
 
   [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
     Message = "HeartbeatWorker forced a watchdog beat for instance {InstanceId}: the regular beat ran late enough to approach the {ThresholdSeconds}s stale threshold. Peers would have read this instance as dead without it; look for the stall that delayed the tick.")]
@@ -388,6 +475,11 @@ public enum HeartbeatBeatReason {
   Regular,
   /// <summary>The row's age approached the stale threshold before the cadence boundary.</summary>
   Watchdog,
+  /// <summary>
+  /// The schema-ready gate opened since the last beat, which was a startup beat: the full heartbeat is due now, so the
+  /// row is registered and any held stage written without waiting for the next cadence boundary (#2126).
+  /// </summary>
+  SchemaReady,
 }
 
 /// <summary>The outcome of <see cref="HeartbeatWorker.PlanNextTick"/>.</summary>

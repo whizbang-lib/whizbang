@@ -32,7 +32,8 @@ namespace Whizbang.Core.Startup;
 /// <para>
 /// The tables exist because the database is newer than the binary; the registration runs against functions a newer
 /// release installed. A beat that fails is logged and tried again on the next beat; a beat the registry refuses (the
-/// instance was evicted) ends the beating, since an evicted instance id never becomes valid again.
+/// instance was evicted) ends the beating, since an evicted instance id never becomes valid again, and the instance exits
+/// through the one exit path (#2126) so its host restarts it under a new instance id.
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#standing-down</docs>
@@ -97,6 +98,13 @@ public sealed partial class StartupStandDown {
   public IWhizbangRunController? RunControl { get; init; }
 
   /// <summary>
+  /// The one exit path (#2126) a refused beat takes: an evicted stood-down instance exits with
+  /// <see cref="ExitCause.ClusterEviction"/> so its host restarts it under a new instance id. <see langword="null"/> in a
+  /// host without one, where the beating only ends.
+  /// </summary>
+  public IWhizbangInstanceExit? InstanceExit { get; init; }
+
+  /// <summary>
   /// The liveness window each beat declares (#2027): the one liveness rule judges a stood-down instance by it, so it is
   /// derived from this beat's own cadence the way the heartbeat worker derives its own (three beats; no slow cadence).
   /// </summary>
@@ -129,6 +137,7 @@ public sealed partial class StartupStandDown {
       services.GetService<ILogger<StartupStandDown>>()!) {
       ApplicationVersion = services.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
       RunControl = services.GetService<IWhizbangRunController>(),
+      InstanceExit = services.GetService<IWhizbangInstanceExit>(),
     };
   }
 
@@ -193,7 +202,13 @@ public sealed partial class StartupStandDown {
       return false;
     }
     if (!accepted) {
-      LogEvicted(_logger, _instance.InstanceId);
+      if (InstanceExit is { } exit) {
+        // #2126: nothing keeps running sidelined. The exit's one entry states the eviction.
+        exit.RequestExit(new InstanceExitRequest(ExitCause.ClusterEviction,
+          "the heartbeat of this stood-down instance was refused: the fleet evicted it (a peer reaped it and tombstoned it)"));
+      } else {
+        LogEvicted(_logger, _instance.InstanceId);
+      }
       return null;
     }
     await _stages.InstanceRegisteredAsync(stop).ConfigureAwait(false);

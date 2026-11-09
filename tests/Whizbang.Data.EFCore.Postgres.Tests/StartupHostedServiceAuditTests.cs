@@ -23,8 +23,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <list type="bullet">
 ///   <item>a worker hosted with its start point (<c>AddWhizbangWorker</c>, <c>AddWhizbangWorkerAtSchemaReady</c>), at
 ///     the start point this table names: the data plane and the transport consumer at Accept commands, so nothing
-///     claims or receives before the instance's row says it is eligible for work; the heartbeat and the work that keeps
-///     an instance alive and coordinated when the schema-ready gate opens;</item>
+///     claims or receives before the instance's row says it is eligible for work; the heartbeat at Elect, right after
+///     the instance registers (#2126); the work that keeps an instance coordinated when the schema-ready gate opens;</item>
 ///   <item>schema initialization and the startup machinery itself, which drive the stages;</item>
 ///   <item>a service that does no database work when it starts (in-memory registration, configuration checks, a
 ///     subscription on the notification connection, or work done only on stop).</item>
@@ -54,10 +54,12 @@ public sealed class StartupHostedServiceAuditTests {
     // Elect and Coordinate (#1849, #1989).
     ["PgSharedNotifyConnection"] = "Elect",
     ["SignalBusHostedService"] = "Elect",
+    // The heartbeat starts at registration, the end of Preflight (#2126): a starting instance is judged by a heartbeat
+    // it really sends through Elect, Migrate, Converge and Coordinate.
+    ["HeartbeatWorker"] = "Elect",
     ["DutyHolderWorker"] = "Coordinate",
     ["PartitionAssignerWorker"] = "Coordinate",
     // Alive and coordinated, not yet eligible for work: when the schema-ready gate opens, at the end of Coordinate.
-    ["HeartbeatWorker"] = SCHEMA_READY,
     ["PgInstanceLifecycleMonitor"] = SCHEMA_READY,
     ["StandbyWatcher"] = SCHEMA_READY,
     ["TypeDefinitionReconcilerHostedService"] = SCHEMA_READY,
@@ -150,6 +152,25 @@ public sealed class StartupHostedServiceAuditTests {
       }
     }
     await Assert.That(wrongPoint).IsEmpty().Because(string.Join("; ", wrongPoint));
+  }
+
+  /// <summary>
+  /// An instance held in Migrate (#2126): what has started is what starts at Preflight, Elect or Migrate. The heartbeat
+  /// has, so a live peer's reap judges the instance by beats it really sends; no role holder, no partition assigner and
+  /// no data-plane worker has, so the instance is offered no role (the migrator is elected by schema initialization
+  /// itself) and claims nothing until it records Accept commands.
+  /// </summary>
+  [Test]
+  public async Task HeldInMigrate_OnlyTheHeartbeatAndTheNotificationConnectionHaveStarted_NoRoleNorDataPlaneWorkerAsync() {
+    using var host = _turnkeyHost();
+    var started = host.Services.GetServices<IHostedService>().Select(_describe)
+      .Where(h => h.StartPoint is { } point
+        && StartupStages.Startup.Any(s => StartupStages.NameOf(s) == point && s <= StartupStage.Migrate))
+      .Select(h => h.Name).ToList();
+
+    await Assert.That(started).IsEquivalentTo(["PgSharedNotifyConnection", "SignalBusHostedService", "HeartbeatWorker"])
+      .Because("held in Migrate an instance beats, and is neither a role candidate nor a claimant; started: "
+        + string.Join(", ", started));
   }
 
   private static (string Name, string? StartPoint) _describe(IHostedService service) => service is GatedHostedService gated
