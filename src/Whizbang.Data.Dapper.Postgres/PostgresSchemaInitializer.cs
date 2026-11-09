@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Data;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
@@ -225,6 +226,30 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// Rolls the schema back to this binary's version (#2122): the rollback <c>Assess</c> decided on, run before the schema
+  /// pass, under the schema lock, in one transaction, from the reverse scripts the newer version stored in the ledger
+  /// (<see cref="SchemaRollback"/>). This driver holds no election, so the schema lock alone keeps it to one instance; it
+  /// decides again under the lock, so an instance that waited finds nothing left to reverse.
+  /// </summary>
+  /// <param name="plan">The rollback Assess decided on.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many changes were reversed.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaRollbackTests.cs:AnOwedRollback_RunsTheStoredReverseScripts_ThenThePassMigratesAsync</tests>
+  public async Task<int> RollBackSchemaAsync(RollbackPlan plan, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(plan);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    // No instance id: this instance registers only in the pass that follows, so no row of its own can be online yet.
+    return await SchemaRollback.ApplyAsync(
+      new SchemaRollbackRequest(
+        () => new NpgsqlConnection(_connectionString), schema, SchemaInitializationLockKey.Compute(schema),
+        new Whizbang.Core.Versioning.VersionSighting(_migrationProvider.Version, _recordedApplicationVersion), plan.AllowLossy,
+        SchemaCommandTimeout.Resolve(_connectionString)),
+      TimeProvider.System, Logger, cancellationToken);
+  }
+
+  /// <summary>
   /// Whether the schema needs nothing from this binary (#1992), read without a lock: every migration this binary
   /// carries recorded at its hash and at this binary's version (the infrastructure schema this driver builds is tied to
   /// the version, and recorded nowhere else), every perspective table and application object at its hash, every
@@ -267,6 +292,9 @@ public sealed class PostgresSchemaInitializer {
     return ManagedObjects is not { } declared
       || (await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(connection, schema, declared, cancellationToken)).Count == 0;
   }
+
+  /// <summary>The migration ledger, as this driver names it: unqualified, on the session's search path.</summary>
+  private const string LEDGER = "wh_schema_migrations";
 
   /// <summary>The application version the ledger and the stored-form journal record (#2027, #2131); never null.</summary>
   private string _recordedApplicationVersion =>
@@ -890,6 +918,10 @@ public sealed class PostgresSchemaInitializer {
       await _upsertMigrationAsync(connection,
           new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
           cancellationToken, transaction);
+      // #2122: how the migration is reversed, as it declares, in the transaction that applied it. A provider that is not
+      // the library's own has no reverse scripts to offer, and its migrations record nothing.
+      await MigrationReversal.RecordAsync(connection, LEDGER, migration.Name,
+        (_migrationProvider as PostgresMigrationProvider)?.ReversalOf(migration), cancellationToken);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
       // Captured rather than rethrown here. A rethrow from an async catch that also awaits
@@ -1041,6 +1073,9 @@ public sealed class PostgresSchemaInitializer {
       await _upsertMigrationAsync(connection,
         new MigrationRecord(perspectiveName, hash, versionId, status, desc),
         cancellationToken, transaction);
+      // #2122: this driver knows a perspective by its key, not by its table, so it cannot generate the drop that would
+      // reverse a table it created; every perspective change it applies is recorded as irreversible.
+      await MigrationReversal.RecordAsync(connection, LEDGER, perspectiveName, MigrationReversal.Irreversible, cancellationToken);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
       // Captured rather than rethrown here. A rethrow from an async catch that also awaits

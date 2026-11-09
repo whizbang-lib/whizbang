@@ -575,5 +575,6 @@ public static class PostgresDriverExtensions {
     sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
     sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
     sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+    Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 }

@@ -378,6 +378,28 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // learn what this instance can simply watch for. So it watches the schema lock the way a waiter watches the duty,
     // and does the work when the wait ends, whichever way it ended. The migrator first confirms it still holds the
     // role, and votes again rather than working without it.
+    // #2122: a rollback Assess decided on runs on the instance doing the schema work, before anything else it does, on a
+    // connection of its own (one transaction under the schema lock). With no way to open one it cannot run, and the pass
+    // must not run over the newer version's schema either.
+    if (assessment?.Rollback is not null && segmentConnectionFactory is null) {
+      throw new InvalidOperationException(
+        "Schema __SCHEMA__ is owed a rollback to this version, which runs on a connection of its own; pass an initialization "
+        + "connection string, or register an NpgsqlDataSource.");
+    }
+    async Task rollBackAsync(Func<Npgsql.NpgsqlConnection> rollbackConnectionFactory) {
+      if (assessment?.Rollback is not { } rollback) {
+        return;
+      }
+      var rollingInstance = (serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
+        as Whizbang.Core.Observability.IServiceInstanceProvider)?.InstanceId;
+      await Whizbang.Data.Postgres.SchemaRollback.ApplyAsync(
+        new Whizbang.Data.Postgres.SchemaRollbackRequest(
+          rollbackConnectionFactory, "__SCHEMA__", lockId,
+          new Whizbang.Core.Versioning.VersionSighting("__LIBRARY_VERSION__", _ledgerApplicationVersion.Value, rollingInstance),
+          rollback.AllowLossy, _schemaCommandTimeoutSeconds),
+        startupClock, logger, cancellationToken);
+    }
+
     if (segmentConnectionFactory is not null && !schemaIsCurrent) {
       await Whizbang.Data.Postgres.MigratorPreLockPhase.RunAsync(
         migratorDuty,
@@ -407,7 +429,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             "__SCHEMA__", logger, ct),
           // On the system clock, like the deferral's own polls: a host clock frozen by a test must not stall a vote.
           PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), TimeProvider.System, ct),
-          WorkAsync: _ => rewriteStoredFormsAsync(segmentConnectionFactory)),
+          WorkAsync: async _ => {
+            await rollBackAsync(segmentConnectionFactory);
+            await rewriteStoredFormsAsync(segmentConnectionFactory);
+          }),
         "__SCHEMA__", logger, cancellationToken);
     }
 
@@ -1431,6 +1456,12 @@ END $$;
             ? (3, "Skipped (table already exists)")
             : (isUpdate ? 2 : 1, isUpdate ? $"Updated from hash {_hashPrefix(existingHash!)}..." : "First apply");
           await _upsertMigrationAsync(connection, perspectiveKey, hash, pass.VersionId, status, desc, order, "perspective", ct);
+          // #2122: a table this pass created is reversed by dropping it (lossy: its rows go with it); one it changed, or
+          // found already there, cannot be reversed, since this version does not know the shape before it.
+          await Whizbang.Data.Postgres.MigrationReversal.RecordAsync(connection, _ledgerName, perspectiveKey,
+            tableExisted || isUpdate
+              ? Whizbang.Data.Postgres.MigrationReversal.Irreversible
+              : Whizbang.Data.Postgres.MigrationReversal.DropTable(@"__QUOTED_SCHEMA__", name), ct);
           logger?.LogDebug("Perspective {Perspective}: {Status}", name, desc);
         },
         pass.Tracked ? (ex, ct) => _recordFailureAsync(connection, perspectiveKey, hash, pass.VersionId, order, "perspective", ex, ct) : null,
@@ -1710,9 +1741,24 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       ? $"Re-applied ({reason ?? "marked to run again"})"
       : isUpdate ? $"Updated from hash {_hashPrefix(existingHash!)}..." : "First apply";
     await _upsertMigrationAsync(connection, name, hash, pass.VersionId, isUpdate ? 2 : 1, desc, executionOrder, "whizbang", ct);
+    // #2122: how the migration is reversed, as it declares, beside its row and in its transaction, so an older version
+    // can roll it back from the record. Nothing for a migration that predates the declaration.
+    await Whizbang.Data.Postgres.MigrationReversal.RecordAsync(connection, _ledgerName, name,
+      Whizbang.Data.Postgres.MigrationReversal.ForLibraryMigration(
+        name, transformedSql, _transformReverseSql, typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly), ct);
     logger?.LogDebug("Migration {Migration}: {Status}", name, desc);
     return true;
   }
+
+  /// <summary>The ledger, as the reversal recorder names it (#2122).</summary>
+  private const string _ledgerName = @"__QUOTED_SCHEMA__.wh_schema_migrations";
+
+  /// <summary>The placeholder the library's reverse scripts carry, spelled so the generator leaves it alone.</summary>
+  private const string _reverseSchemaToken = "__" + "SCHEMA__";
+
+  /// <summary>A reverse script, transformed as this context's migrations are (#2122).</summary>
+  private static string _transformReverseSql(string sql) =>
+    _transformMigrationSql(sql.Replace(_reverseSchemaToken, "__MIGRATION_SCHEMA__"), "__SCHEMA__");
 
   private static string _hashPrefix(string hash) => hash.Length > 8 ? hash[..8] : hash;
 
@@ -2111,6 +2157,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           connection, _associationsHashKey, _associationsHash, pass.VersionId,
           status: 1, desc: "Associations registered",
           executionOrder: 9000, owner: "association", ct);
+      // #2122: the older version's own pass registers its associations again, so reversing them runs nothing.
+      await Whizbang.Data.Postgres.MigrationReversal.RecordAsync(
+        connection, _ledgerName, _associationsHashKey, Whizbang.Data.Postgres.MigrationReversal.RegisteredAgain, ct);
     }
   }
 

@@ -51,6 +51,10 @@ internal sealed class DapperSchemaInitializationRunner(
     await SchemaInitializationStages.ElectedAsync(
       services, new SchemaStaging(SchemaStage.Unstaged, null, "the Dapper driver holds no election"), cancellationToken)
       .ConfigureAwait(false);
+    // #2122: a rollback Assess decided on runs first, so the pass migrates from this version's point of view.
+    if (assessment?.Rollback is { } rollback) {
+      await createInitializer().RollBackSchemaAsync(rollback, cancellationToken).ConfigureAwait(false);
+    }
     await createInitializer().InitializeSchemaAsync(cancellationToken).ConfigureAwait(false);
     await retry.WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
   }

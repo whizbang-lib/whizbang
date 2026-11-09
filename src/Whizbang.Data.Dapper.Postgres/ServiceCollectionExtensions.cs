@@ -435,7 +435,8 @@ public static class ServiceCollectionExtensions {
     new(connectionString, () => createInitializer(sp),
       sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
-      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+      Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the

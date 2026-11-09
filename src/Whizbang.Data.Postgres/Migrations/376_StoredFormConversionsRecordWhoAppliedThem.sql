@@ -30,6 +30,7 @@
 --
 --              Number 376: above every number on develop (through 372) and in open pull requests (through 375).
 --
+-- Reversal: irreversible (it ships with the release that first runs reversals, so no rollback ever crosses it)
 -- Dependencies: 153 (wh_perspective_forms), 176 (wh_stored_form_migrations)
 -- Objects: wh_stored_form_migrations.applied_library_version, wh_stored_form_migrations.applied_application_version,
 --          wh_perspective_forms.applied_library_version, wh_perspective_forms.applied_application_version

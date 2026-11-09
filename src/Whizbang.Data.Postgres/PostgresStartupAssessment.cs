@@ -64,15 +64,16 @@ internal static class PostgresStartupAssessment {
   /// <param name="own">This instance's versions and id; a null library version means no provider says.</param>
   /// <param name="overrideIncompatibility">Whether the host turned the incompatibility override on (#2022,
   /// <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>).</param>
+  /// <param name="allowLossyRollback">Whether a rollback may discard data (#2122, <see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
   /// <param name="isCurrent">Whether the schema needs nothing applied, asked only when nothing newer is recorded or
   /// online. A throw is read as "could not be shown current".</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The verdict.</returns>
   internal static async Task<StartupAssessment> AssessAsync(
-      NpgsqlConnection connection, string? schema, VersionSighting own, bool overrideIncompatibility,
+      NpgsqlConnection connection, string? schema, VersionSighting own, bool overrideIncompatibility, bool allowLossyRollback,
       Func<CancellationToken, Task<bool>> isCurrent, CancellationToken cancellationToken) {
     var prefix = PgIdentifier.QualifyPrefix(schema);
-    var probe = await _probeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
+    var probe = await ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     if (!probe.Ledger) {
       return new StartupAssessment(StartupVerdict.Migrate,
         "brand-new database: no version record, so nothing newer than this binary can exist");
@@ -86,7 +87,7 @@ internal static class PostgresStartupAssessment {
     var online = probe.Online
       ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false)
       : [];
-    var verdict = ComputeVerdict(own, ledger, online, overrideIncompatibility);
+    var verdict = ComputeVerdict(own, ledger, online, overrideIncompatibility, allowLossyRollback);
     if (verdict.Verdict != StartupVerdict.Serve) {
       return verdict;
     }
@@ -114,7 +115,7 @@ internal static class PostgresStartupAssessment {
   internal static async Task<IReadOnlyList<VersionSighting>> ReadOnlineAsync(
       NpgsqlConnection connection, string? schema, CancellationToken cancellationToken) {
     var prefix = PgIdentifier.QualifyPrefix(schema);
-    var probe = await _probeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
+    var probe = await ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     return probe.Online ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false) : [];
   }
 
@@ -141,10 +142,12 @@ internal static class PostgresStartupAssessment {
   /// this version then starts the instance as Current (no election, no pass, nothing applied), with the reason it would
   /// have stood down in <see cref="StartupAssessment.OverriddenReason"/>. It never lifts the stand-down for a newer
   /// version online, nor the refusal of a build that cannot say what it is.</param>
-  /// <returns>Migrate, Serve or StandDown; Current only when the override let an incompatible instance start.</returns>
+  /// <param name="allowLossyRollback">Whether a rollback may discard data the newer version wrote (#2122).</param>
+  /// <returns>Migrate (with the rollback owed, when one is), Serve or StandDown; Current only when the override let an
+  /// incompatible instance start.</returns>
   internal static StartupAssessment ComputeVerdict(
       VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online,
-      bool overrideIncompatibility = false) {
+      bool overrideIncompatibility = false, bool allowLossyRollback = false) {
     var mine = own.LibraryVersion;
     if (mine is null) {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres
@@ -169,7 +172,13 @@ internal static class PostgresStartupAssessment {
       return new StartupAssessment(StartupVerdict.StandDown, newer.Describe() + STANDING_DOWN);
     }
     if (UpgradeOrder.AppliedSince(own, ledger) is { Count: > 0 } since) {
-      var incompatible = UpgradeOrder.DescribeAppliedSince(own, since) + STANDING_DOWN;
+      // #2122: every change since can be reversed, so this instance's start rolls the schema back to its version.
+      if (UpgradeOrder.WhyNotReversible(own, since, allowLossyRollback) is not { } refusal) {
+        return new StartupAssessment(StartupVerdict.Migrate, UpgradeOrder.DescribeRollback(own, since)) {
+          Rollback = new RollbackPlan(since, allowLossyRollback),
+        };
+      }
+      var incompatible = refusal + STANDING_DOWN;
       return overrideIncompatibility
         ? new StartupAssessment(StartupVerdict.Current,
             $"running past an incompatibility verdict because {UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY} is on: the schema is "
@@ -185,10 +194,11 @@ internal static class PostgresStartupAssessment {
   }
 
   /// <summary>What the database has: the ledger, its version table and owner column, and what reading who is online needs.</summary>
-  private readonly record struct Probe(
-    bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online, bool AppliedBy, bool StoredForms, bool TemporalForms);
+  internal readonly record struct Probe(
+    bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online, bool AppliedBy, bool StoredForms, bool TemporalForms,
+    bool Reversals);
 
-  private static async Task<Probe> _probeAsync(NpgsqlConnection connection, string prefix, CancellationToken cancellationToken) {
+  internal static async Task<Probe> ProbeAsync(NpgsqlConnection connection, string prefix, CancellationToken cancellationToken) {
     await using var probe = connection.CreateCommand();
     probe.CommandText = """
       SELECT to_regclass($1) IS NOT NULL,
@@ -199,7 +209,8 @@ internal static class PostgresStartupAssessment {
                AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($4) AND attname = 'application_version' AND NOT attisdropped),
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'applied_version_id' AND NOT attisdropped),
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($5) AND attname = 'applied_library_version' AND NOT attisdropped),
-             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($6) AND attname = 'applied_library_version' AND NOT attisdropped)
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($6) AND attname = 'applied_library_version' AND NOT attisdropped),
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'reversal' AND NOT attisdropped)
       """;
     probe.Parameters.AddWithValue(prefix + "wh_schema_migrations");
     probe.Parameters.AddWithValue(prefix + "wh_schema_versions");
@@ -210,11 +221,22 @@ internal static class PostgresStartupAssessment {
     await using var reader = await probe.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return new Probe(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetBoolean(4),
-      reader.GetBoolean(5), reader.GetBoolean(6), reader.GetBoolean(7));
+      reader.GetBoolean(5), reader.GetBoolean(6), reader.GetBoolean(7), reader.GetBoolean(8));
   }
 
+  /// <summary>One change the ledger records: the change, the version row that applied it, and its reverse script.</summary>
+  internal sealed record LedgerChange(AppliedSchemaChange Change, int? AppliedVersionId, string? DownSql);
+
   private static async Task<IReadOnlyList<AppliedSchemaChange>> _readLedgerAsync(
-      NpgsqlConnection connection, string prefix, Probe probe, CancellationToken cancellationToken) {
+      NpgsqlConnection connection, string prefix, Probe probe, CancellationToken cancellationToken) =>
+    [.. (await ReadChangesAsync(connection, prefix, probe, withScripts: false, cancellationToken).ConfigureAwait(false)).Select(c => c.Change)];
+
+  /// <summary>
+  /// Every change the ledger records, with who applied it and how it is reversed (#2022, #2122); the reverse scripts
+  /// too when <paramref name="withScripts"/>, which only the rollback reads.
+  /// </summary>
+  internal static async Task<IReadOnlyList<LedgerChange>> ReadChangesAsync(
+      NpgsqlConnection connection, string prefix, Probe probe, bool withScripts, CancellationToken cancellationToken) {
     // #2022: who applied each change (359), or on an older ledger the version that last stamped it. Every row is read,
     // so a ledger whose rows were all re-stamped is still a ledger; a row whose applier is unknown carries no versions.
     // A row not written since 359 has no applied_version_id: one last applied (status 1, 2, 4) was applied by its
@@ -226,10 +248,14 @@ internal static class PostgresStartupAssessment {
     var (kind, notStep) = probe.Owner
       ? ("m.owner IN ('perspective', 'association')", "m.owner <> 'step'")
       : ("(m.file_name LIKE 'perspective:%' OR m.file_name LIKE 'app:%')", "m.file_name NOT LIKE 'step:%'");
+    // #2122: how each change is reversed (377); nothing recorded is irreversible.
+    var reversal = probe.Reversals ? "m.reversal" : "NULL::text";
+    var script = probe.Reversals && withScripts ? "m.down_sql" : "NULL::text";
     await using var command = connection.CreateCommand();
 #pragma warning disable S2077 // the prefix is quoted by PgIdentifier; the fragments are this method's own literals
     command.CommandText = $"""
-      SELECT m.file_name AS name, {kind} AS application, v.library_version, {application} AS application_version
+      SELECT m.file_name AS name, {kind} AS application, v.library_version, {application} AS application_version,
+             {reversal} AS reversal, v.id AS applied_version_id, {script} AS down_sql
       FROM {prefix}wh_schema_migrations m
       LEFT JOIN {prefix}wh_schema_versions v ON v.id = {applier}
       WHERE {notStep}
@@ -237,13 +263,16 @@ internal static class PostgresStartupAssessment {
       ORDER BY name
       """;
 #pragma warning restore S2077
-    var changes = new List<AppliedSchemaChange>();
+    var changes = new List<LedgerChange>();
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       // The versions are NULL when nobody is known to have applied the row: DBNull reads as null.
-      changes.Add(new AppliedSchemaChange(reader.GetString(0),
+      var change = new AppliedSchemaChange(reader.GetString(0),
         reader.GetBoolean(1) ? SchemaChangeKind.Application : SchemaChangeKind.Platform,
-        reader.GetValue(2) as string, reader.GetValue(3) as string));
+        reader.GetValue(2) as string, reader.GetValue(3) as string) {
+        Reversal = MigrationReversal.FromLedgerText(reader.GetValue(4) as string),
+      };
+      changes.Add(new LedgerChange(change, reader.GetValue(5) as int?, reader.GetValue(6) as string));
     }
     return changes;
   }
@@ -258,7 +287,7 @@ internal static class PostgresStartupAssessment {
     if (probe.StoredForms) {
       union.Append(CultureInfo.InvariantCulture, $"""
         UNION ALL
-        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version
+        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version, NULL, NULL::int, NULL
         FROM {prefix}{StoredFormMigrationSql.JOURNAL} j WHERE j.applied_library_version IS NOT NULL
 
         """);
@@ -266,7 +295,7 @@ internal static class PostgresStartupAssessment {
     if (probe.TemporalForms) {
       union.Append(CultureInfo.InvariantCulture, $"""
         UNION ALL
-        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version
+        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version, NULL, NULL::int, NULL
         FROM {prefix}wh_perspective_forms f WHERE f.applied_library_version IS NOT NULL
 
         """);
