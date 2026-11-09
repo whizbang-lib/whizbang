@@ -292,6 +292,15 @@ jobs:
           # Verify the change
           grep "<Version>" Directory.Build.props
 
+      - name: Gather the changelog fragments
+        run: |
+          VERSION="${{ steps.version.outputs.semver }}"
+          # Every changelog.d/ fragment, plus anything still under [Unreleased], becomes CHANGELOG.md's
+          # "## [VERSION] - <date>" section; the gathered fragments are deleted. It lands in the bump commit
+          # below, so the release PR shows the assembled notes. A malformed fragment fails the cut, naming it
+          # (changelog.d/README.md); fix it by PR into develop and cut again.
+          pwsh -NoProfile -File .github/scripts/Merge-ChangelogFragments.ps1 -Version "$VERSION"
+
       - name: Commit and Push
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -299,7 +308,8 @@ jobs:
           VERSION="${{ steps.version.outputs.semver }}"
           BRANCH="${{ steps.version.outputs.branch }}"
 
-          git add Directory.Build.props
+          # The version bump and the gathered changelog (CHANGELOG.md, and the fragments it deleted) in one commit.
+          git add -A -- Directory.Build.props CHANGELOG.md changelog.d
           git commit -m "chore(release): bump version to $VERSION"
           # Published through the API, not git push, so GitHub signs the commits: the rulesets require
           # signed commits (.github/scripts/Publish-SignedCommit.ps1).
@@ -331,11 +341,13 @@ jobs:
 
           ### Changes
           - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
+          - Gathered the `changelog.d/` fragments into `CHANGELOG.md`'s `v${{ steps.version.outputs.semver }}` section
 
           ### Release Checklist
           - [ ] All CI checks pass
           - [ ] Version number is correct
-          - [ ] CHANGELOG updated (if applicable)
+          - [ ] `CHANGELOG.md`'s new section reads correctly (corrections go in a PR into this branch; if a beta or
+                rc rolls the stable number up, that PR renames the heading to the number that will ship)
 
           ### After Merge
           When this PR is merged to `main`, the release workflow will:
