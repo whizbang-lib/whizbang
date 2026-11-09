@@ -441,13 +441,16 @@ public sealed partial class IntegrityManifestReceptor(
       }
     }
 
-    // #2032: an older origin may still advertise types another service owns; it is not authoritative for them, and
-    // repair is asked of the owner, so those digests are not compared here.
+    // #2032: an older origin may still advertise types another service owns, or types this service owns itself; it is
+    // not authoritative for them, and repair is asked of the owner, so those digests are not compared here (a ledger row
+    // they left would never clear).
     var ownership = new IntegrityDomainOwnership(
       await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false));
-    if (message.Digests.Any(d => ownership.IsOwnedByAnother(d.EventType, message.OriginServiceId))) {
+    var ownDomains = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains
+      ?? (IReadOnlyCollection<string>)[];
+    if (message.Digests.Any(d => ownership.IsNotAuthoritative(d.EventType, message.OriginServiceId, ownDomains))) {
       message = message with {
-        Digests = [.. message.Digests.Where(d => !ownership.IsOwnedByAnother(d.EventType, message.OriginServiceId))],
+        Digests = [.. message.Digests.Where(d => !ownership.IsNotAuthoritative(d.EventType, message.OriginServiceId, ownDomains))],
       };
       if (message.Digests.Count == 0) {
         return;

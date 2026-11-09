@@ -241,6 +241,19 @@ public sealed partial class IntegrityAuditWorker(
     if (forgotten > 0) {
       LogForgotUnconsumedLedgerRows(_logger, forgotten);
     }
+    // A row recorded under an origin that does not own its type (written before #2032, when a service still reported
+    // events it had only received as its own) is never compared again: that origin's answers leave the type out (#2008)
+    // and the owner's land under the owner's id. It can neither heal nor clear, so it is forgotten by the same rule the
+    // comparison uses to ignore such an origin.
+    var ownership = new IntegrityDomainOwnership(
+      await coordinator.GetIntegrityDomainClaimsAsync(cancellationToken).ConfigureAwait(false));
+    var ownDomains = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains
+      ?? (IReadOnlyCollection<string>)[];
+    var forgottenNonOwner = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync(
+      (origin, eventType) => ownership.IsNotAuthoritative(eventType, origin, ownDomains), cancellationToken).ConfigureAwait(false);
+    if (forgottenNonOwner > 0) {
+      LogForgotNonOwnerLedgerRows(_logger, forgottenNonOwner);
+    }
     if (consumed.Count == 0 && absorbed.Count == 0) {
       LogNothingConsumed(_logger);
       return false;   // nothing to audit across services: a configuration, not a cold fleet.
@@ -326,6 +339,11 @@ public sealed partial class IntegrityAuditWorker(
     Message = "Integrity audit forgot {RowCount} repair-ledger row(s) of event types this service does not consume: "
             + "they can never heal, because their redelivery is discarded on receive.")]
   static partial void LogForgotUnconsumedLedgerRows(ILogger logger, int rowCount);
+
+  [LoggerMessage(EventId = 99, Level = LogLevel.Information,
+    Message = "Integrity audit forgot {RowCount} repair-ledger row(s) recorded under an origin that does not own the event type: "
+            + "that origin's answers leave the type out, so the rows could never heal or clear.")]
+  static partial void LogForgotNonOwnerLedgerRows(ILogger logger, int rowCount);
 
   [LoggerMessage(EventId = 98, Level = LogLevel.Debug,
     Message = "Integrity audit asked no origin: this service consumes no events and absorbs no namespace.")]
