@@ -500,6 +500,15 @@ await cts.CancelAsync();
 await run.WaitAsync(timeout);
 ```
 
+The same shape hides in a worker loop's `while (!stoppingToken.IsCancellationRequested)`: its false outcome is
+taken only when an iteration finishes normally after the stop, while tests usually stop the worker inside a wait and
+leave through the cancellation catch. `HeartbeatWorker`'s beat loop lost PR #2209's queue run this way; the fix is a
+collaborator that cancels the stop token and then completes normally, so the loop always returns to its condition
+canceled.
+
+To find others, compare per-line condition coverage across several queue runs' `coverage-unit` and
+`coverage-component` artifacts: on an unchanged line, a count that differs between runs is timing-dependent.
+
 ### Rule
 When a single test is the only one that makes an await suspend, make the suspension structural (same-thread body,
 asserted `IsCompleted == false`) rather than a signal raced against a cancellation on another thread.
