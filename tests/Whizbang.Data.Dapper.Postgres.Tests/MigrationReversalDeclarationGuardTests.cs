@@ -27,7 +27,7 @@ public partial class MigrationReversalDeclarationGuardTests {
     AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Whizbang.Data.Postgres", "Migrations"));
 
   private static IEnumerable<string> _files(string pattern) =>
-    Directory.GetFiles(_migrationsDirectory(), pattern).Select(f => Path.GetFileName(f)!).Order(StringComparer.Ordinal);
+    Directory.GetFiles(_migrationsDirectory(), pattern).Select(Path.GetFileName).Order(StringComparer.Ordinal);
 
   private static IEnumerable<string> _forward() => _files("*.sql").Where(f => !f.EndsWith(".down.sql", StringComparison.Ordinal));
 

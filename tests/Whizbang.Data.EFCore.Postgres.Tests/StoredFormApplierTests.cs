@@ -131,6 +131,22 @@ public class StoredFormApplierTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task TheDeclaredKeyPass_OnAJournalOlderThanTheRecord_StillMovesTheKeysAsync(CancellationToken ct) {
+    await _execAsync("ALTER TABLE wh_stored_form_migrations DROP COLUMN applied_library_version, DROP COLUMN applied_application_version", ct);
+    await _execAsync($"CREATE TABLE {TABLE} (id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb NULL)", ct);
+    await _execAsync($$"""INSERT INTO {{TABLE}} VALUES ('{{Guid.CreateVersion7()}}', '{"Name": "a"}', NULL)""", ct);
+    var table = new DeclaredKeyTable(TABLE, [new DeclaredKeyColumn("data", DeclaredKeyShape.ForObject(new DeclaredMember("name")))]);
+
+    using (StoredFormApplier.ScopeTo(_newer)) {
+      await DeclaredKeySpellingPass.ApplyAsync(_open, "public", [table], TIMEOUT_SECONDS, logger: null, cancellationToken: ct);
+    }
+
+    await Assert.That(await _textAsync($"SELECT data ->> 'name' FROM {TABLE}", ct)).IsEqualTo("a")
+      .Because("a journal with no place for the applier records the conversion without it");
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task OutsideAnyScope_AConversionRecordsNobodyAsync(CancellationToken ct) {
     await _execAsync($"CREATE TABLE {TABLE} (id int PRIMARY KEY, data jsonb)", ct);
     await _execAsync($$"""INSERT INTO {{TABLE}} VALUES (1, '{"Status": 123}')""", ct);
