@@ -9,7 +9,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | Workflow | File | Runs on | What it does |
 |---|---|---|---|
 | CI | `ci.yml` | PRs, the merge queue, pushes to `develop`, `release/v*` and `main`, dispatch | Plan, build, test, analyze and gate every change; publishes develop's alpha and older-line hotfixes |
-| Start Release | `start-release.yml` | dispatch, from `develop` | Cuts `release/vX.Y.Z` and opens the release PR |
+| Start Release | `start-release.yml` | dispatch, from `develop` | Cuts `release/vX.Y.Z`, gathers `changelog.d/` into `CHANGELOG.md`, and opens the release PR |
 | Release Prerelease | `release-prerelease.yml` | dispatch, from a release branch | Publishes a beta or rc from the release branch's tested build |
 | Release | `release.yml` | the release PR closing; dispatch for recovery | Promotes the tested packages as stable, tags `main`, syncs `develop` |
 | NuGet Publish | `nuget-publish.yml` | dispatch; called by the above | Pushes a packages artifact and creates the tag and GitHub release |

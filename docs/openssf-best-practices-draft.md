@@ -118,7 +118,7 @@ human review.
 
 | Criterion | Answer | Justification |
 |---|---|---|
-| `release_notes` | Met | Every GitHub release carries notes listing the changes by pull request, and `CHANGELOG.md` summarizes notable changes. <https://github.com/whizbang-lib/whizbang/releases>, <https://github.com/whizbang-lib/whizbang/blob/develop/CHANGELOG.md> |
+| `release_notes` | Met | Every GitHub release carries notes listing the changes by pull request. `CHANGELOG.md` holds a human-written section per release: each pull request records its notable change as a fragment in `changelog.d/`, and cutting a release gathers the fragments into that version's section, which is reviewed in the release pull request (`docs/RELEASING.md`, "The changelog"). <https://github.com/whizbang-lib/whizbang/releases>, <https://github.com/whizbang-lib/whizbang/blob/develop/CHANGELOG.md> |
 | `release_notes_vulns` | N/A | No publicly known vulnerability has been reported against or fixed in the project; there are no published security advisories. <https://github.com/whizbang-lib/whizbang/security/advisories> |
 
 ## Reporting
