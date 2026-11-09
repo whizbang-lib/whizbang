@@ -503,6 +503,67 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
+  public async Task ExecuteAsync_ACountThatCannotBeRead_ClaimsNothing_LogsIt_AndResumesOnceItCanAsync() {
+    // The cap fails closed: a pending-answer count that cannot be read fails the tick, so nothing is claimed (no attempt
+    // stamped, nothing sent) until the count reads again. Driven through the real loop on a clock that signals each time
+    // the loop arms its one-second wait, so every step waits on the transition it asserts.
+    var origin = TrackedGuid.New().Value;
+    var logger = new FakeLogger<RepairDrainWorker>();
+    var clock = new ArmSignalingClock(new DateTimeOffset(2026, 11, 9, 12, 0, 0, TimeSpan.Zero));
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+    }, origin, learnTopic: true, logger: logger, clock: clock);
+    coordinator.CountFailure = new InvalidOperationException("the ledger cannot be read");
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+    var guard = TimeSpan.FromSeconds(30);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await clock.Armed.WaitAsync(guard);           // the loop waits out its first second
+      clock.Advance(TimeSpan.FromSeconds(1));
+      await coordinator.Counted.WaitAsync(guard);   // the tick asked, and the count threw
+      await clock.Armed.WaitAsync(guard);           // the failed tick is over and the loop waits again
+
+      await Assert.That(coordinator.ClaimCalls).IsEmpty()
+        .Because("a cap that cannot be measured never opens: no row is claimed, so no attempt is spent");
+      await Assert.That(transport.Published).IsEmpty();
+      var failed = logger.Collector.GetSnapshot().Where(r => r.Message.Contains("tick failed", StringComparison.Ordinal)).ToList();
+      await Assert.That(failed.Count).IsEqualTo(1).Because("the failed tick is logged with its cause");
+      await Assert.That(failed[0].Level).IsEqualTo(LogLevel.Warning);
+      await Assert.That(failed[0].Exception).IsTypeOf<InvalidOperationException>();
+
+      coordinator.CountFailure = null;
+      clock.Advance(TimeSpan.FromSeconds(1));
+      await coordinator.FirstClaim.Task.WaitAsync(guard);   // the next tick reads the count and claims
+      await clock.Armed.WaitAsync(guard);                   // and finishes
+
+      await Assert.That(coordinator.ClaimCalls.Count).IsEqualTo(1).Because("once the count reads, the drain resumes");
+      await Assert.That(transport.Published.Count).IsEqualTo(1);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>A fake clock that releases <see cref="Armed"/> each time a timer is created, which is each time the drain's
+  /// loop starts waiting out its interval.</summary>
+  private sealed class ArmSignalingClock(DateTimeOffset start) : TimeProvider {
+    private readonly FakeTimeProvider _inner = new(start);
+    public SemaphoreSlim Armed { get; } = new(0);
+    public void Advance(TimeSpan by) => _inner.Advance(by);
+    public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+    public override long GetTimestamp() => _inner.GetTimestamp();
+    public override long TimestampFrequency => _inner.TimestampFrequency;
+    public override TimeZoneInfo LocalTimeZone => _inner.LocalTimeZone;
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = _inner.CreateTimer(callback, state, dueTime, period);
+      Armed.Release();
+      return timer;
+    }
+  }
+
+  [Test]
   public async Task Options_MaxOutstandingRepairAnswers_DefaultsTo500Async() {
     await Assert.That(new StreamIntegrityOptions().MaxOutstandingRepairAnswers).IsEqualTo(500)
       .Because("at the default 5 rows a second, 500 answers is 100 seconds of requests: answers that land in under that "
@@ -533,7 +594,7 @@ public class RepairDrainWorkerTests {
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _build(
       StreamIntegrityOptions options, Guid origin, bool learnTopic, ILogger<RepairDrainWorker>? logger = null,
-      StreamIntegrityMetrics? metrics = null) {
+      StreamIntegrityMetrics? metrics = null, TimeProvider? clock = null) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -559,7 +620,8 @@ public class RepairDrainWorkerTests {
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options),
-      logger ?? NullLogger<RepairDrainWorker>.Instance);
+      logger ?? NullLogger<RepairDrainWorker>.Instance,
+      clock);
     return (worker, coordinator, transport, tracker);
   }
 
@@ -594,8 +656,17 @@ public class RepairDrainWorkerTests {
     public int AnswerPending { get; set; }
     public List<(DateTimeOffset Now, int Limit)> CountCalls { get; } = [];
 
+    /// <summary>When set, the count throws it, as a store that cannot be read would.</summary>
+    public Exception? CountFailure { get; set; }
+    /// <summary>Released on every count, so a test waits on the count itself.</summary>
+    public SemaphoreSlim Counted { get; } = new(0);
+
     public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) {
       CountCalls.Add((now, limit));
+      Counted.Release();
+      if (CountFailure is { } failure) {
+        return Task.FromException<int>(failure);
+      }
       return Task.FromResult(Math.Min(AnswerPending, limit));
     }
 
