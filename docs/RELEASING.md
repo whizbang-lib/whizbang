@@ -39,6 +39,10 @@
 - **Only reviewed code publishes.** The publish environments admit runs from `develop`, `main` and
   `release/**` only, and each of those takes changes through a pull request with the CI gate. A
   published `v*` tag cannot be moved or deleted.
+- **Changelog entries are fragments, gathered at the cut** (#2168). A pull request into `develop` adds
+  `changelog.d/<issue>.md` instead of editing `CHANGELOG.md`; Start Release turns every fragment, plus
+  anything left under `[Unreleased]`, into the version's section in the version bump commit. See
+  [The changelog](#the-changelog).
 - **Claude sessions follow the `release` skill** (`.claude/skills/release/SKILL.md`), which maps any
   situation to the flow below and its recovery. Keep it in step with this document.
 
@@ -52,7 +56,7 @@ the enforcement points named in the last column refuse it.
 | # | I want to… | Do this | What runs | Enforced by |
 |---|---|---|---|---|
 | F1 | Ship a change | PR from `feat/*`, `fix/*`, `test/*`, `ci/*`, … into `develop`; merge through the queue | CI (1 pre-merge, 2 merge queue, 3 post-merge); develop publishes the changed packages as **`0.Y.0-alpha.N`** | gitflow check; `develop` ruleset |
-| F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Rolls up the cut commit's alpha number into `X.Y.Z` ([Version rollup](#version-rollup)); creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate reuses the tested develop commit's results when only the version file differs (build, pack, verify: no suites) | one release in flight; branch must not exist |
+| F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Rolls up the cut commit's alpha number into `X.Y.Z` ([Version rollup](#version-rollup)); gathers the `changelog.d/` fragments into `CHANGELOG.md` ([The changelog](#the-changelog)); creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate reuses the tested develop commit's results when only the version file and the changelog differ (build, pack, verify: no suites) | one release in flight; branch must not exist |
 | F3 | Publish a **beta** or **rc** | Actions → **Release Prerelease**, "Use workflow from" = the release branch, pick `beta` or `rc` | Repacks the branch head's tested build as **`X.Y.Z-beta.N`** / **`-rc.N`**, publishes, tags it on the branch. Nothing merges | release branch only; the open release PR's head is this commit and its coverage/Sonar gate passed on it; green CI; no beta after rc; not after stable |
 | F4 | Fix something in an open release | PR from `fix/*` (or `bugfix/*`, `hotfix/*`) into `release/vX.Y.Z` | The branch re-tests; publish the next beta or rc when ready (F3); the fix reaches develop after release (F5) | gitflow check |
 | F5 | Ship the **stable** release | Merge the release PR (merge commit) and approve `nuget-publish` | Promotes the release branch's tested packages as **`X.Y.Z`** (or, when betas or rcs rolled the number up, repacks the same tested build at the rolled-up version), tags `main`, syncs `main` back to `develop` by PR; CI 5 released reuses the release branch's results | release PR must come from `release/vX.Y.Z` with its own stable number; tested tree must equal the tagged tree |
@@ -668,10 +672,14 @@ the release app token and checks out with it, then runs the action (#1796).
 
 - It compares main and develop with a **three-dot diff** (`origin/develop...origin/main`) so it only
   considers what the *release* added, not develop's own post-cut progress.
-- If the only difference is the `Directory.Build.props` version bump (the common case), it **skips** —
+- If the only difference is the `Directory.Build.props` version bump, it **skips**:
   develop keeps its local placeholder, and versioning doesn't need the bump (GitVersion uses the tag).
-- If main has *real* release-stabilization changes develop lacks, it opens a **review PR** into
-  develop with `Directory.Build.props` restored to develop's value.
+- If main has *real* changes develop lacks, it opens a **review PR** into develop with
+  `Directory.Build.props` restored to develop's value. Since #2168 that is every release cut by Start
+  Release: the gathered changelog (the new version section, the emptied `[Unreleased]` and the deleted
+  fragments) comes back this way, together with any stabilization fixes. It normally merges cleanly, because no
+  pull request into develop adds under `[Unreleased]` and fragments merged after the cut are files the
+  release never touched.
 
 ---
 
@@ -688,7 +696,9 @@ the release app token and checks out with it, then runs the action (#1796).
 
 It refuses while another release PR is open, or if the branch already exists. It creates
 `release/vX.Y.Z`, **merges `main` into it** (so the PR is conflict-free, see below), writes the
-version into `Directory.Build.props`, and opens the PR `chore(release): vX.Y.Z` into `main`. The
+version into `Directory.Build.props`, **gathers the changelog** into `CHANGELOG.md`'s `## [X.Y.Z]`
+section in the same commit ([The changelog](#the-changelog)), and opens the PR `chore(release): vX.Y.Z`
+into `main`, where the assembled notes are reviewed. The
 push runs the full matrix once (CI · 4 release candidate); the PR's own run reuses those results and
 runs only its Sonar analysis on their coverage.
 
@@ -726,6 +736,44 @@ main-line Sonar analysis.
 > expected conflict (the version is re-stamped immediately after), so the PR to `main` opens clean
 > without ever touching develop's placeholder. Any *other* conflict fails the run loudly. It is also
 > what makes the merged tree byte-identical to the tested one.
+
+### The changelog
+
+Every pull request used to add its entry at the top of `CHANGELOG.md`'s `[Unreleased]` section, so any
+two open pull requests conflicted, and nothing ever turned `[Unreleased]` into a version. Since #2168:
+
+- **A pull request into `develop` adds a fragment**, `changelog.d/<issue>.md` (or `<pr>.md` with no
+  issue): front matter naming the category (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`,
+  `Security`) and optional subsection (`Storage`, `Startup`, ...), then the entry. The format and the
+  allowed headings are in `changelog.d/README.md`. Every pull request writes its own file, so fragments
+  never conflict.
+- **The cut gathers them.** Start Release's `Gather the changelog fragments` step runs
+  `.github/scripts/Merge-ChangelogFragments.ps1 -Version X.Y.Z` after writing the version, and the
+  result is part of the one `chore(release): bump version to X.Y.Z` commit, published signed through
+  `Publish-SignedCommit.ps1` like the bump. It renders every fragment, together with anything still
+  under `[Unreleased]`, into `## [X.Y.Z] - <cut date, UTC>` below an empty `## [Unreleased]` heading,
+  ordered by category, then subsection, then fragment number (entries already under `[Unreleased]` first
+  in their group), and deletes exactly the fragments it read. Fragments merged into develop after the
+  cut are not on the release branch, so they wait for the next release. The run summary shows the
+  section; the release PR shows it for review.
+- **Preview it any time:** `pwsh .github/scripts/Merge-ChangelogFragments.ps1 -Version X.Y.Z -DryRun`
+  prints the section a cut would write and changes nothing.
+- **A malformed fragment fails the cut**, naming the file, before anything is written or pushed: fix it
+  by a PR into develop and cut again. `Test · Pipeline scripts` reads every fragment in the tree on each
+  pull request and in the merge queue, so one rarely gets that far.
+- **Release branches edit `CHANGELOG.md` directly.** A stabilization fix or hotfix PR into
+  `release/vX.Y.Z` writes its entry in that version's section (a hotfix branch cut from a tag adds the
+  `## [X.Y.Z] - <date>` heading itself), never under `[Unreleased]`: the sync back to develop would
+  carry those lines into the next release too. A fragment there is refused, since no gather is left to
+  pick it up. Corrections to the assembled notes, including the date, go in the same way.
+- **A rolled-up stable ships under a higher number than the heading** when betas or rcs were published
+  ([Version rollup](#version-rollup)). Rename the heading by a PR into the release branch after the last
+  prerelease, to the number Release Prerelease's summary printed.
+- **The rules are enforced.** `Gate · Pull request type` refuses a pull request into develop that adds
+  lines under `[Unreleased]` (the `sync/*` back-merge is exempt) or a fragment on a pull request into a
+  release branch, and takes a breaking change's **Upgrade:** note from the fragment (from
+  `CHANGELOG.md` on a release branch). The review checks' `pr.changelog` finding asks a library feat or
+  fix for a fragment, or for a `CHANGELOG.md` entry on a release branch.
 
 ### Releases promote the tested packages
 
@@ -782,7 +830,9 @@ tag:
 | **Current** (above it), F7 | `release/v0.2451.1` | It **opens the release PR into `main`** (title `chore(release): v0.2451.1`) instead of publishing. From there it is an ordinary release: beta/rc if wanted (F3), then merge (F5), which syncs develop. |
 | **Older** (at or below it), F8 | `release/v0.2450.1` | The fix must arrive as a PR **into** the hotfix branch (a direct push is refused), so its coverage and Sonar gate runs on it. Merging that PR publishes through `Publish · Hotfix (older line)` (after the approval gate), then `Merge back · Hotfix to develop` opens a **develop-only** back-merge PR. It never touches `main`, which would regress main to an older release. |
 
-Either way the fix reaches develop, so the next cut cannot silently ship without it. The back-merge
+Either way the fix reaches develop, so the next cut cannot silently ship without it. The fix PR writes
+its changelog entry in `CHANGELOG.md` under a `## [X.Y.Z] - <date>` heading for the hotfix, not as a
+fragment ([The changelog](#the-changelog)). The back-merge
 PR may conflict when the lines have diverged; resolve it like any PR.
 
 ---
@@ -804,6 +854,7 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Release Prerelease refused: "build has expired" / "not green" | the branch head's run is older than 7 days, running, or red | Re-run that CI run (or push), wait for green, retry |
 | Release Prerelease refused: "gate did not pass" / "PR's head is not this commit" | the release PR's Quality or SonarCloud check failed, or is still running, on the branch head | Fix it in the release branch through a PR until the release PR is green on its head, then retry |
 | Older-line hotfix refused: "pushed directly" | the fix was pushed to the hotfix branch instead of merged through a PR | Put the fix on `fix/<name>`, PR it into the hotfix branch, merge when green |
+| Start Release failed at `Gather the changelog fragments`: "changelog.d/N.md: ..." | a fragment (or a heading left under `[Unreleased]`) the gather cannot render; nothing was pushed | Fix the named file by a PR into develop (`changelog.d/README.md` lists the format), check with `pwsh .github/scripts/Merge-ChangelogFragments.ps1 -Version X.Y.Z -DryRun`, then cut again |
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run's Compile, a different assembly set, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, a different assembly set, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |

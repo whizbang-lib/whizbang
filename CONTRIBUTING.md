@@ -165,8 +165,30 @@ the pull request must contain:
 | any | A closing keyword for an accepted issue opened first | Gate · Linked issue |
 | `fix` | It closes an issue labeled `bug`, and a library fix adds or changes a test that fails without it | Review checks |
 | `feat`, `fix`, `perf` in the library | A docs-site pull request, open or merged, that names this one ([Docs](#docs-for-a-library-change)), unless a maintainer comments `/docs-not-needed` | Review checks |
-| `feat`, `fix` in the library | A `CHANGELOG.md` entry under Unreleased | Review checks |
-| `!` (breaking) | A `CHANGELOG.md` entry with an **Upgrade:** note | Gate · Pull request type |
+| `feat`, `fix` in the library | A changelog fragment, `changelog.d/<issue>.md` ([Changelog entries](#changelog-entries)) | Review checks |
+| `!` (breaking) | A changelog fragment with an **Upgrade:** note | Gate · Pull request type |
+| any, into `develop` | No lines added under `[Unreleased]` in `CHANGELOG.md` | Gate · Pull request type |
+
+#### Changelog entries
+
+A change a consumer would notice gets a changelog entry, written as a file of its own:
+`changelog.d/<issue>.md`, named by the issue the pull request fixes (or by the pull request number when
+there is none). It starts with front matter naming its category and, optionally, its subsection, then the
+entry as a list item:
+
+```markdown
+---
+category: Fixed
+subsection: Storage
+---
+- **What changed, in one sentence (#1234).** What a consumer sees now, and what they need to do.
+```
+
+`changelog.d/README.md` lists the categories and subsections. Do not edit `CHANGELOG.md` in a pull request
+into `develop`: every pull request would then change the same lines and conflict with every other, and the
+**Gate · Pull request type** check refuses an addition under `[Unreleased]`. Cutting a release gathers the
+fragments into the version's section (`docs/RELEASING.md`, "The changelog"). A pull request into a release
+branch is the exception: it edits `CHANGELOG.md` directly, under that version's heading.
 
 **Examples:**
 ```
