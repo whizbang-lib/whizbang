@@ -449,7 +449,6 @@ public static class DeclaredKeySpellingPass {
         }
       }
     }
-    }
 
     private async Task<List<ChunkRow>> _readChunkAsync(string select, Guid? after, int columnCount, CancellationToken cancellationToken) {
       await using var command = _command(select);
