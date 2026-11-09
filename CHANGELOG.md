@@ -13,21 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### App signals
-- **An app signal published inside a transaction is delivered on its commit (#2076).** `IAppSignalChannel` is now
-  resolved per scope over the signal bus (`AddWhizbangAppSignalChannel`, called by the Postgres driver). A publish
-  through a channel resolved in a scope whose framework DbContext has a transaction open is sent on that transaction's
-  connection: subscribers hear it only when it commits, never when it (or the savepoint it was made in) rolls back, and
-  PostgreSQL delivers identical topic-and-payload publishes in one transaction once. Inside a `TransactionScope` the
-  signal is sent once the scope commits and dropped on rollback, on EF Core and Dapper alike. Everything else is sent at
-  once, as before: no transaction, a channel held by a singleton or resolved from the root, and a transaction begun on a
-  Dapper connection of the caller's own. Callers do not change. The Postgres driver registers the new
-  `IAppSignalTransactionSource` for every framework DbContext. **Upgrade notes:** a custom `ISignalTopicTransport`
-  implements `PublishTopicAsync(topic, payload, DbTransaction? transaction, ...)`; a payload PostgreSQL rejects (over
-  8000 bytes) published inside a caller's DbContext transaction now fails that transaction (inside a
-  `TransactionScope` the caller's work commits and the rejected send is logged); code that resolved `IAppSignalChannel`
-  and expected the `SignalBus` instance now receives a per-scope channel over it.
-
 #### Security
 - **Receptor interceptors run before every receptor (#1996).** The registered `IReceptorInterceptor`s (composed in a
   singleton `ReceptorInterceptorPipeline`) are asked immediately before every receptor invocation: `SendAsync`,
@@ -517,45 +502,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grows with the table, so a large table used to hold hundreds of thousands of dead rows before a vacuum.
 
 #### Startup
-- **Older instances stand down cluster-wide when a newer version comes online (#2022).** A newer instance, once it
-  serves, publishes a durable `NewerVersionOnlineSignal` when an older instance is online; every older running instance
-  asks the one Assess verdict again (also on an instance that died or left, and on the standby watcher's slow cadence)
-  and stands down through the one run-control path, the same path as a pause and a stop: stop claiming, finish or
-  release held work, release roles, record `StandingBy`. The row's stage message says why (the newer version and the
-  instance it runs on), logged once (`StandbyWatcher` event 3). The maintenance role moves on the newer instance's
-  normal vote. Assess now reads the live, serving instances beside the migration ledger, in both drivers, so an
-  instance that starts while a newer one is online stands down at once.
-  - **Both versions, the application first:** an instance stands down when a strictly newer application or library
-    (W!) version is online. One rule orders them (`UpgradeOrder`): the application version first (the newest
-    application has priority), like with like (SemVer, or a host deploy number); the library, by SemVer, decides when the
-    application versions are equal, unknown or of different schemes. Equal versions do nothing, and an older instance
-    never stands a newer one down. The coordination source guard fails any version comparison outside the rule.
-  - **The rollback gate (behavior change):** an instance serves a database a newer version has touched only when
-    nothing was applied after its own version: no W! migration applied by a newer library, and no application schema
-    change (a perspective table, an association, an application object) applied by a newer application or library.
-    Anything applied since stands it down at Assess with an error naming each change and who applied it, and that a
-    migration cannot be reversed yet (down migrations: #2122). This replaces "the ledger records a newer version":
-    an application or W! rollback with nothing migrated since now serves normally, where before any newer version the
-    ledger named stood it down. Migration 359 records who applied each change (`wh_schema_migrations.applied_version_id`,
-    kept by a trigger: set on an insert or a content-hash change, kept through skips and re-stamps, never moved by a
-    failure). 359 rewrites no ledger row: a row last applied before it names its applier in `version_id` (carried over
-    on its next write), a row last skipped names nobody and never blocks, and a ledger older than 359 takes the version
-    that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
-    version yet and are not gated.
-  - **An override for incompatibility verdicts:** `Whizbang:Startup:OverrideIncompatibility` (off by default) lets an
-    instance start when Assess would stand it down for an incompatibility: the schema newer than its build, or a change
-    it cannot reverse applied since its version. It starts as `Current` (no election, no pass, no converge, nothing
-    applied and no migration run backward), logs at every start at Error (`StartupAssessmentSource` event 3) that it
-    runs past the verdict, with the verdict and its full reason, and records that reason on its instance row
-    (`wh_service_instances.incompatibility_override`, migration 360). It never lifts the stand-down for a newer
-    version online, nor the refusal of a build whose own version is missing or unreadable. Only the one verdict reads
-    and honors it (`StartupAssessment.OverriddenReason` is how everything else learns of it).
-  - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
-    Assess) when the verdict no longer says stand down, for example when the newer instance died; before, an instance
-    stood down by the runtime re-assessment stayed down until replaced. A change applied since its version still keeps
-    it down.
-  - `IOnlineVersionReader` (both Postgres drivers) reads the online instances' versions; `EFCorePostgresStartupAssessor`
-    takes the application version and the instance identity.
 - **Assess is the first stage of startup, and its one verdict binds everything after it (part of #1636).**
   `StartupAssessmentSource` reads the version record once per host; the `Assess` step, the schema initializer and each
   driver's schema pass read that verdict (`StartupVerdictBinding`) and nothing reads the schema again to decide. A
@@ -1614,105 +1560,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moves lanes through the shared fold, the wrong origin's sealed epochs are refolded and both lanes' ledger buckets are
   re-armed. Every correction is logged at Warning and counted (`misattributed_origins_corrected`); no event is deleted.
   A changed ownership map rewalks the store; `ReattributionEnabled` switches it off with re-attribution.
-- **How long the record of an instance's exits is kept is an operator setting (#2126).** `wh_record_instance_exit`
-  removed rows of `wh_instance_exits` older than a fixed 30 days with each write. The window is now
-  `wh_settings.instance_exit_retention_days`, published from `Whizbang:Workers:Maintenance:Retention:InstanceExitDays`
-  (`MaintenanceRetentionOptions.InstanceExitDays`) like every other retention window, and 30 days when nothing sets it
-  (migration 364, in the bootstrap closure with 363's definition; the function is now PL/pgSQL so it can probe for
-  `wh_settings`, which the closure runs before on a new database).
-- **A crash on any thread goes through the one exit path (#2126).** The exit path subscribes to the process's own
-  failure events when the host starts (`IProcessCrashEvents`, `ProcessCrashEvents.Instance` unless a test registers
-  its own), once, and gives them back when its exit completes. An exception nothing caught is a `Crash` (exit code 1)
-  unless an exit is already under way, whose cause stands: it halts through the run-control path (releasing roles and
-  leases), writes the detailed entry, records the durable row, sets the exit code, and then deregisters the instance
-  (its leases and row), which a graceful stop leaves to the shutdown service that a dying process never reaches; all of
-  it bounded by `WhizbangInstanceExit.CrashExitBudget` (5 seconds) on the exit path's clock, as well as by the token
-  the steps are given, so nothing it does can hold the dying process, throw into the runtime's handler, or exit twice.
-  A faulted task nobody observed is said at Error (event 2, `UnobservedTaskException`) and does not end the process,
-  since the runtime does not end it either.
-- **Long startup work says how far along it is, and unrepairable rows no longer make a table rescan every start
-  (#2128).** The declared-key spelling scan and the required-member check that follows it said nothing above Debug, so a
-  migrating instance could show minutes with no output, and a batched migration step (for example 087's backfill) logged
-  its batches only at Debug, so an operator could not tell working from stuck. Each now reports at Information on a steady
-  cadence (`StartupProgress.Cadence`, 15 seconds, on the clock it is given): the scans say when they start, which table
-  of how many they are on with the rows read in it and in all, and their totals when they finish; a batched step says the
-  batch it is on, the rows moved and the time elapsed (`MigrationBatchProgress`, on both drivers), then its totals. A start
-  on which every table is settled says nothing. A table with rows missing a required member, which nothing at startup can
-  repair, used to stay unsettled and be scanned again, and reported again, on every start: it is now settled after the
-  check, which reports the rows once at Error with their count and the table, and is not checked again until what its
-  readers declare changes. A table whose keys were rewritten on a start stays open and is checked on the next one, which
-  reports what is missing then, once. New overloads of `DeclaredKeySpellingPass.ApplyAsync`, `RewriteAsync` and
-  `SettleAsync` take the clock.
-- **The migrator keeps its role through a startup phase longer than its lease (#2127).** The migrator duty is a role
-  assignment with a lease (30 seconds by default), and it was renewed only between phases, so a long one (the
-  declared-key spelling scan, a wait for the schema lock, the stored-form rewrite, the index rebuild, the settle scan, a
-  long migration step) let the lease lapse; the renewal then refused the lapsed lease even when nobody had taken it, the
-  migrator said it lost the role, and a waiting instance concluded the migrator was gone and did the same work. Schema
-  initialization now holds the grant in a `MigratorDuty` from the election until it returns, and holding it starts a
-  `DutyGrantKeepalive`, which verifies the grant at half its role's renew interval (`IDutyGrant.RenewInterval`, a new
-  default member; a role-assignment grant reports `RoleAssignmentOptions.RenewInterval`), so the database sees one
-  renewal per interval through every phase; it stops before the grant is released, so a released role is never renewed.
-  A test fails if any phase from Elect to the end of Migrate runs outside it. The phases before the schema lock run only
-  on the instance holding the role (`MigratorPreLockPhase`): a waiter whose migrator is gone votes for the role and does
-  the work only once it holds it (losing the vote makes it a waiter for the winner, with the votes paced), and a migrator
-  that finds it no longer holds the role votes again rather than working without it; an instance that could not be
-  staged still does the work, as before. The phases are announced to the registered observers
-  (`ISchemaInitializationObserver.OnPreLockPhasesStartingAsync`, a default member), not as a stage, since they run on a
-  restart too. The wait between two steps of another instance's pass has its own outcome,
-  `SchemaDeferralOutcome.FreeBetweenSteps` (`SchemaMigrationDeferral.WaitBetweenStepsAsync`), said at Debug, instead of
-  "the migrator is gone, taking the work over" at Warning and "another instance is migrating" at Information for every
-  step.
-- **An upgrade from a release before #1681 no longer re-runs every older migration (#2125).** Releases before #1681
-  (2026-10-23) recorded each migration's ledger hash over its raw text, and #1681 added a license header to every
-  migration file in the same release that moved to normalized hashes. The step that moves those rows onto normalized
-  hashes compared them with the raw hash of today's headered text, which no earlier release recorded, so it recognized
-  none of them: the first start after the upgrade re-ran every migration that release had applied (204 from v0.2623.1),
-  including the full, single-transaction backfill in 087, which could hold a service in the migrate stage longer than its
-  restart window. The step now recognizes every form an earlier release recorded for a file that has not changed: the
-  raw hash with or without that header (on the EF Core driver, also without the indentation its generator gives the
-  line the header displaced), and on the EF Core driver for a context in a named schema, the text as the
-  earlier schema qualifier rendered it (it reached inside comments and literals; `EarlierReleaseMigrationText`). Matching
-  rows are rewritten to the normalized hash without running the migration, and the count is logged at Information. A file
-  whose content really changed still runs. The upgrade tests stand a database on the hashes v0.2623.1 recorded, captured
-  from its published packages by `scripts/Capture-LegacyMigrationLedger.ps1`. A database that has already been through
-  that re-run needs nothing: its rows already hold normalized hashes.
-- **A starting instance is no longer evicted during a long Elect or Migrate (#2126).** An instance registers at the end
-  of Preflight, but its heartbeat started only once its schema was ready, and the registration recorded no liveness
-  window, so the one liveness rule judged it by 30 seconds and any live peer's reap evicted an instance still electing
-  or migrating. The heartbeat now starts at registration: the worker pipeline hosts it at Elect
-  (`HeartbeatWorker.StartsAt`), and a test fails if it moves later. Until the schema-ready gate opens, a beat goes
-  through `IWorkCoordinator.RecordStartupHeartbeatAsync` (migration 362, `wh_record_startup_heartbeat`, in the bootstrap
-  closure so it exists from Preflight on), which refreshes the heartbeat, the connection mode and the liveness window of
-  the instance's existing row and nothing else: it never inserts a row, never writes the stage or the lifecycle phase
-  (the stage record stays their one writer), reaps no peer and refuses an evicted instance. The first beat after the
-  gate opens is due at once and is the full heartbeat, which registers, reaps and announces the join as before. The
-  registration itself records the connection mode and the liveness window (`InstanceRegistrationLiveness`), so the rule
-  judges the row by its own window from the moment it exists. Readiness is unchanged: a starting instance stays out of
-  the claim ranking and the partition assignment, holds no role but the migrator, and reads as migrating in the fleet
-  status, until it records Accept commands. On the Dapper driver, which applies no bootstrap closure and registers after
-  its pass, a startup beat before the pass has created the function is accepted and writes nothing.
-- **Every exit goes through one exit path, and an evicted instance exits (#2126).** Each way the process exits, good or
-  bad, now takes `IWhizbangInstanceExit`: a host shutdown, the killswitch's stop, a stand-down whose newer version
-  committed, a hosted worker that faulted, a blocking schema initialization that failed, a required capability that is
-  not ready, and an eviction by the fleet. An exit halts through the one run-control path (`HaltAsync` with
-  `RunHaltReason.Stop`, bounded by the host's stop token), writes one entry (EventId 1, `InstanceExit`; Error for a
-  failure, Information for an intended stop) that says why, with every fact as a structured field (`ExitCause`,
-  `ExitCode`, the instance, service and host, the stage and phase, uptime, time since the last accepted heartbeat, what it
-  held, and for an eviction when, by which peer and why), records the same facts in the new `wh_instance_exits` table
-  (migration 363, one row per exit; best effort, and the entry says when the row could not be written), sets the exit
-  code and stops the host. `ExitCause` is closed: `HostShutdown`, `OperatorStop` and `UpgradeStandDown` exit 0, `Crash`
-  1, `Unknown` 2, `ClusterEviction` 3, `StartupFailure` 4 and `SchemaIncompatible` 5. An instance whose heartbeat (or
-  startup beat, or claim registration) is refused because a peer reaped and tombstoned it no longer stops beating and
-  stays sidelined: it exits with code 3 so its host restarts it under a new instance id. The tombstone now records the
-  evicting peer for a reap too, and the last heartbeat and liveness window the rule judged the instance by. Library code
-  can no longer stop the host or set the exit code anywhere else: `BannedSymbols.Exit.txt` bans
-  `IHostApplicationLifetime.StopApplication`, `Environment.Exit`, `Environment.ExitCode` and `Environment.FailFast` in
-  every library project, and a source guard fails on any call the analyzer cannot see. Two changes in behavior follow: a
-  capability that is not ready now exits with code 4 (it was 1), and a blocking schema initialization
-  (`NonBlockingSchemaInit = false`) that fails now exits with code 4 (5 for a schema newer than the binary) instead of
-  throwing out of host start, which ended the process as an unhandled crash. The killswitch's `StopAsync` now ends the
-  process (exit code 0) once held work and roles are released. The heartbeat also no longer holds its first full beat
-  back by a cadence when the schema-ready gate opens between its plan and its wait.
 - **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
   so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
   their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them
@@ -1800,44 +1647,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window's answer (`BackfillWindowAnswer`) now reports the last commit sequence it covered and whether more remains, and
   the requester asks for the next window from exactly that point. An ordinary request that reaches the bound with more
   selected is counted (`redelivery_answers_capped`) and logged.
-- **A collection interface of records serializes on an opaque model or message (#2114).** The generated message JSON
-  context had metadata for `IReadOnlyList<T>` only among the collection interfaces, so a perspective model stored as one
-  opaque document (or any message) holding an `ICollection<T>`, `IReadOnlyCollection<T>` or `IEnumerable<T>` failed its
-  first write with `NotSupportedException` ("JsonTypeInfo metadata ... was not provided"). The mapped path cannot fill
-  those interfaces, so every perspective model declaring one of records was stored opaquely and could not be written at
-  all. The context now provides metadata for each, read back into a `List<T>`. No upgrade step and no schema change.
-- **A recursive type in a perspective model keeps every level (#2112).** A model holding a type that reaches itself (a
-  tree node with `List<TNode> Children`, `IList<TNode>`, `ImmutableList<TNode>`, or two types holding each other) was
-  stored on the Entity Framework driver as mapped properties, and Entity Framework maps a recursive complex type one
-  level deep: every level below the first self-reference was dropped on write and read back as null, with no error at
-  model build, save or query. The generator now stores such a model as one opaque document (the form an array of records
-  already takes), so the whole tree round-trips at any depth, and the new WHIZ202 (Info) reports the recursive property,
-  at any depth, saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
-  that is recursive further down) to switch to `List<TNode>`, which is what led into the truncation. A type reached twice
-  without recursion stays mapped. WHIZ304 and the index advisory (WHIZ302) name a recursive member as recursive, with
-  that reason, instead of as one "the mapped path cannot construct". The generated message JSON context now provides metadata for `IList<T>` and
-  `ImmutableList<T>` (as it did for `IReadOnlyList<T>`), and discovers the element type behind an `ImmutableList<T>`:
-  without it, any opaque document or message holding one could not be serialized at all (`NotSupportedException`,
-  "JsonTypeInfo metadata ... was not provided"). **Upgrade notes:** no schema change: the `data` column is `jsonb` in both forms, and a
-  row an earlier release wrote reads on the new path. Such a row holds only the first level of the recursion: the rest
-  was never written and nothing in the database can restore it; rebuilding the perspective (re-projecting from its
-  events) writes the whole tree. **Perspectives whose models are recursive must be rebuilt after upgrading; the startup
-  log names them.** Nothing is rebuilt automatically. On the first start against a database an earlier release
-  migrated, the instance doing the schema work logs one Warning per such perspective whose table holds rows (event id
-  2112, `RecursivePerspectiveNeedsRebuild`), naming the perspective (the name a rebuild takes) and its table. It reads
-  the migration ledger: new migration `361_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
-  migrated by this release, so a fresh database and every later start are silent. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
-  as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
-  as errors is not affected: WHIZ202 reports a recursive model at Info, since it is stored correctly and there is
-  nothing to change (`WhizbangOpaqueArrayWarning=false` or a suppression on the property turns the report off).
-  **New error WHIZ201:** a perspective model whose recursive types form a circular reference cannot be saved. A tree
-  (`Node.Children`), two types holding collections of each other and a linked list (`Link.Next`) are writable; a
-  recursion that stores a collection and also a single-valued reference back up the document (`Node.Children` with
-  `Node.Parent`, `Order.Lines` with `Line.Order`, or deeper, `Order.Lines`, `Line.Detail`, `Detail.Order`) lets an
-  element reach its container, and is now a build error at the back-reference. Leave the reference out of the stored
-  model (`[JsonIgnore]`) and restore it after reading, or store the container's identifier. An object cycle the
-  analyzer cannot see (`Next` with `Prev`, a node placed among its own descendants) fails the write with the
-  serializer's cycle detection and stores nothing; it is never truncated in silence.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose
