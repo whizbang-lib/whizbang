@@ -205,6 +205,31 @@ public class TypeHistoryWalkSqlTests : EFCoreTestBase {
     await Assert.That(second.Batches).IsEqualTo(0).Because("the second type's last window came back empty: nothing left to read");
   }
 
+  [Test]
+  public async Task Reconcile_ABudgetSpentOnOneType_LeavesTheNextTypeUntouchedForTheNextCycleAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    for (var i = 0; i < 3; i++) {
+      await _appendAsync(conn, stream, _embedded, _embeddedJson(stream, "k"));
+    }
+    var otherStream = (Guid)TrackedGuid.New();
+    var other = await _appendAsync(conn, otherStream, _other, _otherJson(otherStream, "k"));
+    var step = _step(2, 1, typeof(SupersedingProbeEmbedded), typeof(TypeHistoryWalkProbeOther));
+
+    var first = await step.ReconcileAsync(_services(), CancellationToken.None);
+
+    await Assert.That(first.Batches).IsEqualTo(1);
+    await Assert.That(await _flagsAsync(conn, other)).IsEqualTo(0L).Because("the cycle's one batch went to the first type");
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_type_history_walks WHERE event_type = @t", ("t", _other)))
+      .IsEqualTo(0L).Because("a type the budget does not reach is not even ensured this cycle");
+
+    var second = await step.ReconcileAsync(_services(), CancellationToken.None);
+
+    await Assert.That(second.Batches).IsEqualTo(1);
+    await Assert.That(second.TypesFinished).IsEqualTo(1).Because("the first type's last window came back short");
+    await Assert.That(await _flagsAsync(conn, other)).IsEqualTo(0L).Because("its batch again spent the cycle's budget");
+  }
+
   // ===== The cursor rows 345 kept =====
 
   [Test]
