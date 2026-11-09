@@ -184,6 +184,9 @@ public class ConfigurationKeyManifestTests {
     // stand-down beat and the migration ledger), which the harness never reaches; ApplicationVersionTests reads both.
     "Whizbang:Application:DeployNumber",
     "Whizbang:Application:Version",
+    // The incompatibility override (#2022), read when a Postgres driver builds its Assess verdict's assessor, which the
+    // harness never resolves; UpgradeOrderTests reads it.
+    "Whizbang:Startup:OverrideIncompatibility",
   ];
 
   private const string MANIFEST_HEADER =

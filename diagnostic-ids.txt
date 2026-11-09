@@ -131,6 +131,8 @@ WHIZ170 | active | Whizbang.Generators | [InheritScope] on a perspective class h
 WHIZ171 | active | Whizbang.Generators | [InheritScope] with all-None flags gives rows no scope
 WHIZ180 | active | Whizbang.Generators | Audit settings of an unreachable event type are not registered
 WHIZ200 | active | Whizbang.Generators | An array of records stores the perspective model as one opaque document
+WHIZ201 | active | Whizbang.Generators | A perspective model holds a circular reference and cannot be saved
+WHIZ202 | active | Whizbang.Generators | A recursive type stores the perspective model as one opaque document
 WHIZ300 | active | Whizbang.Generators | Perspective interfaces must use the same model type
 WHIZ302 | active | Whizbang.Generators | Filtered perspective field has no index
 WHIZ303 | active | Whizbang.Generators | Declared index cannot be built for this field's type

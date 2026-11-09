@@ -34,6 +34,17 @@ public static class SchemaInitializationObservers {
     }
   }
 
+  /// <summary>The phases before the schema lock are about to run for <paramref name="schema"/> on this instance.</summary>
+  /// <param name="services">Where the observers are registered; null tells none.</param>
+  /// <param name="schema">The schema, unquoted.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_TellsEveryRegisteredObserverAsync</tests>
+  public static async Task PreLockPhasesStartingAsync(IServiceProvider? services, string schema, CancellationToken cancellationToken) {
+    foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
+      await observer.OnPreLockPhasesStartingAsync(schema, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   /// <summary>The bootstrap closure for <paramref name="schema"/> failed transiently and retries after <paramref name="delay"/>.</summary>
   /// <param name="services">Where the observers are registered; null tells none.</param>
   /// <param name="schema">The schema being bootstrapped, unquoted.</param>

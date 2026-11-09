@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -56,6 +57,8 @@ public class StartupParityTests {
       string? connectionString = null, Action<IServiceCollection>? configure = null, params (string Key, string Value)[] config) {
     var services = new ServiceCollection();
     services.AddLogging();
+    // #2126: an exit in a test keeps the test process's own exit code.
+    services.AddSingleton<Whizbang.Core.RunControl.IProcessExitCode>(new DiscardedExitCode());
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
       .AddInMemoryCollection(config.Select(c => new KeyValuePair<string, string?>(c.Key, c.Value))).Build());
     services.Configure<SchemaInitializationOptions>(o => {
@@ -70,6 +73,10 @@ public class StartupParityTests {
     var provider = services.BuildServiceProvider();
     _instances.Add(provider);
     return provider;
+  }
+
+  private sealed class DiscardedExitCode : Whizbang.Core.RunControl.IProcessExitCode {
+    public void SetExitCode(int exitCode) { }
   }
 
   private static WhizbangDatabaseInitializerService _initializer(IServiceProvider instance) =>
@@ -202,8 +209,13 @@ public class StartupParityTests {
     await _startAsync(driver, ("Whizbang:Schema:Reconcile:Drop:Index", "false"));
     await Assert.That(await _existsAsync(driver.Retired)).IsTrue().Because("index drops are switched off");
 
-    await Assert.That(async () => await _startAsync(driver, ("Whizbang:Schema:Reconcile:Mode", "Sideways")))
-      .Throws<InvalidOperationException>().Because("a setting that is not one fails the start rather than being ignored");
+    // #2126: a setting that is not one fails the start rather than being ignored: the instance exits through the one exit
+    // path as a startup failure (exit code 4), rather than throwing out of host start as an unhandled crash.
+    var refused = await _startAsync(driver, ("Whizbang:Schema:Reconcile:Mode", "Sideways"));
+    var exit = refused.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>();
+    await exit.Completion;
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure);
+    await Assert.That(exit.Report!.Record.ExceptionType).IsEqualTo("System.InvalidOperationException");
 
     await _startAsync(driver);
     await Assert.That(await _existsAsync(driver.Retired)).IsFalse();
@@ -384,10 +396,126 @@ public class StartupParityTests {
     await Assert.That(await _ledgerAsync()).IsEqualTo(before);
   }
 
-  /// <summary>Records a release newer than this binary as the writer of one framework migration.</summary>
+  // ── the incompatibility override (owner decision, #2022) ─────────────
+
+  private const string OVERRIDE = "Whizbang:Startup:OverrideIncompatibility";
+
+  /// <summary>Every log line at Warning or above, with its event id, from every category.</summary>
+  private sealed class WarningLog : ILoggerProvider {
+    private readonly Lock _lock = new();
+    private readonly List<(int Id, LogLevel Level, string Message)> _lines = [];
+    public List<(int Id, LogLevel Level, string Message)> Lines { get { lock (_lock) { return [.. _lines]; } } }
+    public ILogger CreateLogger(string categoryName) => new Sink(this, categoryName);
+    public void Dispose() { /* nothing held */ }
+
+    private sealed class Sink(WarningLog owner, string category) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+      public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+        if (IsEnabled(logLevel)) {
+          lock (owner._lock) {
+            owner._lines.Add((eventId.Id, logLevel, category + ": " + formatter(state, exception)));
+          }
+        }
+      }
+    }
+  }
+
+  private Task<object> _overrideRecordAsync(IServiceProvider instance) => _scalarAsync<object>(
+    "SELECT incompatibility_override FROM wh_service_instances WHERE instance_id = $1",
+    instance.GetRequiredService<IServiceInstanceProvider>().InstanceId);
+
+  private static List<(int Id, LogLevel Level, string Message)> _overrideLines(WarningLog log) =>
+    [.. log.Lines.Where(l => l.Message.StartsWith("Whizbang.Core.Startup.StartupAssessmentSource: ", StringComparison.Ordinal)
+      && l.Message.Contains(OVERRIDE, StringComparison.Ordinal))];
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _recordNewerVersionAsync("999.0.0");
+    var before = await _ledgerAsync();
+    var log = new WarningLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<ILoggerProvider>(log), config: (OVERRIDE, "true"));
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue()
+      .Because("the override lets this build serve");
+    await Assert.That(await _ledgerAsync()).IsEqualTo(before)
+      .Because("it only serves: no migration runs, backward or otherwise");
+    var lines = _overrideLines(log);
+    await Assert.That(lines.Count).IsEqualTo(1).Because("logged once per start, loudly");
+    await Assert.That(lines[0].Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(lines[0].Id).IsEqualTo(3);
+    await Assert.That(lines[0].Message).Contains("StandDown");
+    await Assert.That(lines[0].Message).Contains("(applied by library 999.0.0, application unknown)")
+      .Because("the full reason, as the stand-down error carries it");
+    var recorded = await _overrideRecordAsync(instance) as string;
+    await Assert.That(recorded).IsNotNull().Because("operators and peers see it on the instance row");
+    await Assert.That(recorded).Contains("(applied by library 999.0.0, application unknown)");
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheIncompatibilityOverride_OnACompatibleInstance_LogsNothing_AndRecordsNothingAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    var log = new WarningLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<ILoggerProvider>(log), config: (OVERRIDE, "true"));
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
+    await Assert.That(_overrideLines(log)).IsEmpty();
+    await Assert.That(await _overrideRecordAsync(instance)).IsEqualTo(DBNull.Value);
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheIncompatibilityOverride_DoesNotOverrideANewerVersionOnlineAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _execAsync($$"""
+      SELECT record_heartbeat('{{Whizbang.Core.ValueObjects.TrackedGuid.New()}}'::uuid, 'svc', 'host', 1, '{}'::jsonb,
+        'Running', '0.0.0-0', 90, 'pooled', '2.0.0')
+      """);
+    var stages = new StageLog();
+    // An application host registers its version with AddWhizbang; the driver alone does not, so the scenario does.
+    var instance = _compose(driver, configure: s => {
+      s.AddSingleton<IStartupStageReporter>(stages);
+      s.AddSingleton<Whizbang.Core.Versioning.IApplicationVersionProvider>(new Whizbang.Core.Versioning.ApplicationVersionProvider(
+        Whizbang.Core.Versioning.ApplicationVersion.FromRecorded("1.0.0")));
+    }, config: (OVERRIDE, "true"));
+    var initializer = _initializer(instance);
+
+    await initializer.StartAsync(cancellationToken);
+    await stages.Registered.Task.WaitAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsFalse()
+      .Because("a newer version online is the cluster-wide stand-down, not an incompatibility: the override never lifts it");
+    await Assert.That(stages.Calls.Any(c => c.Contains("is online with application version 2.0.0", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>
+  /// Records a release newer than this binary as having applied one framework migration: a changed content hash, so the
+  /// ledger records it as the applier (#2022). A pass that only re-stamped the row would have applied nothing.
+  /// </summary>
   private async Task _recordNewerVersionAsync(string version) => await _execAsync($"""
     WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('{version}') RETURNING id)
-    UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v)
+    UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), content_hash = 'applied-by-{version}', status = 2
       WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]');
     """);
 

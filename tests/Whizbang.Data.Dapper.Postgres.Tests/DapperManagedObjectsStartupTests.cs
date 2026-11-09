@@ -109,10 +109,29 @@ public class DapperManagedObjectsStartupTests {
       .Because("ReportOnly reports the drop and makes none");
   }
 
+  /// <summary>
+  /// A setting that is not one fails the start: since #2126 the instance exits through the one exit path as a startup
+  /// failure (exit code 4), rather than throwing out of host start as an unhandled crash.
+  /// </summary>
   [Test]
   public async Task AtStart_ASettingThatIsNotOne_FailsTheStartAsync() {
-    await Assert.That(async () => await SchemaStartup.StartAsync(_services(config: ("Whizbang:Schema:Reconcile:Mode", "Sideways"))))
-      .Throws<InvalidOperationException>();
+    var codes = new RecordingExitCodes();
+    var services = _services(config: ("Whizbang:Schema:Reconcile:Mode", "Sideways"));
+    services.AddSingleton<Whizbang.Core.RunControl.IProcessExitCode>(codes);
+
+    await using var provider = await SchemaStartup.StartAsync(services);
+    var exit = provider.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>();
+    await exit.Completion;
+
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure);
+    await Assert.That(exit.Report!.Record.ExceptionType).IsEqualTo("System.InvalidOperationException");
+    await Assert.That(codes.Codes).IsEquivalentTo([4]);
+  }
+
+  /// <summary>The test process keeps its own exit code.</summary>
+  private sealed class RecordingExitCodes : Whizbang.Core.RunControl.IProcessExitCode {
+    public List<int> Codes { get; } = [];
+    public void SetExitCode(int exitCode) => Codes.Add(exitCode);
   }
 
   [Test]

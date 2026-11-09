@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
 
@@ -63,6 +64,24 @@ public static class SignalBusServiceCollectionExtensions {
     // Shared state behind the signal-bus health component: probe verdicts, last wire arrival,
     // doorbell-liveness accounting. Written by the probe loop / transports / claim loop.
     services.TryAddSingleton<SignalBusLivenessState>();
+    return services;
+  }
+
+  /// <summary>
+  /// Registers the application's <see cref="IAppSignalChannel"/> over the registered <see cref="SignalBus"/> (#2076).
+  /// Idempotent. The channel is resolved per provider: in a scope, a publish inside a transaction a registered
+  /// <see cref="IAppSignalTransactionSource"/> reports is sent inside it and delivered only on commit; from the root, or
+  /// as a singleton's dependency, a publish is sent at once.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/app-signals#transactional-publish</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Signals/ScopeBoundAppSignalChannelTests.cs:AddWhizbangAppSignalChannel_IsIdempotent_AndRequiresServicesAsync</tests>
+  public static IServiceCollection AddWhizbangAppSignalChannel(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+
+    // A singleton factory always receives the root provider, which is what tells a root resolution from a scoped one.
+    services.TryAddSingleton(static sp => new AppSignalRootProvider(sp));
+    services.TryAddTransient<IAppSignalChannel>(static sp =>
+      new ScopeBoundAppSignalChannel(sp.GetRequiredService<SignalBus>(), sp, sp.GetRequiredService<AppSignalRootProvider>()));
     return services;
   }
 }

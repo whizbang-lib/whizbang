@@ -75,6 +75,13 @@ public interface IReleasesHeldWork {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task that completes when the release is done.</returns>
   Task ReleaseHeldWorkAsync(CancellationToken cancellationToken);
+
+  /// <summary>
+  /// How many leased streams this holds right now, for the exit's account of what the instance held (#2126). Zero by
+  /// default, for a releaser that does not count its leases.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs:TheEntry_StatesWhatTheInstanceHeld_ReadBeforeTheHaltReleasedItAsync</tests>
+  int HeldLeases => 0;
 }
 
 /// <summary>
@@ -88,6 +95,13 @@ public interface IReleasesHeldRoles {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task that completes when every role is released.</returns>
   Task ReleaseAllAsync(CancellationToken cancellationToken);
+
+  /// <summary>
+  /// The roles this holds right now, for the exit's account of what the instance held (#2126). Empty by default, for a
+  /// releaser that does not name its roles.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs:TheEntry_StatesWhatTheInstanceHeld_ReadBeforeTheHaltReleasedItAsync</tests>
+  IReadOnlyCollection<string> HeldRoles => [];
 }
 
 /// <summary>

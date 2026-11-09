@@ -277,6 +277,7 @@ Whizbang:SignalBus:ProbeTimeoutMilliseconds
 Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
+Whizbang:Startup:OverrideIncompatibility
 Whizbang:Startup:RegistrationCollisions
 Whizbang:StartupStatusGraph:IncludeReasons
 Whizbang:StreamIntegrity:AuditEnabled
@@ -599,6 +600,7 @@ Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
 Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize
 Whizbang:Workers:Maintenance:Retention:DeduplicationDays
 Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours
+Whizbang:Workers:Maintenance:Retention:InstanceExitDays
 Whizbang:Workers:Maintenance:Retention:IntegrityLedgerMaxEntries
 Whizbang:Workers:Maintenance:Retention:LogDays
 Whizbang:Workers:Maintenance:Retention:OrphanPerspectiveEventGraceHours

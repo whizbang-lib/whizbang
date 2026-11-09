@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -49,12 +48,10 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     };
   }
 
-  private sealed class StubHostLifetime : IHostApplicationLifetime {
-    public bool StopRequested { get; private set; }
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => StopRequested = true;
+  /// <summary>The exit path as the watcher sees it: whether it asked to exit (#2126).</summary>
+  private sealed class StubHostLifetime {
+    public Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit { get; } = new();
+    public bool StopRequested => Exit.Cause == Whizbang.Core.RunControl.ExitCause.UpgradeStandDown;
   }
 
   private sealed class CountingStep : IStartupStep {
@@ -98,9 +95,15 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     }
 
     var versionProvider = new LibraryVersionProvider(version);
-    // The one writer of the row's stage, phase and version (#1636): the pod is Running, as the stage record says.
+    // The one writer of the row's stage, phase and version (#1636): an older pod is Running, as the stage record says;
+    // the newer pod is the migrator, still in Migrate while it runs the handshake. #2022: a newer instance that serves is
+    // online and stands the older ones down by itself; a migrator mid-handshake does not serve yet.
     var stages = new StartupStageReporter(scopeFactory, pod, [], NullLogger<StartupStageReporter>.Instance, versionProvider);
-    await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
+    if (version == NEW_VERSION) {
+      await stages.EnterAsync(StartupStage.Migrate, "applying the breaking migration under the standby handshake", ct);
+    } else {
+      await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
+    }
     await stages.InstanceRegisteredAsync(ct);
     var lifecycleOptions = new WhizbangLifecycleOptions();
     var lifecycle = new WhizbangLifecycleState(
@@ -115,7 +118,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     var watcher = new StandbyWatcher(
       scopeFactory: scopeFactory,
       runControl: runControl,
-      hostLifetime: hostLifetime,
+      instanceExit: hostLifetime.Exit,
       instanceProvider: pod,
       versionProvider: versionProvider,
       assessor: assessor,

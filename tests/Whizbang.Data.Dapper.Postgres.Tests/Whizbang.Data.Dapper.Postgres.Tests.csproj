@@ -38,4 +38,9 @@
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The ledger hashes published releases recorded (#2125), read at run time from the output directory. -->
+    <None Include="Fixtures/LegacyMigrationLedgers/**/*.tsv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
