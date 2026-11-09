@@ -1010,6 +1010,7 @@ public sealed partial class IntegrityManifestReceptor(
       : [];
 
     var mismatched = new List<string>();
+    var matched = new List<StreamDigest>();
     var bulkCandidates = new List<(StreamDigest Origin, StreamDigest? Mine, long Deficit)>();
     foreach (var origin in message.Digests) {
       var bucket = (origin.TenantScope, origin.EventType, origin.StreamId);
@@ -1017,6 +1018,7 @@ public sealed partial class IntegrityManifestReceptor(
       heldByBucket.TryGetValue(bucket, out var sequenceless);
       var placement = IntegrityDigestMath.PlaceHeld(origin, placed, sequenceless);
       if (placement.Verdict == HeldWindowVerdict.Matches) {
+        matched.Add(origin);
         continue;
       }
       var mine = placement.Held;
@@ -1034,6 +1036,7 @@ public sealed partial class IntegrityManifestReceptor(
         bulkCandidates.Add((origin, mine, deficit));
       }
     }
+    await _healProvenTypeLanesAsync(services, coordinator, message, matched, cancellationToken).ConfigureAwait(false);
     if (mismatched.Count == 0) {
       // #80-C seal advance — only when the whole window PROVABLY passed: every bucket matched,
       // the answer was one complete chunk, and no resume cursor was pending. Chunks carry no
@@ -1173,6 +1176,42 @@ public sealed partial class IntegrityManifestReceptor(
       new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     LogDrillDown(logger, drillDown.Count, mismatched.Count, message.OriginServiceName);
     return true;
+  }
+
+  /// <summary>
+  /// #2207: heals the type-lane ledger row (the empty stream) of every (tenant, type) this answer proves complete, so a
+  /// deficit recorded on the type lane, by a bulk backfill or a checkpoint gap, clears once the type compares equal
+  /// instead of waiting for a checkpoint window heal that a type with no new traffic never gets.
+  /// </summary>
+  /// <remarks>
+  /// A match is proof only when both sides were counted over the whole history of the type: a full-history answer
+  /// (no window), or a window that starts at or below the seal (everything beneath it was verified) and reached the
+  /// origin's settled head (the origin did not cap it). A window above the seal or a capped one proves only itself, and
+  /// the recorded deficit may lie outside it, so its matches heal nothing. Only a <see cref="HeldWindowVerdict.Matches"/>
+  /// verdict reaches here: an undecided type (events held without the origin's sequence that fill the count but not the
+  /// fold) is not proven. Each heal records its age on the heal histogram, as every other heal does.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.TypeLaneHeal.cs</tests>
+  private static async Task _healProvenTypeLanesAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, IntegrityManifest message, List<StreamDigest> matched,
+      CancellationToken cancellationToken) {
+    if (matched.Count == 0) {
+      return;
+    }
+    if (message.ComputedThrough is not null
+        && (message.WindowCapped
+            || (message.SinceSequence ?? 0) > await coordinator.GetIntegritySealAsync(message.OriginServiceId, cancellationToken).ConfigureAwait(false))) {
+      return;
+    }
+    var ledger = IntegrityRepairSupport.ResolveLedger(services);
+    var ages = await ledger.MarkHealedBatchWithAgesAsync(
+      matched.ConvertAll(d => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, d.TenantScope, d.EventType, Guid.Empty)),
+      cancellationToken).ConfigureAwait(false);
+    var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    foreach (var age in ages) {
+      metrics?.BucketHealSeconds.Record(age);
+    }
   }
 
   /// <summary>

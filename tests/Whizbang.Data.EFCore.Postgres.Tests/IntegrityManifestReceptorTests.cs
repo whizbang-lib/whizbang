@@ -35,7 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 [NotInParallel("IntegrityManifestGates")]   // the receptors' per-process gates are shared state
 [Category("Shard3")]
-public class IntegrityManifestReceptorTests {
+public partial class IntegrityManifestReceptorTests {
   // A fixed instant: these tests pass "now" explicitly, so it never needs the real clock.
   private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
