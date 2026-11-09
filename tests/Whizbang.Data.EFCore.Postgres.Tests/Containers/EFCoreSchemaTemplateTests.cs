@@ -273,7 +273,6 @@ public class EFCoreSchemaTemplateTests {
   public async Task TheSweep_DropsOnlyTemplatesUnderThePrefixUnusedForTooLongAsync(CancellationToken cancellationToken) {
     await SharedPostgresContainer.InitializeAsync(cancellationToken);
     var prefix = string.Create(CultureInfo.InvariantCulture, $"eftmpls{Guid.NewGuid():N}")[..20];
-    var now = new DateTimeOffset(2026, 11, 8, 12, 0, 0, TimeSpan.Zero);
     var old = $"{prefix}_old";
     var recent = $"{prefix}_recent";
     var kept = $"{prefix}_kept";
@@ -290,14 +289,16 @@ public class EFCoreSchemaTemplateTests {
         await _scalarAsync<object>($"ALTER DATABASE {name} WITH IS_TEMPLATE {(template ? "true" : "false")}", null,
           cancellationToken);
       }
-      await stampAsync(old, EFCoreSchemaTemplate.FormatStamp(now.AddDays(-2)), template: true);
-      await stampAsync(recent, EFCoreSchemaTemplate.FormatStamp(now.AddHours(-1)), template: true);
-      await stampAsync(kept, EFCoreSchemaTemplate.FormatStamp(now.AddDays(-30)), template: true);
+      // Ages by the database's clock, which is the one the sweep measures against.
+      var now = await _scalarAsync<DateTime>("SELECT now()", null, cancellationToken);
+      static string stamp(DateTime when) => when.ToUniversalTime().ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+      await stampAsync(old, stamp(now.AddDays(-2)), template: true);
+      await stampAsync(recent, stamp(now.AddHours(-1)), template: true);
+      await stampAsync(kept, stamp(now.AddDays(-30)), template: true);
       await stampAsync(unreadable, "not a stamp", template: true);
-      await stampAsync(notATemplate, EFCoreSchemaTemplate.FormatStamp(now.AddDays(-30)), template: false);
+      await stampAsync(notATemplate, stamp(now.AddDays(-30)), template: false);
 
-      var swept = await EFCoreSchemaTemplate.SweepStaleTemplatesAsync(
-        prefix, keep: kept, TimeSpan.FromDays(1), now, cancellationToken);
+      var swept = await EFCoreSchemaTemplate.SweepStaleTemplatesAsync(prefix, keep: kept, TimeSpan.FromDays(1), cancellationToken);
 
       await Assert.That(swept).IsEqualTo(1);
       await Assert.That(await _oidAsync(old, cancellationToken)).IsNull();
@@ -419,10 +420,10 @@ public class EFCoreSchemaTemplateTests {
   }
 
   [Test]
-  public async Task AStamp_RoundTripsAndRejectsWhatItDidNotWriteAsync() {
+  public async Task AStamp_IsReadAsUtc_AndWhatItDidNotWriteIsRejectedAsync() {
     var when = new DateTimeOffset(2026, 11, 8, 12, 34, 56, TimeSpan.Zero);
 
-    await Assert.That(EFCoreSchemaTemplate.TryReadStamp(EFCoreSchemaTemplate.FormatStamp(when), out var read)).IsTrue();
+    await Assert.That(EFCoreSchemaTemplate.TryReadStamp("20261108123456", out var read)).IsTrue();
     await Assert.That(read).IsEqualTo(when);
     await Assert.That(EFCoreSchemaTemplate.TryReadStamp(null, out _)).IsFalse();
     await Assert.That(EFCoreSchemaTemplate.TryReadStamp("last used yesterday", out _)).IsFalse();

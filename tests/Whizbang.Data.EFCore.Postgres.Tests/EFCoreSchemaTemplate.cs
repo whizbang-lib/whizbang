@@ -170,13 +170,7 @@ internal static partial class EFCoreSchemaTemplate {
   /// <returns>The marker text.</returns>
   internal static string MarkerFor(string fingerprint) => MARKER_PREFIX + fingerprint;
 
-  /// <summary>Writes a moment the way a template's last use is stamped.</summary>
-  /// <param name="when">The moment.</param>
-  /// <returns>The stamp.</returns>
-  internal static string FormatStamp(DateTimeOffset when) =>
-    when.UtcDateTime.ToString(STAMP_FORMAT, CultureInfo.InvariantCulture);
-
-  /// <summary>Reads a stamp <see cref="FormatStamp"/> wrote.</summary>
+  /// <summary>Reads a stamp <see cref="_stampAsync"/> wrote: the database clock's UTC time as yyyyMMddHHmmss.</summary>
   /// <param name="comment">A template's database comment.</param>
   /// <param name="stamp">The moment, when the comment is a stamp.</param>
   /// <returns><see langword="true"/> when the comment is a stamp.</returns>
@@ -215,7 +209,7 @@ internal static partial class EFCoreSchemaTemplate {
     var name = TemplateName;
     await EnsureTemplateAsync(name, Fingerprint,
       (context, ct) => context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: ct), cancellationToken);
-    await SweepStaleTemplatesAsync(TEMPLATE_PREFIX, name, StaleAfter, DateTimeOffset.UtcNow, cancellationToken);
+    await SweepStaleTemplatesAsync(TEMPLATE_PREFIX, name, StaleAfter, cancellationToken);
     return name;
   }
 
@@ -264,8 +258,7 @@ internal static partial class EFCoreSchemaTemplate {
   /// </summary>
   /// <param name="prefix">The prefix the templates are named under.</param>
   /// <param name="keep">The caller's own template, never dropped.</param>
-  /// <param name="staleAfter">How long unused before a template is dropped.</param>
-  /// <param name="now">The moment ages are measured from.</param>
+  /// <param name="staleAfter">How long unused before a template is dropped, by the database's clock.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>How many were dropped.</returns>
   /// <remarks>
@@ -274,13 +267,13 @@ internal static partial class EFCoreSchemaTemplate {
   /// process or worktree is using is never a day old.
   /// </remarks>
   internal static async Task<int> SweepStaleTemplatesAsync(
-      string prefix, string keep, TimeSpan staleAfter, DateTimeOffset now, CancellationToken cancellationToken) {
+      string prefix, string keep, TimeSpan staleAfter, CancellationToken cancellationToken) {
     await using var admin = new NpgsqlConnection(_adminConnectionString());
     await admin.OpenAsync(cancellationToken);
 
     var stale = new List<string>();
     await using (var query = new NpgsqlCommand("""
-        SELECT datname, shobj_description(oid, 'pg_database')
+        SELECT datname, shobj_description(oid, 'pg_database'), now()
         FROM pg_database
         WHERE datistemplate AND starts_with(datname, @templatePrefix) AND datname <> @kept
         """, admin)) {
@@ -289,6 +282,8 @@ internal static partial class EFCoreSchemaTemplate {
       await using var reader = await query.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         var comment = reader.IsDBNull(1) ? null : reader.GetString(1);
+        // The database's clock, which wrote the stamp, so the age never depends on the host's.
+        var now = reader.GetFieldValue<DateTimeOffset>(2);
         if (TryReadStamp(comment, out var lastUsed) && lastUsed < now - staleAfter) {
           stale.Add(reader.GetString(0));
         }
@@ -372,8 +367,11 @@ internal static partial class EFCoreSchemaTemplate {
     return await command.ExecuteScalarAsync(cancellationToken) as string;
   }
 
+  /// <summary>Stamps the template's last use with the database's clock, which the sweep measures its age against.</summary>
   private static Task _stampAsync(NpgsqlConnection admin, string name, CancellationToken cancellationToken) =>
-    _executeAsync(admin, $"COMMENT ON DATABASE {name} IS '{FormatStamp(DateTimeOffset.UtcNow)}'", cancellationToken);
+    _executeAsync(admin,
+      "DO $$ BEGIN EXECUTE format('COMMENT ON DATABASE %I IS %L', '" + name + "', "
+      + "to_char(now() AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS')); END $$", cancellationToken);
 
   /// <summary>Drops a template, or whatever holds its name, retrying the contention a copy in progress causes.</summary>
   private static Task _dropAsync(NpgsqlConnection admin, string name, CancellationToken cancellationToken) =>
@@ -386,7 +384,7 @@ internal static partial class EFCoreSchemaTemplate {
         await _executeAsync(admin, $"DROP DATABASE IF EXISTS {name} WITH (FORCE)", cancellationToken);
       },
       static _ => false,
-      TimeProvider.System,
+      TimeProvider.System, // review-checks:allow backoff between retries of server contention (55006); no assertion waits on it
       cancellationToken);
 
   private static async Task _buildAsync(
@@ -424,7 +422,7 @@ internal static partial class EFCoreSchemaTemplate {
           await _executeAsync(admin, $"ALTER DATABASE {build.Name} RENAME TO {name}", cancellationToken);
         },
         static _ => false,
-        TimeProvider.System,
+        TimeProvider.System, // review-checks:allow backoff between retries of server contention (55006); no assertion waits on it
         cancellationToken);
       holder = name;
 

@@ -75,7 +75,7 @@ every migration, perspective tables, constraints, associations and the reconcile
   template. The template refuses connections (`ALLOW_CONNECTIONS false`), because one open connection makes every copy
   fail with 55006, and the build ends any backend left in the scratch database before the rename.
 - **Leftovers.** A failed build drops its scratch database. Every use stamps the template's database comment, and the
-  run's other `eftmpl_` templates unused for a day are dropped.
+  run's other `eftmpl_` templates unused for a day are dropped; both the stamp and the age use the database clock.
 - **From scratch on purpose.** A test of the schema pass itself still migrates an empty database; such a fixture is on
   the reasoned list in `SchemaTemplateGuardTests`.
 
