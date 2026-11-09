@@ -255,6 +255,23 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
   }
 
   /// <inheritdoc />
+  /// <remarks>Every entry of the proven (origin, tenant, type) triples goes, whatever its stream; ages come off the
+  /// entries removed, as for <see cref="MarkHealedBatchWithAgesAsync"/>.</remarks>
+  public ValueTask<IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
+      IReadOnlyList<DivergenceKey> typeKeys, CancellationToken cancellationToken = default) {
+    var proven = typeKeys.Select(k => (k.OriginServiceId, k.TenantScope, k.EventType)).ToHashSet();
+    var now = DateTimeOffset.UtcNow;
+    var ages = new List<double>();
+    lock (_lock) {
+      foreach (var key in _entries.Keys.Where(k => proven.Contains((k.OriginServiceId, k.TenantScope, k.EventType))).ToList()) {
+        _entries.Remove(key, out var entry);
+        ages.Add(Math.Max(0d, (now - entry!.FirstSeen).TotalSeconds));
+      }
+    }
+    return ValueTask.FromResult<IReadOnlyList<double>>(ages);
+  }
+
+  /// <inheritdoc />
   /// <remarks>Marks only buckets this ledger tracks: a redelivery nobody asked this ledger for leaves nothing
   /// behind. A changed signature (<see cref="TryBeginReport"/>) or a heal lifts the mark.</remarks>
   public ValueTask<IReadOnlyList<DivergenceKey>> MarkUnhealableBatchAsync(

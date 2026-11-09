@@ -1172,6 +1172,41 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the ledger then forgets the type lanes alone, through the batch heal.</remarks>
+  public async Task<IReadOnlyList<double>?> IntegrityMarkTypesHealedWithAgesAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(typeKeys);
+    try {
+      return await _withCoordinatorCommandAsync<IReadOnlyList<double>?>(async (cmd, schema) => {
+        cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_mark_types_healed")}(@p_origin_service_id,@p_tenant_scopes,@p_event_types)";
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN_SERVICE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+          Value = typeKeys.Select(k => k.TenantScope).ToArray()
+        });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+          Value = typeKeys.Select(k => k.EventType).ToArray()
+        });
+        var ages = new List<double>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          ages.Add(reader.GetDouble(0));
+        }
+        return ages;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the ledger falls back to the type lanes.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_mark_types_healed failed for origin {OriginServiceId}; only the proven types' type lanes are forgotten this time.",
+        originServiceId);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
   /// <remarks>Null on any failure: a mark that cannot reach the ledger leaves repair on its terminal cadence, the
   /// harmless direction. The returned keys speak the caller's form, an absent tenant as null.</remarks>
   public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(

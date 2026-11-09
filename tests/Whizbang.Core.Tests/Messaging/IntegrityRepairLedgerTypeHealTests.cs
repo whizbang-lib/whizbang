@@ -38,7 +38,7 @@ public class IntegrityRepairLedgerTypeHealTests {
       await _seedAsync(ledger, key);
     }
 
-    var ages = await ((IIntegrityRepairLedger)ledger).MarkTypesHealedWithAgesAsync([streams[1]]);
+    var ages = await ledger.MarkTypesHealedWithAgesAsync([streams[1]]);
 
     await Assert.That(ages.Count).IsEqualTo(4).Because("the type lane and its three streams, each with its age");
     await Assert.That(ledger.Count).IsEqualTo(3).Because("another tenant's, type's and origin's buckets are not proven");

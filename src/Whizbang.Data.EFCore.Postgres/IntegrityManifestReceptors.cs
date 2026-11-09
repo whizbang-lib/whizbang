@@ -1200,7 +1200,10 @@ public sealed partial class IntegrityManifestReceptor(
   /// <summary>
   /// #2207: heals the type-lane ledger row (the empty stream) of every (tenant, type) this answer proves complete, so a
   /// deficit recorded on the type lane, by a bulk backfill or a checkpoint gap, clears once the type compares equal
-  /// instead of waiting for a checkpoint window heal that a type with no new traffic never gets.
+  /// instead of waiting for a checkpoint window heal that a type with no new traffic never gets. The same proof covers
+  /// every stream of the type, so every per-stream row of that (origin, tenant, type) is a phantom and is forgotten in
+  /// the same step (phantom heal); a type with a stream genuinely missing has a roll-up that disagrees and never reaches
+  /// here.
   /// </summary>
   /// <remarks>
   /// A match is proof only when both sides were counted over the whole history of the type: a full-history answer
@@ -1212,6 +1215,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// </remarks>
   /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.TypeLaneHeal.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.PhantomHeal.cs</tests>
   private static async Task _healProvenTypeLanesAsync(
       IServiceProvider services, IWorkCoordinator coordinator, IntegrityManifest message, List<StreamDigest> matched,
       CancellationToken cancellationToken) {
@@ -1224,7 +1228,8 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
     var ledger = IntegrityRepairSupport.ResolveLedger(services);
-    var ages = await ledger.MarkHealedBatchWithAgesAsync(
+    // The same proof covers every stream of the type, so its per-stream rows are phantoms and go with the type lane.
+    var ages = await ledger.MarkTypesHealedWithAgesAsync(
       matched.ConvertAll(d => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, d.TenantScope, d.EventType, Guid.Empty)),
       cancellationToken).ConfigureAwait(false);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();

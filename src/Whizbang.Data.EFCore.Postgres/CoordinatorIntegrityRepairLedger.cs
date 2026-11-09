@@ -185,6 +185,32 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
+  /// <remarks>One round trip (migration 384) when the store supports it. A store that does not, cannot be reached or
+  /// fails still forgets the proven types' type lanes through <see cref="MarkHealedBatchWithAgesAsync"/>, so the type lane
+  /// clears as #2207 made it. The keys share one origin, as every batch here does.</remarks>
+  public async ValueTask<System.Collections.Generic.IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
+      CancellationToken cancellationToken = default) {
+    if (typeKeys.Count == 0) {
+      return [];
+    }
+    try {
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is not null
+          && await coordinator.IntegrityMarkTypesHealedWithAgesAsync(typeKeys[0].OriginServiceId, typeKeys, cancellationToken).ConfigureAwait(false) is { } ages) {
+        return ages;
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      _degraded("mark-types-healed", fallback: false, ex);
+    }
+    return await MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k with { StreamId = Guid.Empty })], cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   /// <remarks>One round trip. A store that cannot answer marks nothing: repair then keeps its terminal cadence for
   /// these buckets, which costs an occasional redundant redelivery and never stops a repair that could help.</remarks>
   public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
