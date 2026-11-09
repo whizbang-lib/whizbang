@@ -156,7 +156,8 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   /// <c>pg_statio_user_tables</c> counts a table's blocks across every backend and every fork, so a vacuum in the window
   /// adds every page it scans (an autovacuum worker's reads land in whichever window is open when it flushes its
   /// counters), and one that ran before marks pages all-visible, so the next update of a row there also reads the
-  /// visibility map. Here the vacuum is run on purpose and its counters flushed.
+  /// visibility map. Here the vacuum is run on purpose and its counters flushed, and the all-visible state it leaves is
+  /// checked rather than assumed (#2158): see <see cref="_flushCommitsAsync"/>.
   /// </summary>
   [Test]
   [Timeout(600000)]
@@ -167,6 +168,7 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     await _executeAsync(conn, _chainAsMigrationDefinedIt("260_"));
     await _disableAutovacuumAsync(conn);
     await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pageinspect");
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
     var oneLevel = await _seedWarmStreamsAsync(conn);
     var shallow = await _measureAsync(conn, recorder, _batchOver(oneLevel));
     var untouched = await _seedWarmStreamsAsync(conn);
@@ -179,7 +181,13 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     }
 
     var clean = await _measureAsync(conn, recorder, _batchOver(untouched));
+    await _flushCommitsAsync(conn);
     await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+    var (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
+    await Assert.That(vacuumedPages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
+    await Assert.That(vacuumedPagesNotAllVisible).IsEqualTo(0L)
+      .Because($"precondition: the vacuum marked every page holding the streams' rows all-visible ({vacuumedPages} pages), "
+        + "or the update below has no visibility-map read to show");
     var afterVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedBefore));
     var ledgerPages = await _scalarAsync(conn, "SELECT pg_relation_size('wh_stream_lifecycle') / current_setting('block_size')::bigint");
     var duringVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedDuring), duringTheWindow: async () => {
@@ -206,6 +214,31 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
       .Because("an update on an all-visible page also reads the visibility map, which pg_statio counts as the table's");
     await Assert.That(duringVacuum.LedgerBlocks).IsGreaterThanOrEqualTo(clean.LedgerBlocks + ledgerPages)
       .Because("a vacuum in the window reads every heap page of the ledger, and pg_statio charges those reads to the window");
+  }
+
+  /// <summary>Makes every earlier commit's WAL durable, so a vacuum after it can mark their rows all-visible (#2158).</summary>
+  /// <remarks>
+  /// The shared container runs with <c>synchronous_commit</c> off, so a commit returns before its WAL is flushed and the
+  /// WAL writer flushes it on its own schedule. A row's commit hint bit may be set only once the WAL holding its commit is
+  /// flushed, and a vacuum marks a page all-visible only when every row on it carries that bit. A vacuum that ran within
+  /// the WAL writer's delay of the last commits therefore left their pages as they were, no other session holding
+  /// anything back, and the update after it read no visibility map: the flaky 300. One synchronous commit flushes the WAL
+  /// through its own commit record, every earlier commit included, so the state no longer depends on when the vacuum ran.
+  /// </remarks>
+  private static Task _flushCommitsAsync(NpgsqlConnection conn) =>
+    _executeAsync(conn, "BEGIN; SET LOCAL synchronous_commit = on; SELECT txid_current(); COMMIT;");
+
+  /// <summary>The ledger pages holding <paramref name="streams"/>' rows, and how many of them are not all-visible.</summary>
+  private static async Task<(long Pages, long NotAllVisible)> _pagesHoldingAsync(NpgsqlConnection conn, Guid[] streams) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT count(*), count(*) FILTER (WHERE NOT (pg_visibility_map('wh_stream_lifecycle', p.blk)).all_visible)
+      FROM (SELECT DISTINCT (ctid::text::point)[0]::bigint AS blk FROM wh_stream_lifecycle WHERE stream_id = ANY(@streams)) p
+      """;
+    cmd.Parameters.AddWithValue(nameof(streams), streams);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    _ = await reader.ReadAsync();
+    return (reader.GetInt64(0), reader.GetInt64(1));
   }
 
   private static Guid[] _batchOver(Guid[] streams) => [.. Enumerable.Range(0, EVENTS).Select(i => streams[i % streams.Length])];
