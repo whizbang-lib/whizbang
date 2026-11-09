@@ -214,7 +214,9 @@ public class DataOnlyRoleE2ETests {
       public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
       public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
         if (IsEnabled(logLevel)) {
-          entries.Enqueue($"{category}: {formatter(state, exception)} {exception?.Message}");
+          // The whole exception, stack and inner exceptions included: an entry from the process-wide unobserved-task
+          // hook names only "a Task threw", and the stack is what says which operation abandoned it.
+          entries.Enqueue($"{category}: {formatter(state, exception)} {exception}");
         }
       }
     }
