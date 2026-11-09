@@ -181,7 +181,8 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     }
 
     var clean = await _measureAsync(conn, recorder, _batchOver(untouched));
-    await _flushCommitsAsync(conn);
+    await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
+      .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
     await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
     var (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
     await Assert.That(vacuumedPages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
@@ -224,9 +225,25 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   /// the WAL writer's delay of the last commits therefore left their pages as they were, no other session holding
   /// anything back, and the update after it read no visibility map: the flaky 300. One synchronous commit flushes the WAL
   /// through its own commit record, every earlier commit included, so the state no longer depends on when the vacuum ran.
+  /// The transaction writes a row: one that writes no WAL before its commit record skips the flush even when synchronous.
   /// </remarks>
-  private static Task _flushCommitsAsync(NpgsqlConnection conn) =>
-    _executeAsync(conn, "BEGIN; SET LOCAL synchronous_commit = on; SELECT txid_current(); COMMIT;");
+  /// <returns>Whether the flushed WAL reached the point written before the call.</returns>
+  private static async Task<bool> _flushCommitsAsync(NpgsqlConnection conn) {
+    await _executeAsync(conn, "CREATE TABLE IF NOT EXISTS wal_flush_probe (id int)");
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT pg_current_wal_insert_lsn()::text;
+      BEGIN;
+      SET LOCAL synchronous_commit = on;
+      INSERT INTO wal_flush_probe VALUES (1);
+      COMMIT;
+      """;
+    var written = (string)(await cmd.ExecuteScalarAsync())!;
+    await using var check = conn.CreateCommand();
+    check.CommandText = "SELECT pg_current_wal_flush_lsn() >= @written::pg_lsn";
+    check.Parameters.AddWithValue(nameof(written), written);
+    return (bool)(await check.ExecuteScalarAsync())!;
+  }
 
   /// <summary>The ledger pages holding <paramref name="streams"/>' rows, and how many of them are not all-visible.</summary>
   private static async Task<(long Pages, long NotAllVisible)> _pagesHoldingAsync(NpgsqlConnection conn, Guid[] streams) {
