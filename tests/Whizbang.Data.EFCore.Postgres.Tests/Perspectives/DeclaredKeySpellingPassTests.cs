@@ -227,8 +227,8 @@ public class DeclaredKeySpellingPassTests {
     var log = new ListLogger();
     var clock = new OneCadencePerReading();
 
-    var result = await DeclaredKeySpellingPass.RewriteAsync(_factory, "public", [_table], TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
-    await DeclaredKeySpellingPass.SettleAsync(_factory, "public", result, TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
+    var result = await DeclaredKeySpellingPass.RewriteAsync(new DeclaredKeySpellingRun(_factory, "public", TIMEOUT_SECONDS, BatchSize: 2, clock, log), [_table], CancellationToken.None);
+    await DeclaredKeySpellingPass.SettleAsync(new DeclaredKeySpellingRun(_factory, "public", TIMEOUT_SECONDS, BatchSize: 2, clock, log), result, CancellationToken.None);
 
     var lines = _information(log);
     string[] expected = [
@@ -259,8 +259,8 @@ public class DeclaredKeySpellingPassTests {
     var log = new ListLogger();
     var clock = new FakeTimeProvider();
 
-    var result = await DeclaredKeySpellingPass.RewriteAsync(_factory, "public", [_table], TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
-    await DeclaredKeySpellingPass.SettleAsync(_factory, "public", result, TIMEOUT_SECONDS, batchSize: 2, clock, log, CancellationToken.None);
+    var result = await DeclaredKeySpellingPass.RewriteAsync(new DeclaredKeySpellingRun(_factory, "public", TIMEOUT_SECONDS, BatchSize: 2, clock, log), [_table], CancellationToken.None);
+    await DeclaredKeySpellingPass.SettleAsync(new DeclaredKeySpellingRun(_factory, "public", TIMEOUT_SECONDS, BatchSize: 2, clock, log), result, CancellationToken.None);
 
     await Assert.That(string.Join("\n", _information(log))).IsEqualTo(string.Join("\n",
       "The declared-key spelling scan of public started: 1 perspective table(s) to look at",

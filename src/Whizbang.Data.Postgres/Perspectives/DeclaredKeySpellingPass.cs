@@ -110,7 +110,7 @@ public static class DeclaredKeySpellingPass {
   public static Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, TimeProvider.System, logger, cancellationToken);
+    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, TimeProvider.System, logger, cancellationToken);
 
   /// <summary>
   /// Rewrites every stored key in another case than its declared name, reporting progress on
@@ -128,32 +128,31 @@ public static class DeclaredKeySpellingPass {
   public static Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, timeProvider, logger, cancellationToken);
+    RewriteAsync(
+      DeclaredKeySpellingRun.Create(connectionFactory, schema, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, timeProvider, logger),
+      tables, cancellationToken);
 
   internal static Task<DeclaredKeySpellingResult> RewriteAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
       int commandTimeoutSeconds, int batchSize, ILogger? logger, CancellationToken cancellationToken) =>
-    RewriteAsync(connectionFactory, schema, tables, commandTimeoutSeconds, batchSize, TimeProvider.System, logger, cancellationToken);
+    RewriteAsync(
+      DeclaredKeySpellingRun.Create(connectionFactory, schema, commandTimeoutSeconds, batchSize, TimeProvider.System, logger),
+      tables, cancellationToken);
 
   internal static async Task<DeclaredKeySpellingResult> RewriteAsync(
-      Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<DeclaredKeyTable> tables,
-      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(connectionFactory);
-    ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+      DeclaredKeySpellingRun run, IReadOnlyList<DeclaredKeyTable> tables, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(tables);
-    ArgumentNullException.ThrowIfNull(timeProvider);
-    var log = logger ?? NullLogger.Instance;
+    var (schema, log) = (run.Schema, run.Log);
 
-    var progress = new ScanProgress(SPELLING_SCAN, schema, tables.Count, timeProvider, log);
+    var progress = new ScanProgress(SPELLING_SCAN, schema, tables.Count, run.TimeProvider, log);
     var checkedTables = new List<(DeclaredKeyTable, long)>();
     var conflicts = new List<string>();
     long rowsChanged = 0;
     for (var i = 0; i < tables.Count; i++) {
       var table = tables[i];
       try {
-        var outcome = await _rewriteTableAsync(
-          connectionFactory, schema, table, commandTimeoutSeconds, batchSize, progress.Table(i + 1, table.Table), log,
-          cancellationToken).ConfigureAwait(false);
+        var outcome = await _rewriteTableAsync(run, table, progress.Table(i + 1, table.Table), cancellationToken)
+          .ConfigureAwait(false);
         if (outcome is { } scanned) {
           checkedTables.Add((table, scanned.RowsChanged));
           conflicts.AddRange(scanned.Conflicts);
@@ -190,7 +189,7 @@ public static class DeclaredKeySpellingPass {
   public static Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
       int commandTimeoutSeconds, ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, TimeProvider.System, logger, cancellationToken);
+    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, TimeProvider.System, logger, cancellationToken);
 
   /// <summary>
   /// Reports a required member still missing from the stored rows of each table the rewrite scanned and changed
@@ -207,31 +206,31 @@ public static class DeclaredKeySpellingPass {
   public static Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
       int commandTimeoutSeconds, TimeProvider timeProvider, ILogger? logger = null, CancellationToken cancellationToken = default) =>
-    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, timeProvider, logger, cancellationToken);
+    SettleAsync(
+      DeclaredKeySpellingRun.Create(connectionFactory, schema, commandTimeoutSeconds, DEFAULT_BATCH_SIZE, timeProvider, logger),
+      result, cancellationToken);
 
   internal static Task SettleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
       int commandTimeoutSeconds, int batchSize, ILogger? logger, CancellationToken cancellationToken) =>
-    SettleAsync(connectionFactory, schema, result, commandTimeoutSeconds, batchSize, TimeProvider.System, logger, cancellationToken);
+    SettleAsync(
+      DeclaredKeySpellingRun.Create(connectionFactory, schema, commandTimeoutSeconds, batchSize, TimeProvider.System, logger),
+      result, cancellationToken);
 
   internal static async Task SettleAsync(
-      Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeySpellingResult result,
-      int commandTimeoutSeconds, int batchSize, TimeProvider timeProvider, ILogger? logger, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(connectionFactory);
-    ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+      DeclaredKeySpellingRun run, DeclaredKeySpellingResult result, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(result);
-    ArgumentNullException.ThrowIfNull(timeProvider);
-    var log = logger ?? NullLogger.Instance;
+    var (schema, log) = (run.Schema, run.Log);
 
-    var progress = new ScanProgress(REQUIRED_CHECK, schema, result.Checked.Count, timeProvider, log);
+    var progress = new ScanProgress(REQUIRED_CHECK, schema, result.Checked.Count, run.TimeProvider, log);
     var checkedTables = 0;
     long rowsMissing = 0;
     for (var i = 0; i < result.Checked.Count; i++) {
       var (table, rowsChanged) = result.Checked[i];
       try {
-        await using var connection = connectionFactory();
+        await using var connection = run.ConnectionFactory();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        var scan = new TableScan(connection, schema, table, commandTimeoutSeconds, batchSize);
+        var scan = new TableScan(connection, run, table);
         if (rowsChanged > 0) {
           // Rewritten this start: left open, so the next start scans it once more (rows an older instance wrote during
           // a rollout) and checks what is missing then, once.
@@ -289,7 +288,7 @@ public static class DeclaredKeySpellingPass {
       Rows += rows;
       if (_clock.Due()) {
         var elapsed = _clock.Elapsed;
-        DeclaredKeySpellingLog.ScanProgressed(log, phase, schema, _position, tables, _table, _tableRows, Rows,
+        DeclaredKeySpellingLog.ScanProgressed(log, phase, schema, new ScanPosition(_position, tables, _table), _tableRows, Rows,
           new ProgressElapsed(elapsed));
       }
     }
@@ -298,11 +297,11 @@ public static class DeclaredKeySpellingPass {
   private sealed record TableOutcome(long RowsChanged, IReadOnlyList<string> Conflicts);
 
   private static async Task<TableOutcome?> _rewriteTableAsync(
-      Func<NpgsqlConnection> connectionFactory, string schema, DeclaredKeyTable table,
-      int commandTimeoutSeconds, int batchSize, Action<int> read, ILogger log, CancellationToken cancellationToken) {
-    await using var connection = connectionFactory();
+      DeclaredKeySpellingRun run, DeclaredKeyTable table, Action<int> read, CancellationToken cancellationToken) {
+    var log = run.Log;
+    await using var connection = run.ConnectionFactory();
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    var scan = new TableScan(connection, schema, table, commandTimeoutSeconds, batchSize);
+    var scan = new TableScan(connection, run, table);
 
     var state = await scan.StateAsync(cancellationToken).ConfigureAwait(false);
     if (state == TableState.Absent) {
@@ -324,12 +323,11 @@ public static class DeclaredKeySpellingPass {
   private enum TableState { Absent, Settled, Open }
 
   /// <summary>One table's statements, on one open connection.</summary>
-  private sealed class TableScan(
-      NpgsqlConnection connection, string schema, DeclaredKeyTable table, int commandTimeoutSeconds, int batchSize) {
-    private readonly string _qualified = $"{SqlText.Identifier(schema)}.{SqlText.Identifier(table.Table)}";
-    private readonly string _journal = $"{SqlText.Identifier(schema)}.{StoredFormMigrationSql.JOURNAL}";
+  private sealed class TableScan(NpgsqlConnection connection, DeclaredKeySpellingRun run, DeclaredKeyTable table) {
+    private readonly string _qualified = $"{SqlText.Identifier(run.Schema)}.{SqlText.Identifier(table.Table)}";
+    private readonly string _journal = $"{SqlText.Identifier(run.Schema)}.{StoredFormMigrationSql.JOURNAL}";
 
-    public string DisplayTable { get; } = $"{schema}.{table.Table}";
+    public string DisplayTable { get; } = $"{run.Schema}.{table.Table}";
 
     public async Task<TableState> StateAsync(CancellationToken cancellationToken) {
       await using var exists = _command("SELECT to_regclass($1) IS NOT NULL, to_regclass($2) IS NOT NULL");
@@ -393,36 +391,27 @@ public static class DeclaredKeySpellingPass {
       // A column holding SQL NULL has no document, so nothing is missing from it.
       var select = $"SELECT id{string.Concat(checks.Select(c => $", coalesce({c.Predicate}, false)"))} FROM {_qualified} "
         + "WHERE ($1::uuid IS NULL OR id > $1) ORDER BY id LIMIT $2";
-      var counts = new long[checks.Count];
-      var samples = checks.Select(_ => new List<Guid>()).ToArray();
-      long rowsMissing = 0;
+      var tally = new MissingTally(checks.Count);
       Guid? after = null;
       int chunk;
       do {
         await using var command = _command(select);
         command.Parameters.Add(new NpgsqlParameter { Value = (object?)after ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid });
-        command.Parameters.AddWithValue(batchSize);
+        command.Parameters.AddWithValue(run.BatchSize);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         chunk = 0;
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
           chunk++;
           after = reader.GetGuid(0);
-          var lacking = false;
-          for (var i = 0; i < checks.Count; i++) {
-            if (reader.GetBoolean(i + 1)) {
-              counts[i]++;
-              lacking = true;
-              _sample(samples[i], after.Value);
-            }
-          }
-          rowsMissing += lacking ? 1 : 0;
+          tally.Add(reader, after.Value);
         }
         if (chunk > 0) {
           read(chunk);
         }
       } while (chunk > 0);
 
-      return (rowsMissing, [.. checks.Select((c, i) => (c.Label, Count: counts[i], Sample: samples[i]))
+      var (counts, samples) = (tally.Counts, tally.Samples);
+      return (tally.RowsMissing, [.. checks.Select((c, i) => (c.Label, Count: counts[i], Sample: samples[i]))
         .Where(c => c.Count > 0)
         .Select(c => string.Create(CultureInfo.InvariantCulture,
           $"{c.Label} in {c.Count} row(s) (for example {string.Join(", ", c.Sample)})"))]);
@@ -447,16 +436,10 @@ public static class DeclaredKeySpellingPass {
       await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static void _sample(List<Guid> sample, Guid id) {
-      if (sample.Count < MISSING_SAMPLES) {
-        sample.Add(id);
-      }
-    }
-
     private async Task<List<ChunkRow>> _readChunkAsync(string select, Guid? after, int columnCount, CancellationToken cancellationToken) {
       await using var command = _command(select);
       command.Parameters.Add(new NpgsqlParameter { Value = (object?)after ?? DBNull.Value, NpgsqlDbType = NpgsqlDbType.Uuid });
-      command.Parameters.AddWithValue(batchSize);
+      command.Parameters.AddWithValue(run.BatchSize);
       await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       var rows = new List<ChunkRow>();
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
@@ -520,7 +503,33 @@ public static class DeclaredKeySpellingPass {
     }
 
     private NpgsqlCommand _command(string sql) =>
-      new(sql, connection) { CommandTimeout = commandTimeoutSeconds };
+      new(sql, connection) { CommandTimeout = run.CommandTimeoutSeconds };
+  }
+
+  /// <summary>The required-member check's counts: rows lacking a member, per check, with a few of their ids.</summary>
+  private sealed class MissingTally(int checks) {
+    public long[] Counts { get; } = new long[checks];
+    public List<Guid>[] Samples { get; } = [.. Enumerable.Range(0, checks).Select(_ => new List<Guid>())];
+    public long RowsMissing { get; private set; }
+
+    /// <summary>Counts one row: column <c>i + 1</c> of <paramref name="reader"/> says whether check <c>i</c> found it lacking.</summary>
+    public void Add(NpgsqlDataReader reader, Guid id) {
+      var lacking = false;
+      for (var i = 0; i < Counts.Length; i++) {
+        if (reader.GetBoolean(i + 1)) {
+          Counts[i]++;
+          lacking = true;
+          _sample(Samples[i], id);
+        }
+      }
+      RowsMissing += lacking ? 1 : 0;
+    }
+
+    private static void _sample(List<Guid> sample, Guid id) {
+      if (sample.Count < MISSING_SAMPLES) {
+        sample.Add(id);
+      }
+    }
   }
 
   private sealed record ChunkRow(Guid Id, string? Version, string?[] Documents);
@@ -601,10 +610,9 @@ internal static partial class DeclaredKeySpellingLog {
   public static partial void ScanStarted(ILogger logger, string phase, string schema, int tables);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "{Phase} of {Schema}: table {Position} of {Tables} ({Table}), {TableRows} row(s) read in it, "
-      + "{Rows} in all, {Elapsed} elapsed")]
+    Message = "{Phase} of {Schema}: {Position}, {TableRows} row(s) read in it, {Rows} in all, {Elapsed} elapsed")]
   public static partial void ScanProgressed(
-    ILogger logger, string phase, string schema, int position, int tables, string table, long tableRows, long rows, ProgressElapsed elapsed);
+    ILogger logger, string phase, string schema, ScanPosition position, long tableRows, long rows, ProgressElapsed elapsed);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "{Phase} of {Schema} finished: {Scanned} table(s) scanned, {Rows} row(s) read, {Changed} row(s) "
@@ -619,4 +627,31 @@ internal static partial class DeclaredKeySpellingLog {
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Could not bring the stored keys of {Table} to their declared spelling; the next start tries again")]
   public static partial void TableFailed(ILogger logger, Exception exception, string table);
+}
+
+/// <summary>Where a scan is, as its progress line says it: <c>table 2 of 5 (schema.table)</c>, formatted only when written.</summary>
+internal readonly struct ScanPosition(int position, int tables, string table) {
+  /// <inheritdoc/>
+  public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"table {position} of {tables} ({table})");
+}
+
+/// <summary>What every statement of one declared-key spelling pass runs with.</summary>
+/// <param name="ConnectionFactory">Produces the connections the pass uses.</param>
+/// <param name="Schema">The schema the tables live in, unquoted.</param>
+/// <param name="CommandTimeoutSeconds">The timeout of each statement.</param>
+/// <param name="BatchSize">Rows read per statement of a scan.</param>
+/// <param name="TimeProvider">The clock the progress lines are paced on.</param>
+/// <param name="Log">Where the pass reports what it did.</param>
+internal sealed record DeclaredKeySpellingRun(
+    Func<NpgsqlConnection> ConnectionFactory, string Schema, int CommandTimeoutSeconds, int BatchSize,
+    TimeProvider TimeProvider, ILogger Log) {
+  /// <summary>Checks the arguments and builds the run; no logger reports to nowhere.</summary>
+  public static DeclaredKeySpellingRun Create(
+      Func<NpgsqlConnection> connectionFactory, string schema, int commandTimeoutSeconds, int batchSize,
+      TimeProvider timeProvider, ILogger? logger) {
+    ArgumentNullException.ThrowIfNull(connectionFactory);
+    ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+    ArgumentNullException.ThrowIfNull(timeProvider);
+    return new(connectionFactory, schema, commandTimeoutSeconds, batchSize, timeProvider, logger ?? NullLogger.Instance);
+  }
 }
