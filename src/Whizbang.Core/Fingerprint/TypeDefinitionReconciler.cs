@@ -14,9 +14,10 @@ namespace Whizbang.Core.Fingerprint;
 
 /// <summary>
 /// Startup reconciler for the type-definition fingerprint. Registers each message type's current
-/// definition (content hashes), detects drift against the stored fingerprint, records a lineage edge, and
-/// — for settings drift toward Ephemeral, when enabled — reclassifies the type's historical events.
-/// Detect-by-default, act-by-opt-in (<see cref="EphemeralOptions.ReconcileHistoricalOnStartup"/>).
+/// definition (content hashes), detects drift against the stored fingerprint and records a lineage edge.
+/// Detect-by-default, act-by-opt-in (<see cref="EphemeralOptions.ReconcileHistoricalOnStartup"/>): the reclassification
+/// of an ephemeral type's stored history is not done here but by the maintenance cycle, in bounded batches (#2206), so
+/// startup never waits on it.
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
 /// <remarks>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</remarks>
@@ -134,7 +135,6 @@ public sealed partial class TypeDefinitionReconciler(
 
     var driftDetected = 0;
     var typesRegistered = 0;
-    var typesReclassified = 0;
 
     foreach (var entry in _catalog.GetAll()) {
       cancellationToken.ThrowIfCancellationRequested();
@@ -157,23 +157,13 @@ public sealed partial class TypeDefinitionReconciler(
         await _recordDriftAsync(coordinator, entry, reg.DefinitionId, prevId, prev, isEphemeralEvent, cancellationToken)
           .ConfigureAwait(false);
       }
-
-      // The flag reclaims the history of every ephemeral event type on the boot it is on, not only on the boot that
-      // first saw the type turn ephemeral: that boot may have run with the flag off, and every later boot sees the
-      // definition as current (#1578). The reclassification is idempotent, so a type whose history is already
-      // ephemeral costs one lookup.
-      if (isEphemeralEvent && _options.ReconcileHistoricalOnStartup) {
-        var names = new List<string>(1 + entry.FormerNames.Count) { entry.ClrTypeName };
-        names.AddRange(entry.FormerNames);
-        var result = await coordinator.ReclassifyEventsEphemeralAsync(names, cancellationToken).ConfigureAwait(false);
-        if (result.EventsReclassified > 0) {
-          typesReclassified++;
-          LogReclassified(_logger, entry.ClrTypeName, result.EventsReclassified, result.StreamsBlocked);
-        }
-      }
+      // #2206: the history of an ephemeral event type is reclassified by the maintenance cycle's
+      // ephemeral-history-reclassify step, in bounded batches through the per-type history walker, on every cycle with
+      // the flag on (so a type that turned ephemeral on an earlier boot with the flag off is still reclaimed, #1578).
+      // Startup used to do it in one statement over every stored event of the type, and waited on it.
     }
 
-    return new TypeDefinitionReconcileSummary(driftDetected, typesReclassified, typesRegistered);
+    return new TypeDefinitionReconcileSummary(driftDetected, TypesReclassified: 0, typesRegistered);
   }
 
   // Records a definition's drift from the prior one: the lineage edge, the drift warning, and what is owed, since
@@ -213,10 +203,6 @@ public sealed partial class TypeDefinitionReconciler(
     Message = "Type-definition drift for '{TypeName}' (settingsChanged={SettingsChanged}, schemaChanged={SchemaChanged}) — recorded lineage {Relationship}.")]
   private static partial void LogDrift(ILogger logger, string typeName, bool settingsChanged, bool schemaChanged, string relationship);
 
-  [LoggerMessage(EventId = 9211, Level = LogLevel.Information,
-    Message = "Reclassified historical events of '{TypeName}' to Ephemeral: {EventsReclassified} events, {StreamsBlocked} streams skipped as mixed.")]
-  private static partial void LogReclassified(ILogger logger, string typeName, long eventsReclassified, long streamsBlocked);
-
   [LoggerMessage(EventId = 9212, Level = LogLevel.Warning,
     Message = "'{TypeName}' is now Ephemeral but has historical Sourced events — reclassification is pending. Enable EphemeralOptions.ReconcileHistoricalOnStartup or run the reclassify command to reclaim them.")]
   private static partial void LogReclassifyPending(ILogger logger, string typeName);
@@ -227,6 +213,11 @@ public sealed partial class TypeDefinitionReconciler(
 }
 
 /// <summary>Outcome of a <see cref="TypeDefinitionReconciler"/> pass.</summary>
+/// <param name="DriftDetected">Types whose definition changed since it was last stored.</param>
+/// <param name="TypesReclassified">Always 0 since #2206: startup no longer reclassifies an ephemeral type's history; the
+/// maintenance cycle's ephemeral-history-reclassify step does, in bounded batches.</param>
+/// <param name="TypesRegistered">Types whose current definition the pass registered.</param>
+/// <param name="Skipped">True when a sibling instance already reconciled inside the claim window.</param>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
 public sealed record TypeDefinitionReconcileSummary(
     int DriftDetected,
