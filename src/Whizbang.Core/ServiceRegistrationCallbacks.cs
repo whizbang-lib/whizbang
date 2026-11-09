@@ -52,6 +52,36 @@ public static class ServiceRegistrationCallbacks {
   /// </summary>
   public static Action<IServiceCollection, ServiceRegistrationOptions>? PerspectiveServices { get; set; }
 
+  private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _pinnedIdRegistry = new(_lock);
+  private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _rawReceptors = new(_lock);
+
+  /// <summary>
+  /// One startup slot every assembly sets: each assignment adds a callback, null clears them, and the combined
+  /// delegate runs every callback in the order set. Built from a snapshot, so a saved value replays exactly the set
+  /// it was read from.
+  /// </summary>
+  private sealed class AccumulatedCallbacks<TCallback>(Lock gate) where TCallback : Delegate {
+    private readonly List<TCallback> _callbacks = [];
+
+    public TCallback? Combined {
+      get {
+        lock (gate) {
+          return (TCallback?)Delegate.Combine([.. _callbacks]);
+        }
+      }
+    }
+
+    public void Set(TCallback? value) {
+      lock (gate) {
+        if (value is null) {
+          _callbacks.Clear();
+        } else {
+          _callbacks.Add(value);
+        }
+      }
+    }
+  }
+
   /// <summary>
   /// Callback for registering the generated dispatcher and receptor infrastructure.
   /// Set by the source-generated module initializer in EVERY Whizbang-compiled assembly that
@@ -112,10 +142,15 @@ public static class ServiceRegistrationCallbacks {
 
 
   /// <summary>
-  /// Callback for registering the generated <see cref="IPinnedIdRegistry"/>.
-  /// Set by the PinnedIdRegistryGenerator's module initializer in the consumer assembly.
+  /// Callback for registering the generated <see cref="IPinnedIdRegistry"/>. Set by the PinnedIdRegistryGenerator's
+  /// module initializer in every assembly that pins types (Whizbang.Core among them), so it accumulates, as
+  /// <see cref="Dispatcher"/> does; each callback contributes its registry to the one the host serves (#2198).
   /// </summary>
-  public static Action<IServiceCollection>? PinnedIdRegistry { get; set; }
+  /// <tests>tests/Whizbang.Core.Tests/ServiceRegistrationCallbacksAccumulateTests.cs:PinnedIdRegistry_RunsEveryAssemblysCallback_InTheOrderSetAsync</tests>
+  public static Action<IServiceCollection>? PinnedIdRegistry {
+    get => _pinnedIdRegistry.Combined;
+    set => _pinnedIdRegistry.Set(value);
+  }
 
   /// <summary>
   /// Callback for registering the generated <see cref="IMessageTypeCatalog"/>.
@@ -195,9 +230,15 @@ public static class ServiceRegistrationCallbacks {
   /// <summary>
   /// Callback for registering discovered <see cref="Whizbang.Core.Messaging.IRawReceptor"/>
   /// implementations and the <see cref="Whizbang.Core.Messaging.IRawReceptorRegistry"/>.
-  /// Set by the RawReceptorDiscoveryGenerator's module initializer in the consumer assembly.
+  /// Set by the RawReceptorDiscoveryGenerator's module initializer in every assembly that declares raw receptors,
+  /// so it accumulates, as <see cref="Dispatcher"/> does: a single-valued slot let the last assembly's initializer
+  /// overwrite the others', and their raw receptors were never registered (#2198).
   /// </summary>
-  public static Action<IServiceCollection>? RawReceptors { get; set; }
+  /// <tests>tests/Whizbang.Core.Tests/ServiceRegistrationCallbacksAccumulateTests.cs:RawReceptors_RunsEveryAssemblysCallback_InTheOrderSetAsync</tests>
+  public static Action<IServiceCollection>? RawReceptors {
+    get => _rawReceptors.Combined;
+    set => _rawReceptors.Set(value);
+  }
 
   /// <summary>
   /// Callback that folds the ASP.NET hosting integration (<c>AddWhizbangAspNet()</c>) into
