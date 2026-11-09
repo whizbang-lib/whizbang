@@ -44,6 +44,11 @@ public sealed class DeadLetterCanaryCampaignTests {
     // Blocks the purge call indefinitely (respecting ct) so a test can cancel the worker while
     // the startup held-cohort campaign is genuinely in flight, rather than racing a sleep.
     public bool BlockPurgeUntilCanceled { get; set; }
+    // Raised when the purge is ENTERED, before it starts waiting: it proves the campaign reached the
+    // purge, not that the worker is suspended on it. A test that cancels on this signal from another
+    // thread can cancel before the wait begins, so the purge, the campaign and the worker's await on
+    // it all complete synchronously. A test that needs the worker suspended drives ExecuteAsync on
+    // its own thread (ExecutableWorker.ExecuteDirectlyAsync) and cancels after it returns.
     public TaskCompletionSource PurgeStartedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<HeldCohort> Cohorts { get; set; } = [];
     public List<(string Fp, string Gen, int Size)> BeginCalls { get; } = [];
@@ -406,7 +411,26 @@ public sealed class DeadLetterCanaryCampaignTests {
   // parallel suite host must not be able to starve past it.
   private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(90);
 
-  private static (DeadLetterRecoveryWorker Worker, CampaignFake Svc, FakeLogCollector Logs, Bell Bell) _build(
+  /// <summary>
+  /// The worker with its <c>ExecuteAsync</c> callable directly. <c>StartAsync</c> runs the body on a pool thread
+  /// (.NET 10), so the test cannot know where the body is when it acts. Called directly, the body runs on the
+  /// test's own thread until its first real suspension and only then returns its task: a pending task proves the
+  /// body is suspended at an await, with nothing racing it.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The logger is handed to the base worker, whose constructor takes ILogger<DeadLetterRecoveryWorker>; the subclass only exposes ExecuteAsync and logs nothing itself.")]
+  private sealed class ExecutableWorker(
+      IServiceScopeFactory scopeFactory,
+      IOptions<DeadLetterRecoveryOptions> options,
+      IOptions<StreamIntegrityOptions> integrityOptions,
+      IGenerationProvider generationProvider,
+      ILogger<DeadLetterRecoveryWorker> logger,
+      IWorkNotificationListener notificationListener)
+      : DeadLetterRecoveryWorker(scopeFactory, options, integrityOptions, generationProvider, logger,
+          notificationListener: notificationListener) {
+    public Task ExecuteDirectlyAsync(CancellationToken stoppingToken) => ExecuteAsync(stoppingToken);
+  }
+
+  private static (ExecutableWorker Worker, CampaignFake Svc, FakeLogCollector Logs, Bell Bell) _build(
       DeadLetterRecoveryOptions options, CampaignFake? svc = null) {
     svc ??= new CampaignFake();
     var bell = new Bell();
@@ -416,13 +440,13 @@ public sealed class DeadLetterCanaryCampaignTests {
     services.AddSingleton<IDeadLetterRecoveryPolicy>(
       new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     var provider = services.BuildServiceProvider();
-    var worker = new DeadLetterRecoveryWorker(
+    var worker = new ExecutableWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options),
       Options.Create(new StreamIntegrityOptions()),
       new Gen(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
-      notificationListener: bell);
+      bell);
     return (worker, svc, provider.GetFakeLogCollector(), bell);
   }
 
@@ -757,20 +781,36 @@ public sealed class DeadLetterCanaryCampaignTests {
   /// Covers lines 199-200 (OperationCanceledException arm): the worker shuts down while the
   /// startup held-cohort campaign is still purging. A shutdown mid-campaign is an ordinary
   /// lifecycle event, not a failure — it must exit through the cancellation catch quietly,
-  /// never fall through to the generic-Exception arm that logs a scan-cycle failure. The purge
-  /// is blocked on a real await (Task.Delay(Infinite, ct)), and the test waits on a signal
-  /// proving the purge call has actually started before canceling — never a sleep.
+  /// never fall through to the generic-Exception arm that logs a scan-cycle failure.
   /// </summary>
+  /// <remarks>
+  /// The worker must be SUSPENDED on the campaign when the shutdown arrives, so the cancellation resumes it
+  /// there. This test used to start the worker on a pool thread and cancel on the purge's entry signal from
+  /// the test thread; that signal is raised before the purge starts waiting, so the cancellation could land
+  /// first, and then the purge, the campaign and the worker's await on it all completed synchronously. The
+  /// test passed either way, but the resume after the campaign await (a compiler branch the coverage tools
+  /// report on the <c>if (campaignMode != Off)</c> line) ran only when the race went one way, and the
+  /// library-wide coverage gate failed when it did not. Driving ExecuteAsync on this thread removes the
+  /// race: the call returns only at the body's first suspension, which here is the campaign's purge.
+  /// </remarks>
   [Test]
   public async Task Canary_CanceledDuringStartupCampaign_ExitsWithoutLoggingAnErrorAsync() {
     var svc = new CampaignFake { BlockPurgeUntilCanceled = true, Cohorts = [new("fp-aaa", 100, 1)] };
     var (worker, _, logs, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
     using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await svc.PurgeStartedSignal.Task.WaitAsync(_timeout);
+
+    var run = worker.ExecuteDirectlyAsync(cts.Token);
+
+    await Assert.That(svc.PurgeStartedSignal.Task.IsCompleted).IsTrue()
+      .Because("precondition: the body ran on this thread as far as the campaign's purge");
+    await Assert.That(run.IsCompleted).IsFalse()
+      .Because("precondition: the body is suspended awaiting the campaign, so the shutdown resumes it there");
 
     await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
+    await run.WaitAsync(_timeout);
+
+    await Assert.That(run.IsCompletedSuccessfully).IsTrue()
+      .Because("the cancellation arm returns from the worker; it neither faults nor rethrows");
 
     await Assert.That(svc.CallOrder.Contains("list")).IsFalse()
       .Because("the cancellation happened mid-purge, before the cohort list was ever fetched — "
