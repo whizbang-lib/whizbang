@@ -2086,9 +2086,9 @@ public interface IWorkCoordinator {
   /// <summary>
   /// #2115: claims up to <paramref name="limit"/> ledger rows to re-check, oldest report first: rows of
   /// <paramref name="originIds"/> (origins whose request topic is learned) last reported before
-  /// <paramref name="reportedBefore"/>, not looked at since then, and stamped with the window they were compared over. A
-  /// claim marks each row looked at (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a
-  /// re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
+  /// <paramref name="reportedBefore"/>, not looked at since then, each with the window it was compared over (both bounds
+  /// null for a row compared over the whole history, #2208), never the type lane. A claim marks each row looked at
+  /// (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
   /// rows. Nothing is attempted and no repair is asked: a claimed row is compared again, never repaired. Empty = nothing
   /// that old, or unsupported.
   /// </summary>

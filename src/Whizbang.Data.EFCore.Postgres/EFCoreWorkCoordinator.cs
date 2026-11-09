@@ -996,8 +996,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 348) returns only rows with a stamped
-  /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 375) returns a row with a stamped window
+  /// with both bounds, and a row with no window (compared over the whole history) with neither (#2208). A failure
+  /// propagates: the re-check worker logs it and retries next tick.</remarks>
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
       CancellationToken cancellationToken = default) {
@@ -1022,7 +1023,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       items.Add(new IntegrityRepairDrainItem(
-        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5)));
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3),
+        await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
+        await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)));
     }
     return items;
   }
