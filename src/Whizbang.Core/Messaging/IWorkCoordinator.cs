@@ -2064,6 +2064,39 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// #2211: takes (reads and forgets) where the last stream-level walk of one audit window of an origin stopped at the
+  /// consumer's page budget, so the next drill-down of that window resumes after it instead of comparing the same
+  /// leading streams again. A cursor is used once: a walk that ends, or is dropped, leaves none, and the next drill-down
+  /// starts from the first stream. Null = no cursor kept, or unsupported (every drill-down starts from the first stream).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window is drilled.</param>
+  /// <param name="windowSince">The window's first commit sequence (its start, which names it across audits).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The last stream the stopped walk compared, or null.</returns>
+  /// <docs>resilience/stream-integrity#a-large-window-is-walked-across-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDrillCursorSqlTests.cs</tests>
+  Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) =>
+    Task.FromResult<Guid?>(null);
+
+  /// <summary>
+  /// #2211: keeps where a stream-level walk of one audit window of an origin stopped at the consumer's page budget
+  /// (<see cref="StreamIntegrityOptions.MaxManifestPagesPerAudit"/>), replacing any cursor kept for that window, so the
+  /// next drill-down resumes after it (<see cref="IntegrityTakeDrillCursorAsync"/>). No-op = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window was walked.</param>
+  /// <param name="windowSince">The window's first commit sequence.</param>
+  /// <param name="resumeAfterStreamId">The last stream the walk compared.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the cursor is kept.</returns>
+  /// <docs>resilience/stream-integrity#a-large-window-is-walked-across-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDrillCursorSqlTests.cs</tests>
+  Task IntegritySaveDrillCursorAsync(
+    Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// #2103: records, per keyed ledger row, the one event its bucket is missing (or null when the comparison could not
   /// name one), so the paced repair drain asks the owner for that event instead of the stream. Pairs by position with
   /// <paramref name="keys"/>; a null clears an id recorded by an earlier comparison. No-op = unsupported, and the drain

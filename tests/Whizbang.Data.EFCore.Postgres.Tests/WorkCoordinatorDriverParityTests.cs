@@ -58,6 +58,8 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.IntegrityLoadGapTrackerStateAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityRecordOriginCheckpointAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityReplacePendingGapsAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.IntegritySaveDrillCursorAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.IntegrityTakeDrillCursorAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.CountReceivedFromOriginAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.EndSubscriptionBackfillAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.EnqueueIntegrityDeliveryAsync)] = INTEGRITY,
