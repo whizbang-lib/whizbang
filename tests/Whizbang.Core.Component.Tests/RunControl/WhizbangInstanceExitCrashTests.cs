@@ -256,13 +256,13 @@ public class WhizbangInstanceExitCrashTests {
   // ─────────────────────────────────────────────────────────────────────────
 
   internal sealed class FakeCrashEvents : IProcessCrashEvents {
-    private UnhandledExceptionEventHandler? _unhandled;
+    private EventHandler<UnhandledExceptionEventArgs>? _unhandled;
     private EventHandler<UnobservedTaskExceptionEventArgs>? _unobserved;
 
     public int UnhandledSubscribers => _unhandled?.GetInvocationList().Length ?? 0;
     public int UnobservedSubscribers => _unobserved?.GetInvocationList().Length ?? 0;
 
-    public event UnhandledExceptionEventHandler UnhandledException {
+    public event EventHandler<UnhandledExceptionEventArgs> UnhandledException {
       add => _unhandled += value;
       remove => _unhandled -= value;
     }

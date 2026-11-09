@@ -16,7 +16,7 @@ namespace Whizbang.Core.RunControl;
 /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitCrashTests.cs</tests>
 public interface IProcessCrashEvents {
   /// <summary>An exception nothing caught, on any thread; the runtime ends the process once the handlers return.</summary>
-  event UnhandledExceptionEventHandler UnhandledException;
+  event EventHandler<UnhandledExceptionEventArgs> UnhandledException;
 
   /// <summary>A faulted task whose exception nobody observed, found when the task is collected.</summary>
   event EventHandler<UnobservedTaskExceptionEventArgs> UnobservedTaskException;
@@ -32,9 +32,14 @@ public sealed class ProcessCrashEvents : IProcessCrashEvents {
   private ProcessCrashEvents() { }
 
   /// <inheritdoc />
-  public event UnhandledExceptionEventHandler UnhandledException {
-    add => AppDomain.CurrentDomain.UnhandledException += value;
-    remove => AppDomain.CurrentDomain.UnhandledException -= value;
+  /// <remarks>
+  /// The runtime's event takes its own delegate type, so each handler is wrapped as one bound to the handler's
+  /// <c>Invoke</c>. Two wrappers of the same handler are equal (same target, same method), so removal finds the one
+  /// that was added.
+  /// </remarks>
+  public event EventHandler<UnhandledExceptionEventArgs> UnhandledException {
+    add => AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(value.Invoke);
+    remove => AppDomain.CurrentDomain.UnhandledException -= new UnhandledExceptionEventHandler(value.Invoke);
   }
 
   /// <inheritdoc />

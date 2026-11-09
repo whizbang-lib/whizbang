@@ -478,7 +478,7 @@ public class StartingInstanceHeartbeatE2ETests : EFCoreTestBase {
 
   /// <summary>Process failure events nothing raises: a pod here never crashes for real.</summary>
   private sealed class NoCrashEvents : IProcessCrashEvents {
-    public event UnhandledExceptionEventHandler UnhandledException {
+    public event EventHandler<UnhandledExceptionEventArgs> UnhandledException {
       add => _ = value;
       remove => _ = value;
     }

@@ -136,7 +136,7 @@ public class WhizbangKillswitchTests {
 
   /// <summary>Process failure events nothing raises: the killswitch tests never start a host.</summary>
   private sealed class NoCrashEvents : IProcessCrashEvents {
-    public event UnhandledExceptionEventHandler UnhandledException {
+    public event EventHandler<UnhandledExceptionEventArgs> UnhandledException {
       add => _ = value;
       remove => _ = value;
     }
