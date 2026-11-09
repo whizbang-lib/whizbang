@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <remarks>Registered as a singleton by
 /// <c>WorkerPipelineExtensions.AddWhizbangWorkers</c>.</remarks>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 /// <param name="runtimeRegistry">The runtime receptor registry; when supplied, runtime-registered
 /// receptors (the control-plane surface) count as consumers at the discard gates.</param>
 public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runtimeRegistry) : IReceptorRegistryQuery {
@@ -46,4 +46,14 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runti
   /// gates.</remarks>
   public IReadOnlyList<HandledMessageInfo> GetHandledMessages()
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetConsumedMessages_DelegatesToGeneratedStaticAsync</tests>
+  public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages()
+    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:Adapter_FindConsumedMessage_ReadsTheGeneratedRegistryAsync</tests>
+  public ConsumedMessageInfo? FindConsumedMessage(string messageType)
+    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.FindConsumedMessage(messageType);
 }

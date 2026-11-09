@@ -106,4 +106,28 @@ public class RoleAssignmentOptionsTests {
     await Assert.That(options.Validate).Throws<ArgumentOutOfRangeException>();
   }
 
+  [Test]
+  public async Task ProgressWindow_DefaultsToTwoMinutesAsync() =>
+    await Assert.That(new RoleAssignmentOptions().ProgressWindow).IsEqualTo(TimeSpan.FromMinutes(2));
+
+  [Test]
+  public async Task ProgressWindowFor_IsNeverShorterThanTheRolesLease_AndZeroTurnsItOffAsync() {
+    // #2140: a window shorter than the lease would extend nothing, so the longer of the two is declared; zero declares
+    // none, and the lease alone decides as it did before.
+    var options = new RoleAssignmentOptions();
+    options.RoleLeases["long-role"] = TimeSpan.FromMinutes(10);
+
+    await Assert.That(options.ProgressWindowFor(StartupDuties.MAINTAINER)).IsEqualTo(TimeSpan.FromMinutes(2));
+    await Assert.That(options.ProgressWindowFor("long-role")).IsEqualTo(TimeSpan.FromMinutes(10));
+    options.ProgressWindow = TimeSpan.Zero;
+    await Assert.That(options.ProgressWindowFor(StartupDuties.MAINTAINER)).IsEqualTo(TimeSpan.Zero);
+    await Assert.That(options.ProgressWindowFor("long-role")).IsEqualTo(TimeSpan.Zero);
+  }
+
+  [Test]
+  public async Task Validate_RefusesANegativeProgressWindowAsync() {
+    var options = new RoleAssignmentOptions { ProgressWindow = TimeSpan.FromSeconds(-1) };
+
+    await Assert.That(options.Validate).Throws<ArgumentOutOfRangeException>();
+  }
 }

@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <see cref="IntegrityRepairMode.AutoRepairCapped"/> a scoped
 /// <see cref="RequestRedeliveryCommand"/> goes back to the origin WIRE-ONLY, directed via the R0
 /// target (a lost request simply re-fires on the next confirmation cycle). Only types this
-/// consumer subscribes to are verified; a service's own checkpoints are ignored (locally
+/// consumer keeps at the receive boundary (#2058: what it consumes, or a namespace it absorbs) are verified; a service's own checkpoints are ignored (locally
 /// originated events carry no origin stamp to count against).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
@@ -63,12 +63,22 @@ public sealed partial class IntegrityCheckpointReceptor(
       return;
     }
 
-    tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, DateTimeOffset.UtcNow, message.RequestTopic);
+    // #2104: the kept state first, so a gap seen before a restart is confirmed by this checkpoint.
+    await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
+    var checkpointAt = DateTimeOffset.UtcNow;
+    tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, checkpointAt, message.RequestTopic);
+    await coordinator.IntegrityRecordOriginCheckpointAsync(
+      message.OriginServiceId, message.OriginServiceName, message.RequestTopic, checkpointAt, cancellationToken).ConfigureAwait(false);
+    var pendingBefore = tracker.PeekPending(message.OriginServiceId);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     // #2008: the origin's announced domains replace its claims; the map built from every claim decides which buckets
     // this origin is authoritative for (#2032).
     var ownership = await _recordOwnershipAsync(services, coordinator, metrics, message, cancellationToken).ConfigureAwait(false);
+    // #2186: judged by the one rule the manifest comparison and the ledger sweep use, so a type in this service's own
+    // owned domains is no other origin's to count, even when the map is silent about it.
+    var ownDomains = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains
+      ?? (IReadOnlyCollection<string>)[];
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
 
     // MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch. Checkpoints fire every
@@ -112,8 +122,8 @@ public sealed partial class IntegrityCheckpointReceptor(
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
-      if (ownership.IsOwnedByAnother(pending.EventType, pending.OriginServiceId)) {
-        continue;   // #2032: another service owns the type; this origin's count is not authoritative for it.
+      if (ownership.IsNotAuthoritative(pending.EventType, pending.OriginServiceId, ownDomains)) {
+        continue;   // #2032, #2186: this origin does not own the type, so its count is not authoritative for it.
       }
       // Recount governor (#634). Repair is bounded per window; the recount that CONFIRMS the gap
       // was not, so an unhealable gap paid a full event-store scan on every checkpoint forever.
@@ -128,6 +138,10 @@ public sealed partial class IntegrityCheckpointReceptor(
         .CountReceivedFromOriginAsync(pending.OriginServiceId, pending.FromCommitSequence, pending.ToCommitSequence, cancellationToken)
         .ConfigureAwait(false);
       var actual = _bucketCount(recount, pending.TenantScope, pending.EventType);
+      if (actual < pending.ExpectedCount) {
+        actual += _heldCount(await _unsequencedAsync(coordinator, pending.OriginServiceId, [pending.EventType], cancellationToken)
+          .ConfigureAwait(false), pending.TenantScope, pending.EventType);
+      }
       var observation = new IntegrityRepairPolicy.GapObservation(
         pending.OriginServiceId, pending.EventType, pending.TenantScope,
         pending.FromCommitSequence, pending.ToCommitSequence,
@@ -254,21 +268,32 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
 
     // 2) Evaluate THIS window: deficits become pendings the NEXT checkpoint confirms or clears.
-    var subscribed = _subscribedTypeNames(services);
-    if (subscribed.Count == 0) {
+    // #2058: only what the receive boundary keeps is this service's contract (what it consumes, or a namespace it
+    // absorbs). A type it only knows is never stored here, so a count against it is a deficit that cannot heal.
+    // #2032: and a type another service owns (or this service owns, #2186) is asked of its owner, not counted against an
+    // older origin still counting it.
+    var keeps = ConsumedMessageTypes.Keeps(services);
+    var verified = message.Buckets
+      .Where(b => keeps(b.EventType) && !ownership.IsNotAuthoritative(b.EventType, message.OriginServiceId, ownDomains))
+      .ToList();
+    if (verified.Count == 0) {
+      await _keepPendingAsync(coordinator, tracker, message.OriginServiceId, pendingBefore, cancellationToken).ConfigureAwait(false);
       return;
     }
     var actualBuckets = await coordinator
       .CountReceivedFromOriginAsync(message.OriginServiceId, message.FromCommitSequence, message.ToCommitSequence, cancellationToken)
       .ConfigureAwait(false);
-    foreach (var bucket in message.Buckets) {
-      if (!subscribed.Contains(bucket.EventType)) {
-        continue;   // not consumed here — the origin's count is someone else's contract
-      }
-      if (ownership.IsOwnedByAnother(bucket.EventType, message.OriginServiceId)) {
-        continue;   // #2032: an older origin still counting a type another service owns; asked of the owner instead.
-      }
-      var actual = _bucketCount(actualBuckets, bucket.TenantScope, bucket.EventType);
+    // #2102: a window counts the events it can place by origin sequence. Events held from the origin without that
+    // sequence may belong to it, so a short bucket counts them too; the read is paid only when a bucket reads short.
+    var shortTypes = verified
+      .Where(b => _bucketCount(actualBuckets, b.TenantScope, b.EventType) < b.Count)
+      .Select(b => b.EventType).Distinct(StringComparer.Ordinal).ToList();
+    var held = shortTypes.Count == 0
+      ? []
+      : await _unsequencedAsync(coordinator, message.OriginServiceId, shortTypes, cancellationToken).ConfigureAwait(false);
+    foreach (var bucket in verified) {
+      var actual = _bucketCount(actualBuckets, bucket.TenantScope, bucket.EventType)
+        + _heldCount(held, bucket.TenantScope, bucket.EventType);
       if (actual < bucket.Count) {
         tracker.AddPending(new IntegrityGapTracker.PendingGap {
           OriginServiceId = message.OriginServiceId,
@@ -281,6 +306,22 @@ public sealed partial class IntegrityCheckpointReceptor(
         });
       }
     }
+    await _keepPendingAsync(coordinator, tracker, message.OriginServiceId, pendingBefore, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #2104: keeps the origin's pending gaps in the store when this checkpoint changed them (a gap confirmed, healed or
+  /// first seen), so a restarted process confirms them with its first checkpoint. A checkpoint that changed nothing
+  /// writes nothing.
+  /// </summary>
+  private static async Task _keepPendingAsync(
+      IWorkCoordinator coordinator, IntegrityGapTracker tracker, Guid originServiceId,
+      IReadOnlyList<IntegrityGapTracker.PendingGap> before, CancellationToken cancellationToken) {
+    var after = tracker.PeekPending(originServiceId);
+    if (after.SequenceEqual(before)) {
+      return;
+    }
+    await coordinator.IntegrityReplacePendingGapsAsync(originServiceId, after, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>Wire-only, directed at the origin — the pump's own publish pattern. A lost request
@@ -332,7 +373,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
-      Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand)), serialized.EnvelopeType,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestRedeliveryCommand), options), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     // #2034: the whole-window request answers the type lane and the per-stream drain rows of the type inside it. The
     // ledger's window is the request's range shifted by one (an exclusive floor and an inclusive ceiling), as the drain
@@ -369,15 +410,14 @@ public sealed partial class IntegrityCheckpointReceptor(
   private static int _bucketCount(IReadOnlyList<CheckpointBucket> buckets, string? tenantScope, string eventType) =>
     buckets.Where(b => b.EventType == eventType && b.TenantScope == tenantScope).Sum(b => b.Count);
 
-  private static HashSet<string> _subscribedTypeNames(IServiceProvider services) {
-    var provider = services.GetService<IEventTypeProvider>();
-    if (provider is not { IsAvailable: true }) {
-      return [];
-    }
-    // Wire form ("Type, Assembly") — checkpoint buckets carry wh_event_store.event_type values,
-    // so this filter must speak the same form or every bucket silently skips verification.
-    return [.. provider.GetEventTypes().Select(TypeNameFormatter.Format)];
-  }
+  /// <summary>#2102: the (tenant, type) folds of the events held from the origin without its commit sequence. No
+  /// settle horizon: the checkpoint's own count has none.</summary>
+  private static Task<IReadOnlyList<StreamDigest>> _unsequencedAsync(
+      IWorkCoordinator coordinator, Guid originServiceId, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken) =>
+    coordinator.ComputeUnsequencedReceivedDigestsAsync(originServiceId, eventTypes, streamIds: null, TimeSpan.Zero, cancellationToken);
+
+  private static int _heldCount(IReadOnlyList<StreamDigest> held, string? tenantScope, string eventType) =>
+    held.Where(d => d.EventType == eventType && d.TenantScope == tenantScope).Sum(d => d.EventCount);
 
   [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
     Message = "CONFIRMED integrity gap reports capped for origin '{OriginServiceName}': {ConfirmedGaps} confirmed, " +

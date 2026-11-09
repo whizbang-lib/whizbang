@@ -60,8 +60,57 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Type-level mismatches escalated to stream-level manifest requests. Tagged by origin.</summary>
   public PassiveCounter<long> DrillDownsRequested { get; }
 
+  /// <summary>
+  /// #2102: windowed stream buckets a comparison could not decide because the consumer holds some of their events
+  /// without the origin's commit sequence. Not deficits: none is recorded or repaired, and the full-history comparison
+  /// decides those streams. Tagged by origin.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
+  public PassiveCounter<long> UnplacedBuckets { get; }
+
+  /// <summary>
+  /// #2115: ledger rows the idle re-check claimed and asked their owner to answer again. Tagged by origin.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public PassiveCounter<long> LedgerRowsRechecked { get; }
+
+  /// <summary>
+  /// #2115: ledger rows a re-check answer removed, because their bucket now matches or is undecided. Tagged by origin.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public PassiveCounter<long> LedgerRowsRecheckCleared { get; }
+
+  /// <summary>
+  /// #2106: stream digest buckets the id-lane backfill found disagreeing with their events and corrected, each also
+  /// logged at Warning with its stored and recomputed values. Sustained non-zero means a write path changes digests
+  /// without the shared fold. Tagged by kind (drift_updated | drift_removed | drift_added).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-digest-fold</docs>
+  public PassiveCounter<long> StreamDigestDriftCorrected { get; }
+
   /// <summary>Phase S state-only backfill requests broadcast for consumed-set growth (value = new type count).</summary>
   public PassiveCounter<long> BackfillsRequested { get; }
+
+  /// <summary>#2092: paced backfill windows requested of owners, retries included. Tagged by event_type.</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> BackfillWindowsRequested { get; }
+
+  /// <summary>#2092: events the answered backfill windows selected. Tagged by event_type.</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> BackfillEventsReceived { get; }
+
+  /// <summary>#2092: paced backfills that ended. Tagged by outcome (complete | unanswered).</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> BackfillsEnded { get; }
+
+  /// <summary>
+  /// #2098: redelivery answers an origin stopped at its event bound with more of the selection left. A windowed
+  /// backfill continues from where the answer stopped; any other request does not, so a non-zero rate on the
+  /// "ordinary" kind means requests wider than the bound.
+  /// Tagged by kind (window | ordinary).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public PassiveCounter<long> RedeliveryAnswersCapped { get; }
 
   /// <summary>Settled digest buckets checked by the trust-but-verify sweep.</summary>
   public PassiveCounter<long> DigestBucketsVerified { get; }
@@ -137,6 +186,14 @@ public sealed class StreamIntegrityMetrics {
   /// </summary>
   public PassiveCounter<long> RepairsDeferred { get; }
 
+  /// <summary>
+  /// #2184: each time the paced repair drain starts holding because <c>MaxOutstandingRepairAnswers</c> buckets await
+  /// their answer; counted once per hold, not per tick. A rising count means answers lag the requests: the drain is
+  /// pacing itself to the rate they land at.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  public PassiveCounter<long> RepairDrainHolds { get; }
+
   /// <summary>Integrity deliveries recorded for the maintainer's drain (#2001); a copy already recorded is not counted
   /// again. Tagged by type.</summary>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
@@ -164,6 +221,16 @@ public sealed class StreamIntegrityMetrics {
   /// own backfill broadcast came back to it).</summary>
   /// <docs>resilience/stream-integrity#redelivery-ships-only-what-the-origin-wrote</docs>
   public PassiveCounter<long> RedeliveryRequestsIgnored { get; }
+
+  /// <summary>#2116: children of a redelivery bundle stored under their type's true owner, because the origin the bundle
+  /// names does not own the type (it answered with events it had only received). Each bundle is also logged at Warning.</summary>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  public PassiveCounter<long> RedeliveredChildrenReattributed { get; }
+
+  /// <summary>#2116: stored events recorded under an origin that does not own their type, re-attributed to the owner by
+  /// the misattributed-origin correction. Each batch is also logged at Warning, per type, origin and owner.</summary>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  public PassiveCounter<long> MisattributedOriginsCorrected { get; }
 
   /// <summary>Stored events received before origins were recorded that re-attribution gave their owner as origin.</summary>
   /// <docs>resilience/stream-integrity#re-attribution</docs>
@@ -217,6 +284,18 @@ public sealed class StreamIntegrityMetrics {
     DrillDownsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.drill_downs_requested",
       description: "Type-level mismatches escalated to stream-level requests; tagged by origin");
+    UnplacedBuckets = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.unplaced_buckets",
+      description: "Windowed stream buckets left undecided because events are held without the origin's sequence; tagged by origin");
+    LedgerRowsRechecked = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ledger_rows_rechecked",
+      description: "Ledger rows the idle re-check asked their owner to answer again; tagged by origin");
+    LedgerRowsRecheckCleared = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ledger_rows_recheck_cleared",
+      description: "Ledger rows a re-check answer removed because their bucket now matches or is undecided; tagged by origin");
+    StreamDigestDriftCorrected = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.stream_digest_drift_corrected",
+      description: "Stream digest buckets the id-lane backfill found drifted from their events and corrected; tagged by kind");
     BackfillsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.backfills_requested",
       description: "State-only backfill requests broadcast for consumed-set growth (value = new type count)");
@@ -266,6 +345,9 @@ public sealed class StreamIntegrityMetrics {
     RepairsDeferred = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repairs_deferred",
       description: "Deficit buckets a comparison deferred instead of adding to the paced repair drain's ledger; tagged by origin + reason (per_audit_cap | backlog_cap)");
+    RepairDrainHolds = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.repair_drain_holds",
+      description: "Times the paced repair drain stopped claiming because MaxOutstandingRepairAnswers buckets awaited their answer; once per hold");
     RepairTrafficDiscarded = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repair_traffic_discarded",
       description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
@@ -288,6 +370,12 @@ public sealed class StreamIntegrityMetrics {
     RedeliveryRequestsIgnored = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_ignored",
       description: "Redelivery requests an origin declined to answer; tagged by reason (own_request)");
+    RedeliveredChildrenReattributed = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivered_children_reattributed",
+      description: "Redelivery bundle children stored under their type's true owner because the bundle's origin does not own the type");
+    MisattributedOriginsCorrected = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.misattributed_origins_corrected",
+      description: "Stored events recorded under an origin that does not own their type, re-attributed to the owner");
     OriginsReattributed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_reattributed",
       description: "Stored events received before origins were recorded that re-attribution gave their owner as origin");
@@ -297,6 +385,35 @@ public sealed class StreamIntegrityMetrics {
     ReattributionHopDisagreements = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.reattribution_hop_disagreements",
       description: "Stored events re-attribution left because their first hop names a service other than the owner");
+
+    BackfillWindowsRequested = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.backfill_windows_requested",
+      description: "Paced backfill windows requested of owners, retries included; tagged by event_type");
+    BackfillEventsReceived = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.backfill_events_received",
+      description: "Events the answered paced backfill windows selected; tagged by event_type");
+    BackfillsEnded = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.backfills_ended",
+      description: "Paced backfills that ended; tagged by outcome (complete | unanswered)");
+    RedeliveryAnswersCapped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivery_answers_capped",
+      description: "Redelivery answers stopped at the origin's event bound with more selected; tagged by kind (window | ordinary)");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.backfill_windows_in_flight",
+      () => _backfill.WindowsInFlight,
+      description: "Paced backfill windows requested and awaiting their answer");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.backfill_remaining_events",
+      () => {
+        var remaining = _backfill.Remaining;
+        var measurements = new Measurement<long>[remaining.Count];
+        for (var i = 0; i < remaining.Count; i++) {
+          measurements[i] = new Measurement<long>(remaining[i].Events,
+            new KeyValuePair<string, object?>("event_type", remaining[i].EventType));
+        }
+        return measurements;
+      },
+      description: "Events each running paced backfill is estimated to have left, by event_type; falls to zero as it finishes");
 
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.sealed_through",
@@ -346,7 +463,24 @@ public sealed class StreamIntegrityMetrics {
     DigestDriftHealed.Touch("kind", _driftKinds);
     RepairTrafficDiscarded.Touch("role", _discardRoles);
     RepairsDeferred.Touch("reason", _deferralReasons);
+    BackfillsEnded.Touch("outcome", _backfillOutcomes);
+    RedeliveryAnswersCapped.Touch("kind", _cappedKinds);
   }
+
+  private static readonly string[] _backfillOutcomes = ["complete", "unanswered"];
+  private static readonly string[] _cappedKinds = ["window", "ordinary"];
+
+  private volatile BackfillGaugeSnapshot _backfill = BackfillGaugeSnapshot.Empty;
+
+  /// <summary>Publishes the paced backfill's current state to its gauges (#2092), swapped atomically like the ledger's.</summary>
+  /// <param name="snapshot">The reading; null resets to empty.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SubscriptionBackfillWorkerTests.cs</tests>
+  public void UpdateBackfillGauges(BackfillGaugeSnapshot snapshot) =>
+    _backfill = snapshot ?? BackfillGaugeSnapshot.Empty;
+
+  /// <summary>The backfill reading the gauges would currently report.</summary>
+  internal BackfillGaugeSnapshot CurrentBackfillGaugesForTest => _backfill;
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
@@ -409,3 +543,22 @@ public sealed record LedgerGaugeSnapshot {
 /// <param name="SealedThrough">Exclusive end of the highest window that audited clean and complete.</param>
 /// <docs>resilience/stream-integrity</docs>
 public sealed record OriginSeal(Guid OriginServiceId, long SealedThrough);
+
+/// <summary>An atomically swappable reading of the paced backfill, for its gauges (#2092).</summary>
+/// <docs>resilience/stream-integrity#paced-backfill</docs>
+public sealed record BackfillGaugeSnapshot {
+  /// <summary>Nothing running (also the reading before the first tick).</summary>
+  public static BackfillGaugeSnapshot Empty { get; } = new();
+
+  /// <summary>Windows requested and awaiting their answer.</summary>
+  public int WindowsInFlight { get; init; }
+
+  /// <summary>Each running backfill's estimated remaining events, by event type.</summary>
+  public IReadOnlyList<BackfillRemaining> Remaining { get; init; } = [];
+}
+
+/// <summary>One running backfill's estimated remaining events, for the <c>backfill_remaining_events</c> gauge.</summary>
+/// <param name="EventType">The event type.</param>
+/// <param name="Events">Events estimated to remain.</param>
+/// <docs>resilience/stream-integrity#paced-backfill</docs>
+public sealed record BackfillRemaining(string EventType, long Events);

@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived prefix now needs `IncludeWhileLive`.
 
 #### Storage
+- **Superseding groups: several event types supersede each other in one stream (#2124).** `[Superseding(Group =
+  "name")]` puts event types in one group, so the newest event of any of them supersedes the older events of every one
+  of them, per stream, group and key: a stream with a full-state "created" event and later full-state "updated" events
+  keeps only the newest. The name is explicit and global, never derived from a type name, and stored with every event.
+  Migration 352 adds `wh_event_store.supersede_group`, stamped beside the key by every write path (dispatch, receive,
+  direct append on both drivers) from the stored metadata's `sg`, and the queue and the reaper match on
+  `COALESCE(supersede_group, event_type)` through a new index, so an ungrouped type is its own group exactly as before
+  and no row is backfilled. A type that joins, leaves or changes a group later is walked again by the history reconcile
+  (#2110), which re-stamps its stored events under the new group. WHIZ138 (error) reports the types of a group that
+  disagree on their key: all keyless, or all keyed by the same type. `SupersedingEvents.GroupOf` reads a type's group,
+  and `EnvelopeMetadata.SupersedingGroup` carries it. Every event of every type in a group must carry the whole state for
+  its key, and a consumer that handles several of the types must need only the newest.
 - **Each perspective chooses what happens to its rows of a stream archived whole (#1739, WS-3 S10).**
   `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]` on a perspective, overridden per perspective by
   `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>`. `Keep` (the default) changes nothing; `Drop` deletes the
@@ -238,6 +250,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either refuses is not registered. The flag-name parser learns `Superseding`. New API: `SupersedingAttribute`,
   `SupersedingKeyAttribute`, `SupersedingEvents`, `EventFlags.Superseding`, `MessageTypeCatalogEntry.IsSuperseding`,
   `EnvelopeMetadata.SupersedingKey`.
+- **Declaring an event type `[Superseding]` now reclaims the history stored before the declaration (#2110).** Until
+  now only events stored after the declaration carried the flag and key, so adopting `[Superseding]` on a type with
+  history stopped growth but recovered none of the space already used. A new maintenance step,
+  `superseding-history-reconcile`, walks each superseding type's stored events (idle-gated, under the maintainer turn,
+  5,000 events of the store per batch, 20 batches per cycle, one instance per type, resumable after a crash), reads each
+  key from the stored payload with the same generated accessor the write paths use, stamps the flag and key, and queues
+  every event but the newest of each stream, type and key in `wh_superseded_events`. The reaper then deletes them past
+  all of its gates (consumed, no cursor or snapshot on it, no destruction hold, stamped, not debug mode); the step
+  itself deletes nothing. A null key stays unkeyed and is never superseded; a payload whose key cannot be read is kept
+  and logged. Each service reconciles its own store, received copies included. The walk restarts when the
+  type-definition registry records a newer definition of the type, and the generator's settings hash now includes
+  `[Superseding]`, so becoming superseding is recorded as a definition change (every other type keeps its hash).
+  Migration 345 adds `wh_superseding_history` and its functions; no new index. New API: `SupersedingOptions`,
+  `SupersedingEvents.Types()`, `SupersedingHistoryReconcileStep`. **Upgrade note:** this is on by default. After
+  upgrading, a type already declared `[Superseding]` that has history from before its declaration has that history
+  reclaimed down to the newest event of each key once consumed, and every such type registers one new type definition
+  on its first boot (logged as drift once). Set `Whizbang:Superseding:ReconcileHistory` to `false` to keep that history.
 - **The Azure Blob archive store writes its objects at a chosen access tier (#1897).** `AzureBlobArchiveOptions.AccessTier`
   (`Whizbang:Archive:AzureBlob:AccessTier`) takes `Hot`, `Cool` or `Cold` in any case; unset, objects take the storage
   account's default tier as before. `Archive` and every other value are refused when the setting is bound, when the
@@ -836,6 +865,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+
+- **A stable release's version rolls up its prereleases (#2136).** For each prerelease label published since the
+  last stable (alpha, beta, rc or any label), its latest number is added to the minor: `0.2627.0-alpha.674` ships as
+  `0.3301.0`, and with `beta.5` and `rc.3` as `0.3309.0`. Start Release names the branch from GitVersion's base and
+  the cut commit's alpha number and records both in the release PR; the stable publish adds the betas and rcs
+  published from the branch, prints the sum (`alpha 674 + beta 5 + rc 3 = 682 -> 0.3309.0`) and, when the number
+  moved, repacks the tested build at it. The target component is `rollupTarget` in `.github/release-version.json`
+  (minor now, patch possible after 1.0); `major`, `minor`, `patch` and `manual` cuts and hotfixes are overrides.
+  The math is `.github/scripts/Get-ReleaseVersion.ps1`.
+- **Stream digest math has one home, and stream digests carry id lanes (#2106).** Fifteen SQL functions wrote
+  `wh_stream_digests` with their own copy of the fold, so a change made in one and missed in another would silently
+  corrupt the digests the integrity audit trusts. Migration 336 adds `_wh_digest_lane` (the only place an event id
+  becomes a digest lane, inlined by the planner), `_wh_fold_stream_digests` (folds, takes out or seeds a set of events,
+  every lane together) and `_wh_heal_stream_digests` (recomputes buckets and rewrites drift, returning each changed
+  bucket with its stored and recomputed values); every writer, the epoch folds, the C# live folds and the sweep's
+  verification now go through them, with the hash lanes and counts they store unchanged. `wh_stream_digests` gains
+  `id_lo`/`id_hi`, the XOR of each folded event id's two 64-bit halves; NULL until computed, and a fold keeps NULL as
+  NULL. A guard test fails when any function or C# SQL writes digest lanes or hashes an event id outside the helpers.
+  Buckets stored before 336 get their id lanes from a bounded, idle-gated maintenance step
+  (`StreamDigestIdLaneBackfillMaintenanceStep`, migration 337's `wh_backfill_stream_digest_id_lanes_batch`): batches
+  of streams under their append locks, resumable from a cursor, done once. A bucket it finds drifted from its events is
+  logged at Warning with its stored and recomputed values and counted on
+  `whizbang.stream_integrity.stream_digest_drift_corrected` before it is corrected.
 - **Stand-down, pause and stop take one run-control path (#2045).** The instance has one run permit, and one path
   (`IWhizbangRunController`) closes or reopens it. Every halt runs the same sequence: close the permit (no new
   claims), write Pausing or Stopping, wait for work in hand (bounded by the new `Whizbang:Lifecycle:HeldWorkTimeout`,
@@ -1378,6 +1430,229 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
+  longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
+  state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
+  buffers per call on a service holding 1.6M processed rows, asked on every integrity checkpoint). It now counts
+  unprocessed rows only, through the expiry index (1.0 ms on a copy of that table), and a row the store pass completed
+  without clearing its lease no longer keeps the service from settling.
+
+- **A rebuild dates a row at its stream's start once the stream's first event is gone (Fixes #2152).** A perspective
+  row's `CreatedAt` is business time from the events folded into it, and an update never moves it. After the
+  superseding reaper or a prefix truncate deleted a stream's first event, a rebuild that writes the row afresh
+  (blue-green into an empty shadow table, or in place where the row is missing) had only the surviving events to date it
+  by. Migration 358 adds `wh_stream_lifecycle.first_event_at`: the reaper and `wh_truncate_stream_prefix` record the
+  business time of the stream's first event (its last stored hop's timestamp, the value the runner reads) before they
+  delete it, written once and never on the append path. `wh_stream_started_at` answers it only while the stream no
+  longer holds an event at version 0 or 1, falling back to `first_appended_at` for a first event removed before the
+  migration. `IEventStore.GetStreamStartedAtAsync` (both Postgres drivers, forwarded by every decorator) reads it, and
+  the generated runner asks only for a row that is not known to exist and whose fold does not begin with the stream's
+  first event, then dates that row's insert at the answer (`PerspectiveRowStart`). The answer is null while the stream
+  holds its first event, and an existing row keeps its `CreatedAt`.
+- **A new perspective row is dated at the first event folded into it, not the last (Fixes #2154).** The runner folds a
+  batch and writes the row once, and the insert took the write's own time, the last folded event's, so a rebuild of a
+  multi-event stream (blue-green, or in place where the row is missing) and a live first batch of several events dated
+  the row at the last event, and `CreatedAt` depended on batching. An insert now takes the first folded event's business
+  time (the timestamp of its last hop, as the runner reads every event), or the stream's recorded start once its first
+  event is gone (#2152); `UpdatedAt` keeps the last event's time and an update never moves `CreatedAt`. A row already
+  stored keeps the date it was given; rebuild blue-green to re-date rows written before this fix.
+- **A redelivery answer marks a bucket unhealable only when it covered the bucket's deficit (#2143).** Audit-driven
+  repairs and bulk backfills ask the origin for the compared window, and an answer for a recent window carries only the
+  stream's recent events. When the consumer already held those, the answer stored nothing and every bucket it touched
+  was marked as one repair cannot change, including buckets whose missing events are older than the window (most of
+  them whole-history deficits that never had a repair request of their own), so repair stopped on real gaps. The origin
+  now echoes the window it answered on every bundle (`RedeliveryComposite.AnswersWindow`, `AnsweredFromCommitSequence`,
+  `AnsweredToCommitSequence`; `RedeliveryPump.PublishAnswerAsync`), and a bucket is marked only when that window
+  includes the bucket's compared window (a whole-history bucket needs a whole-history answer) or the answer carried the
+  bucket's named missing event; any other bucket is recorded as answered and stays repairable. A bundle from an origin
+  that predates the fields marks as before. Migration 357 carries the check (`wh_integrity_record_bundle_answer` gains
+  trailing defaulted parameters, so calls from an older release still resolve, and the reconcile marks through the new
+  `wh_integrity_mark_unhealable_covered_batch`) and re-arms, once per database, the whole-history rows already marked with
+  no repair attempt of their own; it runs at migration rather than as a maintenance step because maintenance waits for
+  an idle service, and a service whose repair stalled this way may never be idle.
+
+- **Stopping the shared LISTEN connection no longer hangs when the stop lands as its wait begins.** Npgsql's
+  `WaitAsync` checks its token and then re-arms the read's own cancellation source, which discards a cancellation
+  delivered in between (Npgsql 10.0.1), so a stop arriving as the dispatch loop parked was never seen and
+  `StopAsync`, which waited for the loop, could hang a host's shutdown. The loop now ends on the stopping token itself;
+  a stop with no delivery running returns at once, no subscriber is called after it, and the connection is disposed
+  only once the abandoned wait ends, never under a read in flight. A stop during a delivery still waits for it.
+
+- **A role holder is judged by the one liveness rule, learns of a loss within one renew interval, and quick hand-offs
+  vacuum once (#2140).** A freshly elected holder busy with startup, or inside one long unit of work, lapsed 15 seconds
+  after its last renewal although it was live, so a restart could move the maintainer role back and forth, and the old
+  holder learned of the loss only on its next verify, minutes later, with both instances believing they held the role.
+  Migration 355 judges a holder past its lease by the same rule every other reader asks (`wh_instance_is_live`: a
+  recent heartbeat or a held alive-lock), plus the role's own progress check: it keeps the role while the rule calls it
+  live and it renewed inside the progress window it declared for its epoch (`RoleAssignmentOptions.ProgressWindow`,
+  default 2 minutes, zero turns it off), so a connected but stuck holder still loses the role within the window and a
+  dead one lapses at its lease. The fence treats a holder as live exactly when the vote does. Each grant now watches its
+  assignment once per renew interval (`wh_role_is_held`) and cancels the new `IDutyGrant.LostToken` on a loss, or after
+  a whole lease without a confirmation; the duty holder loop links its work to that token, so exclusive work stops
+  before it could overlap the next holder's, and `DutyHolderWorker.Holds` turns false at once. The maintainer's
+  acquisition vacuum leaves a work table the database records as vacuumed within
+  `MaintenanceWorkerOptions.SkipAcquisitionVacuumWithin` (default 10 minutes) alone, so hand-offs shortly after a
+  takeover do not repeat it.
+- **An archive record never redirects a read, restore or delete to another container; archive locations are stored
+  normalized and checked against configuration (#2137).** The Azure Blob archive store opened the container named in
+  a manifest record whenever it differed from its configured one, so a database copied to another environment read,
+  restored and, through retention and purge, deleted the source environment's objects. Migration 353 adds
+  `wh_archive_locations` (provider, storage account endpoint, logical connection name, container; never a secret), and
+  each manifest row and queued deletion now holds its `location_id` plus a path that starts at its stream; existing
+  locators are split into a location per container and a path, with no object moved or deleted. Before any request
+  reaches storage, a read, restore and delete compare every record's location with the configured one and throw the
+  new `ArchiveLocationMismatchException` naming both; a write of a stream whose objects are recorded elsewhere is refused
+  the same way and writes nothing, so a stream never spans two locations; the deletion queue is drained only for the
+  configured location. The tombstone locator names only the store and the stream (`azure-blob://{stream}?...`).
+  Repointing an environment (a copied or restored database, disaster recovery) is an explicit update of the one
+  location row, or `AzureBlobArchiveStore.RepointLocationAsync`, which merges into an existing location. New setting
+  `Whizbang:Archive:AzureBlob:ConnectionName` (default `default`), and `Whizbang:Archive:AzureBlob:VerifyLocation` (default
+  `true`): turned off, the store uses the configured location without comparing records, giving up that safety net, and
+  still writes location rows so the check can be turned back on. The offload store records no locations: its claim
+  names a provider and a key, and the provider always uses its configured container.
+- **A service with no perspectives of its own now concludes the collective events it stores (#2142).** Such a service
+  has no perspective registry, yet it stores the collective events of the namespaces it subscribes to and the store
+  routes each to the `__collective__` sink. The claim leased those rows and handed their streams to the drain, but the
+  perspective worker ended at startup when it found no registry, so nothing read them: the rows were leased in
+  batches, re-offered, released and leased again, with nothing in the log, and the #2142 fix never ran there. The
+  worker now parks on its drain channel instead (still no startup repair and no database work while idle) and drains
+  what the claim hands it, so those rows are completed, warned once per type and counted on
+  `whizbang.collectives.unhandled`. A service whose registry lists no perspective, which skipped every drain batch,
+  concludes them too.
+- **A collective event no handler on the service applies no longer stalls its perspective backlog (#2142).** The store
+  routes every collective event it keeps to the `__collective__` sink, so a service that stores one it has no
+  `[CollectiveApplyFor]` handler for (it consumes other events of the same namespace) got a sink row whose type the
+  drain cannot read. That row was never concluded, so the claim took it again on every poll, oldest first, and the
+  rest of the perspective backlog waited behind it while the service never counted as idle. The drain now completes
+  such a row without applying it, as an event no perspective consumes is never queued, counts it on the new
+  `whizbang.collectives.unhandled` counter, and logs a Warning once per event type per batch naming the service, the
+  type, the count and a stream; a perspective rebuild applies those events once a handler is added. Rows already
+  stranded are concluded the same way on their next claim, which takes them first. The events are kept. An ordinary
+  perspective row of an unknown type is still left for an instance that can read it.
+- **A superseding key missing from a received or stored payload is no key, not the key type's default (#2123).** A
+  superseding event type keyed by a value type (`[SupersedingKey] Guid RegionId`) read a key absent from a JSON payload
+  as the type's default, so on the receive path (a message from an older producer during a rolling deploy) and in the
+  history reconcile (events stored before the key property existed) every such event of a stream shared one key and all
+  but the newest were reaped. The key is now looked for in the payload under the name the serializer writes it
+  (`[JsonPropertyName]` and the naming policy honored, read from the serializer metadata, no reflection): missing or
+  JSON `null`, the event is stamped superseding without a key and never reaped, and the reconcile logs it. A present
+  default value (`Guid.Empty`, `0`) is a real key. A typed payload dispatched in process is unchanged.
+  `SupersedingEvents.IsKeyMissing` reports the case, and the generated catalog registers the key's member and
+  `[JsonPropertyName]` through a new `SupersedingEvents.Register` overload; code generated before it keeps the old
+  behavior until rebuilt.
+- **Inbox rows the dispatcher never sees no longer retry for ever, and a consumer receives its owners' checkpoints
+  (#2117, #2118).** A received event that sorts after an earlier pending event of its stream, which the instance does
+  not hold, is held back unstored, and the drain never fetches an unstored event, yet the claim re-offered its stream
+  first. Once the outstanding budget narrowed the re-offer to one stream, that stream was always the held-back one, so
+  every other row the claim acquired, received integrity checkpoints included, was charged an attempt and never
+  dispatched: it climbed attempts for days without completing or being dead-lettered, and a consumer that owns nothing
+  never learned who owns the types it consumes. Migration 349 re-offers only the held streams the drain can fetch. The
+  attempt ceiling is enforced where a row is dispatched, so the maintenance cycle now also concludes the inbox rows past
+  `MaxInboxAttempts` that no dispatcher concluded (`MaintenanceWorkerOptions.ConcludeExhaustedInboxRows`, default on,
+  `ExhaustedInboxConcludeLimit`, default 500): a domain message is moved to the dead-letter store as
+  `MaxAttemptsExceeded`, keeping its last recorded error, and control-plane traffic is dropped
+  (`IWorkCoordinator.DropExhaustedInboxRowsAsync`, migration 350).
+- **Received events are stored under their owner, not the service that relayed them (#2116).** A redelivery bundle
+  names the service that answered it as every child's origin. A service that answered with events it had only received
+  (before #2032, and from bundles that sat in a consumer's inbox since) made consumers store another service's events
+  under its own name: the owner's lane counted short, the relay's long, and repair could never heal the bucket because
+  the owner's redelivery is skipped as a duplicate. A redelivery child of a type the consumer's ownership map gives to
+  another service is now stored under that owner with no origin sequence, and is not reconciled under the bundle's
+  origin (`MisattributedOrigin`, `FanoutResult.ReattributedChildren`, counter `redelivered_children_reattributed`).
+  History already stored under the wrong origin is corrected by a new idle-gated maintenance step
+  (`MisattributedOriginCorrectionStep`, both Postgres drivers; migration 346 `wh_integrity_origin_correction`,
+  `wh_integrity_origin_correction_window`, `wh_integrity_correct_origins`): in bounded commit-sequence batches each such
+  event takes its owner as origin with its origin sequence cleared (the owner's next redelivery fills it), its digest
+  moves lanes through the shared fold, the wrong origin's sealed epochs are refolded and both lanes' ledger buckets are
+  re-armed. Every correction is logged at Warning and counted (`misattributed_origins_corrected`); no event is deleted.
+  A changed ownership map rewalks the store; `ReattributionEnabled` switches it off with re-attribution.
+- **The integrity gap tracker survives a restart (#2104).** Its known origins and pending gaps were held in memory only,
+  so after every restart the audit skipped manifest requests until each origin checkpointed again, liveness alarms lost
+  their history, and a pending gap was re-detected a cycle late. Migration 339 keeps them
+  (`wh_integrity_known_origins`, written per recorded checkpoint as a heap-only update; `wh_integrity_pending_gaps`,
+  replaced only when a checkpoint changes an origin's pending set), and a new process loads both once before the tracker
+  is first read (`IntegrityGapTracker.EnsureHydratedAsync`, `IWorkCoordinator.IntegrityLoadGapTrackerStateAsync`). What
+  the process already learned from a live checkpoint wins, and a failed load is retried rather than latched.
+- **A repair asks for the one event a stream is missing instead of re-sending the stream (#2103).** A
+  `RequestRedeliveryCommand` could name only types, streams and a range, so one missing event cost the stream's whole
+  history in transport and processing. Stream digests carry id lanes (#2106), and every stream-level digest a
+  comparison reads now carries them (`StreamDigest.IdLo`/`IdHi`). When the origin's bucket holds exactly one event more
+  than the consumer's, origin XOR local is that event's id
+  (`IntegrityDigestMath.SingleMissingEventId`): the burst path sends it as `RequestRedeliveryCommand.EventIds` (at most
+  500 per request; a larger set is paged), and the paced drain records it on the deficit's ledger row
+  (`IntegrityRecordMissingEventsAsync`, migration 338's `wh_integrity_ledger.missing_event_id`) and sends it from there.
+  The owner ships exactly the named events (`RedeliveryRequest.EventIds`), and answers a named stream whose event it
+  does not hold over the window. Streams and window always ride along, so an owner that predates the field answers the
+  range as before; a bucket without id lanes, or missing more than one event, syncs whole. Buckets stay per (origin,
+  tenant, type, stream), so a consumer that keeps only some of a stream's types compares and repairs only those.
+- **The integrity audit no longer reports deficits for events a consumer holds without the origin's commit sequence
+  (#2102).** Windowed comparisons counted a consumer's events by the origin's commit sequence, so an event that carries
+  the origin but not the sequence (history re-attributed to its owner) was counted in no window, and its bucket read short
+  on every audit: a false deficit, and a pointless redelivery with repair on. A windowed stream or type comparison, and a
+  checkpoint count that reads short, now also fold the events held from that origin without a sequence
+  (`IWorkCoordinator.ComputeUnsequencedReceivedDigestsAsync`, bounded by the disagreeing streams or by the origin's
+  sequence-less rows) and place them by identity (`IntegrityDigestMath.PlaceHeld`): the bucket matches when they complete
+  the window, is a deficit only when the origin counts more events than are held placed and sequence-less together, and
+  is otherwise left undecided (not recorded or repaired, counted by `whizbang.stream_integrity.unplaced_buckets`; the
+  full-history comparison, whose folds include every held event, decides those streams). A recorded deficit keeps the
+  sequence-less events in its local digest. Existing false deficit rows clear on the next comparison, and a bulk
+  backfill is sized by what is missing beyond the held events.
+- **A service receives only the commands it handles on a per-namespace command inbox (#2089).** A service that handled
+  any command of a namespace subscribed to that namespace's command inbox with a match-all filter, so handling one command
+  of another service's namespace delivered every command (and, since #2078, all directed integrity traffic) sent there.
+  Each command inbox subscription now filters by subject to the command types the service handles. On Azure Service Bus
+  the filter is split across as many rules as the 1,024-character SQL filter limit needs, and the provisioner converges an
+  existing subscription's rules as well as a new one's. On RabbitMQ a queue that binds explicit patterns drops its legacy
+  match-all `#` binding. The ownership drift check now flags only a second subscriber that is not filtered to exact command
+  types (Service Bus); RabbitMQ, which cannot read another queue's bindings, no longer records drift.
+- **Directed integrity traffic reaches only its addressee (#2090).** Repair and redelivery requests, manifests and the
+  bundles that answer them were addressed to the service's first command inbox, which other services also read. Each
+  service now has its own control inbox, `inbox.whizbang.service.<service>`, that only it subscribes to, and advertises it
+  as its request and reply address. Senders keep answering on whatever address a receiver advertised, so a service on an
+  earlier version keeps receiving where it did.
+- **Framework control traffic a service cannot use is discarded on receipt (#2091).** A control or minted message
+  addressed to another service, or consumed by nothing on the receiving service, is now discarded at the receive
+  boundary on any entity with no inbox row, no comparison and no fan-out, and counted under its reason. Such a message
+  could previously reach dispatch, run database work and be retried until dead-lettered.
+- **Recording a redelivery bundle answer costs in proportion to the bundle (#2093).** The answer scanned the whole
+  integrity ledger under a generic plan, rewrote already-answered rows and could deadlock with a concurrent bundle.
+  Migration 333 finds the covered rows by primary key, leaves answered rows alone and locks in key order.
+- **The shared control topic no longer carries directed integrity traffic (#2094).** A service with no command inbox
+  advertised the system broadcast inbox as its request and reply address, so every request to it and every answer it
+  asked for was delivered to every service. Directed traffic now uses the addressee's own control inbox (#2090); only
+  system commands and the backfill broadcast for types with no known owner remain on the broadcast inbox.
+- **Integrity checkpoints are no longer dead-lettered by topic fan-out, and a backlog of redelivery reconciles drains
+  as a batch (#2099).** A checkpoint is published once per topic of its origin's owned types with one message id, so a
+  consumer subscribed to ten of those topics observed it ten times after one processing attempt, and the durable
+  redelivery bound moved it to dead letters, taking the in-flight row from its handler: the origin was then reported as
+  not checkpointing. The receive-side poison quarantine now leaves control-plane traffic in place, as the dead-letter
+  boundary already drops it rather than storing it. Separately, the maintainer's drain reconciled each recorded
+  redelivery bundle on its own and refolded the sealed digest epochs of each, so a backlog of one-event bundles that
+  each fill one origin sequence (history re-attributed to its owner records the origin but not its sequence) cost one
+  epoch fold per bundle. Leased reconciles are now handed to `wh_reconcile_redelivered_bundles` (migration 335) together:
+  one update fills every sequence and each sealed epoch the batch touches is refolded once. The reconcile's report now
+  tells an event whose origin it filled apart from one that only took its sequence, which used to read as the same
+  origins being filled again and again.
+- **The backfill of a grown subscription is paced (#2092).** A boot that widened a service's consumed set asked each
+  owner for the whole history of every newly consumed type at once, and each owner answered with one bundle per event,
+  which flooded the transport and the shared database. The subscription-expansion reconciler now queues one backfill
+  per (owner, type) and the new `SubscriptionBackfillWorker` walks each in bounded windows by the owner's commit
+  sequence: the next window is requested only after the previous one is answered, at most
+  `BackfillMaxConcurrentWindows` (default 2) at once, paced by a token bucket of `BackfillEventsPerMinute` (default
+  6,000) with `BackfillWindowSize` events per window (default 1,000), on the maintainer under the idle gate and never in
+  report-only. Progress is durable (migration 334, `wh_subscription_backfills`), so a restart resumes and a finished
+  type stops. A window reads its type through `idx_event_store_type_commit_sequence`, which the new framework index
+  build (`ConcurrentIndexBuild`, a maintenance step on the EF Core driver) creates with `CREATE INDEX CONCURRENTLY` after
+  the migrations, so writes to the event store go on while it builds; an invalid index an interrupted build left is
+  dropped and rebuilt, and windows read without it until it is valid. Answers carry many events per bundle across streams, on the backfill's own session. An owner on an
+  earlier release answers a window the legacy way; after `BackfillMaxWindowAttempts` (default 3) unanswered requests the
+  type's backfill ends as unanswered. Metrics: `backfill_windows_requested`, `backfill_events_received`,
+  `backfills_ended`, and the gauges `backfill_windows_in_flight` and `backfill_remaining_events`.
+- **A redelivery answer that stops at its bound says so, and a backfill continues from there (#2098).** An owner capped
+  every answer at 10,000 events and stopped without a word, so a backfill of a larger type never completed. A backfill
+  window's answer (`BackfillWindowAnswer`) now reports the last commit sequence it covered and whether more remains, and
+  the requester asks for the next window from exactly that point. An ordinary request that reaches the bound with more
+  selected is counted (`redelivery_answers_capped`) and logged.
 - **Stream integrity's local lane follows registered ownership (#2008).** The local lane was every stored event with no
   origin, so a store that received other services' events before origins were recorded advertised them as its own,
   counted them as surplus and redelivered them under its own identity, and every receiver refused them. An event whose
@@ -1421,6 +1696,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration, and a pass that failed and retried logged one for every file after the failure, each blaming a replay
   that never happened. The line is now written only for a file the comparison adds to the run; a file already in it
   (new, changed, or not yet reached) is not named. Which files run is unchanged.
+- **Stream integrity audits what the service consumes, not every type it knows (#2058).** The audit request, the
+  checkpoint verification and the manifest comparison took their types from the perspective event-type provider. A
+  consumer with no perspectives asked every origin for every type (the request's type list was null), and a consumer
+  with perspectives never audited the events only a receptor handles. A type nothing here consumes is never stored
+  here, so each of its buckets read as a deficit whose redelivery the receive boundary discarded: its repair-ledger
+  rows never healed, held `whizbang.stream_integrity.unhealed_buckets` up and kept the repair budget cycling. The
+  integrity surface is now the consumer registry (`IConsumerRegistry`, the predicate the receive boundary keeps or
+  discards by, with its new list form `GetConsumedMessages` / `GetConsumedEventTypes`, generated from the same data)
+  plus the namespaces the service absorbs (`RoutingOptions.AbsorbNamespaces`), which the request carries as the new
+  `RequestIntegrityManifest.EventNamespaces` (an origin that predates it answers the type list alone). A service that
+  consumes nothing requests nothing, never every type. Each audit cycle forgets the ledger rows of types outside that
+  surface (`wh_integrity_forget_unconsumed`, migration 331), so an existing ledger heals itself. The
+  subscription-expansion backfill and the orphan-inbox janitor read the same registry: a service with no perspectives
+  now baselines and backfills the events its receptors consume, and the janitor no longer counts on the perspective
+  list for what is handled.
+- **A consumed event reaches the event store whether or not a perspective folds it (#2064).** The receive path
+  classified an event by the perspective event list, so a receptor-only event in a service with perspectives, and every
+  event in a service with none (a transport payload arrives as JSON, so its own marker cannot say), was stored as a
+  non-event and never copied into the event store. The consumer registry's event flag now decides for a type the
+  service consumes (`IConsumerRegistry.FindConsumedMessage`); the perspective list and the payload's marker decide only
+  for a type it does not. The transport consumer's known-event filter counts the consumed events too, and keeps an
+  event the discard policy keeps with no consumer (an absorbed namespace). On the first start after upgrading, the
+  subscription-expansion pass treats those newly stored types as expansions and backfills them under the existing caps,
+  asking each type's known owner directly (#2032) and broadcasting only for a type with no known owner;
+  `whizbang.stream_integrity.backfills_requested` counts them.
+- **Every consumed event's namespace is subscribed (#2065).** The event-namespace registry that decides the transport
+  subscriptions discovered perspectives and `IReceptor<TEvent>` only, so an event consumed by a synchronous receptor, a
+  notification tag or the collective sink had no subscription for its namespace and was never delivered. A service
+  consuming such an event may create one more subscription on its next start.
+- **The orphan-inbox janitor keeps absorbed events (#2066).** It purged every pending inbox row whose type had no
+  consumer, including events in an absorbed namespace, which are stored on purpose so a later perspective can rebuild
+  from them. The janitor now asks the receive boundary's keep decision about each pending type
+  (`IWorkCoordinator.GetPendingInboxMessageTypesAsync`).
+- **An absorbed event received as JSON reaches the event store (#2074).** A type the consumer registry does not know,
+  such as an event in an absorbed namespace (stored on purpose with no consumer), was classified by the perspective
+  list and then by the payload's own marker. A transport payload arrives as JSON, so the marker could not say, and the
+  absorbed event was stored as a non-event and never copied into the event store. The message type catalog's declared
+  kind now decides for a type the application declares (by its current or a former name), before the payload marker.
+  The catalog gives a plain message (neither command nor event) its own kind, `"message"`, instead of `"event"`, so it
+  is never classified as an event or stored; it still publishes where it did, so topology and provisioning are unchanged.
+- **Directed integrity traffic goes to the addressee's own inbox and expires (#2078).** A service's integrity request
+  address defaulted to the first destination it consumes, in practice the shared framework inbox every service reads,
+  so every directed integrity message (manifest and redelivery requests and answers, drill-downs, page follows) was
+  copied to every service, and none expired: a stopped service's subscription grew until the shared topic reached its
+  size cap. The default request address is now the service's own command inbox (the destination the namespace inbox
+  strategy provisions for a command namespace it handles, which only it subscribes to), advertised on the checkpoint
+  as before, so requests and answers reach exactly one service. A broadcast backfill for a type with no known owner
+  still rides the shared topic. An explicit `Whizbang:StreamIntegrity:RepairTopic` still wins; a service with no
+  command inbox of its own keeps the shared fallback and logs once that it does. Every directed integrity message now
+  carries a time to live, `Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes` (default 60, at least 1), lifted
+  to the broker's expiry by the Azure Service Bus and RabbitMQ transports. An older service that advertises the shared
+  topic keeps receiving its traffic there until it upgrades.
+- **A type-filtered digest window costs in proportion to the rows it returns, and one audit window is capped (#2107).**
+  After #2080 the windowed stream-digest read was bound by its window, but as an auto-prepared statement it settled into
+  a generic plan that found the window's rows through `idx_event_store_commit_sequence` and filtered the requested
+  types on the heap, so a wide window read every event in it (on a large store, seconds and hundreds of thousands of
+  pages per call) to return a few hundred. The read is now `wh_compute_stream_digests_window` (migration 347), planned
+  per call against its own window and types (`plan_cache_mode = force_custom_plan`), so a sparse type is read through an
+  index on the type (`idx_event_store_type_commit_sequence` from #2092 once built, or `idx_event_store_type_tenant`),
+  and the page is assembled without a nested loop over the window. An origin now answers at most
+  `StreamIntegrityOptions.MaxAuditWindowSequences` commit sequences per windowed audit request (default 500,000, five
+  default digest epochs) and marks the answer `IntegrityManifest.WindowCapped`; the consumer asks for the next window from where it stopped,
+  up to `MaxAuditWindowsPerAudit` windows per audit (default 5), so history is walked in bounded slices instead of read
+  at once or skipped. A window that does not verify is not sealed, so the seal stays at the first such window and the
+  next audit starts again there, but the windows after it are still compared and repaired in the same audit. A windowed type-level answer with no digests is now compared too, and seals its window when this service
+  holds nothing there either, so a capped slice with nothing to audit no longer freezes the seal. The seal advances only
+  over a window that starts at or below it.
+- **An idle service re-checks stale ledger rows itself instead of waiting for the daily audit (#2115).** A ledger row
+  cleared only when the audit compared its bucket again, at most once a day, so rows written under an older compare rule
+  lingered for days after an upgrade, and with automatic repair on the paced drain turned them into repair requests. The
+  new `IntegrityLedgerRecheckWorker` (on the maintainer, under the housekeeping idle gate) claims up to
+  `StreamIntegrityOptions.LedgerRecheckRowsPerTick` rows (default 500) every `LedgerRecheckIntervalSeconds` (default 60)
+  whose last report is older than `LedgerRecheckAfterMinutes` (default 120), oldest first, and asks each row's owner for a
+  stream-level answer over the row's window marked `Recheck`. The comparison removes the rows that now match or are
+  undecided exactly as the audit does, and a re-check answer never leads to a repair request. A claimed row is stamped
+  (`wh_integrity_ledger.rechecked_at`, migration 348) and waits the threshold again before its next re-check. Counted
+  by `whizbang.stream_integrity.ledger_rows_rechecked` and `ledger_rows_recheck_cleared`; turned off with
+  `LedgerRecheckEnabled`. Rows without a stamped window (pre-stamp rows and non-deficit divergences) are left to the audit.
+- **A windowed digest reads its window, not the whole lane (#2080).** Answering a windowed stream-level manifest and
+  the windowed type-level fold (`compute_type_digests_epoch_window`) took the lane's sequence from a `CASE`
+  (`commit_sequence` for the local lane, `origin_commit_sequence` for an origin's) and filtered the window afterwards.
+  No index can serve a range on a `CASE`, so every call read the whole lane and the cost grew with the store rather
+  than the window. Both queries now read the lane as two branches, each with the window as a direct range on its own
+  indexed column (`idx_event_store_commit_sequence`, `idx_event_store_origin_lane`), so a call reads only the rows in
+  its window (migration 332). No new index.
 - **The Dapper work coordinator no longer leaves coordinator operations silently unimplemented (#2051).** It served the
   interface's inert default (an empty list, zero or `unsupported`) for dozens of operations, so on Dapper a retention
   setting such as the pointer prune or the lifecycle-completion window was accepted and removed nothing, the

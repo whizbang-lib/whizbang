@@ -128,7 +128,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     await shared.StartAsync(cancellationToken);
     try {
       var goodListened = shared.WaitForChannelListenedAsync(goodChannel, cancellationToken);
-      var badLogged = logger.WaitForCountAsync(9, 1, TimeSpan.FromSeconds(15));
+      var badLogged = logger.WaitForCountAsync(9, 1, TimeSpan.FromSeconds(15), cancellationToken);
       await goodListened.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
       var badMessages = await badLogged;
 
@@ -171,7 +171,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
       await gateB.StartAsync(cancellationToken);
       try {
         await _awaitAvailableAsync(gateB, cancellationToken);
-        var messages = await loggerB.WaitForCountAsync(100, 1, TimeSpan.FromSeconds(15));
+        var messages = await loggerB.WaitForCountAsync(100, 1, TimeSpan.FromSeconds(15), cancellationToken);
 
         await Assert.That(gateB.IsAliveLockHeld).IsFalse()
           .Because("a second session claiming the same instance id's lock must be told it "
@@ -186,6 +186,189 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
       await gateA.StopAsync(CancellationToken.None);
     }
   }
+
+  // Npgsql's WaitAsync can miss a cancellation that lands while it is entering its read: it checks
+  // the token, then re-arms the read's own cancellation source, and re-arming discards a cancel
+  // delivered in between. The wait then sits on the socket until the server sends something, which
+  // for an idle LISTEN connection may be never. A stop that relied on canceling the wait never
+  // finished: a host shutting down would hang, and AliveLock_AlreadyHeldByAnotherSession, which
+  // stops its gates the moment they come up, timed out in CI with no failure of its own.
+  [Test]
+  [Timeout(60000)]
+  public async Task Stop_WhileTheWaitMissesItsCancellation_StillCompletesAsync(
+      CancellationToken cancellationToken) {
+    var logger = new CapturingLogger();
+    using var gate = _sharedConnection(logger);
+    var channel = $"wh_cov_missed_stop_{Guid.NewGuid():N}";
+    var subscriber = new CountingSubscription(channel);
+    using var handle = gate.Subscribe(subscriber);
+    var parked = new TaskCompletionSource<(NpgsqlConnection Connection, Task Wait)>(
+      TaskCreationOptions.RunContinuationsAsynchronously);
+    // A wait that ignores its token: the missed cancellation, made certain instead of rare.
+    gate.WaitForMessageAsync = (conn, _, _) => {
+      var wait = conn.WaitAsync(Timeout.InfiniteTimeSpan, CancellationToken.None);
+      parked.TrySetResult((conn, wait));
+      return wait;
+    };
+    await gate.StartAsync(cancellationToken);
+    await _awaitAvailableAsync(gate, cancellationToken);
+    var (listenConnection, abandonedWait) = await parked.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+    var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    listenConnection.StateChange += (_, change) => {
+      if (change.CurrentState == System.Data.ConnectionState.Closed) {
+        closed.TrySetResult();
+      }
+    };
+
+    var stop = gate.StopAsync(CancellationToken.None);
+    try {
+      await stop.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+    } catch (TimeoutException) {
+      Assert.Fail("StopAsync never completed: the dispatch loop is still parked in a wait that "
+                + "did not see the stop. It logged: " + string.Join(" | ", logger.AllMessages()));
+    }
+    var openAfterStop = listenConnection.State == System.Data.ConnectionState.Open;
+
+    // The abandoned wait is still reading. A notification now reaches it, ends it, and must reach
+    // no subscriber: the connection was stopped.
+    await using (var notifier = new NpgsqlConnection(ConnectionString)) {
+      await notifier.OpenAsync(cancellationToken);
+      await using var notify = new NpgsqlCommand("SELECT pg_notify(@channel, 'after-stop')", notifier);
+      notify.Parameters.AddWithValue("channel", channel);
+      await notify.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await abandonedWait.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+    await closed.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+
+    await Assert.That(gate.IsAvailable).IsFalse()
+      .Because("the loop must have left and reported the shutdown, not merely been abandoned");
+    await Assert.That(openAfterStop).IsTrue()
+      .Because("the connection is not disposed under a read still in flight on it");
+    await Assert.That(subscriber.Deliveries).IsEqualTo(0)
+      .Because("no subscriber is called from a connection after it was stopped");
+  }
+
+  // #2155: a resync wakes the parked wait by canceling its token, and Npgsql can lose that cancel
+  // the same way it lost the stop (#2150). The wait then sat on the idle socket, so a subscription
+  // made after the connection came up was never LISTENed and every notification on it was lost.
+  // The wait now carries the keepalive interval as a timeout, which Npgsql cannot lose, and the pass
+  // after it times out drains the resync latch: a lost wake costs at most one keepalive interval.
+  [Test]
+  [Timeout(60000)]
+  public async Task Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync(
+      CancellationToken cancellationToken) {
+    var logger = new CapturingLogger();
+    using var gate = _sharedConnection(logger);
+    var waits = new ScriptedWaits();
+    gate.WaitForMessageAsync = waits.WaitAsync;
+    await gate.StartAsync(cancellationToken);
+    try {
+      await _awaitAvailableAsync(gate, cancellationToken);
+      var firstWait = await waits.NextParkedAsync(cancellationToken);
+      var channel = $"wh_cov_lost_resync_{Guid.NewGuid():N}";
+      using var handle = gate.Subscribe(new NoopSubscription(channel));
+      var listenedWhileParked = gate.ListenedChannelsForTesting.Contains(channel);
+
+      firstWait.Completion.SetResult(false);
+      await gate.WaitForChannelListenedAsync(channel, cancellationToken)
+        .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+
+      await Assert.That(listenedWhileParked).IsFalse()
+        .Because("the wait ignores its token, so the resync's cancel is lost and nothing has LISTENed yet");
+      await Assert.That(firstWait.Timeout).IsEqualTo(TimeSpan.FromSeconds(30))
+        .Because("the wait is bounded by the keepalive interval, so a lost wake waits at most that long");
+      await Assert.That(gate.ListenedChannelsForTesting).Contains(channel)
+        .Because("the pass after the timeout drains the resync latch and LISTENs the late subscription");
+    } finally {
+      await gate.StopAsync(CancellationToken.None);
+      waits.ReleaseAll();
+    }
+  }
+
+  // #2155: the keepalive used to be a token cancel on the wait too, so the same lost cancel left a
+  // dead connection undetected until something else arrived on it. A wait that times out is the
+  // keepalive now: the connection is checked with SELECT 1 before the loop parks again.
+  [Test]
+  [Timeout(60000)]
+  public async Task Keepalive_WhoseWakeIsLost_RunsSelectOneOnceTheWaitTimesOutAsync(
+      CancellationToken cancellationToken) {
+    var instanceProvider = new ServiceInstanceProvider(
+      Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
+    var logger = new CapturingLogger();
+    using var gate = _sharedConnection(logger, instanceProvider);
+    var waits = new ScriptedWaits();
+    gate.WaitForMessageAsync = waits.WaitAsync;
+    var appName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+    await gate.StartAsync(cancellationToken);
+    try {
+      await _awaitAvailableAsync(gate, cancellationToken);
+      var firstWait = await waits.NextParkedAsync(cancellationToken);
+      var beforeTimeout = await _lastStatementAsync(appName, cancellationToken);
+
+      firstWait.Completion.SetResult(false);
+      // The loop parks again only once the keepalive round trip has completed.
+      _ = await waits.NextParkedAsync(cancellationToken);
+      var afterTimeout = await _lastStatementAsync(appName, cancellationToken);
+
+      await Assert.That(beforeTimeout).IsNotEqualTo("SELECT 1")
+        .Because("no keepalive has run before the wait timed out, so the check below is not satisfied in advance");
+      await Assert.That(afterTimeout).IsEqualTo("SELECT 1")
+        .Because("a timed-out wait is the keepalive: the connection is checked before the loop parks again");
+      await Assert.That(gate.IsAvailable).IsTrue()
+        .Because("a healthy keepalive leaves the connection in use rather than recycling it");
+    } finally {
+      await gate.StopAsync(CancellationToken.None);
+      waits.ReleaseAll();
+    }
+  }
+
+  private async Task<string> _lastStatementAsync(string appName, CancellationToken cancellationToken) {
+    await using var admin = new NpgsqlConnection(ConnectionString);
+    await admin.OpenAsync(cancellationToken);
+    await using var cmd = new NpgsqlCommand(
+      "SELECT query FROM pg_stat_activity WHERE application_name = @appName", admin);
+    cmd.Parameters.AddWithValue("@appName", appName);
+    return (string)(await cmd.ExecuteScalarAsync(cancellationToken))!;
+  }
+
+  /// <summary>
+  /// A wait for the dispatch loop that ignores its token, the missed cancellation made certain, and
+  /// ends only when the test completes it: with false for a timeout, the way Npgsql reports one.
+  /// </summary>
+  private sealed class ScriptedWaits {
+    private readonly System.Threading.Channels.Channel<ParkedWait> _parked =
+      System.Threading.Channels.Channel.CreateUnbounded<ParkedWait>();
+    private readonly List<ParkedWait> _all = [];
+
+    /// <summary>The dispatch loop's wait: parks with the timeout it was given and ignores its token.</summary>
+    public Func<NpgsqlConnection, TimeSpan, CancellationToken, Task<bool>> WaitAsync => (_, timeout, _) => _park(timeout);
+
+    private Task<bool> _park(TimeSpan timeout) {
+      var parked = new ParkedWait(timeout, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+      lock (_all) {
+        _all.Add(parked);
+      }
+      _parked.Writer.TryWrite(parked);
+      return parked.Completion.Task;
+    }
+
+    /// <summary>
+    /// Ends every wait still parked after the stop, so the stopped lifetime disposes its connection
+    /// instead of holding the session open past the test.
+    /// </summary>
+    public void ReleaseAll() {
+      lock (_all) {
+        foreach (var parked in _all) {
+          parked.Completion.TrySetResult(false);
+        }
+      }
+    }
+
+    public async Task<ParkedWait> NextParkedAsync(CancellationToken cancellationToken) =>
+      await _parked.Reader.ReadAsync(cancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+  }
+
+  private sealed record ParkedWait(TimeSpan Timeout, TaskCompletionSource<bool> Completion);
 
   // The claim can also fail outright. If that exception were swallowed without a trace,
   // IsAliveLockHeld would sit at false and look IDENTICAL to "another session holds it" -- two
@@ -211,7 +394,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     await gate.StartAsync(cancellationToken);
     try {
       await _awaitAvailableAsync(gate, cancellationToken);
-      var messages = await logger.WaitForCountAsync(101, 1, TimeSpan.FromSeconds(15));
+      var messages = await logger.WaitForCountAsync(101, 1, TimeSpan.FromSeconds(15), cancellationToken);
 
       await Assert.That(gate.IsAliveLockHeld).IsFalse()
         .Because("a claim that could not even run must not be reported as a held lock");
@@ -358,7 +541,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
 
     await shared.SyncListensAsync(conn, cancellationToken);
 
-    var failures = await logger.WaitForCountAsync(10, 1, TimeSpan.FromSeconds(15));
+    var failures = await logger.WaitForCountAsync(10, 1, TimeSpan.FromSeconds(15), cancellationToken);
     await Assert.That(failures[0].Message).Contains(channel)
       .Because("an operator reading the log has to know which channel was left behind");
     await Assert.That(shared.ListenedChannelsForTesting).Contains(channel)
@@ -393,6 +576,13 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
   private sealed class NoopSubscription(string channel) : INotifySubscription {
     public string ChannelName => channel;
     public void OnNotification(string payload) { }
+  }
+
+  private sealed class CountingSubscription(string channel) : INotifySubscription {
+    private int _deliveries;
+    public string ChannelName => channel;
+    public int Deliveries => Volatile.Read(ref _deliveries);
+    public void OnNotification(string payload) => Interlocked.Increment(ref _deliveries);
   }
 }
 
@@ -505,9 +695,10 @@ internal sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
   /// Waits until at least <paramref name="count"/> entries have been logged for
   /// <paramref name="eventId"/>, then returns the entries captured so far (at least
   /// <paramref name="count"/> of them, in log order). Throws on <paramref name="timeout"/>
-  /// rather than hanging when the expected log never fires.
+  /// rather than hanging when the expected log never fires, and ends with the test's own token.
   /// </summary>
-  public async Task<IReadOnlyList<LogEntry>> WaitForCountAsync(int eventId, int count, TimeSpan timeout) {
+  public async Task<IReadOnlyList<LogEntry>> WaitForCountAsync(
+      int eventId, int count, TimeSpan timeout, CancellationToken cancellationToken = default) {
     var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     void CheckThreshold(int loggedEventId) {
       if (loggedEventId != eventId) {
@@ -527,7 +718,7 @@ internal sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
       _onLogged += CheckThreshold;
     }
     try {
-      await tcs.Task.WaitAsync(timeout);
+      await tcs.Task.WaitAsync(timeout, cancellationToken);
     } finally {
       lock (_gate) {
         _onLogged -= CheckThreshold;
@@ -535,6 +726,17 @@ internal sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
     }
     lock (_gate) {
       return [.. _byEventId[eventId]];
+    }
+  }
+
+  /// <summary>
+  /// Every message captured so far, across event ids, so a test that times out can say what the
+  /// connection reported instead of only that it never came up.
+  /// </summary>
+  public IReadOnlyList<string> AllMessages() {
+    lock (_gate) {
+      return [.. _byEventId.Values.SelectMany(entries => entries)
+        .Select(entry => entry.Exception is null ? entry.Message : $"{entry.Message} ({entry.Exception.GetType().Name}: {entry.Exception.Message})")];
     }
   }
 }

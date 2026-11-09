@@ -161,6 +161,8 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
     await Assert.That(await _digestAsync(conn, stream, TYPE)).IsEqualTo(await _freshFoldAsync(conn, stream, TYPE))
       .Because("the digest loses exactly the reaped event's contribution, so it equals a fold of what is left");
     await Assert.That(await _digestCountAsync(conn, stream, TYPE)).IsEqualTo(1L);
+    // #2106: the reaped event's id halves leave the id lanes too.
+    await StoredDigestInvariant.AssertAgreeAsync(conn, stream);
   }
 
   [Test]

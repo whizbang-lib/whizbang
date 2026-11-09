@@ -160,6 +160,8 @@ public class IntegrityCheckpointReceptorTests {
     var (envelope, destination, _) = fx.Transport.Published.Single();
     await Assert.That(destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never to the requester's own topic.");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a directed integrity request expires at the broker instead of piling up");
     await Assert.That(envelope.Target).IsEqualTo("origin-svc")
       .Because("the request is DIRECTED at the origin — only it should run the selection.");
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -433,8 +435,10 @@ public class IntegrityCheckpointReceptorTests {
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegrityRepairPolicy? policy = null,
       Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null,
-      bool withMetrics = true) {
-    var coordinator = new VerifyCoordinator();
+      bool withMetrics = true,
+      VerifyCoordinator? coordinator = null,
+      string[]? ownedDomains = null) {
+    coordinator ??= new VerifyCoordinator();
     var dispatcher = new CaptureDispatcher();
     var transport = new CaptureTransport();
     var services = new ServiceCollection();
@@ -446,6 +450,9 @@ public class IntegrityCheckpointReceptorTests {
         ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     }
     services.AddSingleton(new IntegrityGapTracker());
+    if (ownedDomains is not null) {
+      services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().OwnDomains(ownedDomains)));
+    }
     // A fresh warn-once memory per fixture: the receptor's process-wide fallback would leak between tests.
     services.AddSingleton(new IntegrityOwnershipConflicts());
     var ledger = new RecordingIntegrityRepairLedger();
@@ -454,7 +461,7 @@ public class IntegrityCheckpointReceptorTests {
     // static fallback is process-wide, which would leak state between parallel tests.
     services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new TypeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     // See IntegrityManifestReceptorTests: publishing is opt-in; these exercise that path.
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
@@ -562,8 +569,12 @@ public class IntegrityCheckpointReceptorTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(VerifiedEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class TypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(VerifiedEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
@@ -607,6 +618,42 @@ public class IntegrityCheckpointReceptorTests {
     public Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
       Guid originServiceId, long fromCommitSequence, long toCommitSequence, CancellationToken cancellationToken = default) =>
       Task.FromResult(Counts((originServiceId, fromCommitSequence, toCommitSequence)));
+
+    /// <summary>#2104: what the store keeps of the gap tracker, shared by the fixtures of a simulated restart.</summary>
+    public Dictionary<Guid, IntegrityKnownOrigin> KeptOrigins { get; } = [];
+    public Dictionary<Guid, IReadOnlyList<IntegrityGapTracker.PendingGap>> KeptPending { get; } = [];
+    public int PendingWrites { get; private set; }
+
+    public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult<IntegrityGapTrackerState?>(new IntegrityGapTrackerState(
+        [.. KeptOrigins.Values], [.. KeptPending.Values.SelectMany(p => p)]));
+
+    public Task IntegrityRecordOriginCheckpointAsync(
+        Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+        CancellationToken cancellationToken = default) {
+      KeptOrigins[originServiceId] = new IntegrityKnownOrigin(
+        originServiceId, originServiceName,
+        requestTopic ?? (KeptOrigins.TryGetValue(originServiceId, out var prior) ? prior.RequestTopic : null), checkpointAt);
+      return Task.CompletedTask;
+    }
+
+    public Task IntegrityReplacePendingGapsAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) {
+      PendingWrites++;
+      KeptPending[originServiceId] = pending;
+      return Task.CompletedTask;
+    }
+
+    /// <summary>#2102: the (tenant, type) folds of events held from the origin without an origin sequence.</summary>
+    public IReadOnlyList<StreamDigest> Unsequenced { get; set; } = [];
+    public List<(IReadOnlyList<string> Types, IReadOnlyList<Guid>? Streams)> UnsequencedAsks { get; } = [];
+
+    public Task<IReadOnlyList<StreamDigest>> ComputeUnsequencedReceivedDigestsAsync(
+        Guid originServiceId, IReadOnlyList<string> eventTypes, IReadOnlyList<Guid>? streamIds, TimeSpan settleWindow,
+        CancellationToken cancellationToken = default) {
+      UnsequencedAsks.Add((eventTypes, streamIds));
+      return Task.FromResult<IReadOnlyList<StreamDigest>>([.. Unsequenced.Where(d => eventTypes.Contains(d.EventType))]);
+    }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
@@ -796,13 +843,14 @@ public class IntegrityCheckpointReceptorTests {
     }
     var total = scans;
 
-    // Every checkpoint still pays a first-sight count of its OWN window (both halves of each pair,
-    // so 12 across six cycles); those windows advance in production and are per-checkpoint cost,
-    // not per-gap cost. The governor bounds the repeated CONFIRMATION recount of the same stale
-    // window: two (the unchanged threshold), then the cooldown holds.
-    await Assert.That(total).IsEqualTo(14)
-      .Because("detection cost on an unchanged answer must be bounded: 12 first-sight counts + 2 "
-             + "confirmation recounts, then the cooldown holds. Unbounded is 18");
+    // Every checkpoint that names a bucket this service keeps pays a first-sight count of its OWN window (one per
+    // pair here, so 6 across six cycles: an empty checkpoint names nothing to verify, and since #2058 it counts
+    // nothing). Those windows advance in production and are per-checkpoint cost, not per-gap cost. The governor
+    // bounds the repeated CONFIRMATION recount of the same stale window: two (the unchanged threshold), then the
+    // cooldown holds.
+    await Assert.That(total).IsEqualTo(8)
+      .Because("detection cost on an unchanged answer must be bounded: 6 first-sight counts + 2 "
+             + "confirmation recounts, then the cooldown holds. Unbounded is 12");
   }
 
 
@@ -938,5 +986,148 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(logger.Entries.Count(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning
                                              && e.Message.Contains("rival-svc", StringComparison.Ordinal))).IsEqualTo(1)
       .Because("the warning does not depend on the meter being registered");
+  }
+
+  // ── #2102: events held without the origin's commit sequence ─────────────
+
+  private static StreamDigest _unsequenced(int count) => new() {
+    TenantScope = "tenant-a",
+    EventType = _verifiedType,
+    StreamId = Guid.Empty,
+    DigestLo = 1,
+    DigestHi = 2,
+    EventCount = count,
+  };
+
+  [Test]
+  public async Task AShortWindow_TheEventsHeldWithoutASequenceCanFill_IsNoGapAsync() {
+    // The consumer counts one event of the window by its origin sequence and holds two more of the origin's events
+    // whose sequence it never learned. They may be exactly the window's other two, so the window is not short.
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+    fx.Coordinator.Unsequenced = [_unsequenced(2)];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty()
+      .Because("a consumer never reports a gap for events it holds, whether or not it knows their origin sequence");
+    await Assert.That(fx.Coordinator.UnsequencedAsks.Single().Types).IsEquivalentTo([_verifiedType]);
+    await Assert.That(fx.Coordinator.UnsequencedAsks.Single().Streams).IsNull()
+      .Because("the checkpoint counts per (tenant, type), so the held events are counted per (tenant, type)");
+  }
+
+  [Test]
+  public async Task AFullWindow_NeverAsksForTheEventsHeldWithoutASequenceAsync() {
+    var fx = _fixture();
+    fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 3 }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
+
+    await Assert.That(fx.Coordinator.UnsequencedAsks).IsEmpty()
+      .Because("the checkpoint runs every interval; the extra read is paid only by a window that reads short");
+  }
+
+  [Test]
+  public async Task AWindowShortByMoreThanTheEventsHeldWithoutASequence_IsStillAGapAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Unsequenced = [_unsequenced(1)];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    var report = (IntegrityGapDetected)fx.Dispatcher.Published.Single();
+    await Assert.That(report.ExpectedCount).IsEqualTo(3)
+      .Because("three expected and at most one held: a genuinely missing event is still a gap");
+    await Assert.That(report.ActualCount).IsEqualTo(1)
+      .Because("the report counts what the consumer holds, the event without a sequence included");
+  }
+
+  [Test]
+  public async Task APendingGap_TheEventsHeldWithoutASequenceFillOnTheRecount_HealsAndForgetsTheLaneAsync() {
+    // A gap recorded before the consumer could count its sequence-less events clears on the next comparison.
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [];
+    var key = new Whizbang.Core.Messaging.IntegrityRepairLedger.DivergenceKey(fx.OriginId, "tenant-a", _verifiedType, Guid.Empty);
+    _ = await fx.Ledger.TryBeginRepairAsync(key, _fixedNow, TimeSpan.FromHours(1), 1);
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests"));
+    fx.Coordinator.Unsequenced = [_unsequenced(3)];
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty();
+    await Assert.That(fx.Transport.Published).IsEmpty().Because("nothing is missing, so nothing is redelivered");
+    await Assert.That(await fx.Ledger.TryBeginRepairAsync(key, _fixedNow, TimeSpan.FromHours(1), 1)).IsTrue()
+      .Because("the type lane healed, so its spent attempt is forgotten");
+  }
+
+  // ── #2186: the gap tracker judges ownership by the same rule as the ledger ──
+
+  [Test]
+  public async Task Checkpoint_ABucketOfATypeThisServiceOwns_IsNotVerifiedAgainstAnotherOriginAsync() {
+    // The map names no owner (a service never announces its own domains to itself), but the type is in this service's
+    // own owned domains: another origin's count of it does not stand, exactly as the manifest comparison and the
+    // ledger sweep judge it (IntegrityDomainOwnership.IsNotAuthoritative).
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
+      ownedDomains: [VERIFIED_DOMAIN]);
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty()
+      .Because("an origin's count of a type this service owns is not authoritative, so no gap is confirmed against it");
+    await Assert.That(fx.Transport.Published).IsEmpty()
+      .Because("no repair is asked of an origin that only received the type's events");
+  }
+
+  [Test]
+  public async Task Checkpoint_APendingGapOfATypeThisServiceOwns_IsDroppedAsync() {
+    // A gap recorded before this service owned the domain (kept across the restart that brought the new ownership) is
+    // judged by the same rule when its confirmation comes due.
+    var options = new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true };
+    var before = _fixture(options);
+    before.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+    await before.Receptor.HandleAsync(_checkpoint(before, from: 0, to: 5, count: 3));   // deficit: pending, kept
+
+    var after = _fixture(options, coordinator: before.Coordinator, ownedDomains: [VERIFIED_DOMAIN]);
+    await after.Receptor.HandleAsync(_checkpoint(before, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    await Assert.That(after.Dispatcher.Published).IsEmpty()
+      .Because("the pending gap is not confirmed against an origin that does not own the type");
+  }
+
+  // ── #2104: the tracker's origins and pending gaps survive a restart ────
+
+  [Test]
+  public async Task Checkpoint_IsKeptByTheStore_WithTheOriginsAddressAndTimeAsync() {
+    var fx = _fixture();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    var kept = fx.Coordinator.KeptOrigins[fx.OriginId];
+    await Assert.That(kept.OriginServiceName).IsEqualTo("origin-svc");
+    await Assert.That(kept.RequestTopic).IsEqualTo("origin.requests");
+    await Assert.That(fx.Coordinator.PendingWrites).IsEqualTo(0)
+      .Because("a checkpoint that neither finds nor clears a gap writes no pending state");
+  }
+
+  [Test]
+  public async Task APendingGapSeenBeforeARestart_IsConfirmedByTheFirstCheckpointAfterItAsync() {
+    var options = new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true };
+    var before = _fixture(options);
+    before.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+    await before.Receptor.HandleAsync(_checkpoint(before, from: 0, to: 5, count: 3));   // deficit: pending, kept
+
+    // A new process: a fresh tracker over the same store.
+    var after = _fixture(options, coordinator: before.Coordinator);
+    await after.Receptor.HandleAsync(_checkpoint(before, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    var report = (IntegrityGapDetected)after.Dispatcher.Published.Single();
+    await Assert.That(report.FromCommitSequence).IsEqualTo(0L)
+      .Because("the gap seen before the restart is confirmed by the first checkpoint after it, not re-detected a cycle late");
+    await Assert.That(before.Coordinator.KeptPending[before.OriginId]).IsEmpty()
+      .Because("a confirmed gap leaves the kept pending set");
   }
 }

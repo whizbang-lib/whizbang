@@ -400,6 +400,7 @@ public class IntegrityManifestReceptorBranchTests {
     wiring ??= new Wiring();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(wiring.Dispatcher ?? new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));

@@ -27,6 +27,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// statement behind a lock or a checkpoint. TUnit's default is eight tests per processor, 96 on a twelve-core build
 /// server.
 /// </para>
+/// <para>
+/// A test's setup is a copy of the migrated schema template (<see cref="EFCoreSchemaTemplate"/>, #2167) rather than a
+/// schema pass of its own, so a test now holds only the admin connection that creates its copy during setup. The
+/// template build holds two more (the lock and the build), once per process. The budget above is unchanged: it was
+/// sized to the tests' peak, which is their workers, not their setup.
+/// </para>
 /// </remarks>
 public sealed class EFCorePostgresParallelism : IParallelLimit {
   /// <summary>The most tests of this project that run at the same time in one process.</summary>

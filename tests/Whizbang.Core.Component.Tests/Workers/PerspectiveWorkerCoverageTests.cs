@@ -393,18 +393,18 @@ public class PerspectiveWorkerCoverageTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
-    // Act: the work is waiting before the worker starts. The signal is the worker body itself ending on
-    // its own, with no cancellation: that is the park.
+    // Act: the work is waiting before the worker starts. The park is entered right after the read-model
+    // barrier is released, and only the drain channel (#2142) or a stop leaves it.
     using var cts = new CancellationTokenSource();
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await worker.StartAsync(cts.Token);
+    await worker.StartupScanComplete.WaitAsync(cancellationToken);
+    await worker.StopAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(cancellationToken);
 
-    // Assert - the body ended by itself, and the work it would have consumed is still in the channel.
-    await Assert.That(cts.IsCancellationRequested).IsFalse()
-      .Because("nothing stopped the worker; it ended because there is no perspective registry to serve");
+    // Assert - the work it would have consumed is still in the channel.
     await Assert.That(harness.ChannelWriter.Reader.TryRead(out var untouched)).IsTrue()
       .Because("a parked worker takes no work from its channels");
     await Assert.That(untouched!.StreamId).IsEqualTo(streamId);
@@ -1633,6 +1633,9 @@ public class PerspectiveWorkerCoverageTests {
     // DB ready for startup scan → triggers the failing CreateAsyncScope (call 3).
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
+    // An empty registry, so the host is a perspective host and the startup scan runs (with no registry
+    // the worker skips startup repair and parks, which is not what this test is about).
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new EmptyRunnerRegistry());
     services.AddLogging();
     await using var realProvider = services.BuildServiceProvider();
 

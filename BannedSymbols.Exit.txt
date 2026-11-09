@@ -1,0 +1,5 @@
+M:Microsoft.Extensions.Hosting.IHostApplicationLifetime.StopApplication; Every exit goes through the one exit path (#2126): call IWhizbangInstanceExit.RequestExit with an ExitCause
+M:System.Environment.Exit(System.Int32); Every exit goes through the one exit path (#2126): call IWhizbangInstanceExit.RequestExit with an ExitCause
+P:System.Environment.ExitCode; The exit code is set in one place, by the one exit path (#2126): call IWhizbangInstanceExit.RequestExit with an ExitCause
+M:System.Environment.FailFast(System.String); Every exit goes through the one exit path (#2126): call IWhizbangInstanceExit.RequestExit with an ExitCause
+M:System.Environment.FailFast(System.String,System.Exception); Every exit goes through the one exit path (#2126): call IWhizbangInstanceExit.RequestExit with an ExitCause

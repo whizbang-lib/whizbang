@@ -1,0 +1,12 @@
+---
+category: Fixed
+subsection: Messaging & delivery
+---
+- **Absorbing stream-integrity repair answers no longer costs the database far more than the answers themselves.**
+  Recording a redelivery bundle's answer created a temporary working table again on almost every call, because a
+  pooled connection is reset each time it is handed out: system catalog writes, a cache invalidation for every other
+  session, fresh plans, and new statement-statistics entries per bundle. It now gathers the bundle in arrays and writes
+  nothing to the catalog. A handler commit that stores inbox children (a redelivery bundle's, among others) no longer
+  rings their owners a second time after the store already rang the streams that needed it, so duplicates and busy
+  streams wake no one. A doorbell reads instance liveness once per call instead of once per owner. Delivery,
+  deduplication and ordering are unchanged; nothing to configure.

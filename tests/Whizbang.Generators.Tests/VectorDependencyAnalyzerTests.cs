@@ -412,16 +412,16 @@ public static class VectorAnalyzerTestHelper {
 
     // Add reference to System.Runtime and other basic assemblies
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
+    references.Add(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
 
     // Add reference to Whizbang.Core (for VectorFieldAttribute)
     try {
       var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
-      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+      references.Add(SharedMetadataReferences.FromFile(coreAssembly.Location));
     } catch {
       // If assembly can't be loaded, try to find it in current directory
       var coreAssemblyPath = Path.Combine(
@@ -429,7 +429,7 @@ public static class VectorAnalyzerTestHelper {
           "Whizbang.Core.dll"
       );
       if (File.Exists(coreAssemblyPath)) {
-        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+        references.Add(SharedMetadataReferences.FromFile(coreAssemblyPath));
       }
     }
 
@@ -481,8 +481,8 @@ public static class VectorAnalyzerTestHelper {
         assemblyName: "Pgvector.EntityFrameworkCore",
         syntaxTrees: [syntaxTree],
         references: [
-          MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-          MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
+          SharedMetadataReferences.FromFile(typeof(object).Assembly.Location),
+          SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
         ],
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );

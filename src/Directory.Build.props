@@ -6,4 +6,10 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
+
+  <!-- #2126: library code never stops the host or sets the exit code itself; every exit goes through the one exit path
+       (WhizbangInstanceExit). Library projects only: the tools and samples are applications that own their exit. -->
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)../BannedSymbols.Exit.txt" />
+  </ItemGroup>
 </Project>

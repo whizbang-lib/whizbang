@@ -250,6 +250,8 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     });
     register("ReleaseUnprocessedInbox", "ReleaseUnprocessedInboxAsync", async (c, _) =>
       await Assert.That(await c.ReleaseUnprocessedInboxAsync(_newId(), [_newId()])).IsEqualTo(0));
+    register("DropExhaustedInboxRows", "DropExhaustedInboxRowsAsync", async (c, _) =>
+      await Assert.That(await ((IWorkCoordinator)c).DropExhaustedInboxRowsAsync([_newId()], maxAttempts: 10)).IsEqualTo(0));
     register("ReleaseUnstartedLeases", "ReleaseUnstartedLeasesAsync", (c, _) =>
       c.ReleaseUnstartedLeasesAsync(_newId(), [_newId()], []));
     register("ImportBrokerDeadLetter", "ImportBrokerDeadLetterAsync", async (c, _) => {

@@ -39,6 +39,16 @@ public partial class DapperWorkCoordinator {
       CoordinatorFleetSql.FindStuckRowsAsync(cmd, prefix, CoordinatorFleetSql.STUCK_INBOX, maxAttempts, limit, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
+  public Task<int> DropExhaustedInboxRowsAsync(IReadOnlyList<Guid> messageIds, int maxAttempts, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messageIds);
+    if (messageIds.Count == 0) {
+      return Task.FromResult(0);
+    }
+    return _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorFleetSql.DropExhaustedInboxRowsAsync(cmd, prefix, messageIds, maxAttempts, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
   public Task<int> ReleaseUnprocessedInboxAsync(Guid instanceId, IReadOnlyList<Guid> messageIds, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(messageIds);
     if (messageIds.Count == 0) {

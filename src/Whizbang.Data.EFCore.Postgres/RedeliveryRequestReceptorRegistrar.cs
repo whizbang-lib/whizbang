@@ -21,7 +21,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// a damaged consumer. Registered deferred (<see cref="IntegrityDeliveryRegistration"/>, #2001): every stage records the message for the maintainer's integrity delivery drain. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// <see cref="AuditRebuildRequestReceptor"/> joins the same three stages for the same reasons: an operator dispatches
 /// <see cref="Whizbang.Core.Commands.System.RequestAuditRebuildCommand"/> on the origin, or the audit service sends it
-/// there (#1724).
+/// there (#1724). <see cref="BackfillWindowAnswerReceptor"/> joins deferred, as the request does: it applies a paced
+/// backfill window's answer on the requesting side (#2092).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
@@ -30,7 +31,8 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
     ILogger<RedeliveryRequestReceptor> receptorLogger,
-    ILogger<AuditRebuildRequestReceptor> auditRebuildLogger) : IHostedService {
+    ILogger<AuditRebuildRequestReceptor> auditRebuildLogger,
+    ILogger<BackfillWindowAnswerReceptor> backfillAnswerLogger) : IHostedService {
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
@@ -46,6 +48,9 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.LocalImmediateInline);
     registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PreOutboxInline);
     registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PostInboxInline);
+    // #2092: a paced backfill window's answer moves the backfill's durable position; deferred to the maintainer's
+    // integrity delivery drain like the request it answers.
+    registry.RegisterIntegrityReceptor(new BackfillWindowAnswerReceptor(scopeFactory, backfillAnswerLogger), services, scopeFactory);
     return Task.CompletedTask;
   }
 

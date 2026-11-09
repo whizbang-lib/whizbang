@@ -3,7 +3,6 @@
 
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -91,14 +90,6 @@ public class StandbyWatcherTests {
     public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
   }
 
-  private sealed class RecordingHostLifetime : IHostApplicationLifetime {
-    public int StopCalls { get; private set; }
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => StopCalls++;
-  }
-
   private sealed class StubAssessor(StartupVerdict verdict, string reason = "test") : IStartupAssessor {
     public int Calls { get; private set; }
     public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
@@ -165,7 +156,7 @@ public class StandbyWatcherTests {
     StandbyWatcher Watcher,
     WhizbangRunController RunControl,
     RecordingLifecycle Lifecycle,
-    RecordingHostLifetime Host,
+    Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit,
     StandbyCoordinator? Coordinator,
     ServiceProvider Provider) : IDisposable {
     public void Dispose() => Provider.Dispose();
@@ -185,13 +176,13 @@ public class StandbyWatcherTests {
     var sp = services.BuildServiceProvider();
 
     var lifecycle = new RecordingLifecycle();
-    var host = new RecordingHostLifetime();
+    var host = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
 
     var runControl = _path(lifecycle);
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       runControl: runControl,
-      hostLifetime: host,
+      instanceExit: host,
       instanceProvider: new StubInstanceProvider(),
       versionProvider: new StubVersionProvider(ourVersion),
       assessor: assessor ?? NullStartupAssessor.Instance,
@@ -322,7 +313,7 @@ public class StandbyWatcherTests {
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
-    await Assert.That(h.Host.StopCalls).IsEqualTo(0);
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -350,7 +341,7 @@ public class StandbyWatcherTests {
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
-    await Assert.That(h.Host.StopCalls).IsEqualTo(0);
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -366,8 +357,11 @@ public class StandbyWatcherTests {
     h.Coordinator!.Request = null;
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
-    await Assert.That(h.Host.StopCalls).IsEqualTo(1)
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(1)
       .Because("the handshake promised to shut down once the migration committed");
+    // #2126: through the one exit path, as an intended exit (code 0) that names the reason.
+    await Assert.That(h.Exit.Requests[0].Cause).IsEqualTo(ExitCause.UpgradeStandDown);
+    await Assert.That(h.Exit.Requests[0].Reason).EndsWith("schema is ahead of this binary");
   }
 
   [Test]
@@ -382,7 +376,7 @@ public class StandbyWatcherTests {
     h.Coordinator!.Request = null;
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
-    await Assert.That(h.Host.StopCalls).IsEqualTo(0);
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(0);
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.Running)
       .Because("a rollback resumes the instance rather than costing the fleet its capacity");
     await Assert.That(h.Lifecycle.Advanced).IsEquivalentTo([LifecyclePhase.Resuming, LifecyclePhase.Running],
@@ -487,12 +481,13 @@ public class StandbyWatcherTests {
   }
 
   [Test]
-  public async Task OnceStoodDown_FurtherTicksDoNothingAsync() {
-    // Alive but not ready and reapable: replacing it is the orchestrator's decision, and
-    // re-advancing the phase every tick would churn the lifecycle for no reason.
+  public async Task OnceStoodDown_FurtherTicksInsideTheSlowCadence_DoNothingAsync() {
+    // Alive but not ready: re-advancing the phase every tick would churn the lifecycle for no reason, and reading the
+    // ledger every poll would cost a query per instance. #2022: a stood-down instance still asks again on the slow
+    // cadence (or a signal), so it resumes when nothing newer remains; StandbyWatcherUpgradeStandDownTests covers that.
     var assessor = new StubAssessor(StartupVerdict.StandDown, "schema moved");
     using var h = _harness(request: null, assessor: assessor,
-      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.FromHours(1) });
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
     var callsAfterFirst = assessor.Calls;
     h.Lifecycle.Advanced.Clear();
@@ -501,7 +496,21 @@ public class StandbyWatcherTests {
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
     await Assert.That(assessor.Calls).IsEqualTo(callsAfterFirst)
-      .Because("a stood-down instance waits for the orchestrator, it does not keep re-assessing");
+      .Because("inside the slow cadence, with nothing signaled, a stood-down instance does not re-assess");
+  }
+
+  [Test]
+  public async Task OnceStoodDown_AVerdictThatStillSaysStandDown_ChangesNothingAsync() {
+    var assessor = new StubAssessor(StartupVerdict.StandDown, "schema moved");
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Lifecycle.Advanced).IsEmpty().Because("the schema stays newer than this binary: the instance stays down");
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
   }
 
   [Test]
@@ -536,7 +545,7 @@ public class StandbyWatcherTests {
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       runControl: _path(new RecordingLifecycle()),
-      hostLifetime: new RecordingHostLifetime(),
+      instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       instanceProvider: new StubInstanceProvider(),
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
@@ -578,7 +587,7 @@ public class StandbyWatcherTests {
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       runControl: _path(lifecycle),
-      hostLifetime: new RecordingHostLifetime(),
+      instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       instanceProvider: null!,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
@@ -614,7 +623,7 @@ public class StandbyWatcherTests {
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       runControl: _path(new RecordingLifecycle()),
-      hostLifetime: new RecordingHostLifetime(),
+      instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       instanceProvider: new StubInstanceProvider(),
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,

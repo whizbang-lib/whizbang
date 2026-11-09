@@ -31,20 +31,20 @@ public class EFCorePerspectiveAssociationGeneratorCoverageTests {
 
     var references = new List<MetadataReference>();
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    references.Add(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
 
     try {
       var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
-      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+      references.Add(SharedMetadataReferences.FromFile(coreAssembly.Location));
     } catch {
       var coreAssemblyPath = Path.Combine(
           Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
           "Whizbang.Core.dll");
       if (File.Exists(coreAssemblyPath)) {
-        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+        references.Add(SharedMetadataReferences.FromFile(coreAssemblyPath));
       }
     }
 

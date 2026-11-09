@@ -344,7 +344,9 @@ public class TransportConsumerWorkerTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionsAsync(1, TimeSpan.FromSeconds(5));
+    // The worker's own readiness signal, not the transport's: the transport signals inside SubscribeBatchAsync, before
+    // the worker has recorded the subscription it returns, so stopping on that signal could find nothing to dispose.
+    await worker.WaitForSubscriptionsReadyAsync(CancellationToken.None);
 
     await worker.StopAsync(CancellationToken.None);
     await worker.StopAsync(CancellationToken.None); // must not throw ObjectDisposedException

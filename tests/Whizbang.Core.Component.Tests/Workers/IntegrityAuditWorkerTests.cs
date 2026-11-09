@@ -31,6 +31,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityAuditWorker.cs</code-under-test>
 public class IntegrityAuditWorkerTests {
 
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
   [Test]
   public async Task LocalGaps_ReportAndDispatchCappedRebuildsAsync() {
     var coordinator = new AuditCoordinator {
@@ -106,6 +108,24 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(Guid.TryParse(transport.Published[0].Destination.Metadata?["StreamId"].GetString(), out _)).IsTrue()
       .Because("session-enabled subscriptions dead-letter sessionless deliveries — the manifest " +
                "request must carry a session key in its destination metadata.");
+  }
+
+  [Test]
+  public async Task AfterARestart_KnownOriginsAreAskedBeforeAnyNewCheckpointArrivesAsync() {
+    // #2104: a fresh process's tracker knows nothing until it loads what the store kept; the first audit asks the
+    // origins the previous process knew instead of skipping a checkpoint interval.
+    var origin = TrackedGuid.New().Value;
+    var coordinator = new AuditCoordinator {
+      KeptState = new IntegrityGapTrackerState(
+        [new IntegrityKnownOrigin(origin, "origin-a", "origin-a.requests", _fixedNow)], []),
+    };
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), new IntegrityGapTracker());
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var (_, destination, _) = transport.Published.Single(p => p.Envelope.Target == "origin-a");
+    await Assert.That(destination.Address).IsEqualTo("origin-a.requests");
   }
 
   [Test]
@@ -614,7 +634,7 @@ public class IntegrityAuditWorkerTests {
     services.AddSingleton(tracker ?? new IntegrityGapTracker());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new TypeProvider());
     services.AddSingleton(metrics
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     var consumerOptions = new TransportConsumerOptions();
@@ -627,8 +647,12 @@ public class IntegrityAuditWorkerTests {
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(AuditProbeEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class TypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(AuditProbeEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
@@ -645,6 +669,12 @@ public class IntegrityAuditWorkerTests {
   }
 
   private sealed class AuditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    /// <summary>#2104: what the store kept of the gap tracker before a restart.</summary>
+    public IntegrityGapTrackerState? KeptState { get; init; }
+
+    public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(KeptState);
+
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
     public int? LastMaxGaps { get; private set; }

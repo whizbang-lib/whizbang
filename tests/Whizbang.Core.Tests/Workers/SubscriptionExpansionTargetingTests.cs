@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -23,8 +22,8 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// The subscription-growth backfill asks each known owner for its own events (#2032): a type whose domain owner is
-/// known from the ownership map, with a request address, goes to that owner as a directed request on its request
-/// topic. Only the types with no usable owner fall back to the broadcast every holder used to answer.
+/// known from the ownership map, with a request address, is queued for that owner. Only the types with no usable owner
+/// fall back to a broadcast. Nothing is sent at once (#2092): the paced backfill walks each queued type in windows.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/SubscriptionExpansionWorker.cs</code-under-test>
 public class SubscriptionExpansionTargetingTests {
@@ -34,7 +33,7 @@ public class SubscriptionExpansionTargetingTests {
   private static readonly string _billedWire = TypeNameFormatter.Format(typeof(BilledEvent));
 
   [Test]
-  public async Task Backfill_TypesWithAKnownOwner_AreAskedOfThatOwnerOnlyAsync() {
+  public async Task Backfill_TypesWithAKnownOwner_AreQueuedForThatOwner_AndNothingIsSentAtOnceAsync() {
     var coordinator = new ExpandingCoordinator {
       Claims = [
         _claim("Whizbang.Core.Tests.Workers.BackfillProbes.Orders", _ordersOwner, "orders-svc", "orders.requests"),
@@ -45,55 +44,45 @@ public class SubscriptionExpansionTargetingTests {
 
     await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
 
-    var sent = transport.Published.Select(p => (p.Envelope.Target, p.Destination.Address, Command: _command(p.Envelope)))
-      .OrderBy(p => p.Target).ToList();
-    await Assert.That(sent.Count).IsEqualTo(2)
-      .Because("each owner gets one directed request; no broadcast is needed when every type has an owner");
-    await Assert.That(sent[0].Target).IsEqualTo("billing-svc");
-    await Assert.That(sent[0].Address).IsEqualTo("billing.requests");
-    await Assert.That(sent[0].Command.EventTypes).IsEquivalentTo([_billedWire]);
-    await Assert.That(sent[1].Target).IsEqualTo("orders-svc");
-    await Assert.That(sent[1].Address).IsEqualTo("orders.requests")
-      .Because("the owner's own request address, the one its checkpoint announced");
-    await Assert.That(sent[1].Command.EventTypes).IsEquivalentTo([_placedWire]);
-    await Assert.That(sent.All(s => s.Command.StateOnly && s.Command.Topic == "inbox" && s.Command.RequesterService == "expanding-svc"))
-      .IsTrue().Because("the answer still comes back state-only to this service's reply topic");
+    await Assert.That(coordinator.Seeds.OrderBy(s => s.OwnerServiceName, StringComparer.Ordinal)).IsEquivalentTo([
+      new SubscriptionBackfillSeed(_billingOwner, "billing-svc", _billedWire),
+      new SubscriptionBackfillSeed(_ordersOwner, "orders-svc", _placedWire),
+    ]).Because("each type is queued for its owner, in the wire form the owner matches its store against");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("#2092: asking every owner for the full history of every type at once was the flood; the paced backfill sends windows");
     await Assert.That(coordinator.Registry.Where(kv => kv.Key != "Contracts.PriorType").All(kv => kv.Value == ConsumedTypeBackfillStatus.Requested))
-      .IsTrue().Because("both expansions were asked of their owners, so both are marked requested");
+      .IsTrue().Because("both expansions are queued, so both are marked requested");
   }
 
   [Test]
-  public async Task Backfill_TypesWithNoUsableOwner_FallBackToOneBroadcastAsync() {
+  public async Task Backfill_TypesWithNoUsableOwner_AreQueuedAsBroadcastsAsync() {
     var coordinator = new ExpandingCoordinator {
       Claims = [
         // Known owner, but it never announced a request address (an older origin): nowhere to direct the request.
         _claim("whizbang.core.tests.workers.backfillprobes.billing", _billingOwner, "billing-svc", requestTopic: null),
       ],
     };
-    var transport = new CaptureTransport();
 
-    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+    await _buildWorker(coordinator, new CaptureTransport()).RunOnceAsync(CancellationToken.None);
 
-    var (envelope, destination, _) = transport.Published.Single();
-    await Assert.That(envelope.Target).IsNull();
-    await Assert.That(destination.Address).IsEqualTo("inbox");
-    await Assert.That(_command(envelope).EventTypes).IsEquivalentTo([_placedWire, _billedWire])
-      .Because("with no owner to ask, the legacy broadcast stands, and the answering side now ships only what it authored");
+    await Assert.That(coordinator.Seeds).IsEquivalentTo([
+      new SubscriptionBackfillSeed(Guid.Empty, string.Empty, _placedWire),
+      new SubscriptionBackfillSeed(Guid.Empty, string.Empty, _billedWire),
+    ]).Because("with no owner to ask, each window is broadcast, and the answering side ships only what it authored");
   }
 
   [Test]
-  public async Task Backfill_MixedOwnership_DirectsTheOwnedTypesAndBroadcastsTheRestAsync() {
+  public async Task Backfill_MixedOwnership_QueuesTheOwnedTypeForItsOwnerAndTheRestAsBroadcastAsync() {
     var coordinator = new ExpandingCoordinator {
       Claims = [_claim("whizbang.core.tests.workers.backfillprobes.orders", _ordersOwner, "orders-svc", "orders.requests")],
     };
-    var transport = new CaptureTransport();
 
-    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+    await _buildWorker(coordinator, new CaptureTransport()).RunOnceAsync(CancellationToken.None);
 
-    var (directed, _, _) = transport.Published.Single(p => p.Envelope.Target == "orders-svc");
-    var (broadcast, _, _) = transport.Published.Single(p => p.Envelope.Target is null);
-    await Assert.That(_command(directed).EventTypes).IsEquivalentTo([_placedWire]);
-    await Assert.That(_command(broadcast).EventTypes).IsEquivalentTo([_billedWire]);
+    await Assert.That(coordinator.Seeds).IsEquivalentTo([
+      new SubscriptionBackfillSeed(_ordersOwner, "orders-svc", _placedWire),
+      new SubscriptionBackfillSeed(Guid.Empty, string.Empty, _billedWire),
+    ]);
   }
 
   [Test]
@@ -103,43 +92,53 @@ public class SubscriptionExpansionTargetingTests {
       LocalServiceId = self,
       Claims = [_claim("whizbang.core.tests.workers.backfillprobes.orders", self, "expanding-svc", "inbox")],
     };
-    var transport = new CaptureTransport();
 
-    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+    await _buildWorker(coordinator, new CaptureTransport()).RunOnceAsync(CancellationToken.None);
 
-    await Assert.That(transport.Published.All(p => p.Envelope.Target is null)).IsTrue()
+    await Assert.That(coordinator.Seeds.All(s => s.OwnerServiceId == Guid.Empty)).IsTrue()
       .Because("a service never directs a request at itself; its own request would loop back to it");
-    await Assert.That(_command(transport.Published.Single().Envelope).EventTypes).IsEquivalentTo([_placedWire, _billedWire]);
   }
 
   [Test]
-  public async Task Backfill_TypesOfOneOwner_GoOutAsOneRequestAsync() {
+  public async Task Backfill_TypesOfOneOwner_AreQueuedOnePerTypeAsync() {
     var coordinator = new ExpandingCoordinator {
       Claims = [_claim("whizbang.core.tests.workers.backfillprobes", _ordersOwner, "probes-svc", "probes.requests")],
     };
-    var transport = new CaptureTransport();
 
-    await _buildWorker(coordinator, transport).RunOnceAsync(CancellationToken.None);
+    await _buildWorker(coordinator, new CaptureTransport()).RunOnceAsync(CancellationToken.None);
 
-    var (envelope, destination, _) = transport.Published.Single();
-    await Assert.That(envelope.Target).IsEqualTo("probes-svc");
-    await Assert.That(destination.Address).IsEqualTo("probes.requests");
-    await Assert.That(_command(envelope).EventTypes).IsEquivalentTo([_placedWire, _billedWire])
-      .Because("one owner's types share one request");
+    await Assert.That(coordinator.Seeds).IsEquivalentTo([
+      new SubscriptionBackfillSeed(_ordersOwner, "probes-svc", _placedWire),
+      new SubscriptionBackfillSeed(_ordersOwner, "probes-svc", _billedWire),
+    ]).Because("each type walks its own history in its own windows, with its own progress and its own finish");
+  }
+
+  /// <summary>
+  /// The first pass after the upgrade to the consumer registry (#2064): the perspective's event was baselined before,
+  /// and the event only a receptor consumes is new to the registry, so it is an expansion. Its history was never stored
+  /// here, and its owner is known, so it is queued for that owner alone.
+  /// </summary>
+  [Test]
+  public async Task Backfill_FirstPassAfterUpgrade_QueuesTheReceptorOnlyEventForItsOwnerAsync() {
+    var coordinator = new ExpandingCoordinator {
+      Claims = [_claim("whizbang.core.tests.workers.backfillprobes.billing", _billingOwner, "billing-svc", "billing.requests")],
+    };
+    coordinator.Registry[TypeNameFormatter.FormatClrTypeName(typeof(PlacedEvent))] = ConsumedTypeBackfillStatus.Baseline;
+
+    await _buildWorker(coordinator, new CaptureTransport()).RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Seeds).IsEquivalentTo([new SubscriptionBackfillSeed(_billingOwner, "billing-svc", _billedWire)])
+      .Because("only the newly consumed type is an expansion; the baselined perspective type is not asked again");
   }
 
   private static IntegrityDomainClaim _claim(string domain, Guid owner, string name, string? requestTopic) =>
     new() { Domain = domain, OwnerServiceId = owner, OwnerServiceName = name, RequestTopic = requestTopic };
 
-  private static RequestRedeliveryCommand _command(IMessageEnvelope envelope) =>
-    (RequestRedeliveryCommand)JsonSerializer.Deserialize(
-      ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
-      JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-
-  private static SubscriptionExpansionWorker _buildWorker(ExpandingCoordinator coordinator, CaptureTransport transport) {
+  private static SubscriptionExpansionWorker _buildWorker(
+      ExpandingCoordinator coordinator, CaptureTransport transport) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new ConsumesBoth());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanding-svc"));
@@ -153,8 +152,11 @@ public class SubscriptionExpansionTargetingTests {
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(PlacedEvent), typeof(BilledEvent)];
+  /// <summary>The consumer registry (#2058): this service consumes both probe events.</summary>
+  private sealed class ConsumesBoth : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => messageType == _placedWire || messageType == _billedWire;
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [new ConsumedMessageInfo(_placedWire, IsEvent: true), new ConsumedMessageInfo(_billedWire, IsEvent: true)];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
@@ -177,6 +179,12 @@ public class SubscriptionExpansionTargetingTests {
     };
     public IReadOnlyList<IntegrityDomainClaim> Claims { get; init; } = [];
     public Guid LocalServiceId { get; init; } = Guid.Parse("0e000000-0000-0000-0000-00000000000e");
+    public List<SubscriptionBackfillSeed> Seeds { get; } = [];
+
+    public Task EnqueueSubscriptionBackfillsAsync(IReadOnlyList<SubscriptionBackfillSeed> seeds, CancellationToken cancellationToken = default) {
+      Seeds.AddRange(seeds);
+      return Task.CompletedTask;
+    }
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) => Task.FromResult(LocalServiceId);
 

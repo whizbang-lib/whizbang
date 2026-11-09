@@ -100,6 +100,20 @@ public partial class CoordinationSourceGuardTests {
     ["stamp_pending_commit_sequences"] = "the visibility fence reads in-flight transaction ids; it judges no instance",
   };
 
+  /// <summary>
+  /// SQL functions (by their last definition) that may compare a lease's expiry (#2140). A role holder's lease is never a
+  /// liveness verdict on its own: past it, the holder is judged by the one rule (<c>_role_holder_kept_live</c>).
+  /// </summary>
+  private static readonly Dictionary<string, string> _sqlLeaseAllowlist = new(StringComparer.Ordinal) {
+    ["_role_lapse_reason"] = "the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
+    ["wh_assert_role_epoch"] = "the fence: the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
+    ["_role_lapse_is_fleet_wide"] = "bounds the window a lapse is classified in (fleet-wide or the holder's own); it judges no holder live",
+    ["_role_void_reason"] = "173's phase-1 lapse helper, which no current function calls; its callers were redefined by 184",
+    ["claim_work"] = "the partition assignment's lease: which partitions an instance owns, published by the assigner, whose role "
+      + "is judged by the rule",
+    ["wh_claim_multi_stream_work"] = "the partition assignment's lease, as claim_work reads it",
+  };
+
   /// <summary>SQL functions (by their last definition) that may take a SESSION advisory lock.</summary>
   private static readonly Dictionary<string, string> _sqlSessionLockAllowlist = new(StringComparer.Ordinal) {
     ["claim_instance_alive_lock"] = "the alive-lock: the lock half of the liveness rule, held by the instance's own LISTEN session",
@@ -111,6 +125,69 @@ public partial class CoordinationSourceGuardTests {
       + "(_queue_doorbell) and this rings it, coalesced, once the transaction has committed",
     ["wh_publish_signal"] = "the signal bus's SQL publish: notifies at commit, and records a decision in the durable log (#2046)",
   };
+
+  /// <summary>
+  /// C# files that may order versions (#2022): the one rule, and the two version types it orders by. Startup's Assess,
+  /// the running instance's re-assessment, the newer instance's announcement, the standby handshake and the migration
+  /// guard all ask the rule, so a stand-down can never be decided by a second comparison that disagrees with it.
+  /// </summary>
+  private static readonly Dictionary<string, string> _versionOrderAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "THE rule: orders versions and finds a newer one recorded or online",
+    ["src/Whizbang.Core/Versioning/SemanticVersion.cs"] = "the SemVer parser and precedence the rule orders library versions by",
+    ["src/Whizbang.Core/Versioning/ApplicationVersion.cs"] = "the application version's schemes and order, which the rule orders "
+      + "application versions by",
+  };
+
+  [GeneratedRegex(@"\bSemanticVersion\b|ApplicationVersion\??\)?\.CompareTo\(")]
+  private static partial Regex _versionOrder();
+
+  [Test]
+  public async Task VersionOrdering_AppearsOnlyInTheOneRuleAsync() =>
+    await _assertOnlyAllowedAsync(_versionOrder(), _versionOrderAllowlist,
+      "a version comparison outside the one rule; ask UpgradeOrder (FindNewer, OlderThan, CompareLibrary) instead");
+
+  [Test]
+  public async Task TheVersionScan_SeesWhatItGuardsAsync() {
+    var csharp = _csharpSources();
+    await Assert.That(_versionOrder().IsMatch(csharp["src/Whizbang.Core/Versioning/UpgradeOrder.cs"])).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("if (!SemanticVersion.TryParse(request.RequestedVersion, out var requested)) {")).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("var order = provider.ApplicationVersion.CompareTo(theirs);")).IsTrue();
+    await Assert.That(_versionOrder().IsMatch("var found = UpgradeOrder.FindNewer(own, seen);")).IsFalse()
+      .Because("asking the rule is the way to compare");
+    var stale = _versionOrderAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_versionOrder().IsMatch(code)).ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
+
+  /// <summary>
+  /// C# files that may read or honor the incompatibility override (#2022): the setting is read where the rule lives, the
+  /// drivers hand it to their assessor, and only the one verdict turns an incompatibility into a start. Anything else
+  /// that read it could start an instance the verdict refused.
+  /// </summary>
+  private static readonly Dictionary<string, string> _overrideAllowlist = new(StringComparer.Ordinal) {
+    ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "the setting's key, read once, beside the rule it overrides",
+    ["src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs"] = "THE verdict: the only place an incompatibility becomes a start",
+    ["src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs"] = "hands the setting to the EF Core driver's assessor",
+    ["src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs"] = "hands the setting to the Dapper driver's assessor",
+  };
+
+  [GeneratedRegex(@"IsIncompatibilityOverridden\(|OverrideIncompatibility""|OverriddenReason\s*=(?!=)")]
+  private static partial Regex _incompatibilityOverride();
+
+  [Test]
+  public async Task TheIncompatibilityOverride_IsHonoredOnlyByTheOneVerdictAsync() =>
+    await _assertOnlyAllowedAsync(_incompatibilityOverride(), _overrideAllowlist,
+      "the incompatibility override read or honored outside the one verdict; read StartupAssessment.OverriddenReason instead");
+
+  [Test]
+  public async Task TheOverrideScan_SeesWhatItGuardsAsync() {
+    var csharp = _csharpSources();
+    await Assert.That(_incompatibilityOverride().IsMatch("var on = UpgradeOrder.IsIncompatibilityOverridden(configuration);")).IsTrue();
+    await Assert.That(_incompatibilityOverride().IsMatch("return verdict with { OverriddenReason = reason };")).IsTrue();
+    await Assert.That(_incompatibilityOverride().IsMatch("if (assessment.OverriddenReason is { } reason) {")).IsFalse()
+      .Because("reading the verdict's record of an override is how everything else learns of it");
+    var stale = _overrideAllowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !_incompatibilityOverride().IsMatch(code)).ToList();
+    await Assert.That(stale).IsEmpty().Because("an allowlist only shrinks: " + string.Join(", ", stale));
+  }
 
   private const string MAINTENANCE_STEP = "a maintenance step: the maintenance cycle runs it only after the maintainer turn, which a "
     + "closed run permit denies (#2045)";
@@ -236,6 +313,9 @@ public partial class CoordinationSourceGuardTests {
   [GeneratedRegex(@"last_heartbeat_at\s*[<>]|[<>]=?\s*(?:\w+\.)?last_heartbeat_at|LastHeartbeatAt\s*[<>]|-\s*(?:\w+\.)*LastHeartbeatAt|is_instance_alive\s*\(|pg_stat_activity|pg_locks")]
   private static partial Regex _liveness();
 
+  [GeneratedRegex(@"lease_expires_at\s*(?:<=|>=|<|>)|(?:<=|>=|<|>)\s*(?:\w+\.)?lease_expires_at|lease_expires_at\s+IS\s+NULL")]
+  private static partial Regex _leaseVerdict();
+
   [GeneratedRegex(@"CREATE OR REPLACE FUNCTION\s+__SCHEMA__\.(\w+)\s*\(.*?\$\$(.*?)\$\$", RegexOptions.Singleline)]
   private static partial Regex _sqlFunction();
 
@@ -287,6 +367,25 @@ public partial class CoordinationSourceGuardTests {
     await _assertSqlOnlyAllowedAsync(_liveness(), _sqlLivenessAllowlist, "judges liveness without the one rule (wh_instance_liveness)");
 
   [Test]
+  public async Task SqlLeaseVerdicts_AppearOnlyInTheAllowlistedFunctionsAsync() =>
+    // #2140: the role lease used to be a liveness rule of its own, and lapsed holders the rule called live.
+    await _assertSqlOnlyAllowedAsync(_leaseVerdict(), _sqlLeaseAllowlist,
+      "judges a holder by its lease alone; past the lease, ask the one rule through _role_holder_kept_live");
+
+  [Test]
+  public async Task ARoleHolder_IsJudgedPastItsLeaseByTheOneLivenessRuleAsync() {
+    // #2140: the vote, the renewal, the status and the fence all decide through _role_lapse_reason or the fence, and both
+    // ask _role_holder_kept_live, which asks wh_instance_is_live: the role keeps only its epoch and its progress window.
+    var sql = _latestSqlFunctions();
+
+    await Assert.That(sql["_role_lapse_reason"]).Contains("_role_holder_kept_live(");
+    await Assert.That(sql["wh_assert_role_epoch"]).Contains("_role_holder_kept_live(");
+    await Assert.That(sql["_role_holder_kept_live"]).Contains("wh_instance_is_live(");
+    await Assert.That(_leaseVerdict().IsMatch(sql["_role_holder_kept_live"])).IsFalse()
+      .Because("the progress window is measured from the last renewal, never from the lease");
+  }
+
+  [Test]
   public async Task SqlSessionAdvisoryLocks_AppearOnlyInTheAllowlistedFunctionsAsync() =>
     await _assertSqlOnlyAllowedAsync(_sessionAdvisory(), _sqlSessionLockAllowlist, "takes a session advisory lock: a duty held outside the role table");
 
@@ -304,7 +403,7 @@ public partial class CoordinationSourceGuardTests {
         (_rawSubscriptionAllowlist, _rawSubscription()), (_coordinationChannelAllowlist, _coordinationChannel()) }) {
       stale.AddRange(allowlist.Keys.Where(path => !csharp.TryGetValue(path, out var code) || !pattern.IsMatch(code)));
     }
-    foreach (var (allowlist, pattern) in new[] { (_sqlLivenessAllowlist, _liveness()), (_sqlSessionLockAllowlist, _sessionAdvisory()), (_sqlNotifyAllowlist, _notify()) }) {
+    foreach (var (allowlist, pattern) in new[] { (_sqlLivenessAllowlist, _liveness()), (_sqlSessionLockAllowlist, _sessionAdvisory()), (_sqlNotifyAllowlist, _notify()), (_sqlLeaseAllowlist, _leaseVerdict()) }) {
       stale.AddRange(allowlist.Keys.Where(name => !sql.TryGetValue(name, out var body) || !pattern.IsMatch(body)));
     }
 
@@ -350,6 +449,10 @@ public partial class CoordinationSourceGuardTests {
     await Assert.That(_advisory().IsMatch(csharp["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"])).IsTrue();
     await Assert.That(_liveness().IsMatch(sql["wh_instance_liveness"])).IsTrue();
     await Assert.That(_liveness().IsMatch("SELECT 1 FROM t WHERE last_heartbeat_at > now() - interval '1 minute'")).IsTrue();
+    await Assert.That(_leaseVerdict().IsMatch(sql["_role_lapse_reason"])).IsTrue();
+    await Assert.That(_leaseVerdict().IsMatch("WHERE r.lease_expires_at > clock_timestamp()")).IsTrue();
+    await Assert.That(_leaseVerdict().IsMatch("SELECT r.lease_expires_at - now()")).IsFalse()
+      .Because("reporting the time left on a lease is not a verdict");
     await Assert.That(sql.ContainsKey("_advisory_lock_held_elsewhere")).IsFalse()
       .Because("a function dropped after its last definition (#2044) is not run by any database, so it is not scanned");
     await Assert.That(sql.ContainsKey("wh_role_assignment_status")).IsTrue()

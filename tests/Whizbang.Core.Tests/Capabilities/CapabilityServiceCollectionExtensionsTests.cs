@@ -138,16 +138,13 @@ public class CapabilityServiceCollectionExtensionsTests {
   }
 
   [Test]
-  public async Task StopApplication_StopsTheHostsLifetime_WhenCalledAsync() {
-    var lifetime = new Microsoft.Extensions.Hosting.Internal.ApplicationLifetime(
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<Microsoft.Extensions.Hosting.Internal.ApplicationLifetime>.Instance);
-    var services = _services();
-    services.AddSingleton<IHostApplicationLifetime>(lifetime);
-    await using var provider = services.BuildServiceProvider();
+  public async Task TheEnforcer_ExitsThroughTheOneExitPath_ThatTheRegistrationProvidesAsync() {
+    // #2126: the enforcer never stops the host itself; the registration brings the exit path it takes.
+    await using var provider = _services().AddWhizbangCapabilities().BuildServiceProvider();
 
-    CapabilityVerdictEnforcer.StopApplicationOf(provider)();
-
-    await Assert.That(lifetime.ApplicationStopping.IsCancellationRequested).IsTrue();
+    await Assert.That(provider.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>())
+      .IsTypeOf<Whizbang.Core.RunControl.WhizbangInstanceExit>();
+    await Assert.That(provider.GetServices<IHostedService>().OfType<CapabilityVerdictEnforcer>().Count()).IsEqualTo(1);
   }
 
   [Test]

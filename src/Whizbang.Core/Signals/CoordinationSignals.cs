@@ -65,3 +65,19 @@ public readonly record struct MultiStreamWorkSignal : ISignal {
   /// <inheritdoc />
   public static SignalTargeting Targeting => SignalTargeting.Broadcast;
 }
+
+/// <summary>
+/// A newer version came online (#2022): an instance whose library or application version is strictly newer than an
+/// online instance's is now serving. Every older instance asks its verdict again and stands down through the one
+/// run-control path. A decision, so it is durable: an instance that missed the notification is told by its tail, and one
+/// that starts later learns from the durable record itself (the online instance rows Assess reads). A doorbell: the
+/// database, read through the one version rule, decides who is newer.
+/// </summary>
+/// <docs>operations/startup/rolling-upgrades#cluster-wide-stand-down</docs>
+[WireName("newer-version-online")]
+public readonly record struct NewerVersionOnlineSignal : ISignal {
+  /// <inheritdoc />
+  public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.Durable;
+  /// <inheritdoc />
+  public static SignalTargeting Targeting => SignalTargeting.Broadcast;
+}

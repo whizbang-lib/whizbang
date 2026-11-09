@@ -67,6 +67,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
   private const string P_TYPES = "p_types";
+  private const string P_STREAMS = "p_streams";
+  private const string P_FROM = "p_from";
+  private const string P_TO = "p_to";
+  private const string P_TENANTS = "p_tenants";
 
   // Unqualified object names; every use goes through BuildSchemaQualifiedName so the
   // caller's schema is applied and escaped.
@@ -354,6 +358,40 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return ScalarResult.IsTrue(result);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_startup_heartbeat</c>, which Preflight's bootstrap closure creates, so it answers from
+  /// the moment the instance registers, before the main pass has created <c>record_heartbeat</c> or replaced an earlier
+  /// release's.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs</tests>
+  public async Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    // Not behind the work gate: a starting instance's liveness must not queue behind the startup work it reports on.
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), Whizbang.Data.Postgres.StartupHeartbeatSql.FUNCTION_NAME);
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    return await Whizbang.Data.Postgres.StartupHeartbeatSql.RecordAsync(scope.Connection, functionName, request, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_instance_exit</c>, which Preflight's bootstrap closure creates, so an instance evicted
+  /// while it is still starting records its exit too. Outside the work gate: an exit must not queue behind the work it is
+  /// leaving.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceExitRecordSqlTests.cs</tests>
+  public async Task<Whizbang.Core.RunControl.InstanceExitRecordResult> RecordInstanceExitAsync(
+      Whizbang.Core.RunControl.InstanceExitRecord exitRecord, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(exitRecord);
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), Whizbang.Data.Postgres.InstanceExitSql.FUNCTION_NAME);
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    return await Whizbang.Data.Postgres.InstanceExitSql.RecordAsync(scope.Connection, functionName, exitRecord, cancellationToken)
+      .ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -785,6 +823,159 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IntegrityGapTrackerState?>(async (cmd, schema) => {
+      // #2104: one read per process start, two primary-key-ordered scans of small tables (one row per origin, one per
+      // pending gap).
+      cmd.CommandText = $"""
+        SELECT origin_service_id, origin_service_name, request_topic, last_checkpoint_at
+        FROM {schema}.wh_integrity_known_origins ORDER BY origin_service_id;
+        SELECT origin_service_id, origin_service_name, tenant_scope, event_type, from_commit_sequence,
+               to_commit_sequence, expected_count
+        FROM {schema}.wh_integrity_pending_gaps ORDER BY 1, 3, 4, 5, 6;
+        """;
+      var origins = new List<IntegrityKnownOrigin>();
+      var pending = new List<IntegrityGapTracker.PendingGap>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        origins.Add(new IntegrityKnownOrigin(
+          reader.GetGuid(0), reader.GetString(1),
+          await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(2),
+          await reader.GetFieldValueAsync<DateTimeOffset>(3, cancellationToken).ConfigureAwait(false)));
+      }
+      await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var tenant = reader.GetString(2);
+        pending.Add(new IntegrityGapTracker.PendingGap {
+          OriginServiceId = reader.GetGuid(0),
+          OriginServiceName = reader.GetString(1),
+          TenantScope = tenant.Length == 0 ? null : tenant,
+          EventType = reader.GetString(3),
+          FromCommitSequence = reader.GetInt64(4),
+          ToCommitSequence = reader.GetInt64(5),
+          ExpectedCount = reader.GetInt32(6),
+        });
+      }
+      return new IntegrityGapTrackerState(origins, pending);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task IntegrityRecordOriginCheckpointAsync(
+      Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
+      CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // #2104: one row per origin, rewritten in place per checkpoint; no indexed column changes, so the update is
+      // heap-only. An origin that announces no address keeps the known one.
+      cmd.CommandText = $"""
+        INSERT INTO {schema}.wh_integrity_known_origins AS k
+          (origin_service_id, origin_service_name, request_topic, last_checkpoint_at)
+        VALUES (@p_origin, @p_name, @p_topic, @p_at)
+        ON CONFLICT (origin_service_id) DO UPDATE SET
+          origin_service_name = EXCLUDED.origin_service_name,
+          request_topic = COALESCE(EXCLUDED.request_topic, k.request_topic),
+          last_checkpoint_at = GREATEST(k.last_checkpoint_at, EXCLUDED.last_checkpoint_at)
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_name", originServiceName));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_topic", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)requestTopic ?? DBNull.Value });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_at", checkpointAt));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task IntegrityReplacePendingGapsAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(pending);
+    return _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // #2104: the origin's set replaced in one statement: rows no longer pending leave, new ones are added, rows still
+      // pending are left alone.
+      cmd.CommandText = $"""
+        WITH kept AS (
+          SELECT * FROM unnest(@p_names::text[], @p_tenants::text[], @p_types::text[], @p_from::bigint[], @p_to::bigint[],
+                               @p_expected::int[])
+            AS g(origin_service_name, tenant_scope, event_type, from_commit_sequence, to_commit_sequence, expected_count)
+        ),
+        gone AS (
+          DELETE FROM {schema}.wh_integrity_pending_gaps p
+          WHERE p.origin_service_id = @p_origin
+            AND NOT EXISTS (SELECT 1 FROM kept g
+                            WHERE g.tenant_scope = p.tenant_scope AND g.event_type = p.event_type
+                              AND g.from_commit_sequence = p.from_commit_sequence
+                              AND g.to_commit_sequence = p.to_commit_sequence)
+        )
+        INSERT INTO {schema}.wh_integrity_pending_gaps AS kp
+          (origin_service_id, origin_service_name, tenant_scope, event_type, from_commit_sequence, to_commit_sequence,
+           expected_count)
+        SELECT @p_origin, g.origin_service_name, g.tenant_scope, g.event_type, g.from_commit_sequence,
+               g.to_commit_sequence, g.expected_count
+        FROM kept g
+        ORDER BY 3, 4, 5, 6
+        ON CONFLICT (origin_service_id, tenant_scope, event_type, from_commit_sequence, to_commit_sequence)
+        DO UPDATE SET expected_count = EXCLUDED.expected_count
+        WHERE kp.expected_count IS DISTINCT FROM EXCLUDED.expected_count
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = pending.Select(g => g.OriginServiceName).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = pending.Select(g => g.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = pending.Select(g => g.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = pending.Select(g => g.FromCommitSequence).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = pending.Select(g => g.ToCommitSequence).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_expected", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = pending.Select(g => g.ExpectedCount).ToArray()
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task IntegrityRecordMissingEventsAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, IReadOnlyList<Guid?> missingEventIds,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    ArgumentNullException.ThrowIfNull(missingEventIds);
+    if (keys.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // One statement for the comparison's deficits, each row found by its primary key; a row whose missing event is
+      // already the recorded one is not rewritten.
+      cmd.CommandText = $"""
+        UPDATE {schema}.wh_integrity_ledger l
+        SET missing_event_id = m.missing_event_id
+        FROM unnest(@p_tenants::text[], @p_types::text[], @p_streams::uuid[], @p_missing::uuid[])
+          AS m(tenant_scope, event_type, stream_id, missing_event_id)
+        WHERE l.origin_service_id = @p_origin AND l.tenant_scope = m.tenant_scope
+          AND l.event_type = m.event_type AND l.stream_id = m.stream_id
+          AND l.missing_event_id IS DISTINCT FROM m.missing_event_id
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = keys.Select(k => k.StreamId).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_missing", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = missingEventIds.Select(id => (object?)id ?? DBNull.Value).ToArray()
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
       int limit, CancellationToken cancellationToken = default) {
@@ -806,7 +997,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
       cmd.Parameters.AddWithValue(P_LIMIT, limit);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit)";
+      // #2103: each claimed row's recorded missing event rides along, read by primary key from the row the claim stamped.
+      cmd.CommandText = $"""
+        SELECT c.origin_service_id, c.tenant_scope, c.event_type, c.stream_id, c.window_from, c.window_until, l.missing_event_id
+        FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit) c
+        LEFT JOIN {schema}.wh_integrity_ledger l
+          ON l.origin_service_id = c.origin_service_id AND l.tenant_scope = c.tenant_scope
+         AND l.event_type = c.event_type AND l.stream_id = c.stream_id
+        """;
 #pragma warning restore S2077
       var items = new List<IntegrityRepairDrainItem>(limit);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -817,7 +1015,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
           reader.GetString(2),
           reader.GetGuid(3),
           await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
-          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)));
+          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
+          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6)));
       }
       return items;
     } catch (OperationCanceledException) {
@@ -828,6 +1027,38 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore CA1848
       return [];
     }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 348) returns only rows with a stamped
+  /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
+  public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
+      IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(originIds);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = originIds.ToArray()
+    });
+    cmd.Parameters.AddWithValue("p_reported_before", reportedBefore);
+    cmd.Parameters.AddWithValue(P_NOW, now);
+    cmd.Parameters.AddWithValue(P_LIMIT, limit);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText =
+      "SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until " +
+      $"FROM {BuildSchemaQualifiedName(schema, "wh_integrity_claim_ledger_recheck")}(@p_origin_ids, @p_reported_before, @p_now, @p_limit)";
+#pragma warning restore S2077
+    var items = new List<IntegrityRepairDrainItem>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      items.Add(new IntegrityRepairDrainItem(
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5)));
+    }
+    return items;
   }
 
   /// <inheritdoc />
@@ -874,20 +1105,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>Null on any failure: a mark that cannot reach the ledger leaves repair on its terminal cadence, the
   /// harmless direction. The returned keys speak the caller's form, an absent tenant as null.</remarks>
-  public async Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+  public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    _markUnhealableBatchAsync(originServiceId, keys, null, [], now, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>The store marks only the rows whose deficit the answer covered (357, #2143).</remarks>
+  public Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+      IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _markUnhealableBatchAsync(originServiceId, keys, answeredWindow, answeredEventIds, now, cancellationToken);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "The mark's keys, the answer's window and events, the clock and cancellation.")]
+  private async Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> _markUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow? answeredWindow,
+      IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_unhealable_batch");
+      // 357 (#2143): an answer whose window is known marks through the coverage-checking function.
+      var qualified = BuildSchemaQualifiedName(schema,
+        answeredWindow is null ? "wh_integrity_mark_unhealable_batch" : "wh_integrity_mark_unhealable_covered_batch");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
       _bindDivergenceKeyArrays(cmd, originServiceId, keys);
       cmd.Parameters.AddWithValue(P_NOW, now);
+      var arguments = "@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now";
+      if (answeredWindow is not null) {
+        _bindAnsweredWindow(cmd, answeredWindow);
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+          Value = answeredEventIds.ToArray()
+        });
+        arguments += ",@p_answer_from,@p_answer_to,@p_event_ids";
+      }
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now)";
+      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}({arguments})";
 #pragma warning restore S2077
       var marked = new List<IntegrityRepairLedger.DivergenceKey>();
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -908,6 +1163,114 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return null;
     }
   }
+
+  /// <summary>
+  /// Binds the window a redelivery answered (#2143): its exclusive floor and inclusive ceiling (NULL = unbounded, and
+  /// both NULL when the window is not known).
+  /// </summary>
+  private static void _bindAnsweredWindow(Npgsql.NpgsqlCommand cmd, RedeliveryAnswerWindow? window) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_from", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = window is { FromCommitSequence: { } from } ? (object)from : DBNull.Value
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_to", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = window is { ToCommitSequence: { } to } ? (object)to : DBNull.Value
+    });
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Best-effort: a prune that cannot reach the ledger is logged and answers 0; the next audit cycle prunes.</remarks>
+  public async Task<int> IntegrityForgetUnconsumedEventTypesAsync(
+      IReadOnlyList<string> consumedEventTypes, IReadOnlyCollection<string> absorbedNamespaces,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(consumedEventTypes);
+    ArgumentNullException.ThrowIfNull(absorbedNamespaces);
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_forget_unconsumed");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      cmd.Parameters.AddWithValue("p_consumed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, consumedEventTypes.ToArray());
+      cmd.Parameters.AddWithValue("p_absorbed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, absorbedNamespaces.ToArray());
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_consumed,@p_absorbed)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next audit cycle prunes.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_forget_unconsumed failed; rows of unconsumed event types stay until the next audit cycle.");
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs with their origin's last report
+  /// (<c>wh_integrity_ledger_origin_types</c>, migrations 370 and 372), then the judged ones forgotten
+  /// (<c>wh_integrity_forget_origin_types</c>); the second is skipped when nothing is judged. Best-effort: a prune that
+  /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
+  public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+      Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(isNotAuthoritative);
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      var origins = new List<Guid>();
+      var types = new List<string>();
+      await using (var read = __scope.Connection.CreateCommand().WithCoordinatorTimeout()) {
+#pragma warning disable S2077 // Function name is a compile-time constant; there are no arguments.
+        read.CommandText =
+          $"SELECT origin_service_id, event_type, origin_last_reported_at FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_origin_types")}()";
+#pragma warning restore S2077
+        await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          var (origin, type) = (reader.GetGuid(0), reader.GetString(1));
+          var lastReported = await reader.GetFieldValueAsync<DateTimeOffset>(2, cancellationToken).ConfigureAwait(false);
+          if (isNotAuthoritative(origin, type, lastReported)) {
+            origins.Add(origin);
+            types.Add(type);
+          }
+        }
+      }
+      if (origins.Count == 0) {
+        return 0;
+      }
+      await using var forget = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      forget.Parameters.AddWithValue("p_origins", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, origins.ToArray());
+      forget.Parameters.AddWithValue("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, types.ToArray());
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      forget.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_forget_origin_types")}(@p_origins,@p_types)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await forget.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next audit cycle prunes.
+      _log.LogWarning(ex,
+        "Integrity ledger prune of rows recorded under an origin that does not own their type failed; they stay until the next audit cycle.");
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>One bounded read (<c>wh_integrity_count_answer_pending</c>, migration 371), answered from
+  /// <c>idx_integrity_ledger_answer_pending</c> once the maintenance pass has built it. Not best-effort: a count that
+  /// cannot be read fails the drain's tick, which claims nothing and retries, so the cap never opens on a failure.</remarks>
+  public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT {schema}.wh_integrity_count_answer_pending(@p_now, @p_limit)";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_limit", limit));
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+        System.Globalization.CultureInfo.InvariantCulture);
+    }, cancellationToken);
 
   /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
@@ -949,9 +1312,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>Null on any failure (logged): the reconcile then judges the bundle as it did before, and its buckets wait
   /// out their answer timeout. The returned keys speak the caller's form, an absent tenant as null.</remarks>
-  public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+  public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
       Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences, DateTimeOffset now,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, null, now, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>An unchanged bucket the answered window did not cover is answered and not marked (357, #2143).</remarks>
+  public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventIds);
     ArgumentNullException.ThrowIfNull(commitSequences);
     if (eventIds.Count != commitSequences.Count) {
@@ -972,8 +1342,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = commitSequences.ToArray()
       });
       cmd.Parameters.AddWithValue(P_NOW, now);
+      // An unknown window marks as before 357.
+      cmd.Parameters.AddWithValue("p_answer_window_known", answeredWindow is not null);
+      _bindAnsweredWindow(cmd, answeredWindow);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now)";
+      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to)";
 #pragma warning restore S2077
       int present = 0, absent = 0, refused = 0, adoptable = 0;
       var markedRefused = new List<IntegrityRepairLedger.DivergenceKey>();
@@ -1046,6 +1419,58 @@ public class EFCoreWorkCoordinator<TDbContext>(
         reader.GetInt32(5), reader.GetInt32(6)));
     }
     return buckets;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(bundles);
+    foreach (var bundle in bundles) {
+      if (bundle.EventIds.Count != bundle.CommitSequences.Count) {
+        throw new ArgumentException(
+          $"A bundle of origin {bundle.OriginServiceId} has {bundle.EventIds.Count} event ids but "
+          + $"{bundle.CommitSequences.Count} commit sequences; they pair by position.", nameof(bundles));
+      }
+    }
+    var results = new List<RedeliveredBucketPresence>[bundles.Count];
+    for (var i = 0; i < results.Length; i++) {
+      results[i] = [];
+    }
+    if (bundles.Count == 0) {
+      return results;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    // 335 (#2099): every bundle at once, each sealed epoch the batch touches refolded once.
+    var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_reconcile_redelivered_bundles");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_origins", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = bundles.Select(b => b.OriginServiceId).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_names", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = bundles.Select(b => (object?)b.OriginServiceName ?? DBNull.Value).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_bundles", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = bundles.SelectMany((b, i) => b.EventIds.Select(_ => i + 1)).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = bundles.SelectMany(b => b.EventIds).ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = bundles.SelectMany(b => b.CommitSequences).ToArray()
+    });
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText = $"SELECT bundle, stream_id, tenant_scope, event_type, present_count, adopted_count, origins_filled_count, refused_truncated_count, refused_foreign_origin_count FROM {qualified}(@p_bundle_origins,@p_bundle_names,@p_event_bundles,@p_event_ids,@p_commit_sequences)";
+#pragma warning restore S2077
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var tenant = reader.GetString(2);
+      results[reader.GetInt32(0) - 1].Add(new RedeliveredBucketPresence(
+        reader.GetGuid(1), tenant.Length == 0 ? null : tenant, reader.GetString(3), reader.GetInt32(4), reader.GetInt32(5),
+        reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(6)));
+    }
+    return results;
   }
 
   /// <inheritdoc />
@@ -1550,28 +1975,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// table names are the framework's own constants, so nothing caller-supplied reaches the statement.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
-  public async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) {
+  public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
+    VacuumWorkTablesAsync(TimeSpan.Zero, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>The loop is <c>TableMaintenanceSql.VacuumWorkTablesAsync</c>, shared with the Dapper coordinator.</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs:ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync</tests>
+  public async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     if (_schemaInitConnectionString() is { } initConnectionString) {
-      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, cancellationToken).ConfigureAwait(false);
+      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, skipTablesVacuumedWithin, cancellationToken).ConfigureAwait(false);
     }
-
-    var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = __scope.Connection;
-    foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
-      var qualified = BuildSchemaQualifiedName(schema, table);
-      if (await TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, table, cancellationToken).ConfigureAwait(false) is { } notOwned) {
-        outcomes.Add(new WorkTableVacuum(table, false, notOwned));
-        continue;
-      }
-      await TableMaintenanceSql.VacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
-      outcomes.Add(new WorkTableVacuum(table, true, null));
-    }
-    return outcomes;
+    return await TableMaintenanceSql.VacuumWorkTablesAsync(__scope.Connection, table => BuildSchemaQualifiedName(schema, table),
+      skipTablesVacuumedWithin, (conn, qualified, table, ct) => TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, table, ct),
+      cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -1669,19 +2090,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
 
+
   /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
   private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
-      string initConnectionString, string schema, CancellationToken cancellationToken) {
-    var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
+      string initConnectionString, string schema, TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken) {
     await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
     await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
-      await TableMaintenanceSql.VacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
-      outcomes.Add(new WorkTableVacuum(table, true, null));
-    }
-    return outcomes;
+    return await TableMaintenanceSql.VacuumWorkTablesAsync(initConnection, table => BuildSchemaQualifiedName(schema, table),
+      skipTablesVacuumedWithin, notOwned: null, cancellationToken).ConfigureAwait(false);
   }
-
 
   /// <summary>
   /// The schema-initialization (<c>-init</c>) connection string configured for this context, or null. The
@@ -1900,9 +2317,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // answer side; a null window includes them (full history).
       cmd.CommandText = $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
         FROM {schema}.wh_event_store es
         WHERE es.origin_service_id = @p_origin
           AND es.stream_id = ANY(@p_streams::uuid[])
@@ -1916,7 +2335,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         ORDER BY 1, 2, 3
         """;
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = streamIds.ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -1926,11 +2345,93 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)untilSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      _addDigestExemptParam(cmd);
+      AddDigestExemptParam(cmd);
 
       return (IReadOnlyList<StreamDigest>?)await _readStreamDigestsAsync(
-        cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
+        cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken, hasIdLanes: true).ConfigureAwait(false);
     }, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamDigest>> ComputeUnsequencedReceivedDigestsAsync(
+    Guid originServiceId, IReadOnlyList<string> eventTypes, IReadOnlyList<Guid>? streamIds, TimeSpan settleWindow,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0 || streamIds is { Count: 0 }) {
+      return [];
+    }
+    return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var byStream = streamIds is not null;
+      cmd.CommandText = byStream ? UnsequencedByStreamSql(schema) : UnsequencedByTypeSql(schema);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      if (byStream) {
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+          Value = streamIds!.ToArray()
+        });
+      }
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
+      AddDigestExemptParam(cmd);
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: !byStream, cancellationToken, hasIdLanes: byStream)
+        .ConfigureAwait(false);
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #2102: the fold of the named streams' events held from the origin without its commit sequence, one row per
+  /// (tenant, type, stream). Bounded by the chunk: the named streams' rows, found through the stream index.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <returns>The query text.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs:ByStream_UnderAGenericPlan_ReadsTheNamedStreamsRows_NotTheOriginsLaneAsync</tests>
+#pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
+  internal static string UnsequencedByStreamSql(string schema) => $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
+        FROM {schema}.wh_event_store es
+        WHERE es.stream_id = ANY(@p_streams::uuid[])
+          AND es.origin_service_id = @p_origin
+          AND es.origin_commit_sequence IS NULL
+          AND es.event_type = ANY(@p_types::text[])
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2, 3
+        ORDER BY 1, 2, 3
+        """;
+
+  /// <summary>
+  /// #2102: the fold of the events held from the origin without its commit sequence, one row per (tenant, type).
+  /// Bounded by the origin's sequence-less rows: the origin lane index (155) keys on (origin, origin sequence), so the
+  /// read is the NULL-sequence range of that origin, never the origin's sequenced lane.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <returns>The query text.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs:ByType_UnderAGenericPlan_ReadsTheOriginsSequencelessRows_NotItsSequencedLaneAsync</tests>
+  internal static string UnsequencedByTypeSql(string schema) => $"""
+        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
+               COUNT(*)::int
+        FROM {schema}.wh_event_store es
+        WHERE es.origin_service_id = @p_origin
+          AND es.origin_commit_sequence IS NULL
+          AND es.event_type = ANY(@p_types::text[])
+          AND COALESCE(es.flags, 0) & 8 = 0
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND es.created_at < NOW() - @p_settle::interval
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """;
+#pragma warning restore S2077, RCS1158
+
 
   /// <inheritdoc />
   public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
@@ -2027,38 +2528,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Pages walk WHOLE streams in stream-id order (streams are homogeneous — one type, one
       // tenant — so rows ≈ streams). The pick fetches one sentinel stream past the bound: its
       // presence is how we know the window is not complete without a second count query.
-      cmd.CommandText = $"""
-        WITH lane AS (
-          SELECT es.*,
-                 CASE WHEN (@p_origin::uuid) IS NULL THEN es.commit_sequence
-                      ELSE es.origin_commit_sequence END AS lane_seq
-          FROM {schema}.wh_event_store es
-          WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-                 OR es.origin_service_id = @p_origin)
-        ),
-        win AS (
-          SELECT l.* FROM lane l
-          WHERE l.lane_seq IS NOT NULL AND l.lane_seq >= @p_since AND l.lane_seq < @p_until
-            AND ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
-            AND COALESCE(l.flags, 0) & 8 = 0
-            AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-            AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-            AND l.created_at < NOW() - @p_settle::interval
-        ),
-        pick AS (
-          SELECT DISTINCT w.stream_id FROM win w
-          WHERE (@p_resume::uuid IS NULL OR w.stream_id > @p_resume)
-          ORDER BY w.stream_id
-          LIMIT @p_limit
-        )
-        SELECT COALESCE(w.scope->>'t', '') AS tenant, w.event_type, w.stream_id,
-               bit_xor(hashtextextended(w.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(w.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int
-        FROM win w JOIN pick p ON p.stream_id = w.stream_id
-        GROUP BY 1, 2, 3
-        ORDER BY 3, 1, 2
-        """;
+      cmd.CommandText = WindowedStreamDigestSql(schema);
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
@@ -2066,8 +2536,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)resumeAfterStreamId ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LIMIT, pageBound + 1));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      _addDigestExemptParam(cmd);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
       var rows = new List<StreamDigest>();
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
@@ -2081,6 +2550,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
             DigestHi = reader.GetInt64(4),
             EventCount = reader.GetInt32(5),
             UpdatedAt = null,
+            IdLo = reader.GetInt64(6),
+            IdHi = reader.GetInt64(7),
           });
         }
       }
@@ -2811,18 +3282,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var schema = _resolveSchema(typeof(OutboxRecord));
 
-    var sql = $"""
-      SELECT es.event_id, es.stream_id, es.version::bigint, es.commit_sequence,
-             es.event_type, eb.event_data::text, eb.metadata::text, es.scope::text,
-             COALESCE(es.flags, 0)
-      FROM {schema}.wh_event_store es
-      JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
-      WHERE (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
-        AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
+    // Every filter but the type, shared by both orders. #2032: only events the answering service authored (no origin,
+    // and a first hop naming it or no service).
+    const string COLUMNS = """
+      es.event_id, es.stream_id, es.version::bigint AS version, es.commit_sequence,
+             es.event_type, eb.event_data::text AS event_data, eb.metadata::text AS metadata, es.scope::text AS scope,
+             COALESCE(es.flags, 0) AS flags
+      """;
+    var filters = $"""
+      (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
         AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
-        AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
+        AND ((@p_event_ids::uuid[]) IS NULL OR es.event_id = ANY(@p_event_ids::uuid[]))
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
-        AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
         AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
         AND (@p_authored_by::text IS NULL OR (
           es.origin_service_id IS NULL
@@ -2830,9 +3301,46 @@ public class EFCoreWorkCoordinator<TDbContext>(
                 (eb.metadata -> 'Hops') -> 0 -> 'si' ->> 'sn',
                 (eb.metadata -> 'Hops') -> 0 -> 'ServiceInstance' ->> 'ServiceName'))), ''), 'unknown')
               IN ('unknown', lower(btrim(@p_authored_by::text)))))
-      ORDER BY es.stream_id, es.version
-      LIMIT @p_max
       """;
+    var normalize = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
+    string sql;
+    if (request.OrderByCommitSequence) {
+      // #2092: one type's stamped history in commit order from the floor. Each type is read through
+      // idx_event_store_type_commit_sequence in order under the limit (a lateral per type), so a window costs its own
+      // rows however much of the type's history lies behind or ahead of it. That index is built concurrently after the
+      // migrations (ConcurrentIndexBuild); until it is valid the same read answers correctly, more slowly.
+      if (request.EventTypes is not { Count: > 0 }) {
+        throw new ArgumentException("A commit-sequence selection names its event types.", nameof(request));
+      }
+      sql = $"""
+        SELECT w.event_id, w.stream_id, w.version, w.commit_sequence, w.event_type, w.event_data, w.metadata, w.scope, w.flags
+        FROM (SELECT DISTINCT {normalize}(t) AS name FROM unnest(@p_types::text[]) AS t) AS types
+        CROSS JOIN LATERAL (
+          SELECT {COLUMNS}
+          FROM {schema}.wh_event_store es
+          JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.event_type = types.name
+            AND es.commit_sequence IS NOT NULL
+            AND es.commit_sequence > COALESCE(@p_from_seq::bigint, -1)
+            AND {filters}
+          ORDER BY es.commit_sequence
+          LIMIT @p_max) AS w
+        ORDER BY w.commit_sequence
+        LIMIT @p_max
+        """;
+    } else {
+      sql = $"""
+        SELECT {COLUMNS}
+        FROM {schema}.wh_event_store es
+        JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
+        WHERE ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {normalize}(t) FROM unnest(@p_types::text[]) AS t))
+          AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
+          AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
+          AND {filters}
+        ORDER BY es.stream_id, es.version
+        LIMIT @p_max
+        """;
+    }
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2845,8 +3353,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = request.EventTypes is null ? DBNull.Value : request.EventTypes.ToArray()
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = request.StreamIds is null ? DBNull.Value : request.StreamIds.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = request.EventIds is null ? DBNull.Value : request.EventIds.ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from_seq", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)request.FromCommitSequence ?? DBNull.Value
@@ -3282,12 +3793,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
         GROUP BY 1, 2
         ORDER BY 1, 2
         """;
-      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", prior.Value));
-      count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, prior.Value));
+      count.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, current));
       count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, floor.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
-      _addDigestExemptParam(count);
+      AddDigestExemptParam(count);
       await using var reader = await count.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         var tenant = reader.GetString(0);
@@ -3348,9 +3859,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ORDER BY 1, 2
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", fromCommitSequence));
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", toCommitSequence));
-    _addDigestExemptParam(cmd);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, fromCommitSequence));
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, toCommitSequence));
+    AddDigestExemptParam(cmd);
 
     var results = new List<CheckpointBucket>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -3457,6 +3968,72 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task EnqueueSubscriptionBackfillsAsync(
+    IReadOnlyList<SubscriptionBackfillSeed> seeds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(seeds);
+    if (seeds.Count == 0) {
+      return;
+    }
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.EnqueueAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), seeds, cancellationToken).ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<SubscriptionBackfillCursor>> GetSubscriptionBackfillsAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync((cmd, schema) => Whizbang.Data.Postgres.SubscriptionBackfillSql.ReadAllAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
+  public async Task MarkSubscriptionBackfillWindowRequestedAsync(
+    Guid backfillId, long window, DateTimeOffset now, DateTimeOffset answerDueBy, CancellationToken cancellationToken = default) =>
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.MarkRequestedAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), backfillId, window, now, answerDueBy, cancellationToken)
+        .ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public Task<SubscriptionBackfillCursor?> RecordSubscriptionBackfillAnswerAsync(
+    BackfillWindowAnswer answer, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(answer);
+    return _withCoordinatorCommandAsync((cmd, schema) => Whizbang.Data.Postgres.SubscriptionBackfillSql.RecordAnswerAsync(
+      cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), answer, now, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task EndSubscriptionBackfillAsync(
+    Guid backfillId, SubscriptionBackfillOutcome outcome, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.EndAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), backfillId, outcome, now, cancellationToken).ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  /// <remarks>One index probe per type (a lateral over idx_event_store_type_commit_sequence, once the concurrent
+  /// framework index build has made it valid), never a scan of the type.</remarks>
+  public Task<long?> GetRedeliveryHeadCommitSequenceAsync(IReadOnlyList<string> eventTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    return _withCoordinatorCommandAsync<long?>(async (cmd, schema) => {
+      var normalize = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
+      cmd.CommandText =
+        "SELECT max(h.head) FROM unnest(@p_types::text[]) AS t CROSS JOIN LATERAL (" +
+        $"SELECT max(es.commit_sequence) AS head FROM {schema}.wh_event_store es " +
+        $"WHERE es.event_type = {normalize}(t) AND es.commit_sequence IS NOT NULL) AS h";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = eventTypes.ToArray()
+      });
+      var head = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return head is long value ? value : null;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public Task<IReadOnlyList<StreamDigest>> ComputeTypeDigestsAsync(
     Guid? originServiceId,
     IReadOnlyList<string>? eventTypes,
@@ -3510,9 +4087,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // out of both sides' digests.
       cmd.CommandText = $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int
+               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
+               COUNT(*)::int,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
+               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
         FROM {schema}.wh_event_store es
         WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
                OR es.origin_service_id = @p_origin)
@@ -3526,9 +4105,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      _addDigestExemptParam(cmd);
+      AddDigestExemptParam(cmd);
 
-      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken)
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken, hasIdLanes: true)
         .ConfigureAwait(false);
     }, cancellationToken);
 
@@ -3588,7 +4167,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Requested names normalize to the stored wire form so a long-AQN caller still matches.
       var normalizeFn = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
       cmd.CommandText = $"""
-        SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at
+        SELECT scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at, id_lo, id_hi
         FROM {schema}.wh_stream_digests
         WHERE origin_service_id = COALESCE(@p_origin::uuid, '{ZERO_ORIGIN_UUID}'::uuid)
           AND ((@p_types::text[]) IS NULL OR event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_types::text[]) AS t))
@@ -3596,7 +4175,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
 
-      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: false, cancellationToken)
+      return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: false, cancellationToken, hasIdLanes: true)
         .ConfigureAwait(false);
     }, cancellationToken);
 
@@ -3629,10 +4208,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// hi, count[, updated]); type-level omits the stream column and carries <see cref="Guid.Empty"/>.
   /// Recomputed reads have no update time.</summary>
   private static async Task<IReadOnlyList<StreamDigest>> _readStreamDigestsAsync(
-      System.Data.Common.DbCommand cmd, bool hasUpdatedAt, bool typeLevel, CancellationToken cancellationToken) {
+      System.Data.Common.DbCommand cmd, bool hasUpdatedAt, bool typeLevel, CancellationToken cancellationToken,
+      bool hasIdLanes = false) {
     var results = new List<StreamDigest>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     var idx = typeLevel ? 2 : 3;
+    // #2103: the id lanes follow the count (and the update time, when read); NULL when a stored bucket has none yet.
+    var idLanes = idx + (hasUpdatedAt ? 4 : 3);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var tenant = reader.GetString(0);
       results.Add(new StreamDigest {
@@ -3643,10 +4225,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DigestHi = reader.GetInt64(idx + 1),
         EventCount = reader.GetInt32(idx + 2),
         UpdatedAt = hasUpdatedAt ? await reader.GetFieldValueAsync<DateTimeOffset>(idx + 3, cancellationToken) : null,
+        IdLo = hasIdLanes ? await _nullableInt64Async(reader, idLanes, cancellationToken) : null,
+        IdHi = hasIdLanes ? await _nullableInt64Async(reader, idLanes + 1, cancellationToken) : null,
       });
     }
     return results;
   }
+
+  private static async Task<long?> _nullableInt64Async(
+      System.Data.Common.DbDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(ordinal);
 
   /// <inheritdoc />
   public async Task<DigestVerificationResult> VerifyDigestTableAsync(
@@ -3667,67 +4255,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   private static void _prepareVerifyDigestCommand(
       System.Data.Common.DbCommand cmd, string schema, TimeSpan settleWindow) {
-    // A1c trust-but-verify: one statement, one snapshot — recompute settled buckets from the event
-    // store and heal the table three ways (update drifted / delete phantom / insert missing). The
-    // settle gates (bucket updated_at, event created_at) keep in-flight folds out of both sides:
-    // a bucket touched inside the window is skipped this pass, and a fresh event with no bucket is
-    // not "missing" — it simply hasn't settled. Data-modifying CTEs share the statement snapshot —
-    // the three heal sets are disjoint by construction, so ordering between them is immaterial.
+    // A1c trust-but-verify: recompute settled buckets from the event store and heal the table three ways (update
+    // drifted / delete phantom / insert missing). The settle gates (bucket updated_at, event created_at) keep in-flight
+    // folds out of both sides: a bucket touched inside the window is skipped this pass, and a fresh event with no
+    // bucket is not "missing", it simply has not settled.
+    // #2106: the heal is the shared SQL helper, which recomputes with the one lane function and rewrites every lane
+    // of a drifted bucket together. It returns one row per bucket it changed; the sweep counts them by kind. Id lanes
+    // never computed are left to the bounded backfill (p_fill_id_lanes false): filling them here would rewrite the
+    // whole table in one statement.
     cmd.CommandText = $"""
-      WITH recomputed AS (
-        SELECT COALESCE(es.origin_service_id, '{ZERO_ORIGIN_UUID}'::uuid) AS origin_service_id,
-               COALESCE(es.scope->>'t', '') AS scope_tenant, es.event_type, es.stream_id,
-               bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-               bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
-               COUNT(*)::int AS event_count
-        FROM {schema}.wh_event_store es
-        WHERE COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-          AND es.created_at < NOW() - @p_settle::interval
-        GROUP BY 1, 2, 3, 4
-      ),
-      drift_updated AS (
-        UPDATE {schema}.wh_stream_digests d
-        SET digest_lo = r.digest_lo, digest_hi = r.digest_hi, event_count = r.event_count, updated_at = NOW()
-        FROM recomputed r
-        WHERE d.origin_service_id = r.origin_service_id AND d.scope_tenant = r.scope_tenant
-          AND d.event_type = r.event_type AND d.stream_id = r.stream_id
-          AND d.updated_at < NOW() - @p_settle::interval
-          AND (d.digest_lo <> r.digest_lo OR d.digest_hi <> r.digest_hi OR d.event_count <> r.event_count)
-        RETURNING 1
-      ),
-      drift_removed AS (
-        DELETE FROM {schema}.wh_stream_digests d
-        WHERE d.updated_at < NOW() - @p_settle::interval
-          AND NOT EXISTS (
-            SELECT 1 FROM recomputed r
-            WHERE r.origin_service_id = d.origin_service_id AND r.scope_tenant = d.scope_tenant
-              AND r.event_type = d.event_type AND r.stream_id = d.stream_id)
-        RETURNING 1
-      ),
-      drift_added AS (
-        INSERT INTO {schema}.wh_stream_digests
-          (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count)
-        SELECT r.origin_service_id, r.scope_tenant, r.event_type, r.stream_id,
-               r.digest_lo, r.digest_hi, r.event_count
-        FROM recomputed r
-        WHERE NOT EXISTS (
-          SELECT 1 FROM {schema}.wh_stream_digests d
-          WHERE d.origin_service_id = r.origin_service_id AND d.scope_tenant = r.scope_tenant
-            AND d.event_type = r.event_type AND d.stream_id = r.stream_id)
-        ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO NOTHING
-        RETURNING 1
+      WITH heal AS (
+        SELECT h.kind FROM {schema}._wh_heal_stream_digests(NULL, @p_settle::interval, false) h
       )
       SELECT (SELECT COUNT(*)::int FROM {schema}.wh_stream_digests
               WHERE updated_at < NOW() - @p_settle::interval),
-             (SELECT COUNT(*)::int FROM drift_updated),
-             (SELECT COUNT(*)::int FROM drift_removed),
-             (SELECT COUNT(*)::int FROM drift_added)
+             (SELECT COUNT(*)::int FROM heal WHERE kind = 'drift_updated'),
+             (SELECT COUNT(*)::int FROM heal WHERE kind = 'drift_removed'),
+             (SELECT COUNT(*)::int FROM heal WHERE kind = 'drift_added')
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-    _addDigestExemptParam(cmd);
   }
+
+  /// <summary>
+  /// The windowed stream-digest query <see cref="ComputeStreamDigestsWindowedAsync"/> runs: one page of whole streams
+  /// in stream-id order, folded over the lane's window <c>[@p_since, @p_until)</c>. The fold is
+  /// <c>wh_compute_stream_digests_window</c> (#2107), which plans each call against its own window and types, so a sparse
+  /// type is read through an index on the type instead of being filtered from every event in the window.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <returns>The query text.</returns>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestLaneReadTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestTypeIndexTests.cs</tests>
+#pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
+  internal static string WindowedStreamDigestSql(string schema) =>
+    "SELECT tenant, event_type, stream_id, digest_lo, digest_hi, event_count, id_lo, id_hi " +
+    $"FROM {BuildSchemaQualifiedName(schema, "wh_compute_stream_digests_window")}" +
+    "(@p_origin, @p_types, @p_since, @p_until, @p_resume, @p_limit, NOW(), @p_settle)";
+#pragma warning restore S2077, RCS1158
 
   /// <summary>
   /// Binds the digest queries' shared filter: the origin service and the event types, each null when
@@ -3749,7 +4314,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   // Binds the digest exemption every recompute folds against (#1492).
-  private static void _addDigestExemptParam(System.Data.Common.DbCommand cmd) =>
+  internal static void AddDigestExemptParam(System.Data.Common.DbCommand cmd) =>
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_DIGEST_EXEMPT, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
     });
@@ -4166,6 +4731,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
     int limit,
     CancellationToken cancellationToken = default)
     => await _findStuckRowsAsync(CoordinatorFleetSql.STUCK_INBOX, maxAttempts, limit, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>Calls <c>wh_drop_exhausted_inbox_rows</c> (migration 350, #2117). An empty set costs no round trip.</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExhaustedInboxDropSqlTests.cs</tests>
+  public async Task<int> DropExhaustedInboxRowsAsync(
+    IReadOnlyList<Guid> messageIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messageIds);
+    if (messageIds.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorFleetSql.DropExhaustedInboxRowsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), messageIds, maxAttempts, cancellationToken).ConfigureAwait(false);
+  }
 
   // v0.657 slice 5c: shared shape for both sentinel methods — they only differ
   // in the SQL function name. Both use the partial indexes from migration 054
@@ -5253,6 +5838,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ));
     }
     return rows;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default) {
+    var schema = _resolveSchema(typeof(InboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var command = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified table names built from a validated schema constant.
+    command.CommandText = Whizbang.Data.Postgres.PendingInboxTypesSql.Query($"\"{schema}\".");
+#pragma warning restore S2077
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var types = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      types.Add(reader.GetString(0));
+    }
+    return types;
   }
 
   /// <inheritdoc />

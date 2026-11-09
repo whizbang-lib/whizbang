@@ -337,6 +337,7 @@ public class IntegrityManifestDrainAdmissionTests {
       Coordinator.Local = Local;
       var services = new ServiceCollection();
       services.AddSingleton<IWorkCoordinator>(Coordinator);
+      services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
       services.AddSingleton<IDispatcher>(new NullDispatcher());
       services.AddSingleton<IIntegrityRepairLedger>(Ledger);
       services.AddSingleton(Options.Create(options));

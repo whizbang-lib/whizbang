@@ -28,6 +28,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Chaos;
 /// once.
 /// </summary>
 /// <remarks>
+/// <para>These tests pin the lease mechanics, so their electors run with <c>RoleAssignmentOptions.ProgressWindow</c> off: a
+/// holder lapses at its lease. A holder judged by the one liveness rule (#2140) is covered by
+/// <c>RoleHolderLivenessE2ETests</c> and <c>RoleHolderLivenessSqlTests</c>.</para>
 /// Each simulated instance is its own elector, store and holder loop over its own connections, as
 /// separate pods would be. "Time" is database time, advanced by shifting stored instants back; each
 /// instance's renew throttle runs on its own fake clock. A pass is driven with
@@ -321,7 +324,7 @@ internal sealed class ChaosPod : IServiceInstanceProvider {
       string podConnection, string effectsConnection, string? version, Func<Task>? pause, FakeTimeProvider time,
       IEnumerable<string> extraRoles, RoleAssignmentOptions? tuned = null, IEnumerable<IDutyAcquisitionHandler>? onAcquired = null) {
     Time = time;
-    var options = tuned ?? new RoleAssignmentOptions();
+    var options = tuned ?? new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero };
     foreach (var role in extraRoles) {
       options.Roles.Add(role);
     }
