@@ -128,4 +128,26 @@ public sealed class MaintenanceRetentionOptions {
   /// </summary>
   /// <remarks>A route still taken is never removed, so only paths that left with old code age out.</remarks>
   public int? RouteIdleDays { get; set; }
+
+  /// <summary>
+  /// The most completed inbox rows one maintenance cycle purges. Publishes <c>completed_inbox_purge_batch_size</c>; the
+  /// database default is 50000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A completed inbox row is normally deleted when its message completes. A row the consumer stores already settled (a
+  /// message discarded on receive) and a row a refused store completes in place stay until this purge removes them. The
+  /// purge runs inside the one maintenance call, under that call's command budget, so it is bounded: an unbounded
+  /// purge over a large backlog outran the budget, the whole cycle rolled back, and the backlog then only grew.
+  /// </para>
+  /// <para>
+  /// Unlike the retention windows, the value must be 1 or greater: a batch of zero would never purge. Debug retention
+  /// (<c>Whizbang:WorkCoordinator:DebugMode</c>) is the way to keep completed rows.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#completed-inbox-purge-is-bounded</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PurgesAtMostTheBatchOfCompletedInboxRows_AndTheRestOnTheNextCycleAsync</tests>
+  public int? CompletedInboxPurgeBatchSize { get; set; }
 }

@@ -74,7 +74,16 @@ internal sealed partial class WhizbangDatabaseInitializerService(
 
   private Task? _backgroundInit;
   private Task? _standDown;
-  private readonly CancellationTokenSource _stopCts = new();
+  // The token is read once, with the source, while the source is alive: the retry loop waits on it after an attempt
+  // fails, which can be after the host has disposed this service, and reading Token from a disposed source throws an
+  // exception nothing awaits (it surfaced as an unobserved task exception).
+  private readonly (CancellationTokenSource Source, CancellationToken Token) _stop = _newStop();
+  private bool _disposed;
+
+  private static (CancellationTokenSource Source, CancellationToken Token) _newStop() {
+    var source = new CancellationTokenSource();
+    return (source, source.Token);
+  }
 
   /// <summary>
   /// The background initialization task when <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/>
@@ -104,11 +113,24 @@ internal sealed partial class WhizbangDatabaseInitializerService(
 
   public Task StopAsync(CancellationToken cancellationToken) {
     // Ends the background retry loop (it waits on this token between attempts).
-    _stopCts.Cancel();
+    _stop.Source.Cancel();
     return Task.CompletedTask;
   }
 
-  public void Dispose() => _stopCts.Dispose();
+  /// <summary>Ends the background retry loop, if it is still running, and releases its token source.</summary>
+  /// <remarks>
+  /// Canceled before it is disposed, so a loop whose attempt fails after this returns sees a canceled token and ends,
+  /// rather than retrying on a token that can no longer be canceled.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangDatabaseInitializerServiceCoverageTests.cs:BackgroundInit_AnAttemptFailingAfterDispose_EndsTheLoopWithoutFaultingAsync</tests>
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    _stop.Source.Cancel();
+    _stop.Source.Dispose();
+  }
 
   private async Task _runInitializationLoggedAsync() {
     // Self-healing loop: fail-closed WHILE retrying, but never give up. MarkReady is only reached
@@ -133,9 +155,9 @@ internal sealed partial class WhizbangDatabaseInitializerService(
         LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
         try {
           foreach (var observer in _observers) {
-            await observer.OnAttemptFailedAsync(attempt, ex, _stopCts.Token).ConfigureAwait(false);
+            await observer.OnAttemptFailedAsync(attempt, ex, _stop.Token).ConfigureAwait(false);
           }
-          await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
+          await Task.Delay(delay, _timeProvider, _stop.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           return;   // host shutdown ends the loop; the gate stays closed.
         }
@@ -181,7 +203,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
       return;
     }
     await standDown.RecordAsync(assessment, cancellationToken);
-    _standDown = standDown.KeepVisibleAsync(_stopCts.Token);
+    _standDown = standDown.KeepVisibleAsync(_stop.Token);
   }
 
   private async Task _runMigrationsAsync(CancellationToken cancellationToken) {

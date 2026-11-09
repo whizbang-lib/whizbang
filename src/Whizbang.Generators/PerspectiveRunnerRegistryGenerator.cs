@@ -399,7 +399,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("public static class PerspectiveRunnerRegistryExtensions {");
     source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine($"  /// Registers all {perspectives.Length} perspective runner(s) as scoped services.");
-    source.AppendLine("  /// Also registers PerspectiveRunnerRegistry as IPerspectiveRunnerRegistry and IEventTypeProvider singletons.");
+    source.AppendLine("  /// Also registers PerspectiveRunnerRegistry as the IPerspectiveRunnerRegistry singleton and as a contribution to IEventTypeProvider.");
     source.AppendLine("  /// Call this method in your service registration (e.g., Startup.cs or Program.cs).");
     source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public static IServiceCollection AddPerspectiveRunners(");
@@ -408,7 +408,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("    // Register the registry as singleton (implements both IPerspectiveRunnerRegistry and IEventTypeProvider)");
     source.AppendLine("    services.AddSingleton<PerspectiveRunnerRegistry>();");
     source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
-    source.AppendLine("    services.AddSingleton<IEventTypeProvider>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
+    // #2146: a contribution to the served provider, never the provider itself. Every perspective assembly generates
+    // this registration, and a plain AddSingleton<IEventTypeProvider> let the last assembly displace the others' types.
+    source.AppendLine("    // Contributes this assembly's event types to the one IEventTypeProvider the host serves (#2146)");
+    source.AppendLine("    global::Whizbang.Core.Messaging.EventTypeProviderServiceCollectionExtensions.AddEventTypeProviderContribution<PerspectiveRunnerRegistry>(services);");
     source.AppendLine();
 
     foreach (var perspective in perspectives.OrderBy(p => p.SimpleName)) {
