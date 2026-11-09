@@ -85,14 +85,14 @@ public class MultiAssemblyPerspectiveRunnerRegistryTests {
     var listed = served.GetRegisteredPerspectives().Select(p => p.ClrTypeName).ToHashSet();
 
     await Assert.That(thisAssemblysPerspectives).IsNotEmpty().Because("precondition: this assembly declares perspectives");
-    foreach (var perspective in thisAssemblysPerspectives) {
-      await Assert.That(listed).Contains(perspective.ClrTypeName)
-        .Because($"{perspective.ClrTypeName} is declared by this assembly, whichever assembly registered last");
+    foreach (var perspectiveName in thisAssemblysPerspectives.Select(p => p.ClrTypeName)) {
+      await Assert.That(listed).Contains(perspectiveName)
+        .Because($"{perspectiveName} is declared by this assembly, whichever assembly registered last");
       var recording = new RecordingServiceProvider();
-      await Assert.That(() => served.GetRunner(perspective.ClrTypeName, recording)).Throws<InvalidOperationException>()
+      await Assert.That(() => served.GetRunner(perspectiveName, recording)).Throws<InvalidOperationException>()
         .Because("the generated registry resolves the runner it found; the recording provider has none to give");
       await Assert.That(recording.Requested.Any(t => t.Name.EndsWith("Runner", StringComparison.Ordinal))).IsTrue()
-        .Because($"the lookup for {perspective.ClrTypeName} must reach this assembly's registry and ask for its runner");
+        .Because($"the lookup for {perspectiveName} must reach this assembly's registry and ask for its runner");
     }
     await Assert.That(listed).Contains(SECOND_ASSEMBLY_PERSPECTIVE);
     await Assert.That(served.GetRunner(SECOND_ASSEMBLY_PERSPECTIVE, provider)).IsTypeOf<SecondAssemblyRunner>()
