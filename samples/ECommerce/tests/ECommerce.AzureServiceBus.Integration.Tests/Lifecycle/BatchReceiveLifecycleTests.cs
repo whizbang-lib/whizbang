@@ -64,7 +64,7 @@ public class BatchReceiveLifecycleTests {
 
     // Act — dispatch command, wait for perspectives to process on remote service
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -91,9 +91,10 @@ public class BatchReceiveLifecycleTests {
       InitialStock = i + 1
     }).ToList();
 
-    // Act — send 3 commands, wait for all perspectives
+    // Act — send 3 commands, wait for all perspectives on these products' streams
+    // (3 commands x 3 events each: ProductCreated x2 perspectives + InventoryRestocked x1 = 9)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 120000, hostFilter: "inventory");
+      expectedCompletions: 9, streamIds: [.. productIds.Select(id => id.Value)], timeoutMilliseconds: 120000, hostFilter: "inventory");
 
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
@@ -123,7 +124,7 @@ public class BatchReceiveLifecycleTests {
 
     // Act
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
