@@ -91,14 +91,43 @@ public class IntegrityTypeLaneAnswerSqlTests : EFCoreTestBase {
     var (coordinator, conn, origin, lane) = await _arrangeAsync();
     var held = await _storeEventAsync(conn, origin, 250);
 
+    _ = await coordinator.IntegrityMarkAnswerPendingAsync(origin, [lane], null, null, _t0, _timeout);
     _ = await coordinator.IntegrityRecordBundleAnswerAsync(
       origin, [held], [250], new RedeliveryAnswerWindow(100, 400), _t0.AddMinutes(5));
     var windowedMarked = await _laneMarkedAsync(conn);
+    _ = await coordinator.IntegrityMarkAnswerPendingAsync(origin, [lane], null, null, _t0.AddMinutes(6), _timeout);
     var whole = await coordinator.IntegrityRecordBundleAnswerAsync(
-      origin, [held], [250], new RedeliveryAnswerWindow(null, null), _t0.AddMinutes(6));
+      origin, [held], [250], new RedeliveryAnswerWindow(null, null), _t0.AddMinutes(7));
 
     await Assert.That(windowedMarked).IsFalse().Because("a type lane with no window was found over the whole history");
     await Assert.That(whole!.MarkedUnchanged).Contains(lane);
+    await conn.DisposeAsync();
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_ATypeLaneNotAwaitingAnAnswer_IsNotMarkedByAnotherRequestsAnswerAsync() {
+    var (coordinator, conn, origin, _) = await _arrangeAsync();
+    var held = await _storeEventAsync(conn, origin, 250);
+
+    // An answer to a request for named streams of the type: the type lane asked for nothing.
+    _ = await coordinator.IntegrityRecordBundleAnswerAsync(
+      origin, [held], [250], new RedeliveryAnswerWindow(null, null), _t0.AddMinutes(5));
+
+    await Assert.That(await _laneMarkedAsync(conn)).IsFalse()
+      .Because("an answer for some streams of the type says nothing about the type's other streams");
+    await conn.DisposeAsync();
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_AnAnswerThatDoesNotSayItsWindow_LeavesTheTypeLaneRepairableAsync() {
+    var (coordinator, conn, origin, lane) = await _arrangeAsync();
+    _ = await coordinator.IntegrityMarkAnswerPendingAsync(origin, [lane], 101, 401, _t0, _timeout);
+    var held = await _storeEventAsync(conn, origin, 250);
+
+    _ = await coordinator.IntegrityRecordBundleAnswerAsync(origin, [held], [250], null, _t0.AddMinutes(5));
+
+    await Assert.That(await _laneMarkedAsync(conn)).IsFalse()
+      .Because("an origin that does not say what it answered cannot be held to the window the type lane asked for");
     await conn.DisposeAsync();
   }
 

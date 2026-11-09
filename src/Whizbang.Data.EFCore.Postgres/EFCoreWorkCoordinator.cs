@@ -860,6 +860,72 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
 
   /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the drill-down then starts from the window's first stream, as it did before
+  /// the cursor existed.</remarks>
+  public async Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync<Guid?>(async (cmd, schema) => {
+        // #2211: read and forgotten in one statement, so a cursor is used by one drill-down only.
+        cmd.CommandText = $"""
+          DELETE FROM {schema}.wh_integrity_drill_cursors
+          WHERE origin_service_id = @p_origin AND window_since = @p_since
+          RETURNING resume_after_stream_id
+          """;
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", windowSince));
+        return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is Guid cursor ? cursor : null;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the drill-down starts from the first stream.
+      _log.LogWarning(ex,
+        "Integrity drill cursor for origin {OriginServiceId}, window from {WindowSince}, could not be read; the drill-down starts from the window's first stream.",
+        originServiceId, windowSince);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>A failure is logged and keeps nothing: the next drill-down starts from the window's first stream.</remarks>
+  public async Task IntegritySaveDrillCursorAsync(
+      Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    try {
+      _ = await _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+        // #2211: one cursor per window, the later replacing the earlier; the origin's cursors of windows below its seal
+        // are never read again (the audit starts at the seal), so they go in the same statement.
+        cmd.CommandText = $"""
+          WITH dead AS (
+            DELETE FROM {schema}.wh_integrity_drill_cursors c
+            USING {schema}.wh_integrity_seals s
+            WHERE c.origin_service_id = @p_origin AND s.origin_service_id = @p_origin AND c.window_since < s.sealed_through
+              AND c.window_since <> @p_since
+          )
+          INSERT INTO {schema}.wh_integrity_drill_cursors (origin_service_id, window_since, resume_after_stream_id, saved_at)
+          VALUES (@p_origin, @p_since, @p_resume, @p_now)
+          ON CONFLICT (origin_service_id, window_since) DO UPDATE SET
+            resume_after_stream_id = EXCLUDED.resume_after_stream_id,
+            saved_at = EXCLUDED.saved_at
+          """;
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", windowSince));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = resumeAfterStreamId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+        return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next drill-down starts from the first stream.
+      _log.LogWarning(ex,
+        "Integrity drill cursor for origin {OriginServiceId}, window from {WindowSince}, could not be kept; the next drill-down starts from the window's first stream.",
+        originServiceId, windowSince);
+#pragma warning restore CA1848
+    }
+  }
+
+  /// <inheritdoc />
   public Task IntegrityRecordOriginCheckpointAsync(
       Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
       CancellationToken cancellationToken = default) =>
