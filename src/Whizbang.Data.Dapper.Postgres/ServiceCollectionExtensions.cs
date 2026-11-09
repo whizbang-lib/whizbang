@@ -136,6 +136,8 @@ public static class ServiceCollectionExtensions {
         ManagedObjectSettings = ManagedSchemaSettings.Read(sp.GetService<IConfiguration>()),
         Logger = sp.GetRequiredService<ILogger<PostgresSchemaInitializer>>(),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        // #2126: the registration records the connection mode and the liveness window the rule judges it by.
+        RegistrationLiveness = Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(sp),
         LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
@@ -299,6 +301,8 @@ public static class ServiceCollectionExtensions {
         DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
           Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        // #2126: the registration records the connection mode and the liveness window the rule judges it by.
+        RegistrationLiveness = Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(sp),
         LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
@@ -419,6 +423,21 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// The driver's assessor (#1992), with this instance's application version and id (#2022) so the one version rule
+  /// compares both versions and never counts the instance's own row.
+  /// </summary>
+  /// <remarks>
+  /// The instance identity is required, not optional: <c>_addSchemaInitialization</c> registers it alongside this
+  /// assessor, so there is always one to read.
+  /// </remarks>
+  private static DapperPostgresStartupAssessor _assessor(
+      IServiceProvider sp, string connectionString, Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) =>
+    new(connectionString, () => createInitializer(sp),
+      sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
+      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+
+  /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the
   /// schema-ready gate. Nothing here touches the database. Without schema initialization the gate still opens, since a
   /// schema provisioned out of band has nothing to wait for. The instance identity is registered when the host has
@@ -438,8 +457,9 @@ public static class ServiceCollectionExtensions {
     services.AddWhizbangInstanceIdentity();
     // #1992: the Assess verdict, as the EF Core driver gives it, so a Dapper instance stands down rather than migrate a
     // newer schema, and skips the election and the migration on a current one.
-    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
-      new DapperPostgresStartupAssessor(connectionString, () => createInitializer(sp)));
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, connectionString, createInitializer));
+    // #2022: the online instances' versions, from the same read, for a newer instance's announcement.
+    services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, connectionString, createInitializer));
     if (initializeSchema) {
       services.AddSingleton<ISchemaInitializationRunner>(sp => new DapperSchemaInitializationRunner(
         connectionString,
@@ -526,6 +546,12 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
+    // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
+      SupersedingHistoryReconcileStep.FromServices));
+    // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
+      MisattributedOriginCorrectionStep.FromServices));
     // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
       new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

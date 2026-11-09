@@ -88,6 +88,26 @@ public partial class ParallelismPolicyGuardTests {
     "StreamsWithPendingMessagesSqlTests.cs",
   ];
 
+  /// <summary>
+  /// Classes that once ran alone only because they emptied the physical field registry before each test, and now
+  /// register their own test-local models without clearing it, so they run in parallel (#2167).
+  /// </summary>
+  /// <remarks>
+  /// The registry is keyed by model type, and each of these classes maps a model type of its own, so registering is
+  /// idempotent and touches nothing another test reads. Clearing was what made them a hazard: it removed every other
+  /// test's mappings, the generated ones included, for as long as the class ran. Going back to clearing would send
+  /// them back to the serial phase at the end of the run, where a class waits for everything else to finish.
+  /// </remarks>
+  internal static readonly string[] RegisterWithoutClearing = [
+    "ComplexTypeJsonMappingTests.cs",
+    "FullLinqSupportTests.cs",
+    "QueryTranslation/PhysicalJsonbContainmentRewriterTests.cs",
+    "UnifiedQuerySyntaxTests.cs",
+  ];
+
+  [GeneratedRegex(@"\bPhysicalFieldRegistry\.Clear\(")]
+  private static partial Regex _clearsTheFieldRegistry();
+
   /// <summary>A <c>[NotInParallel]</c> attribute, keyed or not, starting its line.</summary>
   [GeneratedRegex(@"^\s*\[NotInParallel\b[^\n]*$", RegexOptions.Multiline)]
   private static partial Regex _serializes();
@@ -175,6 +195,25 @@ public partial class ParallelismPolicyGuardTests {
 
     await Assert.That(explainedOrGone).IsEmpty()
       .Because($"these now give a reason or no longer serialize, so take them off the list: {string.Join(", ", explainedOrGone)}");
+  }
+
+  [Test]
+  public async Task TheClassesThatRegisterTheirOwnModels_StayParallelAndNeverClearTheRegistryAsync() {
+    var sources = _sources();
+    var named = RegisterWithoutClearing
+      .Select(path => sources.SingleOrDefault(source => source.Path == path))
+      .ToList();
+
+    await Assert.That(named.Count(source => source.Text is not null)).IsEqualTo(RegisterWithoutClearing.Length)
+      .Because("every class on the list has to be found, or a rename would pass this guard by going missing");
+
+    var serialized = named
+      .Where(source => _serializes().IsMatch(source.Text) || _clearsTheFieldRegistry().IsMatch(source.Text))
+      .Select(source => source.Path)
+      .ToList();
+    await Assert.That(serialized).IsEmpty()
+      .Because("these register test-local models and run in parallel; clearing the process-wide registry or running "
+        + $"alone again puts them back in the serial phase: {string.Join(", ", serialized)}");
   }
 
   [Test]

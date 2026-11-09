@@ -243,7 +243,7 @@ public class MessageJsonContextReferencedCompositeTests {
         references: trusted.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
           .Where(File.Exists)
           .Where(path => !Path.GetFileName(path).StartsWith("Whizbang.", StringComparison.Ordinal))
-          .Select(path => MetadataReference.CreateFromFile(path)),
+          .Select(path => SharedMetadataReferences.FromFile(path)),
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
     var result = CSharpGeneratorDriver.Create(new MessageJsonContextGenerator()).RunGenerators(compilation).GetRunResult();
@@ -328,9 +328,9 @@ public class MessageJsonContextReferencedCompositeTests {
     var trusted = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
     var references = trusted.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
       .Where(File.Exists)
-      .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+      .Select(path => (MetadataReference)SharedMetadataReferences.FromFile(path))
       .ToList();
-    references.Add(MetadataReference.CreateFromFile(typeof(Whizbang.Core.IMessage).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(typeof(Whizbang.Core.IMessage).Assembly.Location));
     return references;
   }
 }

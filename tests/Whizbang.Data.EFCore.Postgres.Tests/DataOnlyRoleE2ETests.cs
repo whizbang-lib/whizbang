@@ -91,6 +91,7 @@ public class DataOnlyRoleE2ETests {
     builder.Logging.ClearProviders();
     builder.Logging.AddProvider(errors);
     builder.Services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
+    builder.Services.AddSingleton<Whizbang.Core.RunControl.IProcessExitCode>(_exitCodes);
     builder.Services.Configure<MaintenanceWorkerOptions>(o => o.AllowTableRewrite = true);
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
     _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
@@ -197,10 +198,24 @@ public class DataOnlyRoleE2ETests {
     using var host = _buildHost(withInitConnection: false, new ErrorLog());
 
     // #1636: the bootstrap, Preflight's first schema work, is what meets the refusal, and fails the start naming it.
-    var thrown = await Assert.That(async () => await host.StartAsync(cancellationToken)).Throws<SchemaBootstrapException>()
+    // #2126: the failure is an exit, a startup failure (exit code 4), not an exception out of host start.
+    await host.StartAsync(cancellationToken);
+    await host.WaitForShutdownAsync(cancellationToken);
+    var exit = host.Services.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>();
+
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure)
       .Because("the role cannot create the schema: without this, the test above would prove nothing about the role");
-    await Assert.That(thrown!.InnerException).IsTypeOf<PostgresException>()
-      .Because("the server's refusal is carried, not replaced");
+    await Assert.That(exit.Report!.Record.ExceptionType).IsEqualTo(typeof(SchemaBootstrapException).FullName)
+      .Because("the bootstrap's refusal, carrying the server's, is what the exit names");
+    await Assert.That(_exitCodes.Codes).IsEquivalentTo([4]);
+  }
+
+  private readonly RecordingExitCodes _exitCodes = new();
+
+  /// <summary>The test process keeps its own exit code; the host's are recorded instead.</summary>
+  private sealed class RecordingExitCodes : Whizbang.Core.RunControl.IProcessExitCode {
+    public List<int> Codes { get; } = [];
+    public void SetExitCode(int exitCode) => Codes.Add(exitCode);
   }
 
   /// <summary>Every log entry at Error or above, kept so a failure the service only logs still fails the test.</summary>
@@ -214,7 +229,9 @@ public class DataOnlyRoleE2ETests {
       public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
       public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
         if (IsEnabled(logLevel)) {
-          entries.Enqueue($"{category}: {formatter(state, exception)} {exception?.Message}");
+          // The whole exception, stack and inner exceptions included: an entry from the process-wide unobserved-task
+          // hook names only "a Task threw", and the stack is what says which operation abandoned it.
+          entries.Enqueue($"{category}: {formatter(state, exception)} {exception}");
         }
       }
     }

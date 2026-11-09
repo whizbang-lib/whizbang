@@ -342,4 +342,27 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(provenance).IsEqualTo(calls)
       .Because("every write passes whether an Apply produced the model: the live, partial and rewind writes");
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SaveModelAndCheckpoint_DatesARowItInsertsAtTheStreamsStart_BeforeTheUpsertAsync() {
+    // #2152 regression lock: the one write method resolves the stream's start for the row and begins it before the
+    // upsert, so every write (live, partial, rewind and rebuild) dates a row it inserts at the stream's start once the
+    // stream's first event is gone. The behavior is pinned end to end by RebuildCreatedAtIntegrationTests.
+    var template = _loadTemplate();
+    var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var resolve = template.IndexOf("PerspectiveRowStart.ResolveAsync(", method, StringComparison.Ordinal);
+    var begin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", method, StringComparison.Ordinal);
+    var upsert = template.IndexOf("#region UPSERT_CALL", method, StringComparison.Ordinal);
+
+    await Assert.That(resolve).IsGreaterThan(method).Because("the start is resolved inside the write method");
+    await Assert.That(begin).IsGreaterThan(resolve).Because("the resolved start is begun for the row being written");
+    await Assert.That(upsert).IsGreaterThan(begin).Because("the start is in force when the store inserts the row");
+    var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
+    var rowFacts = template.Split("modelLoadedFromDb,\n              processedEvents,").Length - 1
+      + template.Split("modelLoadedFromDb,\n                processedEvents,").Length - 1
+      + template.Split("outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],").Length - 1;
+    await Assert.That(rowFacts).IsEqualTo(calls)
+      .Because("every write says whether the row exists and which events it folded: the live, partial and rewind writes");
+  }
 }

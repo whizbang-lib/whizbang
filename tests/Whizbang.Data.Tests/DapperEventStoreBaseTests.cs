@@ -441,6 +441,15 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   }
 
   [Test]
+  public async Task GetStreamStartedAt_DefaultImplementation_IsNullAsync() {
+    // #2152: a Dapper store that removes no events never knows a start apart from its events, so the base answers null
+    // and a row is dated by the events it folds.
+    var store = await _createStoreAsync();
+
+    await Assert.That(await store.GetStreamStartedAtAsync((Guid)TrackedGuid.New())).IsNull();
+  }
+
+  [Test]
   public async Task EnsureConnectionOpen_ClosedConnection_OpensItAsync() {
     // Arrange - a fresh SQLite connection starts Closed
     await using var connection = new SqliteConnection("Data Source=:memory:");

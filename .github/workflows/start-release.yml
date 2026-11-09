@@ -15,7 +15,7 @@ on:
         default: 'auto'
         type: choice
         options:
-          - auto       # Use GitVersion calculated version
+          - auto       # Roll up: base plus the alpha number (docs/RELEASING.md, "Version rollup")
           - major      # Force major version bump (x.0.0)
           - minor      # Force minor version bump (0.x.0)
           - patch      # Force patch version bump (0.0.x)
@@ -79,11 +79,16 @@ jobs:
           MAJOR=$(jq -r '.Major' "$OUTFILE")
           MINOR=$(jq -r '.Minor' "$OUTFILE")
           PATCH=$(jq -r '.Patch' "$OUTFILE")
+          # The develop prerelease the cut commit is (alpha.N): the rollup's alpha fact (#2136).
+          PRE_LABEL=$(jq -r '.PreReleaseLabel // ""' "$OUTFILE")
+          PRE_NUMBER=$(jq -r '.PreReleaseNumber // "" | tostring' "$OUTFILE")
           echo "semVer=$SEMVER" >> $GITHUB_OUTPUT
           echo "fullSemVer=$FULLSEMVER" >> $GITHUB_OUTPUT
           echo "major=$MAJOR" >> $GITHUB_OUTPUT
           echo "minor=$MINOR" >> $GITHUB_OUTPUT
           echo "patch=$PATCH" >> $GITHUB_OUTPUT
+          echo "preReleaseLabel=$PRE_LABEL" >> "$GITHUB_OUTPUT"
+          echo "preReleaseNumber=$PRE_NUMBER" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       - name: Fallback Version (if GitVersion fails)
@@ -111,7 +116,11 @@ jobs:
         env:
           INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
           INPUT_MANUAL_VERSION: ${{ inputs.manual_version }}
+          GV_PRE_LABEL: ${{ steps.gitversion.outputs.preReleaseLabel }}
+          GV_PRE_NUMBER: ${{ steps.gitversion.outputs.preReleaseNumber }}
         run: |
+          MARKER=""
+          ROLLUP=""
           if [ "$INPUT_RELEASE_TYPE" = "manual" ]; then
             # Use manually specified version
             MANUAL_VER="$INPUT_MANUAL_VERSION"
@@ -181,6 +190,29 @@ jobs:
               echo "::warning::v$OPEN has prereleases but never shipped stable; release_type=$INPUT_RELEASE_TYPE starts $BASE instead and leaves it behind."
             fi
             SEMVER="$BASE"
+
+            # THE ROLLUP (#2136): auto names the branch base + the cut commit's alpha number, on the target
+            # component (.github/release-version.json), and records the inputs in the release PR so the
+            # stable publish can add the betas and rcs published from the branch. major, minor and patch are
+            # overrides: no record, so the stable ships the branch's own number. A continued open series
+            # already counted its alphas, so it adds none (its betas and rcs still roll up). Without
+            # GitVersion there is no alpha fact to add, so the fallback number is an override too.
+            if [ "$INPUT_RELEASE_TYPE" = auto ] && [ "${{ steps.gitversion.outcome }}" != "failure" ]; then
+              ROLL="${RUNNER_TEMP}/rollup.txt"
+              : > "$ROLL"
+              if [ -n "$OPEN" ]; then
+                GITHUB_OUTPUT="$ROLL" pwsh -NoProfile -File .github/scripts/Get-ReleaseVersion.ps1 -Mode Cut -Base "$BASE"
+              else
+                GITHUB_OUTPUT="$ROLL" pwsh -NoProfile -File .github/scripts/Get-ReleaseVersion.ps1 -Mode Cut -Base "$BASE" \
+                  -PreReleaseLabel "$GV_PRE_LABEL" -PreReleaseNumber "$GV_PRE_NUMBER"
+              fi
+              SEMVER=$(sed -n 's/^version=//p' "$ROLL")
+              MARKER=$(sed -n 's/^marker=//p' "$ROLL")
+              ROLLUP=$(sed -n 's/^summary=//p' "$ROLL")
+              [ -n "$SEMVER" ] || { echo "::error::The version rollup produced no version."; exit 1; }
+            elif [ "$INPUT_RELEASE_TYPE" = auto ]; then
+              echo "::warning::GitVersion failed, so there is no alpha number to roll up: $SEMVER ships as cut, betas and rcs not added."
+            fi
             if grep -qx "v$SEMVER" <<< "$TAGS"; then
               echo "::error::v$SEMVER is already tagged."
               exit 1
@@ -189,6 +221,8 @@ jobs:
 
           echo "semver=$SEMVER" >> $GITHUB_OUTPUT
           echo "branch=release/v$SEMVER" >> $GITHUB_OUTPUT
+          echo "marker=$MARKER" >> "$GITHUB_OUTPUT"
+          echo "rollup=${ROLLUP:-$INPUT_RELEASE_TYPE override, ships as cut -> $SEMVER}" >> "$GITHUB_OUTPUT"
           echo "Calculated version: $SEMVER"
 
       - name: One release in flight at a time
@@ -258,6 +292,15 @@ jobs:
           # Verify the change
           grep "<Version>" Directory.Build.props
 
+      - name: Gather the changelog fragments
+        run: |
+          VERSION="${{ steps.version.outputs.semver }}"
+          # Every changelog.d/ fragment, plus anything still under [Unreleased], becomes CHANGELOG.md's
+          # "## [VERSION] - <date>" section; the gathered fragments are deleted. It lands in the bump commit
+          # below, so the release PR shows the assembled notes. A malformed fragment fails the cut, naming it
+          # (changelog.d/README.md); fix it by PR into develop and cut again.
+          pwsh -NoProfile -File .github/scripts/Merge-ChangelogFragments.ps1 -Version "$VERSION"
+
       - name: Commit and Push
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -265,7 +308,8 @@ jobs:
           VERSION="${{ steps.version.outputs.semver }}"
           BRANCH="${{ steps.version.outputs.branch }}"
 
-          git add Directory.Build.props
+          # The version bump and the gathered changelog (CHANGELOG.md, and the fragments it deleted) in one commit.
+          git add -A -- Directory.Build.props CHANGELOG.md changelog.d
           git commit -m "chore(release): bump version to $VERSION"
           # Published through the API, not git push, so GitHub signs the commits: the rulesets require
           # signed commits (.github/scripts/Publish-SignedCommit.ps1).
@@ -290,17 +334,24 @@ jobs:
 
           This PR prepares the release of version **v${{ steps.version.outputs.semver }}**.
 
+          **Version rollup:** `${{ steps.version.outputs.rollup }}`. Each beta or rc published from this
+          branch adds its latest number, so the stable ships as this number plus the betas and rcs
+          (docs/RELEASING.md, "Version rollup"); the Release run's summary shows the final sum.
+          ${{ steps.version.outputs.marker }}
+
           ### Changes
           - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
+          - Gathered the `changelog.d/` fragments into `CHANGELOG.md`'s `v${{ steps.version.outputs.semver }}` section
 
           ### Release Checklist
           - [ ] All CI checks pass
           - [ ] Version number is correct
-          - [ ] CHANGELOG updated (if applicable)
+          - [ ] `CHANGELOG.md`'s new section reads correctly (corrections go in a PR into this branch; if a beta or
+                rc rolls the stable number up, that PR renames the heading to the number that will ship)
 
           ### After Merge
           When this PR is merged to `main`, the release workflow will:
-          1. Create git tag `v${{ steps.version.outputs.semver }}`
+          1. Create the git tag for the rolled-up version (`v${{ steps.version.outputs.semver }}` when no beta or rc was published)
           2. Create GitHub Release with auto-generated notes
           3. Publish NuGet packages
 
@@ -315,6 +366,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: v${{ steps.version.outputs.semver }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ steps.version.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rollup**: \`${{ steps.version.outputs.rollup }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **PR**: Created and ready for review" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Once the PR is approved and merged, the release will be automatically published." >> $GITHUB_STEP_SUMMARY

@@ -19,7 +19,7 @@ it: the rules there are enforced by the workflows, and a step that fights them f
 | Situation | Flow | Do |
 |---|---|---|
 | A change is merged, or about to be, and someone wants it "out" | F1 | Nothing to cut. Develop publishes `0.Y.0-alpha.N` on every merge, but **only the changed packages**. If a consumer needs a complete, installable set, that is a beta (F2 + F3). |
-| "Cut a release" / "release what's on develop" | F2 | `gh workflow run start-release.yml --ref develop -f release_type=auto`. A clean cut reuses the tested develop commit's results (no suites; ready in about 15 minutes). If its verify-rebuild goes red, the recovery is `RELEASE_CUT_FULL_MATRIX=true` and a re-run. |
+| "Cut a release" / "release what's on develop" | F2 | `gh workflow run start-release.yml --ref develop -f release_type=auto`. A clean cut reuses the tested develop commit's results (no suites; ready in about 15 minutes). If its verify-rebuild goes red, the recovery is `RELEASE_CUT_FULL_MATRIX=true` and a re-run. The cut also gathers `changelog.d/` into `CHANGELOG.md` (below); preview that first with `pwsh .github/scripts/Merge-ChangelogFragments.ps1 -Version X.Y.Z -DryRun`. |
 | "Give consumers something to test" / beta / rc / release candidate | F3 | Needs an open release branch (F2 first if none). `gh workflow run release-prerelease.yml --ref release/vX.Y.Z -f label=beta` (or `rc`) |
 | A bug found during the release | F4 | Fix on `fix/<name>` cut from `release/vX.Y.Z`, PR **into `release/vX.Y.Z`**. After it merges and the branch goes green, publish the next beta/rc (F3). |
 | "Ship it" / stable | F5 | Merge the release PR **with a merge commit**: `gh pr merge <n> --merge` (or `--auto --merge`). Then the `nuget-publish` approval. |
@@ -41,11 +41,40 @@ permanent and the approval is the human decision point. The one exception is a s
 setting (`PUBLISH_WITHOUT_APPROVAL=true`) that the user set themselves.
 
 Work out the version from facts, not guesses:
-- Next cut: run Start Release's own logic by reading `git tag -l 'v*' --sort=-v:refname | head`, or
-  `dotnet-gitversion` 6.2 with `GitVersion.yml` on `develop`. `auto` gives the next minor, unless an
-  open beta/rc series exists (then it continues that number).
+- **The rollup (#2136).** A stable release's version is the base plus, for each prerelease label
+  published since the last stable (alpha, beta, rc, any label), that label's latest number, added to the
+  minor (patch reset, no suffix): `0.2627.0-alpha.674` -> `0.3301.0`; with `beta.5` -> `0.3306.0`; with
+  `rc.3` too -> `0.3309.0`. The target component is `rollupTarget` in `.github/release-version.json`
+  (`minor`, or `patch` after 1.0). The math is `.github/scripts/Get-ReleaseVersion.ps1`; never do it by hand.
+- Next cut: `dotnet-gitversion` 6.2 with `GitVersion.yml` on `develop` gives `MajorMinorPatch` and
+  `PreReleaseNumber`; `auto` names the branch `release/v<minor + alpha number>` and records both in the
+  release PR body (`<!-- release-rollup: ... -->`). If an open beta/rc series exists it continues that
+  number instead and adds no alpha. `major`, `minor`, `patch` and `manual` are overrides: no record, and
+  the stable ships the branch number however many betas or rcs follow.
 - Next prerelease: `git ls-remote --tags origin 'refs/tags/vX.Y.Z-*'`; the next `beta.N`/`rc.N`
-  follows the highest. A beta after an rc is refused.
+  follows the highest. A beta after an rc is refused. Every beta or rc **raises the stable by one**:
+  Release Prerelease's summary says what the merge will ship.
+- Stable: the release PR title and branch name the **line**; what ships is the line plus the latest
+  beta and rc numbers (`Plan · Is this a release?` prints `alpha 674 + beta 5 + rc 3 = 682 -> 0.3309.0`).
+  When it differs from the line, `Build · Repack the tested build at the rolled-up version` repacks the
+  release-branch run's tested build (the same DLLs, as a beta is made) instead of promoting its packages.
+  Tell the user the rolled-up number, not the title's.
+
+## The changelog
+
+Entries are fragments (#2168; RELEASING.md, *The changelog*; format in `changelog.d/README.md`):
+
+- A PR into `develop` adds `changelog.d/<issue>.md` (front matter `category:` and optional `subsection:`,
+  then the entry). It never edits `[Unreleased]` in `CHANGELOG.md`: `Gate · Pull request type` refuses
+  that, and takes a breaking change's **Upgrade:** note from the fragment.
+- Start Release gathers every fragment, plus anything still under `[Unreleased]`, into `## [X.Y.Z] - <date>`
+  in the version bump commit and deletes the gathered fragments. A malformed fragment fails the cut, naming
+  it, before anything is pushed. Fragments merged after the cut wait for the next release.
+- PRs into a release branch (F4, F7, F8) write in `CHANGELOG.md` under that version's heading, never a
+  fragment and never under `[Unreleased]`. If betas or rcs roll the stable number up, rename the heading by
+  such a PR after the last prerelease.
+- The sync back to develop after a stable now always opens a PR: it carries the version section and the
+  fragment deletions.
 
 ## Watch it through
 

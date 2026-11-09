@@ -272,7 +272,9 @@ public class InboxDrainWorkerTests {
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      instance, drain, inbox,
+      // Adaptive sizing off: it can grow the per-stream fetch after a full one, so 250 rows could take two fetches.
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, AdaptivePerStreamEnabled = false }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 

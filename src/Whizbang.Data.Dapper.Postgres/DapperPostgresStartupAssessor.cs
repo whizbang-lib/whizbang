@@ -3,6 +3,7 @@
 
 using Npgsql;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Versioning;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -15,18 +16,34 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <param name="connectionString">The database.</param>
 /// <param name="createInitializer">Builds the schema initializer whose check says whether the schema is current.</param>
+/// <param name="applicationVersion">This instance's application version, as recorded (#2022); null when unknown.</param>
+/// <param name="instanceId">This instance's id (#2022): its own row is never a newer instance; null when it has none.</param>
+/// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022).</param>
 /// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
-internal sealed class DapperPostgresStartupAssessor(string connectionString, Func<PostgresSchemaInitializer> createInitializer)
-    : IStartupAssessor {
+internal sealed class DapperPostgresStartupAssessor(
+    string connectionString, Func<PostgresSchemaInitializer> createInitializer, string? applicationVersion = null, Guid? instanceId = null,
+    bool overrideIncompatibility = false)
+    : IStartupAssessor, IOnlineVersionReader {
   /// <inheritdoc />
   public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-    var schema = DapperCoordinatorSchema.FromConnectionString(connectionString)
-      ?? await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken).ConfigureAwait(false);
     return await PostgresStartupAssessment.AssessAsync(
-      connection, schema, new PostgresMigrationProvider().Version,
+      connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false),
+      new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId), overrideIncompatibility,
       ct => createInitializer().IsCurrentAsync(ct), cancellationToken).ConfigureAwait(false);
   }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<VersionSighting>> ReadOnlineAsync(CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    return await PostgresStartupAssessment.ReadOnlineAsync(
+      connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+  }
+
+  private async Task<string?> _schemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) =>
+    DapperCoordinatorSchema.FromConnectionString(connectionString)
+      ?? await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken).ConfigureAwait(false);
 }

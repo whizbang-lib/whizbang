@@ -123,15 +123,16 @@ public class StreamIntegrityRedeliveryE2ETests {
     // Sentinel broadcast AFTER the repair: per-subscriber delivery is ordered, so once a service
     // holds the sentinel its verdict on the earlier repair bundle is final — no timing.
     await harness.PublishAsync(new RepairProbeEvent { X = 5 });
-    var healthyFinal = await healthy.Inbox.WaitForInboxAsync(6, TimeSpan.FromSeconds(10));
+    var healthyFinal = await healthy.Inbox.WaitForInboxAsync(5, TimeSpan.FromSeconds(10));
     var damagedFinal = await damaged.Inbox.WaitForInboxAsync(4, TimeSpan.FromSeconds(10));
 
-    // #1720: the undamaged consumer stores the targeted bundle (R0) instead of dropping it unstored, but settled with the
-    // foreign-target reason: processed at arrival, so it is never claimed and the dispatch seam never fans it out. Repair
-    // traffic can still never double-apply where nothing was lost.
-    await Assert.That(healthyFinal.Single(r => r.EnvelopeType.Contains("RedeliveryComposite")).DiscardedOnReceive)
-      .IsEqualTo(InboxReceiveDiscard.FOREIGN_TARGET)
-      .Because("the bundle is targeted at another service, so the healthy consumer settles it unprocessed.");
+    // #2091: the undamaged consumer discards the targeted bundle on receipt with no row at all: framework traffic
+    // addressed to another service costs it no storage, no dispatch and no retry. Repair traffic can still never
+    // double-apply where nothing was lost.
+    await Assert.That(healthyFinal.Any(r => r.EnvelopeType.Contains("RedeliveryComposite"))).IsFalse()
+      .Because("the bundle is targeted at another service, so the healthy consumer discards it on receipt.");
+    await Assert.That(healthyFinal.Count(r => _x(r) == 5)).IsEqualTo(1)
+      .Because("the sentinel published after the repair arrived, so the verdict on the bundle is final.");
 
     var bundle = damagedFinal.Single(r => r.EnvelopeType.Contains("RedeliveryComposite"));
     await Assert.That(bundle.DiscardedOnReceive).IsNull()

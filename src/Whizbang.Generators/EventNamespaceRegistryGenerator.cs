@@ -34,6 +34,26 @@ namespace Whizbang.Generators;
 public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
   private const string IRECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.IReceptor";
+  private const string ISYNCRECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.ISyncReceptor";
+  private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
+  private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
+  private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
+
+  /// <summary>Syntax predicate for notification-tag consumers: an attributed class or record. Shares the receptor
+  /// registry generator's test, so the two discover the same candidates.</summary>
+  /// <param name="node">The syntax node.</param>
+  /// <returns><see langword="true"/> for an attributed class or record.</returns>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassOrRecordCandidate(SyntaxNode node) =>
+    ReceptorRegistryQueryGenerator.IsAttributedClassOrRecordCandidate(node);
+
+  /// <summary>Syntax predicate for sync receptors and collective events: a class or record with a base list. Shares the
+  /// receptor registry generator's test, so the two discover the same candidates.</summary>
+  /// <param name="node">The syntax node.</param>
+  /// <returns><see langword="true"/> for a class or record with a base list.</returns>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+    ReceptorRegistryQueryGenerator.IsClassOrRecordWithBaseListCandidate(node);
 
   /// <summary>
   /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
@@ -58,18 +78,32 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractReceptorEventNamespace(ctx, ct)
     ).Where(static ns => ns is not null);
 
-    // Combine both pipelines with the assembly name, the one fact read from the compilation. Combining the
+    // Pipeline 3 (#2065): events a notification tag or the collective sink consumes. They have no receptor or
+    // perspective of their own, and an event consumed in a namespace with no subscription is never delivered.
+    var taggedNamespaces = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsAttributedClassOrRecordCandidate(node),
+        transform: static (ctx, ct) => _extractConsumedEventNamespace(ctx, collective: false, ct)
+    ).Where(static ns => ns is not null);
+    var collectiveNamespaces = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
+        transform: static (ctx, ct) => _extractConsumedEventNamespace(ctx, collective: true, ct)
+    ).Where(static ns => ns is not null);
+
+    // Combine the pipelines with the assembly name, the one fact read from the compilation. Combining the
     // compilation itself would make every edit regenerate the registry, since every edit is a new compilation.
     var allData = perspectiveNamespaces.Collect()
         .Combine(receptorNamespaces.Collect())
+        .Combine(taggedNamespaces.Collect())
+        .Combine(collectiveNamespaces.Collect())
         .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
     // Generate registry
     context.RegisterSourceOutput(
         allData,
         static (ctx, data) => {
-          var perspectiveNs = data.Left.Left;
-          var receptorNs = data.Left.Right;
+          var perspectiveNs = data.Left.Left.Left.Left;
+          // Tag and collective consumers are receptor-like: something here other than a perspective consumes the event.
+          var receptorNs = data.Left.Left.Left.Right.AddRange(data.Left.Left.Right).AddRange(data.Left.Right);
           var assemblyName = data.Right;
           _generateEventNamespaceRegistry(ctx, assemblyName, perspectiveNs, receptorNs!);
         }
@@ -136,8 +170,12 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
 
     // Look for IReceptor<TMessage> or IReceptor<TMessage, TResponse> interface
     // Use FullyQualifiedFormat to include global:: prefix which matches our constant
-    var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        TypeNameUtilities.FullyQualified(i.OriginalDefinition).StartsWith(IRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal));
+    // A synchronous receptor consumes its event the same way (#2065).
+    var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i => {
+      var name = TypeNameUtilities.FullyQualified(i.OriginalDefinition);
+      return name.StartsWith(IRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal)
+          || name.StartsWith(ISYNCRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal);
+    });
 
     if (receptorInterface is null) {
       return null;
@@ -162,6 +200,26 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
 
     var ns = TypeNameUtilities.Display(containingNamespace);
     return ns.ToLowerInvariant();
+  }
+
+  /// <summary>
+  /// The namespace of a concrete event a notification tag (<paramref name="collective"/> false) or the collective sink
+  /// (true) consumes, lowercase; null for any other type (#2065).
+  /// </summary>
+  private static string? _extractConsumedEventNamespace(
+      GeneratorSyntaxContext context, bool collective, System.Threading.CancellationToken cancellationToken) {
+    if (context.SemanticModel.GetDeclaredSymbol(context.Node, cancellationToken) is not INamedTypeSymbol symbol
+        || symbol.IsAbstract
+        || symbol.ContainingNamespace.IsGlobalNamespace
+        || !symbol.AllInterfaces.Any(i => TypeNameUtilities.FullyQualified(i) == IEVENT_INTERFACE)) {
+      return null;
+    }
+    var consumed = collective
+      ? symbol.AllInterfaces.Any(i => TypeNameUtilities.FullyQualified(i) == ICOLLECTIVE_EVENT_INTERFACE)
+      : symbol.GetAttributes().Any(a =>
+          TypeNameUtilities.IsNamed(a.AttributeClass, NOTIFICATION_TAG_ATTRIBUTE)
+          || TypeNameUtilities.IsNamed(a.AttributeClass, NOTIFICATION_ID_TAG_ATTRIBUTE));
+    return consumed ? TypeNameUtilities.Display(symbol.ContainingNamespace).ToLowerInvariant() : null;
   }
 
   /// <summary>

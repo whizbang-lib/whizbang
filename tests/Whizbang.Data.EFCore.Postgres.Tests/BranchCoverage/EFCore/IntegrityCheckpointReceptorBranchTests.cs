@@ -144,7 +144,7 @@ public class IntegrityCheckpointReceptorBranchTests {
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton<IntegrityRepairLedger>();
-    services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new FakeEventTypeProvider());
     if (wiring.RegisterOptions) {
       services.AddSingleton(Options.Create(new StreamIntegrityOptions {
         RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -235,8 +235,12 @@ public class IntegrityCheckpointReceptorBranchTests {
     }
   }
 
-  private sealed class FakeEventTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(BranchCoverageEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class FakeEventTypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(BranchCoverageEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class FakeInstanceProvider(string serviceName) : IServiceInstanceProvider {

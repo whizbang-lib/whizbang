@@ -211,6 +211,17 @@ public sealed record StreamDigest {
   /// <summary>Events folded into the digest.</summary>
   public required int EventCount { get; init; }
 
+  /// <summary>
+  /// #2103: XOR of the first 64 bits (big-endian) of every folded event id, or null when not computed (an older peer,
+  /// or a stored bucket not yet backfilled). With <see cref="IdHi"/>, names the one event a bucket is missing.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public long? IdLo { get; init; }
+
+  /// <summary>#2103: XOR of the last 64 bits of every folded event id, or null when not computed.</summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public long? IdHi { get; init; }
+
   /// <summary>When the bucket last changed (table reads only; null on recomputed rows). Both
   /// audit sides skip comparing buckets updated inside the settle window — the incremental
   /// equivalent of the recompute's created-at settle filter.</summary>
@@ -308,9 +319,18 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Storm cap: at most this many auto-repair requests per received checkpoint (default 10).</summary>
   public int MaxAutoRepairRequestsPerCheckpoint { get; set; } = 10;
 
-  /// <summary>Wire topic repair requests publish to AND bundles return on. Null (default) = the
-  /// consumer's first subscribed destination.</summary>
+  /// <summary>Wire topic repair requests publish to AND bundles return on. Null (default) = this service's own command
+  /// inbox (#2078), or, for a service that consumes none, the first destination it consumes.</summary>
   public string? RepairTopic { get; set; }
+
+  /// <summary>
+  /// How long a directed integrity control message (a manifest request or answer, a redelivery request or answer, a
+  /// drill-down or page follow) lives at the broker, in minutes (default 60, #2078). They are regenerated every
+  /// integrity cycle, so a stale one is dropped by the broker rather than accumulated on a stopped service's
+  /// subscription.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#directed-integrity-traffic</docs>
+  public int ControlMessageTimeToLiveMinutes { get; set; } = 60;
 
   /// <summary>
   /// Phase S: when the consumed-type set GROWS (a later boot adds event types), broadcast a
@@ -318,6 +338,43 @@ public sealed class StreamIntegrityOptions {
   /// RECORDS the expansion as Pending — the audit reports "pending backfill", not divergence.
   /// </summary>
   public bool BackfillOnSubscriptionGrowth { get; set; } = true;
+
+  /// <summary>
+  /// Events one backfill window asks an owner for (default 1,000, #2092). A grown subscription is backfilled in
+  /// windows by the owner's commit sequence, one event type and owner at a time: the next window is requested only once
+  /// the previous one is answered. The owner clamps it to its own <c>MaxEventsPerRequest</c>. Must be at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillWindowSize { get; set; } = 1_000;
+
+  /// <summary>
+  /// The backfill's pace, in events requested per minute across every type (default 6,000, #2092). Each window spends
+  /// its full size from a token bucket that refills at this rate and holds at most one minute's worth (or one window,
+  /// whichever is larger), so a store with millions of events is backfilled over hours instead of in one burst. Must be
+  /// at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillEventsPerMinute { get; set; } = 6_000;
+
+  /// <summary>
+  /// Backfill windows awaiting their answer at once, across every type and owner (default 2, #2092). Must be at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillMaxConcurrentWindows { get; set; } = 2;
+
+  /// <summary>
+  /// Times one backfill window is requested without an answer before the backfill of that type stops (default 3,
+  /// #2092). A window waits <see cref="RepairAnswerTimeoutMinutes"/> for its answer. An owner on a release that predates
+  /// windowed backfill answers the request the legacy way, with no window answer, so after this many attempts the
+  /// type's backfill ends as answered by a legacy owner and the integrity audit reports anything still missing. Must be
+  /// at least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  public int BackfillMaxWindowAttempts { get; set; } = 3;
 
   /// <summary>Phase A/L: run the scheduled deep audit (default true).</summary>
   public bool AuditEnabled { get; set; } = true;
@@ -405,6 +462,92 @@ public sealed class StreamIntegrityOptions {
   /// storm; whatever it leaves unfollowed re-audits from the seal next cycle.
   /// </summary>
   public int MaxManifestPagesPerAudit { get; set; } = 8;
+
+  /// <summary>
+  /// The widest window, in commit sequences, an origin answers for one windowed audit request (default 500,000, #2107).
+  /// An audit asks from the consumer's seal to the origin's settled head; after a seal reset, on a new consumer, or
+  /// while a divergence holds the seal back, that span is most of the origin's history, and the stream-level drill-down
+  /// over it read every event in it. The origin answers at most this many sequences and marks the answer
+  /// <see cref="IntegrityManifest.WindowCapped"/>; the consumer seals a clean capped window and immediately asks for the
+  /// next one from where it stopped, so history is walked in bounded slices instead of skipped or read at once.
+  /// </summary>
+  /// <remarks>
+  /// The default is five of the default 100,000-sequence digest epochs (<c>integrity_epoch_width</c>): a window that
+  /// starts on an epoch boundary answers its type-level roll-up from sealed epochs, and the widest live fringe is two
+  /// epochs. At the 20 or so events an 8 KB page holds in a typical event store, the worst case for a drill-down into a
+  /// type dense enough to fill every page of the window is about 25,000 pages, against the hundreds of thousands an
+  /// uncapped window read on a large store. Lower it when drill-downs on a large store are still slow; raise it when a
+  /// store with little history needs fewer round trips. Applied by the origin, so a consumer always follows the
+  /// origin's setting. Must be at least 1; host start fails otherwise.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:RequestReceptor_AnOpenEndedAsk_ReadsOneCappedWindow_AndSaysItWasCappedAsync</tests>
+  public int MaxAuditWindowSequences { get; set; } = 500_000;
+
+  /// <summary>
+  /// The windows one audit pass walks against one origin, the first included (default 5, #2107). After each capped
+  /// window (<see cref="MaxAuditWindowSequences"/>) the consumer asks for the next one from where it stopped, until the
+  /// walk reaches the origin's settled head or this many windows have been asked for. Every window counts, verified or
+  /// not: a window that does not verify is not sealed, so the seal stays at the first such window and the next audit
+  /// starts again from there, but the windows after it are still compared, and their deficits recorded and repaired,
+  /// in the same audit.
+  /// </summary>
+  /// <remarks>
+  /// The trade-off is read load per audit against how much later history is checked behind a difference that has not
+  /// healed. Each window is one bounded type-level answer, plus drill-downs for the types that disagree; five windows at
+  /// the default cap compare 2.5 million sequences of history per audit, which catches a consumer up on a large store in
+  /// a few daily audits without turning one audit into a scan of the whole store. Raise it to check more history behind
+  /// a stuck difference or to catch up faster; lower it to bound an audit's load more tightly. Counted by a window
+  /// number the request carries and the origin echoes, so the bound holds without any state on the consumer. Must be at
+  /// least 1; host start fails otherwise.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_TheLastWindowTheBudgetAllows_SealsButAsksForNoMoreAsync</tests>
+  public int MaxAuditWindowsPerAudit { get; set; } = 5;
+
+  /// <summary>
+  /// #2115: when the service is idle, re-check ledger rows whose report has gone stale, oldest first, instead of waiting
+  /// for the daily audit to compare their buckets again (default true). A row clears only when its bucket is compared
+  /// again, and the routine audit compares a bucket at most once a day; rows written under an older compare rule (an
+  /// upgrade that changed the rule) otherwise linger for days, and with automatic repair on, the paced drain turns them
+  /// into repair requests. A re-check asks the owner for a stream-level answer over the row's window, compares it, and
+  /// removes the rows that now match or are undecided, exactly as the audit would; it never asks for a repair. Runs on
+  /// the maintainer instance only, under the housekeeping idle gate.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/LedgerRecheckWorkerTests.cs</tests>
+  public bool LedgerRecheckEnabled { get; set; } = true;
+
+  /// <summary>
+  /// #2115: seconds between idle ledger re-check ticks (default 60). Each tick asks the idle gate first, so a busy
+  /// service spends nothing but that question. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckIntervalSeconds { get; set; } = 60;
+
+  /// <summary>
+  /// #2115: the most ledger rows one idle re-check tick claims (default 500). Rows that share an origin, type and window
+  /// are asked in one request, so a tick sends at most this many requests and usually far fewer. At the default
+  /// interval that is up to 30,000 rows an hour, which clears an upgrade's worth of stale rows within a few idle hours
+  /// without turning one tick into a burst of answers. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckRowsPerTick { get; set; } = 500;
+
+  /// <summary>
+  /// #2115: a ledger row is re-checked once its last report is older than this many minutes (default 120), and the
+  /// re-check stops when no row is that old. Twice the default <see cref="AuditSettleWindowMinutes"/>: a row reported
+  /// within the last two hours was compared recently and settled history has not moved under it since, so re-checking
+  /// it would only repeat that answer. A row a re-check finds still divergent is reported again and waits this long
+  /// before its next re-check. Must be at least 1; host start fails otherwise.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int LedgerRecheckAfterMinutes { get; set; } = 120;
 
   /// <summary>
   /// Bulk-deficit escalation: when a TYPE-level windowed roll-up shows this service missing at
@@ -561,6 +704,54 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>proposals/paced-repair-drain</docs>
   public int RepairDrainBatchSize { get; set; } = 50;
+
+  /// <summary>
+  /// The most repair-ledger buckets that may await an answer at once (default 500); 0 turns the cap off. While this many
+  /// requested buckets have their answer on the way, the paced repair drain claims no new row, and it resumes as answers
+  /// land or time out (#2184).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An answer can land up to <see cref="RepairAnswerTimeoutMinutes"/> after its request, so the request rate alone
+  /// does not bound the load answers put on this service's store: at the default 5 rows a second, three hours of
+  /// requests is 54,000 buckets whose answers could arrive together. The cap bounds that to its own size. At the
+  /// default rate, 500 answers is 100 seconds of requests: while answers land within that, the cap is never reached and
+  /// the drain runs at <see cref="RepairDrainRatePerSecond"/>; when they lag, the drain is paced to the rate they land at.
+  /// A drain holding at the cap is logged once as a warning when the hold starts and once when it ends, and counted
+  /// (<c>whizbang.stream_integrity.repair_drain_holds</c>); <c>repair_answer_pending_buckets</c> shows the count.
+  /// </para>
+  /// <para>
+  /// The count covers every origin, because every answer lands in this service's store. Must not be negative; host
+  /// start fails otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:DrainTick_AtTheOutstandingAnswerCap_ClaimsNothing_AndSaysSoOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:Validate_ANegativeOutstandingAnswerCap_FailsNamingTheKeyAsync</tests>
+  public int MaxOutstandingRepairAnswers { get; set; } = 500;
+
+  /// <summary>
+  /// How long, in days, the origin that reported a repair-ledger row for a type no service owns may be silent before the
+  /// integrity audit forgets the row (default 7, #2185).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A type no service owns (no claim in the ownership map, and outside this service's own owned domains) is compared
+  /// against the origin that reports it, so while that origin reports, its next comparison heals or refreshes the row.
+  /// Once it stops, nothing compares the row again and no owner exists to repair it, so the row would hold
+  /// <c>whizbang.stream_integrity.unhealed_buckets</c> up for good. The audit forgets it once the origin's last report
+  /// (the later of its last checkpoint and the row's last report) is older than this. A week outlasts a weekend outage or
+  /// a paused deployment; an origin that comes back after it simply has its divergence found again by the next audit.
+  /// </para>
+  /// <para>
+  /// Rows recorded under an origin that does not own the type are forgotten at once, whatever this says. Must be at least
+  /// 1; host start fails otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerBranchCoverageTests.cs:RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:UnownedTypeOriginSilence_DefaultsToSevenDaysAsync</tests>
+  public int UnownedTypeOriginSilenceDays { get; set; } = 7;
 
   /// <summary>
   /// How often the maintainer's integrity delivery drain runs, in seconds (default 15). Integrity deliveries (received

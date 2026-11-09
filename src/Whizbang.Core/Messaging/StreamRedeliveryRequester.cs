@@ -136,8 +136,9 @@ public sealed partial class StreamRedeliveryRequester(
     if (string.IsNullOrWhiteSpace(requester)) {
       throw new InvalidOperationException("This service has no service name, so the origin cannot address the redelivery to it.");
     }
+    var integrity = services.GetOptionsValue<StreamIntegrityOptions>() ?? new StreamIntegrityOptions();
     var replyTopic = request.ReplyTopic
-      ?? RepairTopicResolver.Resolve(services.GetOptionsValue<StreamIntegrityOptions>()?.RepairTopic, services)
+      ?? RepairTopicResolver.Resolve(integrity.RepairTopic, services)
       ?? throw new InvalidOperationException("This service consumes no topic to receive the redelivery on; name one as the reply topic.");
     var requestTopic = request.OriginRequestTopic
       ?? services.GetService<IntegrityGapTracker>()?.GetOrigins()
@@ -161,7 +162,8 @@ public sealed partial class StreamRedeliveryRequester(
         OperatorRequested = true,
       };
       await RedeliveryRequestDispatch.PublishAsync(
-        transport, serializer, instanceProvider, command, request.OriginService, requestTopic, chunk[0], now,
+        transport, serializer, instanceProvider, command, request.OriginService,
+        IntegrityControlDestination.For(requestTopic, chunk[0], typeof(RequestRedeliveryCommand), integrity), now,
         cancellationToken).ConfigureAwait(false);
       requests++;
       metrics?.RepairsRequested.Add(chunk.Length,

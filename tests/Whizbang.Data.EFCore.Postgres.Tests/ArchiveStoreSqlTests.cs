@@ -687,6 +687,8 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
       .Because("every event returns at its version and commit position with its body, so nothing reads it as new");
     await Assert.That(await _digestRowsAsync(connection, stream)).IsEquivalentTo(digests, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the refold adds back exactly what the chain folded: not the at-most-once event, not the audit record");
+    // #2106: the refold restores every lane, the id lanes included.
+    await StoredDigestInvariant.AssertAgreeAsync(connection, stream);
     await Assert.That(await _cursorRowAsync(connection, stream)).IsEqualTo(cursor).Because("the parked cursor returns as it was");
     await Assert.That(await _archivedCountAsync(connection, stream)).IsEqualTo(0L);
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_event_archive_cursors WHERE stream_id = @id", stream)).IsEqualTo(0L);

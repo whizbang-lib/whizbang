@@ -19,6 +19,35 @@ namespace Whizbang.Core.Tests.Routing;
 /// derivation itself AND its cross-consistency with the phase-5 subscription naming.
 /// </summary>
 public class CommandInboxNamingTests {
+  #region #2090 ServiceControlTopicFor derivation
+
+  [Test]
+  public async Task ServiceControlTopicFor_IsTheServicesOwnLowercaseControlEntityAsync() {
+    await Assert.That(CommandInboxNaming.ServiceControlTopicFor("OrderService"))
+      .IsEqualTo("inbox.whizbang.service.orderservice");
+  }
+
+  [Test]
+  public async Task ServiceControlTopicFor_ReplacesCharactersAnEntityNameCannotCarryAsync() {
+    await Assert.That(CommandInboxNaming.ServiceControlTopicFor("Order Service/v2:eu_1-a.b"))
+      .IsEqualTo("inbox.whizbang.service.order-service-v2-eu_1-a.b");
+  }
+
+  [Test]
+  [Arguments(null)]
+  [Arguments("")]
+  [Arguments("  ")]
+  public async Task ServiceControlTopicFor_NoServiceName_ThrowsAsync(string? serviceName) {
+    await Assert.That(() => CommandInboxNaming.ServiceControlTopicFor(serviceName!)).Throws<ArgumentException>();
+  }
+
+  [Test]
+  public async Task ServiceControlTopicPrefix_IsUnderTheReservedFrameworkInboxAsync() {
+    await Assert.That(CommandInboxNaming.ServiceControlTopicPrefix).IsEqualTo("inbox.whizbang.service.");
+  }
+
+  #endregion
+
   #region TopicFor derivation
 
   [Test]

@@ -263,7 +263,8 @@ public class ServiceBusConsumerWorkerLifecycleTests {
   [Test]
   public async Task ServiceBusConsumerWorker_PostLifecycle_Fires_ForEventsWithoutPerspectivesAsync() {
     // Arrange
-    var invokedStages = new List<LifecycleStage>();
+    // The detached PostLifecycle receptor runs on a pool thread while the inline one runs here, so both add at once.
+    var invokedStages = new System.Collections.Concurrent.ConcurrentQueue<LifecycleStage>();
 
     var registry = new TestLifecycleReceptorRegistry();
     foreach (var stage in AllInboxAndPostLifecycleStages()) {
@@ -272,7 +273,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
         MessageType: typeof(TestInboxEvent),
         ReceptorId: $"test_postlifecycle_receptor_{stage}",
         InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
-          invokedStages.Add(capturedStage);
+          invokedStages.Enqueue(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
       ));

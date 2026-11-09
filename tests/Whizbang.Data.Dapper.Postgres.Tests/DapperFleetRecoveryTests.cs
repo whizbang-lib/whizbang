@@ -169,6 +169,29 @@ public class DapperFleetRecoveryTests : PostgresTestBase {
     await Assert.That(refused).IsFalse().Because("an evicted instance may not ask the fleet to stand by");
   }
 
+  /// <summary>
+  /// #2117: the exhausted-row drop runs on this driver as on EF Core (twin: <c>ExhaustedInboxDropSqlTests</c>): only the
+  /// given rows still past the ceiling are dropped, and an empty list costs no round trip.
+  /// </summary>
+  [Test]
+  public async Task DropExhaustedInboxRows_DropsOnlyTheGivenRowsPastTheCeilingAsync() {
+    var coordinator = _coordinator();
+    var exhausted = Guid.NewGuid();
+    var atCeiling = Guid.NewGuid();
+    await _insertInboxAsync(exhausted, Guid.NewGuid(), attempts: 11);
+    await _insertInboxAsync(atCeiling, Guid.NewGuid(), attempts: 10);
+
+    var dropped = await coordinator.DropExhaustedInboxRowsAsync([exhausted, atCeiling], maxAttempts: 10);
+    var none = await coordinator.DropExhaustedInboxRowsAsync([], maxAttempts: 10);
+
+    await Assert.That(dropped).IsEqualTo(1);
+    await Assert.That(none).IsEqualTo(0);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_inbox WHERE message_id = @exhausted", new { exhausted }))
+      .IsEqualTo(0L);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_inbox WHERE message_id = @atCeiling", new { atCeiling }))
+      .IsEqualTo(1L);
+  }
+
   private Task _insertInboxAsync(Guid messageId, Guid stream, int attempts, Guid? instance = null) =>
     _executeAsync(@"
       WITH m AS (

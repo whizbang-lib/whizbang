@@ -77,6 +77,13 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
   /// windowed integrity accounting sees the repaired events inside their original window.
   /// </summary>
   IReadOnlyList<long?>? InnerCommitSequences => null;
+
+  /// <summary>
+  /// The window of origin commit sequences the bundle answers (#2143), echoed from the request; null when the origin did
+  /// not say (an origin that predates the field), in which case a bundle that changed nothing marks its buckets as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  RedeliveryAnswerWindow? AnsweredWindow => null;
 }
 
 /// <summary>
@@ -127,11 +134,27 @@ public sealed class RedeliveryComposite
   /// </summary>
   public bool OperatorRequested { get; init; }
 
+  /// <summary>
+  /// True when the origin echoed the window this bundle answers (#2143) in <see cref="AnsweredFromCommitSequence"/> and
+  /// <see cref="AnsweredToCommitSequence"/>. False on a bundle from an origin that predates the fields.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  public bool AnswersWindow { get; init; }
+
+  /// <summary>The answered window's exclusive floor; null = from the beginning (#2143).</summary>
+  public long? AnsweredFromCommitSequence { get; init; }
+
+  /// <summary>The answered window's inclusive ceiling; null = to the head (#2143).</summary>
+  public long? AnsweredToCommitSequence { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
 
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;
 
   IReadOnlyList<long?>? IIdentityPreservingComposite.InnerCommitSequences => InnerCommitSequences;
+
+  RedeliveryAnswerWindow? IIdentityPreservingComposite.AnsweredWindow =>
+    AnswersWindow ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) : null;
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 

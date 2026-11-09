@@ -985,20 +985,27 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       StoredFormFailureRegistry? storedFormFailures = null,
       ISyncEventTracker? syncEventTracker = null,
       Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null,
-      IPerspectiveDrainChannel? drainChannel = null) {
+      IPerspectiveDrainChannel? drainChannel = null,
+      CompositeMetrics? compositeMetrics = null,
+      bool withoutRegistry = false,
+      bool withoutEventStore = false) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    // withoutRegistry is a host with no perspectives: the generator emits no registry, so none is registered and
+    // the event type provider is the defaults' null provider.
     if (registryFactory is not null) {
       services.AddTransient(registryFactory);
-    } else {
+    } else if (!withoutRegistry) {
       services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     }
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddSingleton<IEventStore>(eventStore);
+    if (!withoutEventStore) {
+      services.AddSingleton<IEventStore>(eventStore);
+    }
     if (lifecycleCoordinator is not null) {
       services.AddSingleton(lifecycleCoordinator);
     }
@@ -1029,7 +1036,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
             backoffMultiplier: options.RetryOptions switch { { EnableExponentialBackoff: true } r => r.BackoffMultiplier, _ => 1.0 },
             maxTimeout: TimeSpan.FromSeconds(options.RetryOptions.MaxBackoffSeconds))
         : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
-      eventTypeProvider: registry,
+      eventTypeProvider: withoutRegistry ? provider.GetRequiredService<IEventTypeProvider>() : registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
       logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
@@ -1054,6 +1061,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       metrics: metrics,
       timeProvider: timeProvider,
       recentlyProcessedEventCache: cooldownCache,
+      compositeMetrics: compositeMetrics,
       storedFormFailures: storedFormFailures);
     return (worker, harness, provider);
   }

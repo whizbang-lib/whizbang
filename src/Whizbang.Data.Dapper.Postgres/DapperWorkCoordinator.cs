@@ -832,6 +832,21 @@ public partial class DapperWorkCoordinator(
     PerformMaintenanceAsync(null, cancellationToken);
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    await using var command = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
+    command.CommandText = Whizbang.Data.Postgres.PendingInboxTypesSql.Query(prefix);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var types = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      types.Add(reader.GetString(0));
+    }
+    return types;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<PurgedOrphanInboxRow>> PurgeOrphanInboxAsync(
       IReadOnlyList<string> handledTypeNames,
       CancellationToken cancellationToken = default) {
@@ -969,6 +984,12 @@ public partial class DapperWorkCoordinator(
   )]
   static partial void LogPostgresNotice(ILogger logger, string severity, string message);
 
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Startup beat of instance {InstanceId} skipped: wh_record_startup_heartbeat does not exist yet. This driver creates it in its migration pass and registers the instance after it, so there is no row to keep alive until then."
+  )]
+  static partial void LogStartupBeatBeforeItsFunction(ILogger logger, Guid instanceId);
+
   #endregion
 
   #region Phase B: focused IWorkCoordinator methods
@@ -1002,6 +1023,54 @@ public partial class DapperWorkCoordinator(
         request.ApplicationVersion
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_startup_heartbeat</c>. This driver applies no bootstrap closure and registers the
+  /// instance at the end of its pass, so on a database the pass has not reached yet (fresh, or an earlier release's) the
+  /// function does not exist and there is no row of this instance to keep: the beat is accepted and writes nothing,
+  /// rather than failing on every tick of the migration. Any other failure surfaces, for the heartbeat to log and retry.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupHeartbeatTests.cs</tests>
+  public async Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    // Not behind the work gate: a starting instance's liveness must not queue behind the startup work it reports on.
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    try {
+      return await Whizbang.Data.Postgres.StartupHeartbeatSql.RecordAsync(
+        __scope.Connection, prefix + Whizbang.Data.Postgres.StartupHeartbeatSql.FUNCTION_NAME, request, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction) {
+      if (_logger is { } log) {
+        LogStartupBeatBeforeItsFunction(log, request.InstanceId);
+      }
+      return true;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2126: through <c>wh_record_instance_exit</c>. This driver applies no bootstrap closure, so on a database its pass
+  /// has not reached yet the function does not exist: the exit is then not recorded, and the answer says why, for the
+  /// exit's log entry to state.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperInstanceExitTests.cs</tests>
+  public async Task<Whizbang.Core.RunControl.InstanceExitRecordResult> RecordInstanceExitAsync(
+      Whizbang.Core.RunControl.InstanceExitRecord exitRecord, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(exitRecord);
+    // Not behind the work gate: an exit must not queue behind the work it is leaving.
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    try {
+      return await Whizbang.Data.Postgres.InstanceExitSql.RecordAsync(
+        __scope.Connection, prefix + Whizbang.Data.Postgres.InstanceExitSql.FUNCTION_NAME, exitRecord, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction) {
+      return Whizbang.Core.RunControl.InstanceExitRecordResult.NotWritten(
+        "the exit record does not exist on this database yet: the schema pass has not created wh_record_instance_exit");
+    }
   }
 
   /// <inheritdoc />

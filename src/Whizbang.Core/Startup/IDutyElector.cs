@@ -78,6 +78,28 @@ public interface IDutyGrant : IAsyncDisposable {
   /// <docs>proposals/duty-role-assignment</docs>
   /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
   bool DrainRequested => false;
+
+  /// <summary>
+  /// Canceled the moment this grant stops holding the duty: the elector observed it was lost (a
+  /// role-assignment grant checks once per renew interval, without waiting for a
+  /// <see cref="VerifyStillHeldAsync"/>), or it was released or disposed (#2140). Exclusive work links
+  /// its token to this one, so it stops before another holder's work could overlap it.
+  /// </summary>
+  /// <remarks>A default member: a grant that cannot observe a loss on its own offers a token that is never canceled.</remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs:LostToken_OfAGrantThatCannotObserveALoss_IsNeverCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleHolderLivenessE2ETests.cs:TheOldHolder_ObservesItsLossWithinOneRenewInterval_SoExclusiveWorkNeverOverlapsAsync</tests>
+  CancellationToken LostToken => CancellationToken.None;
+
+  /// <summary>
+  /// How often this grant's lease has to be renewed to stay held, or <see langword="null"/> when it has no lease
+  /// that can lapse. A holder whose exclusive work runs for longer than this between verifies keeps the grant
+  /// alive with a <see cref="DutyGrantKeepalive"/>, which verifies on this interval for as long as it runs.
+  /// </summary>
+  /// <remarks>A default member: a grant without a lease never lapses, so nothing has to renew it.</remarks>
+  /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
+  TimeSpan? RenewInterval => null;
 }
 
 /// <summary>

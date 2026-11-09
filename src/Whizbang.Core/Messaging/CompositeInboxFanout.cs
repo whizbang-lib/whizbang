@@ -96,12 +96,15 @@ public static partial class CompositeInboxFanout {
   /// <param name="Detail">Human-readable failure detail for DLQ error text (null on success).</param>
   /// <param name="CompositeTypeName">Full name of the composite type (null when not a composite).</param>
   /// <param name="UnsubscribedChildren">Children dropped at expansion because the consumer has no subscription for their type (#736).</param>
+  /// <param name="ReattributedChildren">Children of a redelivery bundle stored under their type's true owner instead of
+  /// the origin the bundle names, which does not own it (#2116).</param>
   public readonly record struct FanoutResult(
     FanoutOutcome Outcome,
     IReadOnlyList<InboxMessage> Children,
     string? Detail,
     string? CompositeTypeName,
-    int UnsubscribedChildren = 0);
+    int UnsubscribedChildren = 0,
+    int ReattributedChildren = 0);
 
   /// <summary>
   /// Expands <paramref name="composite"/> into child inbox messages, inheriting identity context from
@@ -119,6 +122,9 @@ public static partial class CompositeInboxFanout {
   /// <param name="scope">The dispatch scope (serializer, catalog, resolvers, logging).</param>
   /// <param name="replacementInner">A pre-fanout directive's replacement for the inner events.</param>
   /// <param name="hasConsumer">Answers whether this consumer subscribes to a child type (by wire type name); a child it does not subscribe to is dropped at expansion and counted (#736). Null keeps every child.</param>
+  /// <param name="ownerOf">For a redelivery bundle: a child type's true owner when the origin the bundle names does not own
+  /// it (<see cref="MisattributedOrigin.ForBundle"/>), or null when the bundle's origin stands. Such a child is stored
+  /// under the owner with no origin sequence, and counted (#2116). Null keeps every child's origin.</param>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Expanding a composite checks five things that can disagree (the inner count against the cap, against the carried ids, against the carried sequences, each inner against null, and each child against the consumer's subscriptions) and every disagreement has a different outcome under Atomic than under Independent. The branching is the atomicity contract, and the two modes have to be read together to see that a drop is logged exactly once.")]
   public static FanoutResult TryExpand(
@@ -126,7 +132,8 @@ public static partial class CompositeInboxFanout {
       IMessageEnvelope source,
       IServiceProvider scope,
       IEnumerable<IMessage>? replacementInner = null,
-      Func<string, bool>? hasConsumer = null) {
+      Func<string, bool>? hasConsumer = null,
+      Func<string, Guid?>? ownerOf = null) {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(scope);
 
@@ -153,7 +160,7 @@ public static partial class CompositeInboxFanout {
     // no typed payloads exist on either side, so they expand through the raw path. A replacement
     // set (pre-fanout directive) is typed and takes the typed path as before.
     if (replacementInner is null && composite is IRawInnerComposite rawComposite) {
-      return _expandRaw(rawComposite, compositeTypeName, source, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor, hasConsumer);
+      return _expandRaw(rawComposite, compositeTypeName, source, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor, hasConsumer, ownerOf);
     }
 
     // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
@@ -293,6 +300,7 @@ public static partial class CompositeInboxFanout {
   /// count desync between payloads, type names, ids, or sequences fails the whole expansion.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The raw path re-checks every guard the typed path checks, because a raw bundle is machine-built and any count desync between payloads, type names, ids and sequences fails the whole expansion. The guards sit in one place so the two paths can be compared line by line.")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The raw path takes exactly what the typed path takes: the composite, its name, the source envelope, the three resolvers, and the two routing questions (who consumes a type, who owns it). Grouping them would hide which resolver each guard uses.")]
   private static FanoutResult _expandRaw(
       IRawInnerComposite composite,
       string compositeTypeName,
@@ -300,7 +308,8 @@ public static partial class CompositeInboxFanout {
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver,
       IStreamIdExtractor? streamIdExtractor,
-      Func<string, bool>? hasConsumer) {
+      Func<string, bool>? hasConsumer,
+      Func<string, Guid?>? ownerOf) {
     var payloads = composite.InnerPayloads;
     var typeNames = composite.InnerTypeNames;
     var identityComposite = composite as IIdentityPreservingComposite;
@@ -346,6 +355,7 @@ public static partial class CompositeInboxFanout {
     }
     var children = new List<InboxMessage>(payloads.Count);
     var unsubscribed = 0;
+    var reattributed = 0;
     for (var i = 0; i < payloads.Count; i++) {
       var wireTypeName = typeNames[i];
       if (payloads[i].ValueKind == JsonValueKind.Undefined || string.IsNullOrWhiteSpace(wireTypeName)) {
@@ -361,6 +371,14 @@ public static partial class CompositeInboxFanout {
 
       var sourceServiceId = originOverride != Guid.Empty ? originOverride : source.SourceServiceId;
       var sourceCommitSequence = identitySequences?[i] ?? source.SourceCommitSequence;
+      // #2116: the bundle names the service that answered it. A child of a type another service owns was only received
+      // there, so it is stored under its owner; the carried sequence is a position in the answerer's lane, so none is
+      // stored (zero), and the owner's next redelivery fills it.
+      if (ownerOf?.Invoke(wireTypeName) is { } owner) {
+        sourceServiceId = owner;
+        sourceCommitSequence = 0;
+        reattributed++;
+      }
       var childEnvelope = new MessageEnvelope<JsonElement> {
         Version = source.Version,
         DispatchContext = source.DispatchContext,
@@ -417,7 +435,7 @@ public static partial class CompositeInboxFanout {
       });
     }
 
-    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName, unsubscribed);
+    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName, unsubscribed, reattributed);
   }
 
   /// <summary>

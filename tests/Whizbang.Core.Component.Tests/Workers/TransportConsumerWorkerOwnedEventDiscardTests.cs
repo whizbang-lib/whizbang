@@ -220,6 +220,33 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
+  /// <summary>
+  /// An owned event from another service, on a service that knows no event (nothing consumed or folded here): the
+  /// known set is empty, so the event is not taken for an owned-event echo and falls through to the hop check, which
+  /// passes a delivery from another service.
+  /// </summary>
+  [Test]
+  public async Task OwnedEvent_FromOtherService_WhenThisServiceKnowsNoEvent_IsNotDiscardedAsync() {
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE, metrics: metrics,
+      eventTypeProvider: new NoEventTypeProvider(), receptorRegistry: new ConsumesNoEventRegistry());
+    await worker.StartAsync();
+
+    var envelope = _createEventEnvelope(sourceServiceName: OTHER_SERVICE);
+
+    try {
+      await worker.SimulateMessageAsync(envelope, _ownedEventType);
+    } catch {
+      // Processing may fail after the echo check; only the echo decision is asserted
+    }
+
+    await worker.StopAsync();
+
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
+  }
+
   // ========================================
   // Edge Cases
   // ========================================
@@ -276,7 +303,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   }
 
   private static TestWorkerWrapper _createWorker(
-      string[] ownedDomains, string serviceName, TransportMetrics? metrics = null) {
+      string[] ownedDomains, string serviceName, TransportMetrics? metrics = null,
+      IEventTypeProvider? eventTypeProvider = null, IReceptorRegistryQuery? receptorRegistry = null) {
     var transport = new StubTransport();
     var workStrategy = new StubWorkStrategy();
     var noOpCoordinator = new NoOpWorkCoordinator();
@@ -287,7 +315,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddSingleton<IEventTypeProvider>(new StubEventTypeProvider());
+    services.AddSingleton(eventTypeProvider ?? new StubEventTypeProvider());
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.Configure<RoutingOptions>(opts => opts.OwnDomains(ownedDomains));
     var sp = services.BuildServiceProvider();
@@ -306,7 +334,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
-      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -389,6 +417,18 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   private sealed class StubEventTypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(FakeOwnedEvent)];
+  }
+
+  /// <summary>A service whose perspectives fold no event.</summary>
+  private sealed class NoEventTypeProvider : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [];
+  }
+
+  /// <summary>Accepts every message at the receive gate but enumerates no consumed event, so the known set is empty.</summary>
+  private sealed class ConsumesNoEventRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => HasInboxHandler(messageType);
+    public bool HasInboxHandler(string messageType) => !string.IsNullOrEmpty(messageType);
+    public bool HasAnyConsumer(string messageType) => HasInboxHandler(messageType);
   }
 
   private sealed class TestWorkerWrapper(

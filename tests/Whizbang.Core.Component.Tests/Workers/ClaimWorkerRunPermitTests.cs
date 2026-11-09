@@ -149,6 +149,8 @@ public class ClaimWorkerRunPermitTests {
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
+    // #2126: the exit's account of what the instance held counts the last claim's streams, before the path releases them.
+    await Assert.That(((IReleasesHeldWork)worker).HeldLeases).IsEqualTo(3);
     // The loop may itself have released a stuck re-offer (#724); the path's release is the last one.
     var before = coordinator.Releases.Count;
     await ((IReleasesHeldWork)worker).ReleaseHeldWorkAsync(CancellationToken.None);
@@ -170,6 +172,7 @@ public class ClaimWorkerRunPermitTests {
     await ((IReleasesHeldWork)worker).ReleaseHeldWorkAsync(CancellationToken.None);
 
     await Assert.That(coordinator.Releases).IsEmpty();
+    await Assert.That(((IReleasesHeldWork)worker).HeldLeases).IsEqualTo(0).Because("nothing was claimed, so nothing is held");
   }
 
   [Test]

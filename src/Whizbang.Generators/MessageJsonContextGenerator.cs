@@ -183,6 +183,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
   private const string PLACEHOLDER_ELEMENT_TYPE = "__ELEMENT_TYPE__";
   private const string PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER = "__ELEMENT_UNIQUE_IDENTIFIER__";
+  private const string PLACEHOLDER_COLLECTION_DEFINITION = "__COLLECTION_DEFINITION__";
+  private const string PLACEHOLDER_COLLECTION_NAME = "__COLLECTION_NAME__";
   private const string PLACEHOLDER_INTERFACE_TYPE = "__INTERFACE_TYPE__";
   private const string PLACEHOLDER_INTERFACE_NAME = "__INTERFACE_NAME__";
   private const string GLOBAL_SYSTEM_PREFIX = "global::System.";
@@ -701,7 +703,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"List<{t.ElementSimpleName}>", "collection type"));
     }
     foreach (var t in iReadOnlyListTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"IReadOnlyList<{t.ElementSimpleName}>", "collection interface type"));
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"{t.CollectionName}<{t.ElementSimpleName}>", "collection interface type"));
     }
     foreach (var t in arrayTypes) {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"{t.ElementSimpleName}[]", "array type"));
@@ -1583,9 +1585,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (!iReadOnlyListTypes.IsEmpty) {
       sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
       foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-        var check = snippets.IReadOnlyList
-            .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
-            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
+        var check = _fillCollectionSnippet(snippets.IReadOnlyList, iReadOnlyListType);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -2558,7 +2558,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       "global::System.Collections.Generic.IReadOnlyList<",
       "global::System.Collections.Generic.ICollection<",
       "global::System.Collections.Generic.IReadOnlyCollection<",
-      "global::System.Collections.Generic.IEnumerable<"
+      "global::System.Collections.Generic.IEnumerable<",
+      "global::System.Collections.Immutable.ImmutableList<"
     };
 
     var matchingPrefix = singleTypeParamCollections.FirstOrDefault(prefix =>
@@ -2960,18 +2961,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       typeName = typeName[..^1];
     }
 
-    const string iReadOnlyListPrefix = "global::System.Collections.Generic.IReadOnlyList<";
-
-    if (typeName.StartsWith(iReadOnlyListPrefix, StringComparison.Ordinal)) {
-      var startIndex = iReadOnlyListPrefix.Length;
+    var definition = _collectionDefinitionOf(typeName);
+    if (definition is not null) {
+      var startIndex = definition.Length + 1;
       var endIndex = typeName.LastIndexOf('>');
       if (endIndex > startIndex) {
         var rawElementTypeName = typeName[startIndex..endIndex];
         var elementTypeName = _normalizeKeywordAliases(rawElementTypeName);
 
-        // Create key using the IReadOnlyList type
-        var iReadOnlyListTypeName = $"global::System.Collections.Generic.IReadOnlyList<{elementTypeName}>";
-        if (iReadOnlyListTypes.ContainsKey(iReadOnlyListTypeName)) {
+        // Create key using the collection type
+        var collectionTypeName = $"{definition}<{elementTypeName}>";
+        if (iReadOnlyListTypes.ContainsKey(collectionTypeName)) {
           return;
         }
 
@@ -2979,23 +2979,59 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var parts = elementTypeName.Split('.');
         var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
-        iReadOnlyListTypes[iReadOnlyListTypeName] = new ReadOnlyListTypeInfo(
-            IReadOnlyListTypeName: iReadOnlyListTypeName,
+        iReadOnlyListTypes[collectionTypeName] = new ReadOnlyListTypeInfo(
+            IReadOnlyListTypeName: collectionTypeName,
             ElementTypeName: elementTypeName,
-            ElementSimpleName: elementSimpleName
+            ElementSimpleName: elementSimpleName,
+            CollectionDefinition: definition
         );
 
-        // Recursively discover IReadOnlyList in the element type
+        // Recursively discover collections in the element type
         _discoverIReadOnlyListType(elementTypeName, iReadOnlyListTypes);
       }
     }
 
-    // Also check if this is a collection containing IReadOnlyList (e.g., List<IReadOnlyList<T>>)
+    // Also check if this is a collection containing one (e.g., List<IReadOnlyList<T>>)
     var elementType = _extractElementTypeSingleLevel(typeName);
     if (elementType != null) {
       _discoverIReadOnlyListType(elementType, iReadOnlyListTypes);
     }
   }
+
+  /// <summary>
+  /// The collections that need metadata of their own: every collection interface a model or message can declare
+  /// (the serializer cannot construct an interface, and the opaque path accepts each of them, #2114) and ImmutableList
+  /// (which cannot be filled one element at a time). Each interface is read into a List, which implements all of them.
+  /// </summary>
+  private static readonly string[] _ownMetadataCollections = [
+    ReadOnlyListTypeInfo.READ_ONLY_LIST,
+    ReadOnlyListTypeInfo.LIST_INTERFACE,
+    ReadOnlyListTypeInfo.COLLECTION_INTERFACE,
+    ReadOnlyListTypeInfo.READ_ONLY_COLLECTION,
+    ReadOnlyListTypeInfo.ENUMERABLE,
+    ReadOnlyListTypeInfo.IMMUTABLE_LIST,
+  ];
+
+  /// <summary>The collection definition the type is constructed from, when it is one that needs its own metadata.</summary>
+  private static string? _collectionDefinitionOf(string typeName) {
+    foreach (var definition in _ownMetadataCollections) {
+      if (typeName.StartsWith(definition + "<", StringComparison.Ordinal)) {
+        return definition;
+      }
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Fills a collection snippet: the collection's definition and name first, since the name sits against the element
+  /// identifier placeholder in the generated identifiers, then the element.
+  /// </summary>
+  private static string _fillCollectionSnippet(string snippet, ReadOnlyListTypeInfo collection) =>
+    snippet
+      .Replace(PLACEHOLDER_COLLECTION_DEFINITION, collection.CollectionDefinition)
+      .Replace(PLACEHOLDER_COLLECTION_NAME, collection.CollectionName)
+      .Replace(PLACEHOLDER_ELEMENT_TYPE, collection.ElementTypeName)
+      .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, collection.ElementUniqueIdentifier);
 
   /// <summary>
   /// Generates lazy fields for IReadOnlyList&lt;T&gt; types.
@@ -3015,9 +3051,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_IREADONLYLIST");
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-      var field = snippet
-          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
-          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
+      var field = _fillCollectionSnippet(snippet, iReadOnlyListType);
       sb.AppendLine(field);
     }
 
@@ -3039,12 +3073,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var sb = new System.Text.StringBuilder();
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IREADONLYLIST_TYPE_FACTORY");
+    var filled = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IREADONLYLIST_TYPE_FACTORY");
+    var immutable = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IMMUTABLE_COLLECTION_TYPE_FACTORY");
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-      var factory = snippet
-          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
-          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
+      var factory = _fillCollectionSnippet(iReadOnlyListType.IsImmutable ? immutable : filled, iReadOnlyListType);
       sb.AppendLine(factory);
       sb.AppendLine();
     }

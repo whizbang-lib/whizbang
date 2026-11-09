@@ -145,13 +145,13 @@ public class StartupAssessorTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
 
-    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", "999.0.0",
+    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), false,
       _ => throw new InvalidOperationException("the catalog could not be read"), cancellationToken);
 
     await Assert.That(unanswered.Verdict).IsEqualTo(StartupVerdict.Serve)
       .Because("a schema that cannot be shown current takes the full path, which finds out for itself");
     await Assert.That(unanswered.Reason).Contains("could not be shown current");
-    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", "999.0.0",
+    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), false,
         _ => throw new OperationCanceledException(), cancellationToken))
       .Throws<OperationCanceledException>();
   }
@@ -251,7 +251,8 @@ public class StartupAssessorTests : EFCoreTestBase {
     await _execAsync("""
       ALTER TABLE wh_schema_migrations DROP COLUMN owner CASCADE;
       WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('999.0.0') RETURNING id)
-      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v) WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations);
+      UPDATE wh_schema_migrations SET version_id = (SELECT id FROM v), content_hash = 'applied-by-999'
+        WHERE file_name = (SELECT min(file_name) FROM wh_schema_migrations);
       """, cancellationToken);
 
     var assessment = await _assessorRunning("1.0.0").AssessAsync(cancellationToken);

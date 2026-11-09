@@ -15,6 +15,11 @@
     <NoWarn>$(NoWarn);CA1707</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Every compilation shares one reference per assembly file (SharedMetadataReferences, #2159); a fresh
+         MetadataReference.CreateFromFile per test is banned here so a new helper cannot quietly bring the cost back. -->
+    <AdditionalFiles Include="BannedSymbols.Tests.txt" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Exclude generated files from compilation -->
     <Compile Remove=".whizbang/cache/**/*.cs" />
   </ItemGroup>

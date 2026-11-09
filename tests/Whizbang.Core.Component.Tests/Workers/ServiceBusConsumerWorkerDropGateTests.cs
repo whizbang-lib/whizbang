@@ -233,6 +233,75 @@ public class ServiceBusConsumerWorkerDropGateTests {
     }
   }
 
+  private static readonly string _frameworkCompositeEnvelopeType =
+    typeof(MessageEnvelope<Whizbang.Core.Minting.RedeliveryComposite>).AssemblyQualifiedName!;
+
+  private static MessageEnvelope<JsonElement> _frameworkMessage(string? target) => new() {
+    MessageId = MessageId.From((Guid)TrackedGuid.New()),
+    Payload = JsonElement.Parse("{}"),
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
+    Target = target,
+  };
+
+  [Test]
+  public async Task HandleMessage_FrameworkMessageAddressedElsewhere_IsDiscardedWithoutARowAsync() {
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var meter = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, transport, strategy, sp) = _buildWorker(new FakeReceptorRegistry(hasAnyConsumer: true), metrics: metrics);
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+      await transport.BatchHandler!.Invoke(
+        [new TransportMessage(_frameworkMessage("another-svc"), _frameworkCompositeEnvelopeType)], cts.Token);
+
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(0)
+        .Because("#2091: framework traffic addressed to another service is discarded on receipt, with no row");
+      var discarded = meter.GetByName("whizbang.transport.inbox.messages_discarded").Where(m => m.Value > 0).ToList();
+      await Assert.That(discarded.Single().Tags["reason"]).IsEqualTo(InboxReceiveDiscard.FOREIGN_TARGET);
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task HandleMessage_UnconsumedFrameworkMessage_IsDiscardedWithoutARowAsync() {
+    var (worker, transport, strategy, sp) = _buildWorker(new FakeReceptorRegistry(hasAnyConsumer: false));
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+      var controlType = typeof(MessageEnvelope<RequestRedeliveryCommand>).AssemblyQualifiedName!;
+      await transport.BatchHandler!.Invoke([new TransportMessage(_frameworkMessage(null), controlType)], cts.Token);
+
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(0)
+        .Because("#2091: framework control traffic nothing here consumes is discarded on receipt");
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task HandleMessage_FrameworkMessageAddressedHere_IsStoredAsync() {
+    var (worker, transport, strategy, sp) = _buildWorker(new FakeReceptorRegistry(hasAnyConsumer: true));
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+      await transport.BatchHandler!.Invoke(
+        [new TransportMessage(_frameworkMessage("test-svc"), _frameworkCompositeEnvelopeType)], cts.Token);
+
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1);
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
   [Test]
   public async Task HandleMessage_RegistrySaysNoConsumer_StoresTheMessageBeforeTheSkipAsync() {
     // Registry reports no consumer for the inner message type. #1720: the message is stored first, and the skip is

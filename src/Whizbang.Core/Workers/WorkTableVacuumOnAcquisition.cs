@@ -17,7 +17,9 @@ namespace Whizbang.Core.Workers;
 /// Vacuums the work tables when this instance acquires the maintainer duty (#1351), instead of on every
 /// instance at every start. A first assignment vacuums once per process; a reassignment, where another
 /// instance held the duty before, vacuums again unless <see cref="MaintenanceWorkerOptions.MaintainOnReassignment"/>
-/// is off. An instance that joins a fleet with a live holder never acquires the duty, so it never vacuums.
+/// is off. An instance that joins a fleet with a live holder never acquires the duty, so it never vacuums. A table the
+/// database records as vacuumed within <see cref="MaintenanceWorkerOptions.SkipAcquisitionVacuumWithin"/> is left alone,
+/// so a hand-off that follows a takeover shortly after does not vacuum the work tables again (#2140).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -91,23 +93,27 @@ public sealed partial class WorkTableVacuumOnAcquisition : IDutyAcquisitionHandl
       if (scope.ServiceProvider.GetService<IWorkCoordinator>() is not { } coordinator) {
         return;
       }
-      var outcomes = await coordinator.VacuumWorkTablesAsync(cancellationToken).ConfigureAwait(false);
+      var outcomes = await coordinator.VacuumWorkTablesAsync(_options.SkipAcquisitionVacuumWithin, cancellationToken).ConfigureAwait(false);
       var vacuumed = 0;
+      var recent = 0;
       foreach (var outcome in outcomes) {
         if (outcome.Vacuumed) {
           vacuumed++;
+        } else if (outcome.RecentlyVacuumed) {
+          recent++;
         } else {
           LogTableNotVacuumed(_logger, outcome.TableName, outcome.SkippedReason ?? "no reason given");
         }
       }
       _firstAssignmentVacuumed = true;
-      LogVacuumed(_logger, vacuumed, outcomes.Count, reassignedFrom is null ? "a first assignment" : $"a reassignment from instance {reassignedFrom}");
+      LogVacuumed(_logger, vacuumed, outcomes.Count, recent, _options.SkipAcquisitionVacuumWithin,
+        reassignedFrom is null ? "a first assignment" : $"a reassignment from instance {reassignedFrom}");
     }
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
-    Message = "Maintainer duty acquired ({Assignment}): vacuumed {Vacuumed} of {Tables} work table(s)")]
-  static partial void LogVacuumed(ILogger logger, int vacuumed, int tables, string assignment);
+    Message = "Maintainer duty acquired ({Assignment}): vacuumed {Vacuumed} of {Tables} work table(s); {Recent} already vacuumed within {Window}")]
+  static partial void LogVacuumed(ILogger logger, int vacuumed, int tables, int recent, TimeSpan window, string assignment);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "Maintainer duty acquired: {Table} was not vacuumed: {Reason}")]

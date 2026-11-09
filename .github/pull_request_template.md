@@ -4,6 +4,8 @@ Every pull request implements an issue a maintainer has marked `accepted`, opene
 Write the closing keyword as plain text, not inside backticks. Name every issue this resolves.
 The title is a Conventional Commit (fix:, feat:, docs:, perf:, refactor:, test:, ci:, build:, chore:),
 with ! for a breaking change; it becomes the commit message.
+A change a consumer would notice adds a changelog fragment, changelog.d/<issue>.md (changelog.d/README.md),
+not an edit to CHANGELOG.md. A pull request into a release branch edits CHANGELOG.md under that version.
 -->
 
 Fixes #
@@ -24,4 +26,4 @@ Fixes #
 
 ## Breaking change
 - What breaks, and for whom:
-- Upgrade note (also in CHANGELOG.md):
+- Upgrade note (also in the changelog fragment):

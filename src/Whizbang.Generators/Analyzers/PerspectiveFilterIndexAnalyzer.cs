@@ -320,7 +320,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       // reason applies decides what the author should go looking for, so the sentence names it.
       var reason = PolymorphicModelDiscovery.IsPolymorphic(model)
         ? "holds a polymorphic member"
-        : $"holds '{MappedPathDiscovery.UnmappableMember(model)}', which the mapped path cannot construct";
+        : MappedPathDiscovery.DescribeUnmappable(model);
 
       return $"This model {reason}, so its document is stored as one serialized value and "
         + "an index over a field inside it cannot be reached. Promote it with "

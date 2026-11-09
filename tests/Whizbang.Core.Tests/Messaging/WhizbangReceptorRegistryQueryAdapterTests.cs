@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -30,7 +31,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// tests registered. No mutation of the static state, no flake.
 /// </para>
 /// </summary>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 public class WhizbangReceptorRegistryQueryAdapterTests {
 
   // A type name no source generator will ever produce — unique per this file.
@@ -166,6 +167,45 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
     await Assert.That(direct.Count).IsEqualTo(static_.Count);
     await Assert.That(direct.SequenceEqual(static_)).IsTrue();
+  }
+
+  [Test]
+  public async Task GetConsumedMessages_DelegatesToGeneratedStaticAsync() {
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
+
+    var direct = ((IReceptorRegistryQuery)sut).GetConsumedMessages();
+    var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
+
+    await Assert.That(direct.SequenceEqual(static_)).IsTrue()
+      .Because("the adapter is the registry's DI face: it must surface the same consumed set");
+  }
+
+  [Test]
+  public async Task Defaults_TheConsumerRegistry_IsTheReceptorRegistryQueryAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    await using var provider = services.BuildServiceProvider();
+
+    var consumers = provider.GetRequiredService<IConsumerRegistry>();
+    var query = provider.GetRequiredService<IReceptorRegistryQuery>();
+
+    await Assert.That(consumers).IsSameReferenceAs(query)
+      .Because("one registry: the receive boundary's gate and every list reader must see the same answer");
+  }
+
+  [Test]
+  public async Task PermissiveQuery_ListsTheGeneratedConsumedMessagesAsync() {
+    var permissive = new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery();
+
+    await Assert.That(permissive.GetConsumedMessages().SequenceEqual(
+      Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages())).IsTrue();
+  }
+
+  [Test]
+  public async Task CustomPredicatesOnlyImplementation_GetConsumedMessages_DefaultsToEmptyAsync() {
+    IReceptorRegistryQuery predicatesOnly = new PredicatesOnlyQueryFake();
+
+    await Assert.That(predicatesOnly.GetConsumedMessages()).IsEmpty();
   }
 
   [Test]

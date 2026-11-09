@@ -677,8 +677,18 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // consumer, so the claim copies it into the event store for a perspective added later to rebuild from. The shared
       // discard policy owns that decision; ReceiveConsumerGate asks it, for this worker and ServiceBusConsumerWorker alike.
       string? discardedOnReceive = null;
-      if (ReceiveConsumerGate.UnconsumedMessageType(
-            msg.EnvelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver, discardPolicy) is not null) {
+      var unconsumed = ReceiveConsumerGate.UnconsumedMessageType(
+        msg.EnvelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver, discardPolicy) is not null;
+      // #2091: framework control or minted traffic this service cannot use (addressed elsewhere, or consumed by
+      // nothing here) is discarded on receipt: no row, no comparison, no fan-out, and so never a retry.
+      if (ReceiveConsumerGate.FrameworkDiscardOnReceipt(msg.EnvelopeType, msg.Envelope.Target, _serviceName, unconsumed)
+          is { } frameworkDiscard) {
+        var discardedType = TypeNameFormatter.GetSimpleName(msg.EnvelopeType!);
+        _countDiscard(frameworkDiscard, discardedType);
+        LogFrameworkMessageDiscardedOnReceipt(_logger, discardedType, frameworkDiscard, msg.Envelope.Target);
+        continue;
+      }
+      if (unconsumed) {
         discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
         _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType!));
       }
@@ -721,7 +731,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       }
     }
 
-    _filterInboxMessagesByKnownEventTypes(inboxMessages);
+    _filterInboxMessagesByKnownEventTypes(inboxMessages, discardPolicy);
     if (inboxMessages.Count > 0) {
       await _storeInboxBatchAsync(inboxMessages, pendingCleanupClaims, scope.ServiceProvider, workCoordinator, cancellationToken);
     }
@@ -1093,6 +1103,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       if (!verdict.ShouldQuarantine) {
         continue;
       }
+      // #2099: control-plane traffic is never quarantined here. An integrity checkpoint is published once per topic of
+      // its origin's owned types, every copy with the same message id, so a consumer on many of those topics counts the
+      // fan-out as redeliveries while the first copy is being handled. Moving the row would dead-letter what the
+      // dead-letter boundary drops (DeadLetterDropPolicy) and take it from its handler; it is left in place, and the
+      // inbox's own attempt bound still ends a control message that keeps failing.
+      var observedType = batch.FirstOrDefault(m => m.MessageId == observation.MessageId)?.MessageType;
+      if (observedType is not null && DeadLetterDropPolicy.ShouldDropInsteadOfStore(observedType)) {
+        LogControlPlaneNotQuarantined(_logger, observation.MessageId, observedType, observation.ObservationCount);
+        continue;
+      }
 
       poisonDetector.RecordQuarantine(
         Routing.PoisonQuarantineGate.Inbox, verdict, context,
@@ -1116,8 +1136,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
           generation: generationProvider.GetGeneration(),
           ct: cancellationToken).ConfigureAwait(false);
         // The store can report a message from an earlier batch, whose type this batch cannot tell.
-        var messageType = batch.FirstOrDefault(m => m.MessageId == observation.MessageId)?.MessageType;
-        DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, observation.MessageId, messageType,
+        DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, observation.MessageId, observedType,
           nameof(MessageFailureReason.PoisonRedeliveryLoop), verdict.Detail);
       } catch (Exception ex) {
         _logger.LogError(
@@ -1193,14 +1212,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <see cref="InboxReceiveDiscard.UNKNOWN_EVENT_TYPE"/> rather than processed (#1720: it used to be removed before the
   /// store, leaving no row). Commands are always processed because they're routed to a specific service on purpose.
   /// </summary>
-  private void _filterInboxMessagesByKnownEventTypes(List<InboxMessage> inboxMessages) {
+  private void _filterInboxMessagesByKnownEventTypes(List<InboxMessage> inboxMessages, IMessageDiscardPolicy? discardPolicy) {
     if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
       return;
     }
     for (var i = 0; i < inboxMessages.Count; i++) {
       var msg = inboxMessages[i];
       if (msg.IsEvent && msg.DiscardedOnReceive is null
-          && !_knownEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType))) {
+          && !_knownEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType))
+          // An event the discard policy keeps with no consumer (an absorbed namespace) is stored on purpose (#1776).
+          && discardPolicy?.EvaluateReceive(msg.MessageType, string.Empty, string.Empty).ShouldDiscard != false) {
         LogStoredSettledOnReceive(_logger, msg.MessageId, msg.MessageType, InboxReceiveDiscard.UNKNOWN_EVENT_TYPE);
         _countDiscard(InboxReceiveDiscard.UNKNOWN_EVENT_TYPE, TypeNameFormatter.GetSimpleName(msg.MessageType));
         inboxMessages[i] = msg with { DiscardedOnReceive = InboxReceiveDiscard.UNKNOWN_EVENT_TYPE };
@@ -1513,6 +1534,23 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   )]
   private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
 
+  /// <summary>
+  /// Logs that a control-plane message past the durable observation bound was left in the inbox rather than moved to
+  /// dead letters (#2099): its copies on several topics share one message id, so the count measures the fan-out.
+  /// </summary>
+  [LoggerMessage(Level = LogLevel.Debug,
+    Message = "Control-plane message {MessageId} ({MessageType}) was observed {Observations} times; not quarantined, "
+            + "because control-plane copies share one message id across topics and control-plane traffic is never stored "
+            + "as a dead letter")]
+  private static partial void LogControlPlaneNotQuarantined(ILogger logger, Guid messageId, string messageType, int observations);
+
+  /// <summary>Logs that framework control or minted traffic was discarded on receipt with no row (#2091).</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs:ForeignTarget_FrameworkMintedMessage_IsDiscardedWithoutARowAsync</tests>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Discarded framework message {MessageType} on receipt ({Reason}, target '{Target}'): not stored, compared or retried")]
+  private static partial void LogFrameworkMessageDiscardedOnReceipt(ILogger logger, string messageType, string reason, string? target);
+
   /// <summary>Logs that a directed message targeted at a different service was discarded at the receive seam.</summary>
   /// <docs>fundamentals/messaging/directed-messages</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
@@ -1566,33 +1604,34 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_knownEventTypeNames is not null) {
       return;
     }
+    // #2064: the events this service consumes (the consumer registry) are known as well as the ones its perspectives
+    // fold. Receive now classifies a receptor-only event as an event, so a perspective-only set would settle every
+    // such event as unknown. Empty = no filtering (allow all through).
+    var known = new HashSet<string>(
+      _receptorRegistry.GetConsumedEventTypes().Select(EventTypeMatchingHelper.NormalizeTypeName), StringComparer.Ordinal);
     var eventTypeProvider = serviceProvider.GetRequiredService<IEventTypeProvider>();
     if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      _knownEventTypeNames = new HashSet<string>(
-        eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(
-          TypeNameFormatter.Format(t))),
-        StringComparer.Ordinal);
-    } else {
-      _knownEventTypeNames = [];  // Empty = no filtering (allow all through)
+      known.UnionWith(eventTypeProvider.GetEventTypes().Select(t => EventTypeMatchingHelper.NormalizeTypeName(
+        TypeNameFormatter.Format(t))));
     }
+    _knownEventTypeNames = known;
   }
 
   /// <summary>
   /// Checks if an envelope type string represents a known event type.
   /// Uses <see cref="_knownEventTypeNames"/> (must be initialized first via
   /// <see cref="_ensureKnownEventTypesInitialized"/>).
-  /// Falls back to allowing through if the set is empty (no provider registered).
+  /// An empty set (nothing consumed or folded here) knows no event, so nothing is treated as one and the message falls
+  /// through to the hop check.
   /// </summary>
+  /// <remarks>
+  /// The batch builds the set before it checks any message for an echo, and this is reached only from that check, so
+  /// the set is never null here.
+  /// </remarks>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  private bool _isKnownEventType(string envelopeType) {
-    if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
-      return false;  // No provider → can't determine, treat as non-event (safe: falls through to hop check)
-    }
-    var normalized = EventTypeMatchingHelper.NormalizeTypeName(envelopeType);
-    return _knownEventTypeNames.Contains(normalized);
-  }
+  private bool _isKnownEventType(string envelopeType) =>
+    _knownEventTypeNames!.Contains(EventTypeMatchingHelper.NormalizeTypeName(envelopeType));
 
   // Namespace extraction moved to TypeNameFormatter.GetPayloadNamespace (testable utility)
 }

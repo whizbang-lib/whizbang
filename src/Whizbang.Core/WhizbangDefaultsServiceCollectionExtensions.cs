@@ -57,6 +57,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Messaging.IReceptorRegistry>(Messaging.NullReceptorRegistry.Instance);
     services.TryAddSingleton<Messaging.IReceptorRegistryQuery>(sp =>
       new Messaging.WhizbangReceptorRegistryQueryAdapter(sp.GetRequiredService<Messaging.IReceptorRegistry>()));
+    // The consumer registry is the receptor registry query's predicate-and-list face (#2058): one registry, so the
+    // receive boundary and every "what do I consume" reader see the same answer, a host's own query included.
+    services.TryAddSingleton<Messaging.IConsumerRegistry>(sp => sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<IStreamIdExtractor>(_ => Registry.StreamIdExtractorRegistry.GetComposite());
     services.TryAddSingleton<IMessageTypeCatalog>(NullMessageTypeCatalog.Instance);
@@ -114,6 +117,8 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
     services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
     services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+    // The receive path classifies a declared type it does not consume (an absorbed event) by its catalog kind (#2074).
+    services.TryAddSingleton(sp => new Messaging.CatalogMessageKinds(sp.GetRequiredService<IMessageTypeCatalog>()));
     // The live audit path and the audit ledger rebuild resolve event types through the same catalog (#2040).
     services.TryAddSingleton<SystemEvents.AuditTypeResolver>();
     // The payload limit reads the options, the catalog and every registered hook once, at first use.

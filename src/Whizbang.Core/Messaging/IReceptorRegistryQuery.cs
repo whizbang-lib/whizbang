@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// patterns where many inbox events flow through with no local handler.
 /// </remarks>
 /// <docs>fundamentals/receptors/receptors</docs>
-public interface IReceptorRegistryQuery {
+public interface IReceptorRegistryQuery : IConsumerRegistry {
   /// <summary>True when at least one receptor is registered for the given lifecycle
   /// stage + message type.</summary>
   bool HasReceptors(LifecycleStage stage, string messageType);
@@ -28,10 +28,6 @@ public interface IReceptorRegistryQuery {
   /// <summary>True when an inbox handler (an <c>IReceptor</c> without a
   /// <c>FireAt</c> attribute) is registered for the message type.</summary>
   bool HasInboxHandler(string messageType);
-
-  /// <summary>True when ANY consumer (handler / lifecycle receptor / perspective /
-  /// tag-attribute) is registered for the message type.</summary>
-  bool HasAnyConsumer(string messageType);
 
   /// <summary>
   /// Enumerates every receptor-handled message type known at compile time —
@@ -48,7 +44,7 @@ public interface IReceptorRegistryQuery {
   /// </remarks>
   /// <returns>The handled-message enumeration, or an empty list for implementations
   /// that predate the enumeration surface.</returns>
-  /// <docs>internals/receptor-registry-query</docs>
+  /// <docs>extending/internals/receptor-registry-query</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:CustomPredicatesOnlyImplementation_GetHandledMessages_DefaultsToEmptyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetHandledMessages_DelegatesToGeneratedStaticAsync</tests>
   IReadOnlyList<HandledMessageInfo> GetHandledMessages() => [];

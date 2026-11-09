@@ -1,7 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Utilities;
@@ -11,7 +13,8 @@ namespace Whizbang.Generators;
 
 /// <summary>
 /// Roslyn analyzer for superseding (latest-wins) event types (#1729): WHIZ135, a type that is both ephemeral and
-/// superseding, and WHIZ136, a superseding type that names more than one key. Both resolve the type the way the catalog
+/// superseding, WHIZ136, a superseding type that names more than one key, and WHIZ138 (#2124), the types of a superseding
+/// group that disagree on their key. Both resolve the type the way the catalog
 /// generator does (<see cref="SupersedingResolver"/>, <see cref="EphemeralResolver"/>), so what the analyzer reports is
 /// exactly what the generator refuses to register.
 /// </summary>
@@ -58,21 +61,54 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
     description: "The key decides which older event a newer one replaces. With two keys the choice is ambiguous, so the "
       + "type is not registered as superseding and every event of it is kept.");
 
+  /// <summary>
+  /// WHIZ138: Error. The types of one superseding group (#2124) disagree on their key: some declare a
+  /// <c>[SupersedingKey]</c> and some do not, or their keys are of different types. The types of a group supersede each
+  /// other by key, so a key must mean the same thing for each of them. Checked within one compilation; a key of a
+  /// nullable value type agrees with the same type's key, since both are stored as the same text.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz138</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/SupersedingEventAnalyzerTests.cs:AGroupWhoseTypesDisagreeOnTheKey_ReportsWHIZ138OnEachAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/SupersedingEventAnalyzerTests.cs:AGroupWhoseTypesAgree_OrTypesOutsideAnyGroup_NoWHIZ138Async</tests>
+  public static readonly DiagnosticDescriptor GroupKeysDisagree = new(
+    id: "WHIZ138",
+    title: "Superseding group's types disagree on their key",
+    messageFormat: "Superseding event type '{0}' is in group '{1}' with {2}, but other types in the group have {3}. The "
+      + "types of a group supersede each other by key: give every one no [SupersedingKey], or a key of the same type.",
+    category: CATEGORY,
+    defaultSeverity: DiagnosticSeverity.Error,
+    isEnabledByDefault: true,
+    description: "In a superseding group the newest event of any type replaces the older events of every type with the "
+      + "same key, so the key must mean the same thing for each type of the group.",
+    customTags: WellKnownDiagnosticTags.CompilationEnd);
+
+  private const string NO_KEY = "no key";
+
   /// <inheritdoc/>
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [EphemeralAndSuperseding, MoreThanOneKey];
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [EphemeralAndSuperseding, MoreThanOneKey, GroupKeysDisagree];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
-    context.RegisterSymbolAction(_analyzeType, SymbolKind.NamedType);
+    context.RegisterCompilationStartAction(start => {
+      var members = new ConcurrentBag<GroupMember>();
+      start.RegisterSymbolAction(symbolContext => _analyzeType(symbolContext, members), SymbolKind.NamedType);
+      start.RegisterCompilationEndAction(end => _reportGroups(end, members));
+    });
   }
 
-  private static void _analyzeType(SymbolAnalysisContext context) {
+  private sealed record GroupMember(INamedTypeSymbol Type, string Group, string Key);
+
+  private static void _analyzeType(SymbolAnalysisContext context, ConcurrentBag<GroupMember> members) {
     // Registered for SymbolKind.NamedType only, so the symbol is always a named type.
     var symbol = (INamedTypeSymbol)context.Symbol;
-    if (!SupersedingResolver.IsDeclared(symbol)) {
+    var (declared, declaredGroup) = SupersedingResolver.Declaration(symbol);
+    if (!declared) {
       return;
+    }
+    if (declaredGroup is { } group) {
+      members.Add(new GroupMember(symbol, group, _keyType(symbol)));
     }
     if (EphemeralResolver.IsEphemeral(symbol)) {
       context.ReportDiagnostic(Diagnostic.Create(EphemeralAndSuperseding, LocationUtilities.FirstOrNone(symbol), symbol.Name));
@@ -81,6 +117,34 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
     if (keys.Count > 1) {
       context.ReportDiagnostic(Diagnostic.Create(
         MoreThanOneKey, LocationUtilities.FirstOrNone(symbol), symbol.Name, string.Join(", ", keys)));
+    }
+  }
+
+  // The key's type as the store sees it: Nullable<T> is T, since both are stored as the same text.
+  private static string _keyType(INamedTypeSymbol type) {
+    // Two keys are WHIZ136's to report; the first stands for the type here.
+    var keys = SupersedingResolver.KeyProperties(type);
+    if (keys.Count == 0) {
+      return NO_KEY;
+    }
+    var property = keys[0];
+    var keyType = property.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+      ? nullable.TypeArguments[0]
+      : property.Type;
+    return $"a {TypeNameUtilities.Display(keyType.WithNullableAnnotation(NullableAnnotation.NotAnnotated))} key";
+  }
+
+  private static void _reportGroups(CompilationAnalysisContext context, ConcurrentBag<GroupMember> members) {
+    var disagreeing = members
+      .GroupBy(m => m.Group, System.StringComparer.Ordinal)
+      .Select(g => (Members: g.ToList(), Keys: g.Select(m => m.Key).Distinct(System.StringComparer.Ordinal).ToList()))
+      .Where(g => g.Keys.Count > 1);
+    foreach (var (group, keys) in disagreeing) {
+      foreach (var member in group) {
+        var others = string.Join(" or ", keys.Where(k => k != member.Key));
+        context.ReportDiagnostic(Diagnostic.Create(
+          GroupKeysDisagree, LocationUtilities.FirstOrNone(member.Type), member.Type.Name, member.Group, member.Key, others));
+      }
     }
   }
 }

@@ -10,6 +10,7 @@ using Whizbang.Core.Data;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.TestFixtures;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
@@ -72,6 +73,7 @@ public class NormalizedMigrationHashTests : IAsyncDisposable {
   /// <summary>A logger that keeps what it was told, safe to share between two concurrent initializers.</summary>
   private sealed class RecordingLogger : ILogger {
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _messages = new();
+    public IReadOnlyCollection<string> Messages => _messages;
     public int Rewrites => _messages.Count(m => m.Contains(REWRITE_MESSAGE, StringComparison.Ordinal));
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -209,6 +211,86 @@ public class NormalizedMigrationHashTests : IAsyncDisposable {
       await Assert.That((await _rowAsync(migration.Name)).Hash).IsEqualTo(MigrationSqlNormalizer.ContentHash(migration.Sql));
     }
     await Assert.That(logger.Rewrites).IsEqualTo(1);
+  }
+
+  /// <summary>The shipped migrations by name, as this release hashes them in the public schema, without the bootstrap.</summary>
+  private static Dictionary<string, MigrationScript> _shippedByName() =>
+    new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, "public").GetMigrations()
+      .Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))
+      .ToDictionary(m => m.Name, StringComparer.Ordinal);
+
+  /// <summary>
+  /// The ledger v0.2623.1 recorded, from its own packages, with the bootstrap left out (it runs every start and is not
+  /// change-detected). Its texts differ from today's by the license header alone, which nothing executes.
+  /// </summary>
+  private static IReadOnlyList<(string FileName, string Hash)> _v0_2623_1Ledger() =>
+    [.. LegacyMigrationLedger.Read(LegacyMigrationLedger.V0_2623_1, "dapper-public")
+      .Where(row => !row.FileName.StartsWith("000", StringComparison.Ordinal))];
+
+  private async Task<IReadOnlyList<string>> _appliedAsync() {
+    await using var connection = await _openAsync();
+    return [.. await connection.QueryAsync<string>(
+      "SELECT file_name FROM wh_schema_migrations WHERE status IN (1, 2) AND file_name NOT LIKE 'perspective:%' ORDER BY file_name")];
+  }
+
+  /// <summary>
+  /// A database last migrated by v0.2623.1, the last release before the normalized hash and the license header, holds
+  /// the hashes that release recorded. The upgrade start recognizes every one of them, rewrites it, and applies none of
+  /// those migrations again (#2125). The hashes were captured from the release's packages, never from today's text,
+  /// and none of them equals any hash of today's text, so only real recognition passes.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task Upgrade_FromV0_2623_1_AppliesNoneOfItsMigrationsAndRewritesTheirHashesAsync(CancellationToken cancellationToken) {
+    await new PostgresSchemaInitializer(_connectionString).InitializeSchemaAsync(cancellationToken);
+    var shipped = _shippedByName();
+    var ledger = _v0_2623_1Ledger();
+    await Assert.That(ledger.Count).IsEqualTo(203).Because("precondition: v0.2623.1 shipped 204 migrations, one the bootstrap");
+    foreach (var (fileName, hash) in ledger) {
+      var current = shipped[fileName].Sql;
+      await Assert.That(hash).IsNotEqualTo(MigrationSqlNormalizer.ContentHash(current))
+        .And.IsNotEqualTo(MigrationSqlNormalizer.LegacyContentHash(current))
+        .Because($"precondition: {fileName}'s recorded hash is no hash of today's text");
+      await _setHashAsync(fileName, hash);
+    }
+
+    var logger = new RecordingLogger();
+    await new PostgresSchemaInitializer(_connectionString) { Logger = logger }.InitializeSchemaAsync(cancellationToken);
+
+    await Assert.That(await _appliedAsync()).IsEmpty()
+      .Because("every file v0.2623.1 shipped is unchanged apart from its license header, so none is applied again");
+    foreach (var (fileName, _) in ledger) {
+      await Assert.That((await _rowAsync(fileName)).Hash).IsEqualTo(MigrationSqlNormalizer.ContentHash(shipped[fileName].Sql))
+        .Because($"{fileName}: its recorded hash is rewritten to the normalized one");
+    }
+    await Assert.That(logger.Rewrites).IsEqualTo(1);
+    await Assert.That(logger.Messages.Single(m => m.Contains(REWRITE_MESSAGE, StringComparison.Ordinal)))
+      .Contains($"{ledger.Count} migration hash");
+  }
+
+  /// <summary>
+  /// The same upgrade, with one file whose content really changed since the release that recorded it: v0.2619.0's 204
+  /// lacks a statement v0.2623.1's has. That file is applied, and nothing before it is.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task Upgrade_FromV0_2623_1_WithAFileThatReallyChanged_AppliesOnlyThatFileAndItsClosureAsync(CancellationToken cancellationToken) {
+    const string CHANGED = "204_DirectInstancesAreLiveByTheirAliveLock";
+    await new PostgresSchemaInitializer(_connectionString).InitializeSchemaAsync(cancellationToken);
+    foreach (var (fileName, hash) in _v0_2623_1Ledger()) {
+      await _setHashAsync(fileName, hash);
+    }
+    var (_, olderHash) = LegacyMigrationLedger.Read(LegacyMigrationLedger.V0_2619_0, "dapper-public").Single(r => r.FileName == CHANGED);
+    await _setHashAsync(CHANGED, olderHash);
+
+    await new PostgresSchemaInitializer(_connectionString).InitializeSchemaAsync(cancellationToken);
+
+    var applied = await _appliedAsync();
+    await Assert.That(applied).Contains(CHANGED).Because("a file whose content really changed is applied");
+    await Assert.That((await _rowAsync(CHANGED)).Status).IsEqualTo((short)2);
+    await Assert.That(applied.All(name => string.CompareOrdinal(name, CHANGED) >= 0)).IsTrue()
+      .Because("only the changed file and the later files redefining its objects run; every earlier file is recognized");
+    await Assert.That(applied).DoesNotContain("087_StreamDigests");
   }
 
   /// <summary>Two instances starting together rewrite once: the step runs under the schema lock.</summary>

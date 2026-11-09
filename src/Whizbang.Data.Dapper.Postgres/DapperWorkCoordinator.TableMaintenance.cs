@@ -161,20 +161,14 @@ public partial class DapperWorkCoordinator {
   /// with the reason and is not vacuumed.
   /// </remarks>
   public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
-    _withGatedConnectionAsync<IReadOnlyList<WorkTableVacuum>>(async (connection, prefix) => {
-      var outcomes = new List<WorkTableVacuum>(TableMaintenanceSql.VACUUMED_WORK_TABLES.Length);
-      foreach (var table in TableMaintenanceSql.VACUUMED_WORK_TABLES) {
-        var qualified = prefix + table;
-        if (await TableMaintenanceSql.NotOwnedReasonAsync(connection, qualified, table, cancellationToken, OWNER_REMEDY)
-              .ConfigureAwait(false) is { } notOwned) {
-          outcomes.Add(new WorkTableVacuum(table, false, notOwned));
-          continue;
-        }
-        await TableMaintenanceSql.VacuumAnalyzeAsync(connection, qualified, cancellationToken).ConfigureAwait(false);
-        outcomes.Add(new WorkTableVacuum(table, true, null));
-      }
-      return outcomes;
-    }, cancellationToken);
+    VacuumWorkTablesAsync(TimeSpan.Zero, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>The loop is <c>TableMaintenanceSql.VacuumWorkTablesAsync</c>, shared with the EF Core coordinator.</remarks>
+  public Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(TimeSpan skipTablesVacuumedWithin, CancellationToken cancellationToken = default) =>
+    _withGatedConnectionAsync((connection, prefix) => TableMaintenanceSql.VacuumWorkTablesAsync(connection, table => prefix + table,
+      skipTablesVacuumedWithin, (conn, qualified, table, ct) => TableMaintenanceSql.NotOwnedReasonAsync(conn, qualified, table, ct, OWNER_REMEDY),
+      cancellationToken), cancellationToken);
 
   /// <inheritdoc />
   public Task<IReadOnlyList<QueueIndexBloat>> GetQueueIndexBloatAsync(CancellationToken cancellationToken = default) =>

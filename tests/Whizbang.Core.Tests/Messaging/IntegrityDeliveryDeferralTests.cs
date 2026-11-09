@@ -241,6 +241,26 @@ public class IntegrityDeliveryRegistryTests {
       .Because("registrars may start more than once; a host that registers its own handler first keeps it");
   }
 
+  /// <summary>
+  /// #2099: the redelivery reconcile also has a batch handler, registered by the registry itself, and the first batch
+  /// registration of a type wins as the single one does.
+  /// </summary>
+  [Test]
+  public async Task TheRedeliveryReconcile_HasABatchHandler_AndTheFirstBatchRegistrationWinsAsync() {
+    var registry = new IntegrityDeliveryRegistry();
+    var calls = new List<string>();
+    registry.RegisterBatch("t", (_, _, _) => { calls.Add("first"); return Task.CompletedTask; });
+    registry.RegisterBatch("t", (_, _, _) => { calls.Add("second"); return Task.CompletedTask; });
+
+    _ = registry.TryGetBatchHandler("t", out var handler);
+    await handler!(["{}"], new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
+
+    await Assert.That(calls).IsEquivalentTo(["first"]);
+    await Assert.That(registry.TryGetBatchHandler(RedeliveryReconciler.DELIVERY_TYPE, out _)).IsTrue()
+      .Because("a backlog of reconciles drains as a batch on every host without a registrar remembering it");
+    await Assert.That(registry.TryGetBatchHandler("unknown-type", out _)).IsFalse();
+  }
+
   [Test]
   public async Task TheReconcileHandler_IsRegisteredByTheRegistryItselfAsync() {
     var registry = new IntegrityDeliveryRegistry();

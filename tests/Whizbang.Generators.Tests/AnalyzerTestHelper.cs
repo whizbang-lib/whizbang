@@ -37,30 +37,33 @@ public static class AnalyzerTestHelper {
 
     // Add reference to System.Runtime and other basic assemblies
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    references.Add(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    // ImmutableList<T> and friends: without it a source naming one compiles to an error type, and a test about how
+    // an immutable collection is judged passes without the type ever being resolved (#2112).
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
     // System.Linq.Expressions and System.Linq.Queryable so IQueryable<T> and the Queryable
     // operators resolve: a query analyzer infers the lambda parameter's type from the operator's
     // Expression<Func<T, bool>> signature, and an unresolved operator leaves the parameter untyped.
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Threading.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Threading.Tasks.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Threading.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Threading.Tasks.dll")));
     // System.Net.Http so HttpClient resolves to a symbol: the purity analyzer classifies I/O by
     // the containing type of the resolved method, and an unresolved call is simply not seen.
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Net.Http.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Net.Http.dll")));
     // System.Text.Json, so [JsonPolymorphic] and the other serialization attributes bind: without it a test of an
     // analyzer that reads them sees no attribute at all and passes on silence (#1431).
-    references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "netstandard.dll")));
+    references.Add(SharedMetadataReferences.FromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "netstandard.dll")));
 
     // Add reference to Whizbang.Core (for TrackedGuid, WhizbangId, etc.)
     try {
       var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
-      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+      references.Add(SharedMetadataReferences.FromFile(coreAssembly.Location));
     } catch {
       // If assembly can't be loaded, try to find it in current directory
       var coreAssemblyPath = Path.Combine(
@@ -68,7 +71,7 @@ public static class AnalyzerTestHelper {
           "Whizbang.Core.dll"
       );
       if (File.Exists(coreAssemblyPath)) {
-        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+        references.Add(SharedMetadataReferences.FromFile(coreAssemblyPath));
       }
     }
 

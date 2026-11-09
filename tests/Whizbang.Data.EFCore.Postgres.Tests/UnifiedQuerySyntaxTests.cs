@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///   WHERE price >= 20.00  // Uses indexed physical column</para>
 /// </remarks>
 [Category("Integration")]
-[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
 public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -120,7 +119,8 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     // Register physical fields for ProductModel
-    PhysicalFieldRegistry.Clear(); // Clear any previous registrations
+    // This class's own model only, and never a Clear(): the registry is keyed by model type, so registering touches
+    // nothing another test reads, and the class runs in parallel with them (#2167).
     PhysicalFieldRegistry.Register<ProductModel>("Name", "name");
     PhysicalFieldRegistry.Register<ProductModel>("Price", "price");
     PhysicalFieldRegistry.Register<ProductModel>("Category", "category");

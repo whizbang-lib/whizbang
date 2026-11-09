@@ -47,6 +47,15 @@ public class DutyGrantContractTests {
     await Assert.That(grant.PreviousHolderInstanceId).IsNull();
   }
 
+  [Test]
+  public async Task LostToken_OfAGrantThatCannotObserveALoss_IsNeverCanceledAsync() {
+    // #2140: a grant that has no way to learn of a loss on its own offers a token that never fires, so work linked to
+    // it is stopped only by its own token, as before.
+    IDutyGrant grant = new SessionLockStyleGrant();
+
+    await Assert.That(grant.LostToken.CanBeCanceled).IsFalse();
+  }
+
   private sealed class OneAtATimeElector : IDutyElector {
     public List<string> Asked { get; } = [];
 

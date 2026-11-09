@@ -85,6 +85,10 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(
             new Whizbang.Core.Observability.LibraryVersionProvider(LibraryVersionInfo.Value));
 
+        // TURNKEY (#2076): the context's open transaction, read by the application signal channel resolved in the same
+        // scope, so a signal published inside it is delivered on commit and never on rollback.
+        EFCoreAppSignalTransactionSource.Register(selector.Services, selector.DbContextType);
+
         // Invoke model registration callback (infrastructure + perspectives)
         // This is registered by source-generated module initializer in consumer assembly
         // The generated code contains AOT-safe registration using concrete types
@@ -137,11 +141,10 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: the Assess verdict machinery — this binary's version against every version
         // the migration ledger records, decided on every instance before the migration barrier.
-        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
-            new EFCorePostgresStartupAssessor(
-                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
-                dbContextType,
-                sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>()));
+        // #2022: with this instance's application version and id, so both versions are compared, and the online
+        // instances' versions from the same read, for a newer instance's announcement.
+        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, dbContextType));
+        selector.Services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, dbContextType));
         // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
@@ -208,6 +211,19 @@ public static class PostgresDriverExtensions {
             new StreamLifecycleBackfillMaintenanceStep(
                 dbContextType,
                 sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
+
+        // TURNKEY: the maintenance step that fills the id lanes of stream digests stored before migration 336 (#2106),
+        // reporting any drift it corrects. Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamDigestIdLaneBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamDigestIdLaneBackfillMaintenanceStep>>()));
+        // TURNKEY: the maintenance step that builds the framework indexes a migration must not build, concurrently and
+        // outside any transaction, so writes to the indexed table go on during the build (#2092). Idle once each is valid.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new FrameworkIndexBuildMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<FrameworkIndexBuildMaintenanceStep>>()));
 
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
@@ -338,6 +354,16 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#history-conversion</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: the maintenance step that brings the history a superseding type stored before its declaration under the
+        // superseding rule (#2110), under the maintainer duty. Whizbang:Superseding:ReconcileHistory=false turns it off.
+        // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
+          SupersedingHistoryReconcileStep.FromServices));
+        // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
+        // type to their owner (#2116), under the maintainer duty, idle-gated.
+        // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
+          MisattributedOriginCorrectionStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
@@ -541,4 +567,13 @@ public static class PostgresDriverExtensions {
     await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return true;
   }
+
+  /// <summary>The driver's assessor (#1992), comparing both versions and skipping the instance's own row (#2022).</summary>
+  private static EFCorePostgresStartupAssessor _assessor(IServiceProvider sp, Type dbContextType) => new(
+    sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+    dbContextType,
+    sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+    sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
+    sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 }

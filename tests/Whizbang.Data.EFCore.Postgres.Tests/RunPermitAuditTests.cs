@@ -51,7 +51,7 @@ public sealed class RunPermitAuditTests {
   /// <summary>Does fleet-wide work only on its maintainer turn, which a closed permit denies.</summary>
   private static readonly HashSet<string> _obeysThroughTheMaintainerDuty = new(StringComparer.Ordinal) {
     "IntegrityAuditWorker", "IntegrityCheckpointWorker", "IntegrityDeliveryWorker", "RepairDrainWorker", "MaintenanceWorker",
-    "OriginReattributionWorker",
+    "OriginReattributionWorker", "SubscriptionBackfillWorker", "IntegrityLedgerRecheckWorker",
   };
 
   /// <summary>Holds a role, and a closed permit refuses every vote.</summary>
@@ -92,6 +92,18 @@ public sealed class RunPermitAuditTests {
     // Fed only by a command receptor, whose dispatch arrives through the obeying consumer and claim worker.
     "RebuildBackgroundWorker",
   };
+
+  /// <summary>#2092: the paced backfill is hosted by the turnkey pipeline, and does its work on the maintainer's turn.</summary>
+  [Test]
+  public async Task TheTurnkeyHost_RunsThePacedBackfillAsync() {
+    using var host = _turnkeyHost();
+    var hosted = host.Services.GetServices<IHostedService>()
+      .Select(service => service is GatedHostedService gated ? gated.Service : service)
+      .Select(service => service.GetType().Name)
+      .ToList();
+
+    await Assert.That(hosted).Contains("SubscriptionBackfillWorker");
+  }
 
   [Test]
   public async Task EveryHostedService_SaysHowItObeysTheRunPermit_AndTheObeyersHoldTheOnePermitAsync() {

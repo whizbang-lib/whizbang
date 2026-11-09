@@ -94,6 +94,23 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
     return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(AdoptionAnswer);
   }
 
+  /// <summary>Every batch reconcile the drain asked for (#2099).</summary>
+  public List<IReadOnlyList<RedeliveredBundle>> BatchReconciles { get; } = [];
+
+  /// <summary>Answers a batch reconcile per bundle; null makes the store one without the batch call.</summary>
+  public Func<IReadOnlyList<RedeliveredBundle>, IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>>? BatchAnswer { get; set; }
+
+  public Exception? BatchFailure { get; set; }
+
+  public Task<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?> ReconcileRedeliveredBundlesAsync(
+      IReadOnlyList<RedeliveredBundle> bundles, CancellationToken cancellationToken = default) {
+    BatchReconciles.Add(bundles);
+    if (BatchFailure is { } failure) {
+      return Task.FromException<IReadOnlyList<IReadOnlyList<RedeliveredBucketPresence>>?>(failure);
+    }
+    return Task.FromResult(BatchAnswer?.Invoke(bundles));
+  }
+
   /// <summary>What the store answers an adoption with.</summary>
   public IReadOnlyList<RedeliveredBucketPresence> AdoptionAnswer { get; set; } = [];
 
@@ -101,6 +118,9 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
   public IntegrityBundleAnswer? BundleAnswer { get; set; }
 
   public Exception? BundleAnswerFailure { get; set; }
+
+  /// <summary>The window each window-aware commit-time record was given (#2143).</summary>
+  public List<RedeliveryAnswerWindow?> BundleAnswerWindows { get; } = [];
 
   /// <summary>Every commit-time record the reconcile asked for.</summary>
   public List<(Guid Origin, IReadOnlyList<Guid> EventIds, IReadOnlyList<long?> Sequences, DateTimeOffset Now)> BundleAnswers { get; } = [];
@@ -112,6 +132,13 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
     return BundleAnswerFailure is { } failure
       ? Task.FromException<IntegrityBundleAnswer?>(failure)
       : Task.FromResult(BundleAnswer);
+  }
+
+  public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    BundleAnswerWindows.Add(answeredWindow);
+    return IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, now, cancellationToken);
   }
 
   public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

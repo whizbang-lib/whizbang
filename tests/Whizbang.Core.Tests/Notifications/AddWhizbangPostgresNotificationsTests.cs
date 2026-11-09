@@ -61,12 +61,15 @@ public class AddWhizbangPostgresNotificationsTests {
 
   [Test]
   public async Task AddWhizbangPostgresNotifications_RegistersAppSignalChannelAsync() {
-    // #2046: application topics ride the signal bus: the channel is the bus itself, whose Postgres transport
-    // carries each topic.
+    // #2046: application topics ride the signal bus, whose Postgres transport carries each topic. #2076: the channel is
+    // resolved per scope over that bus, so a publish inside the scope's transaction is sent inside it.
     var sp = _build();
-    var channel = sp.GetService<IAppSignalChannel>();
-    await Assert.That(channel).IsNotNull();
-    await Assert.That(channel).IsSameReferenceAs(sp.GetRequiredService<Whizbang.Core.Signals.SignalBus>());
+    var root = sp.GetService<IAppSignalChannel>();
+    using var scope = sp.CreateScope();
+    var scoped = scope.ServiceProvider.GetService<IAppSignalChannel>();
+    await Assert.That(root).IsTypeOf<Whizbang.Core.Signals.ScopeBoundAppSignalChannel>();
+    await Assert.That(((Whizbang.Core.Signals.ScopeBoundAppSignalChannel)root!).IsScopeBound).IsFalse();
+    await Assert.That(((Whizbang.Core.Signals.ScopeBoundAppSignalChannel)scoped!).IsScopeBound).IsTrue();
   }
 
   [Test]
@@ -147,5 +150,55 @@ public class AddWhizbangPostgresNotificationsTests {
       .Throws<Microsoft.Extensions.Options.OptionsValidationException>();
     await Assert.That(thrown!.Message).Contains("Whizbang:Database:SignalRetention")
       .Because("a window of zero or less would delete every signal a pod has already read, so it is refused by name");
+  }
+
+  // #2155: the keepalive interval is also the timeout of the LISTEN connection's wait, and Npgsql
+  // reads a zero timeout as none at all. Zero or less would silently remove the bound that catches
+  // a lost wake-up and a dead connection, so it is refused by name instead.
+  [Test]
+  [Arguments("00:00:00")]
+  [Arguments("-00:00:01")]
+  public async Task AddWhizbangPostgresNotifications_ANonPositiveListenKeepaliveInterval_IsRejectedAsync(string interval) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Database:ListenKeepaliveInterval"] = interval
+    }).Build());
+    services.AddWhizbangPostgresNotifications();
+    var sp = services.BuildServiceProvider();
+
+    var thrown = await Assert.That(() => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>().Value)
+      .Throws<Microsoft.Extensions.Options.OptionsValidationException>();
+    await Assert.That(thrown!.Message).Contains("Whizbang:Database:ListenKeepaliveInterval")
+      .Because("an interval of zero or less would leave the LISTEN wait with no timeout, so it is refused by name");
+    await Assert.That(thrown.Message).DoesNotContain("SignalRetention")
+      .Because("only the key that is wrong is reported");
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_BothWindowsNonPositive_ReportsEachKeyAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Database:SignalRetention"] = "00:00:00",
+      ["Whizbang:Database:ListenKeepaliveInterval"] = "00:00:00"
+    }).Build());
+    services.AddWhizbangPostgresNotifications();
+    var sp = services.BuildServiceProvider();
+
+    var thrown = await Assert.That(() => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>().Value)
+      .Throws<Microsoft.Extensions.Options.OptionsValidationException>();
+    await Assert.That(thrown!.Failures).Count().IsEqualTo(2)
+      .Because("an operator fixes every wrong key in one deploy, not one per restart");
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_TheDefaults_AreAcceptedAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    services.AddWhizbangPostgresNotifications();
+    var sp = services.BuildServiceProvider();
+
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>().Value;
+
+    await Assert.That(options.ListenKeepaliveInterval).IsEqualTo(TimeSpan.FromSeconds(30));
   }
 }

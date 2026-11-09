@@ -981,6 +981,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               lastSuccessfulEventType ?? string.Empty,
               checkpointCommitSequence,
               lastSuccessfulEventAt ?? DateTime.UtcNow,
+              modelLoadedFromDb,
+              processedEvents,
               cancellationToken,
               scopeWrite.Scope,
               scopeWrite.ForceUpdate,
@@ -1173,6 +1175,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 lastSuccessfulEventType ?? string.Empty,
                 partialCheckpointCommitSequence,
                 lastSuccessfulEventAt ?? DateTime.UtcNow,
+                modelLoadedFromDb,
+                processedEvents,
                 cancellationToken,
                 partialScopeWrite.Scope,
                 partialScopeWrite.ForceUpdate,
@@ -1390,6 +1394,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       string checkpointEventType,
       long? checkpointCommitSequence,
       DateTime checkpointEventAt,
+      bool rowExists,
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false,
@@ -1414,6 +1420,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Timestamp = checkpointEventAt,
       CommitSequence = checkpointCommitSequence
     };
+
+    // A row this write may insert is dated at the first event folded into it (#2154), not at the write's own time, which
+    // is the last folded event's and goes to updated_at; or at its stream's recorded start once the stream no longer holds
+    // its first event (#2152, the superseding reaper or a prefix truncate removed it). The event store is asked only when
+    // the row is not known to exist and the fold does not begin with the stream's first event; an update never moves
+    // created_at.
+    // <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+    var rowStartedAt = await global::Whizbang.Core.Perspectives.PerspectiveRowStart.ResolveAsync(
+        _eventStore, streamId, rowExists, folded, cancellationToken);
+    using var rowStart = global::Whizbang.Core.Perspectives.PerspectiveRowStart.Begin(streamId, rowStartedAt);
 
     #region UPSERT_CALL
     // Upsert model (insert or update) onto the row version the apply read (Unchecked writes unconditionally)
@@ -1800,6 +1816,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // points and the end — find a qualifying snapshot rather than replaying from event zero.
     var rewindSnapshotInterval = _snapshotOptions?.Value.RewindSnapshotIntervalEvents ?? 0;
     var eventsSinceIntermediateSnapshot = 0;
+    global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>? firstStreamEvent = null;
 
     // Build list of event types this perspective handles
     var eventTypes = new[] {
@@ -1880,6 +1897,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       await foreach (var envelope in read) {
         events.Add(envelope);
       }
+      // #2152: the first of the stream's own events the replay reads, across every pass.
+      firstStreamEvent ??= events.Count > 0 ? events[0] : null;
 
       // Ordering invariant: origin order for a single-origin stream, else commit order when every event is
       // stamped, else id order. The inversion detector is commit-sequence-authoritative, and an id-ordered replay
@@ -2090,6 +2109,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       ModelAtLastEvent = modelAtLastEvent,
       CollectivesHeldThrough = heldThrough.Mark,
       CollectivesSettled = heldThrough.Settled,
+      FirstStreamEvent = firstStreamEvent,
     }, cancellationToken);
   }
 
@@ -2145,7 +2165,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? SnapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
             streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
-            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken,
+            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow,
+            rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present,
+            outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],
+            cancellationToken,
             // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
             // its scope (Always fields catch up on the next live apply).
             global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
@@ -2258,6 +2281,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           return null;
         }
         read.Offer(envelope);
+        outcome.FirstStreamEvent ??= envelope;
         (outcome.FrontierEventId, outcome.FrontierCommitSequence) = _advanceFrontier(outcome.FrontierEventId, outcome.FrontierCommitSequence, envelope);
         readUpTo = _laterId(readUpTo, envelope.MessageId.Value);
       }
@@ -2330,6 +2354,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public long? CollectivesHeldThrough { get; set; }
     // #1970: false when the replay folded a collective still in flight; its snapshot is then not taken.
     public bool CollectivesSettled { get; set; } = true;
+    // The first of the stream's own events the replay read (#2152, #2154): a row the replay inserts is dated at it, or at
+    // the stream's recorded start when it does not begin the stream and the stream's first event is gone.
+    public MessageEnvelope<IEvent>? FirstStreamEvent { get; set; }
   }
 
   /// <summary>Where a replay starts: the snapshot's event, its archive mark and its collectives mark (#1963).</summary>

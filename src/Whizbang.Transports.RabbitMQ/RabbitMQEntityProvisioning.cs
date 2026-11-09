@@ -20,8 +20,9 @@ internal static class RabbitMQEntityProvisioning {
   /// <summary>
   /// Declares the full subscription infrastructure on <paramref name="channel"/>: the topic
   /// exchange, the dead-letter exchange + queue (when enabled), the subscription queue with
-  /// the transport's argument set, and one binding per routing pattern. Every declare is
-  /// broker-idempotent when the arguments match.
+  /// the transport's argument set, and one binding per routing pattern; explicit patterns also
+  /// remove a legacy match-all <c>#</c> binding (#2089). Every declare is broker-idempotent when
+  /// the arguments match.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Declares the exchange, the dead-letter pair, the queue and one binding per routing pattern in a single broker-idempotent call. The parameters are the topology being declared, and splitting the call is what the single call exists to avoid.")]
   internal static async Task DeclareSubscriptionInfrastructureAsync(
@@ -92,7 +93,23 @@ internal static class RabbitMQEntityProvisioning {
         cancellationToken: cancellationToken
       );
     }
+
+    // #2089: explicit patterns replace a match-all binding. A queue declared before its patterns (a command inbox bound
+    // with '#' before it filtered to the command types it handles) keeps receiving everything while the '#' binding
+    // stays beside the new ones, so it is removed. The broker treats unbinding a binding that does not exist as a no-op.
+    if (!routingPatterns.Contains(MATCH_ALL_PATTERN)) {
+      await channel.QueueUnbindAsync(
+        queue: queueName,
+        exchange: exchangeName,
+        routingKey: MATCH_ALL_PATTERN,
+        arguments: null,
+        cancellationToken: cancellationToken
+      );
+    }
   }
+
+  /// <summary>The topic-exchange pattern that matches every routing key.</summary>
+  private const string MATCH_ALL_PATTERN = "#";
 
   /// <summary>
   /// Declares dead letter exchange and queue for a given exchange/queue pair.
