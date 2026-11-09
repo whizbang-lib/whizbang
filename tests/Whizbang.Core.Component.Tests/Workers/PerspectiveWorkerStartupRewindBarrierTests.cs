@@ -109,7 +109,13 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
 
     await fx.Worker.StartAsync(CancellationToken.None);
     await coordinator.WaitForScanAsync(cancellationToken);
-    await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cancellationToken);
+    // Work-channel work, not drain: the drain channel's sliding window waits on the clock, which this test never moves.
+    await fx.Harness.EnqueueWorkAsync(new PerspectiveWork {
+      StreamId = Guid.CreateVersion7(),
+      PerspectiveName = PERSPECTIVE,
+      PartitionNumber = 1,
+      WorkId = Guid.CreateVersion7()
+    }, cancellationToken);
     await cycleDone.Task.WaitAsync(cancellationToken);
 
     await Assert.That(fx.Worker.StartupScanComplete.IsCompleted).IsFalse()
@@ -277,6 +283,7 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
     ArmedTimerClock Clock,
     ListLoggerProvider Log,
     RewindingRunner Runner,
+    BarrierCoordinator Coordinator,
     ServiceProvider Services) : IAsyncDisposable {
     private bool _disposed;
 
@@ -292,6 +299,7 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
       }
       Worker.Dispose();
       await Services.DisposeAsync();
+      Coordinator.Dispose();
     }
   }
 
@@ -345,7 +353,7 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
       perspectiveNotificationListener: new ConfiguredNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor(options),
       timeProvider: clock);
-    return new Fixture(worker, harness, clock, log, runner, sp);
+    return new Fixture(worker, harness, clock, log, runner, coordinator, sp);
   }
 
   // ============================================================
@@ -379,7 +387,7 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
     }
   }
 
-  private sealed class BarrierCoordinator : IWorkCoordinator {
+  private sealed class BarrierCoordinator : IWorkCoordinator, IDisposable {
     public IReadOnlyList<RewindCursorInfo> ScanResult { get; init; } = [];
     public Queue<List<PerspectiveCursorInfo>> BatchAnswers { get; } = new();
     public List<PerspectiveCursorInfo> DefaultBatchAnswer { get; init; } = [];
@@ -433,6 +441,8 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkCoordinatorStatistics());
+
+    public void Dispose() => _batchSignal.Dispose();
   }
 
   /// <summary>A runner whose rewind completes the cursor, counting the rewinds it ran.</summary>
