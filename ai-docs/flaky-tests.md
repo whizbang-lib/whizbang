@@ -469,6 +469,43 @@ run rather than once in a thousand.
 
 ---
 
+## Pattern 11: Coverage of an Await's Resume That Depends on Who Wins a Race
+
+### Symptoms
+- The library-wide coverage gate fails on a line no pull request in the queue touched, for example
+  `(3/4 conditions) if (campaignMode != RetryHeldOnStartupMode.Off) {`
+- Every test passes; the same gate passed on an earlier queue run with the same tests
+- The Cobertura line has a second `jump` condition the source does not show, at 50%
+
+### Root Cause
+An `await` inside a `try` in an async method compiles a hidden state dispatch at the start of the `try`: one
+outcome for the first pass, the other for resuming after the awaited task suspended. The collector attributes
+that hidden branch to the nearest visible line, often the `if` above the `try`. The resume outcome is taken only
+when the awaited call genuinely suspends. If one test alone suspends there, and it signals "started" before it
+reaches its wait, the test thread can cancel in that window: the wait then completes canceled synchronously, the
+await never suspends, the test still passes, and the outcome goes untaken. `DeadLetterRecoveryWorker`'s startup
+campaign lost a merge-queue run this way (PR #2212's queue run): its cancellation test signalled
+`PurgeStartedSignal` and then called `Task.Delay(Timeout.Infinite, ct)`, while the worker body ran on the thread
+pool through `StartAsync`.
+
+### Fix - CORRECT
+Run the worker body on the test thread through a test subclass that calls the protected `ExecuteAsync`, so the
+call returns only at the first real suspension, then assert that suspension before acting:
+
+```csharp
+var run = worker.RunBodyAsync(cts.Token);                 // returns at the first real suspension
+await Assert.That(svc.PurgeStartedSignal.Task.IsCompleted).IsTrue();
+await Assert.That(run.IsCompleted).IsFalse();             // the await suspended, so cancel resumes it
+await cts.CancelAsync();
+await run.WaitAsync(timeout);
+```
+
+### Rule
+When a single test is the only one that makes an await suspend, make the suspension structural (same-thread body,
+asserted `IsCompleted == false`) rather than a signal raced against a cancellation on another thread.
+
+---
+
 ## Files Modified in Flaky Test Fixes (January 2025)
 
 | File | Fix Applied |
