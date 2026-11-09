@@ -209,7 +209,7 @@ public class SeedMutationsTests {
     var dispatcher = new TestDispatcher();
     var productLens = new TestProductCatalogLens([]);
     var logger = NullLogger<SeedMutations>.Instance;
-    var productIds = Enumerable.Range(0, SeedMutations.SeedProductCount).Select(_ => Guid.CreateVersion7()).ToList();
+    var productIds = Enumerable.Range(0, SeedMutations.SEED_PRODUCT_COUNT).Select(_ => Guid.CreateVersion7()).ToList();
 
     var sut = new SeedMutations(dispatcher, productLens, logger);
 
@@ -217,7 +217,7 @@ public class SeedMutationsTests {
     var result = await sut.SeedProductsAsync(productIds);
 
     // Assert
-    await Assert.That(result).IsEqualTo(SeedMutations.SeedProductCount);
+    await Assert.That(result).IsEqualTo(SeedMutations.SEED_PRODUCT_COUNT);
     var sentIds = dispatcher.SentCommands.Cast<CreateProductCommand>().Select(c => c.ProductId.Value).ToList();
     await Assert.That(sentIds).IsEquivalentTo(productIds);
     await Assert.That(sentIds.SequenceEqual(productIds)).IsTrue();

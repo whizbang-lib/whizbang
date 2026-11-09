@@ -24,7 +24,7 @@ public class SeedMutations(
   /// <summary>
   /// The number of products <see cref="SeedProductsAsync(CancellationToken)"/> seeds.
   /// </summary>
-  public const int SeedProductCount = 12;
+  public const int SEED_PRODUCT_COUNT = 12;
 
   /// <summary>
   /// Seeds 12 products matching the frontend mock data.
@@ -33,7 +33,7 @@ public class SeedMutations(
   /// </summary>
   /// <returns>Number of products seeded</returns>
   public Task<int> SeedProductsAsync(CancellationToken cancellationToken = default) =>
-    SeedProductsAsync([.. Enumerable.Range(0, SeedProductCount).Select(_ => Guid.CreateVersion7())], cancellationToken);
+    SeedProductsAsync([.. Enumerable.Range(0, SEED_PRODUCT_COUNT).Select(_ => Guid.CreateVersion7())], cancellationToken);
 
   /// <summary>
   /// Seeds the 12 products using caller-supplied product ids, in order, so the caller knows the
@@ -41,13 +41,13 @@ public class SeedMutations(
   /// streams' perspective processing).
   /// Idempotent - skips seeding if products already exist.
   /// </summary>
-  /// <param name="productIds">Exactly <see cref="SeedProductCount"/> product ids.</param>
+  /// <param name="productIds">Exactly <see cref="SEED_PRODUCT_COUNT"/> product ids.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of products seeded</returns>
   public async Task<int> SeedProductsAsync(IReadOnlyList<Guid> productIds, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(productIds);
-    if (productIds.Count != SeedProductCount) {
-      throw new ArgumentException($"Expected exactly {SeedProductCount} product ids, got {productIds.Count}.", nameof(productIds));
+    if (productIds.Count != SEED_PRODUCT_COUNT) {
+      throw new ArgumentException($"Expected exactly {SEED_PRODUCT_COUNT} product ids, got {productIds.Count}.", nameof(productIds));
     }
 
     _logger.LogInformation("SeedProducts mutation called - checking if seeding is needed...");
