@@ -55,6 +55,7 @@ public sealed record SupersedingGroupProbeRevised : IEvent {
 /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/352_SupersedingGroups.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/365_TheTypeKeyedSupersedingIndexIsDropped.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public class SupersedingGroupSqlTests : EFCoreTestBase {
