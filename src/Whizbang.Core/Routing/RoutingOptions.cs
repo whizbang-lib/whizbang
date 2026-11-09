@@ -240,6 +240,18 @@ public sealed class RoutingOptions {
   /// event with no local consumer is discarded at the receive boundary and recorded. Each listed type is excluded at the
   /// broker instead, on the subscription of the topic it is published to.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Startup fails when a listed type is one this service consumes (a receptor, a perspective, a tag consumer, the
+  /// receive-boundary predicate or a runtime event subscription). A listed type on a namespace this service absorbs
+  /// (<see cref="AbsorbNamespaces"/>) is allowed, with a startup warning: it is then neither delivered nor stored.
+  /// </para>
+  /// <para>
+  /// Performance: Azure Service Bus evaluates a SQL filter rule more slowly than the default match-all rule, so only a
+  /// subscription with a non-empty list pays a small broker-side throughput cost, outweighed by the delivery, storage
+  /// and purge work saved for every excluded event. A subscription that excludes nothing keeps the default rule.
+  /// </para>
+  /// </remarks>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludedEventTypes_ByDefault_IsEmptyAsync</tests>
   public IReadOnlySet<string> ExcludedEventTypes => _excludedEventTypes;
@@ -247,7 +259,8 @@ public sealed class RoutingOptions {
   /// <summary>
   /// Opts this service out of an event type (#2175): the broker stops delivering it to this service's subscription of
   /// the topic it is published to. Startup fails when this service consumes the type, since an excluded type is never
-  /// delivered.
+  /// delivered; a type on an absorbed namespace is allowed, with a warning that it will not be stored. See
+  /// <see cref="ExcludedEventTypes"/> for the performance note.
   /// </summary>
   /// <typeparam name="TEvent">The event type to opt out of.</typeparam>
   /// <returns>This options instance for chaining.</returns>

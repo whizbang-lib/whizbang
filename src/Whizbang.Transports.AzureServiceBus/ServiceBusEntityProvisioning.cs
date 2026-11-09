@@ -220,6 +220,12 @@ internal static partial class ServiceBusEntityProvisioning {
   /// did has its rule replaced in place by a match-all filter. Rules are only ever created or replaced in place before
   /// anything is removed, so the subscription is never without a rule that delivers.
   /// </summary>
+  /// <remarks>
+  /// Performance: the broker evaluates a SQL filter rule more slowly than the default match-all (<c>TrueFilter</c>)
+  /// rule. Only a subscription with a non-empty list carries one, and its small broker-side throughput cost is
+  /// outweighed by the delivery work saved for every excluded event; a subscription that excludes nothing keeps
+  /// <c>$Default</c> untouched.
+  /// </remarks>
   /// <param name="adminClient">The management-plane client.</param>
   /// <param name="topicName">The topic.</param>
   /// <param name="subscriptionName">The subscription.</param>

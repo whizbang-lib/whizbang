@@ -25,6 +25,10 @@ internal static partial class ExcludedEventTypePlanner {
   /// <param name="logger">Receives the warnings and the effective exclusions.</param>
   /// <returns>Topic to ordered, distinct excluded subjects.</returns>
   /// <exception cref="InvalidOperationException">Thrown when an excluded type is one this service consumes.</exception>
+  /// <remarks>
+  /// An excluded type on a namespace this service absorbs is allowed, with a warning: excluding one type of an absorbed
+  /// namespace is a deliberate refinement, and that type is then neither delivered nor stored.
+  /// </remarks>
   internal static IReadOnlyDictionary<string, IReadOnlyList<string>> Plan(
       RoutingOptions options,
       IReadOnlySet<string> eventTopics,
@@ -81,8 +85,9 @@ internal static partial class ExcludedEventTypePlanner {
         continue;
       }
       if (topic is not null && options.AbsorbedNamespaces.Contains(topic)) {
-        violations.Add($"'{typeName}' (its namespace '{topic}' is absorbed)");
-        continue;
+        // Allowed (owner decision on #2175): excluding one type of an absorbed namespace is a deliberate refinement of
+        // the absorb, but that type is then never stored, so say so.
+        LogAbsorbedNamespaceExclusion(logger, topic, typeName);
       }
 
       if (declaredSubjects?.Contains(subject) == false) {
@@ -100,9 +105,8 @@ internal static partial class ExcludedEventTypePlanner {
       throw new InvalidOperationException(
         "Routing excludes event types this service cannot do without: " + string.Join(", ", violations)
         + ". An excluded type is dropped by the broker and never reaches this service, so a type it consumes (through "
-        + "a receptor, a perspective, a tag consumer or a runtime subscription) would silently stop arriving, and a "
-        + "type on an absorbed namespace would never be stored. Remove it from ExcludeEventType / "
-        + "Whizbang:Routing:ExcludedEventTypes, or stop consuming or absorbing it.");
+        + "a receptor, a perspective, a tag consumer or a runtime subscription) would silently stop arriving. Remove "
+        + "it from ExcludeEventType / Whizbang:Routing:ExcludedEventTypes, or stop consuming it.");
     }
 
     foreach (var (topic, subjects) in plan.Where(entry => entry.Value.Count > 0)) {
@@ -121,4 +125,8 @@ internal static partial class ExcludedEventTypePlanner {
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
     Message = "Event subscription to topic '{Topic}' excludes {Count} event type(s) at the broker: {Subjects}")]
   private static partial void LogEffectiveExclusions(ILogger logger, string topic, int count, IEnumerable<string> subjects);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+    Message = "absorbed namespace {Namespace}: event type {EventType} is excluded at the broker and will not be delivered")]
+  private static partial void LogAbsorbedNamespaceExclusion(ILogger logger, string @namespace, string eventType);
 }
