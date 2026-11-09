@@ -163,10 +163,16 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   public async Task LedgerBlocks_FollowTheKeysDepth_AndMoveWithVacuumAsync(CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(cancellationToken);
+    // The shared container runs with synchronous_commit=off, and PostgreSQL does not set a tuple's committed hint bit
+    // until its transaction's commit record is flushed. VACUUM marks a page all-visible only when every live tuple on
+    // it carries that bit, so a vacuum within one WAL-writer cycle of the seeding left the measured pages unmarked, and
+    // the vacuumed-before measurement equaled the clean one (#2158). This session's commits wait for their flush.
+    await _executeAsync(conn, "SET synchronous_commit = on");
     var recorder = new WorkCostRecorder(ConnectionString);
     await _executeAsync(conn, _chainAsMigrationDefinedIt("260_"));
     await _disableAutovacuumAsync(conn);
     await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pageinspect");
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
     var oneLevel = await _seedWarmStreamsAsync(conn);
     var shallow = await _measureAsync(conn, recorder, _batchOver(oneLevel));
     var untouched = await _seedWarmStreamsAsync(conn);
@@ -180,6 +186,9 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
 
     var clean = await _measureAsync(conn, recorder, _batchOver(untouched));
     await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+    await Assert.That(await _pagesNotAllVisibleAsync(conn, vacuumedBefore)).IsEqualTo(0)
+      .Because("precondition: the vacuum marked every page holding the measured rows all-visible; without that the next "
+             + "update reads no visibility-map block and the measurement below says nothing");
     var afterVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedBefore));
     var ledgerPages = await _scalarAsync(conn, "SELECT pg_relation_size('wh_stream_lifecycle') / current_setting('block_size')::bigint");
     var duringVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedDuring), duringTheWindow: async () => {
@@ -206,6 +215,23 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
       .Because("an update on an all-visible page also reads the visibility map, which pg_statio counts as the table's");
     await Assert.That(duringVacuum.LedgerBlocks).IsGreaterThanOrEqualTo(clean.LedgerBlocks + ledgerPages)
       .Because("a vacuum in the window reads every heap page of the ledger, and pg_statio charges those reads to the window");
+  }
+
+  /// <summary>
+  /// How many heap pages holding <paramref name="streams"/>' ledger rows the visibility map does not mark all-visible:
+  /// the vacuumed-before measurement's precondition, read with <c>pg_visibility</c> rather than assumed (#2158).
+  /// </summary>
+  private static async Task<long> _pagesNotAllVisibleAsync(NpgsqlConnection conn, Guid[] streams) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT count(*)
+      FROM (SELECT DISTINCT (ctid::text::point)[0]::bigint AS block
+            FROM wh_stream_lifecycle WHERE stream_id = ANY(@streams)) pages
+      CROSS JOIN LATERAL pg_visibility_map('wh_stream_lifecycle'::regclass, pages.block) map
+      WHERE NOT map.all_visible
+      """;
+    cmd.Parameters.AddWithValue(nameof(streams), NpgsqlDbType.Array | NpgsqlDbType.Uuid, streams);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
   private static Guid[] _batchOver(Guid[] streams) => [.. Enumerable.Range(0, EVENTS).Select(i => streams[i % streams.Length])];
