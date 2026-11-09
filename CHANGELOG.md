@@ -1432,7 +1432,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ListenKeepaliveInterval` (default 30 s) as its timeout, which Npgsql arms afresh on every read and cannot lose: a
   wait that times out runs the keepalive (`SELECT 1`, and the deferred alive-lock claim), and the next pass syncs any
   subscription whose wake was lost. A subscription still wakes the wait at once in the usual case; when that wake is
-  lost, it is listened on within one keepalive interval.
+  lost, it is listened on within one keepalive interval. `Whizbang:Database:ListenKeepaliveInterval` of zero or less
+  is now refused when the notification options are read, by name, since Npgsql would read it as no timeout.
 
 - **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
   longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
