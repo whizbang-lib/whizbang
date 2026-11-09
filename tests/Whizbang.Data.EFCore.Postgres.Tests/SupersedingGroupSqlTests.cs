@@ -55,6 +55,7 @@ public sealed record SupersedingGroupProbeRevised : IEvent {
 /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/352_SupersedingGroups.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/365_TheTypeKeyedSupersedingIndexIsDropped.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public class SupersedingGroupSqlTests : EFCoreTestBase {
@@ -316,6 +317,22 @@ public class SupersedingGroupSqlTests : EFCoreTestBase {
       .Because("matching on COALESCE(group, type) needs the expression index; the type-keyed index narrows by stream only");
     await Assert.That(text).Contains("Index Cond: ((stream_id = ").And.Contains("(COALESCE(supersede_group, (event_type)::text) = ")
       .Because("the group match is an index condition, not a filter over every keyed event of the stream");
+  }
+
+  /// <summary>
+  /// 295's index on the event type is gone once the group index serves every probe (#2166): nothing reads it, and every
+  /// keyed write into the store would still maintain it.
+  /// </summary>
+  [Test]
+  public async Task TheTypeKeyedIndex_IsDroppedAsync() {
+    await using var conn = await _openAsync();
+
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_event_store_superseding'"))
+      .IsEqualTo(0L)
+      .Because("every probe matches on COALESCE(group, type), which idx_event_store_superseding_group serves, ungrouped rows included");
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_event_store_superseding_group'"))
+      .IsEqualTo(1L)
+      .Because("positive control: the catalog read sees the index that replaced it");
   }
 
   // ===== Helpers =====
