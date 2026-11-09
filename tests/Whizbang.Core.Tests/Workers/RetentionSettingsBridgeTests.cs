@@ -37,7 +37,7 @@ public class RetentionSettingsBridgeTests {
     "instance_eviction_retention_hours", "orphan_perspective_grace_hours", "collective_ordering_head_retention_days",
     "log_retention_days", "schedule_run_retention_days", "stream_purge_audit_retention_days", "integrity_ledger_max_entries",
     "collective_apply_progress_retention_days",
-    "trace_retention_days", "route_idle_days",
+    "trace_retention_days", "route_idle_days", "completed_inbox_purge_batch_size",
     "ephemeral_rewind_grace_seconds", "ephemeral_deep_maintenance_enabled",
     "ephemeral_pointer_retention_days", "ephemeral_pointer_prune_interval_days",
     "partition_maintenance_enabled",
@@ -58,6 +58,7 @@ public class RetentionSettingsBridgeTests {
     CollectiveApplyProgressDays = 25,
     TraceDays = 26,
     RouteIdleDays = 27,
+    CompletedInboxPurgeBatchSize = 28,
   };
 
   private static EphemeralOptions _allEphemeralSet() => new() {
@@ -87,6 +88,7 @@ public class RetentionSettingsBridgeTests {
   [Arguments("collective_apply_progress_retention_days", "25", "Whizbang:Workers:Maintenance:Retention:CollectiveApplyProgressDays")]
   [Arguments("trace_retention_days", "26", "Whizbang:Workers:Maintenance:Retention:TraceDays")]
   [Arguments("route_idle_days", "27", "Whizbang:Workers:Maintenance:Retention:RouteIdleDays")]
+  [Arguments("completed_inbox_purge_batch_size", "28", "Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize")]
   [Arguments("ephemeral_rewind_grace_seconds", "18", "Whizbang:Ephemeral:RewindGraceSeconds")]
   [Arguments("ephemeral_pointer_retention_days", "19", "Whizbang:Ephemeral:PointerPrune:RetentionDays")]
   [Arguments("ephemeral_pointer_prune_interval_days", "20", "Whizbang:Ephemeral:PointerPrune:IntervalDays")]

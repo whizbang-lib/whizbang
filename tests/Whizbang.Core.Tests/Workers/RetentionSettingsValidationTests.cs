@@ -101,6 +101,32 @@ public class RetentionSettingsValidationTests {
   }
 
   [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync(int value) {
+    var options = new MaintenanceWorkerOptions {
+      Retention = new MaintenanceRetentionOptions { CompletedInboxPurgeBatchSize = value },
+    };
+
+    var result = new MaintenanceWorkerOptionsValidator().Validate(null, options);
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("a batch of zero would stop the completed-inbox purge for good; debug retention is the off switch");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize");
+    await Assert.That(result.FailureMessage).Contains("must be 1 or greater");
+    await Assert.That(result.FailureMessage).Contains("never purges");
+  }
+
+  [Test]
+  public async Task ACompletedInboxPurgeBatchOfOne_IsAcceptedAsync() {
+    var options = new MaintenanceWorkerOptions {
+      Retention = new MaintenanceRetentionOptions { CompletedInboxPurgeBatchSize = 1 },
+    };
+
+    await Assert.That(new MaintenanceWorkerOptionsValidator().Validate(null, options).Succeeded).IsTrue();
+  }
+
+  [Test]
   public async Task ZeroAndUnset_AreAcceptedAsync() {
     var options = new MaintenanceWorkerOptions {
       Retention = new MaintenanceRetentionOptions { DeduplicationDays = 0, AbandonedStreamHours = 0 },
