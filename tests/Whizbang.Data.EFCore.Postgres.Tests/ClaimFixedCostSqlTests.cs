@@ -237,9 +237,9 @@ public class ClaimFixedCostSqlTests : EFCoreTestBase {
   // ---------------------------------------------------------------------------------------------
 
   private static Task _registerAsync(NpgsqlConnection conn, Guid instance) =>
-    _execAsync(conn, $"""
+    _execAsync(conn, $$"""
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
-      VALUES ('{instance}', 'CostSvc', 'host', 1, NOW(), NOW(), '{"{}"}'::jsonb)
+      VALUES ('{{instance}}', 'CostSvc', 'host', 1, NOW(), NOW(), '{}'::jsonb)
       """);
 
   /// <summary>One pending inbox row leased to <paramref name="holder"/>; a stamped event reads as already through the store pass.</summary>
