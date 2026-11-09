@@ -209,6 +209,27 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
       .Because("Background mode does not hold reads for flagged cursors");
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task NoWorkCoordinatorRegistered_ScanHasNothingToWaitOn_BarrierOpens_AndConsumersStartAsync(CancellationToken cancellationToken) {
+    // A perspective host whose scope resolves no IWorkCoordinator has no cursor table to scan: the scan returns nothing
+    // to wait on, reads open at once, and the consumer loops still start.
+    var coordinator = new BarrierCoordinator { ScanResult = [_flagged(Guid.CreateVersion7(), PERSPECTIVE)] };
+    await using var fx = _build(coordinator, registerCoordinator: false);
+
+    await fx.Worker.StartAsync(CancellationToken.None);
+    await fx.Worker.StartupScanComplete.WaitAsync(cancellationToken);
+    // The consumer loop's idle wait is armed on the NOTIFY safety-net cadence: the loop is running.
+    await fx.Clock.WaitForArmedAsync(TimeSpan.FromMilliseconds(1_000_000), cancellationToken);
+
+    await Assert.That(coordinator.ScanQueryCount).IsEqualTo(0)
+      .Because("with no coordinator registered there is nothing to scan");
+    await Assert.That(fx.Worker.StartupScanComplete.IsCompletedSuccessfully).IsTrue()
+      .Because("a scan with nothing to wait on opens reads, it does not cancel them");
+    await Assert.That(fx.Clock.ArmedCount(POLL)).IsEqualTo(0)
+      .Because("no barrier re-read wait is ever armed when the scan returned nothing");
+  }
+
   // ============================================================
   // Failure and shutdown while waiting
   // ============================================================
@@ -303,7 +324,7 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
     }
   }
 
-  private static Fixture _build(BarrierCoordinator coordinator, RewindStartupMode mode = RewindStartupMode.Blocking) {
+  private static Fixture _build(BarrierCoordinator coordinator, RewindStartupMode mode = RewindStartupMode.Blocking, bool registerCoordinator = true) {
     var harness = new PerspectiveWorkerTestHarness();
     var clock = new ArmedTimerClock();
     var log = new ListLoggerProvider(SCAN_LOG_CATEGORY);
@@ -318,7 +339,9 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
+    if (registerCoordinator) {
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+    }
     services.AddSingleton<IPerspectiveRunnerRegistry>(new SingleRunnerRegistry(PERSPECTIVE, runner));
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddLogging(b => b.AddProvider(log));
@@ -366,11 +389,17 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
 
     public ArmedTimerClock() : base(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)) { }
 
+    private readonly ConcurrentDictionary<TimeSpan, int> _armedCounts = new();
+
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       var timer = base.CreateTimer(callback, state, dueTime, period);
+      _armedCounts.AddOrUpdate(dueTime, 1, static (_, n) => n + 1);
       _armed.Writer.TryWrite(dueTime);
       return timer;
     }
+
+    /// <summary>How many timers due in <paramref name="due"/> have been armed so far.</summary>
+    public int ArmedCount(TimeSpan due) => _armedCounts.GetValueOrDefault(due);
 
     /// <summary>Completes once a timer due in <paramref name="due"/> has been armed, skipping others.</summary>
     public async Task WaitForArmedAsync(TimeSpan due, CancellationToken cancellationToken) {

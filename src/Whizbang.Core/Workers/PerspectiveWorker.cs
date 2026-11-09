@@ -1153,6 +1153,7 @@ public partial class PerspectiveWorker(
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:BackgroundMode_OpensTheBarrierAfterTheScan_WithNoRereadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:NoWorkCoordinatorRegistered_ScanHasNothingToWaitOn_BarrierOpens_AndConsumersStartAsync</tests>
   private async Task<StartupRewindSet?> _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
       return null;
