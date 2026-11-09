@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// supported set the documentation lists is exactly the one compiled.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-filters</docs>
-[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "Captured on purpose: a const local is inlined as a literal and the parameterized path would go untested.")]
@@ -41,7 +40,7 @@ public class PhysicalJsonbContainmentRewriterTests {
       .Options;
 
   /// <summary>How many containment tests the rewrite put into the filter.</summary>
-  private static int _containments(Expression<Func<Row, bool>> filter, bool withModel = true) {
+  internal static int Containments(Expression<Func<Row, bool>> filter, bool withModel = true) {
     Model.Register();
     using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
     var query = context.Set<Row>().Where(filter).Expression;
@@ -62,22 +61,22 @@ public class PhysicalJsonbContainmentRewriterTests {
     var tag = "red";
     var key = "k";
 
-    await Assert.That(_containments(r => r.Data.GridFilter["region"].Contains(region))).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.GridFilter[key].Any(v => v == region))).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.GridFilter[key].Any(v => region == v))).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.Counts["open"] == 3)).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.Tags.Contains(tag))).IsEqualTo(1);
-    await Assert.That(_containments(r => Enumerable.Contains(r.Data.Tags, tag))).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.Labels.Any(l => l.Key == key && l.Label == tag))).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.Location!.Address.City == tag)).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.Bare!.A == tag)).IsEqualTo(1)
+    await Assert.That(Containments(r => r.Data.GridFilter["region"].Contains(region))).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.GridFilter[key].Any(v => v == region))).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.GridFilter[key].Any(v => region == v))).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.Counts["open"] == 3)).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.Tags.Contains(tag))).IsEqualTo(1);
+    await Assert.That(Containments(r => Enumerable.Contains(r.Data.Tags, tag))).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.Labels.Any(l => l.Key == key && l.Label == tag))).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.Location!.Address.City == tag)).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.Bare!.A == tag)).IsEqualTo(1)
       .Because("metadata without an attribute provider names a member by its own name.");
-    await Assert.That(_containments(r => r.Data.Bare!.B == tag)).IsEqualTo(0)
+    await Assert.That(Containments(r => r.Data.Bare!.B == tag)).IsEqualTo(0)
       .Because("a member that metadata does not list has no stored name.");
-    await Assert.That(_containments(r => r.Data.Location!.Note == tag)).IsEqualTo(1)
+    await Assert.That(Containments(r => r.Data.Location!.Note == tag)).IsEqualTo(1)
       .Because("a member ignored only when null is stored under its name whenever it has a value.");
-    await Assert.That(_containments(r => !r.Data.Tags.Contains(tag))).IsEqualTo(1);
-    await Assert.That(_containments(r => r.Data.Tags.Contains(null!))).IsEqualTo(1)
+    await Assert.That(Containments(r => !r.Data.Tags.Contains(tag))).IsEqualTo(1);
+    await Assert.That(Containments(r => r.Data.Tags.Contains(null!))).IsEqualTo(1)
       .Because("a null element is a stored null element, which is what the in-memory Contains matches.");
   }
 
@@ -95,7 +94,7 @@ public class PhysicalJsonbContainmentRewriterTests {
       element);
     var any = Expression.Call(typeof(Enumerable), nameof(Enumerable.Any), [element.Type], labels, some);
 
-    await Assert.That(_containments(Expression.Lambda<Func<Row, bool>>(any, row))).IsEqualTo(1);
+    await Assert.That(Containments(Expression.Lambda<Func<Row, bool>>(any, row))).IsEqualTo(1);
   }
 
   [Test]
@@ -186,7 +185,7 @@ public class PhysicalJsonbContainmentRewriterTests {
         r => EF.Property<List<string>>(r.Data, "Tags").Contains(tag), true, 0),
     };
 
-    var wrong = shapes.Where(s => _containments(s.Filter, s.WithModel) != s.Expected).Select(s => s.Name).ToList();
+    var wrong = shapes.Where(s => Containments(s.Filter, s.WithModel) != s.Expected).Select(s => s.Name).ToList();
 
     await Assert.That(wrong).IsEmpty();
   }
@@ -216,29 +215,6 @@ public class PhysicalJsonbContainmentRewriterTests {
     counter.Visit(new PhysicalJsonbContainmentRewriter(context.Model).Visit(query.Body));
 
     await Assert.That(counter.Count).IsEqualTo(0);
-  }
-
-  // ------------------------------------------------------------------
-  // Order independence
-  // ------------------------------------------------------------------
-
-  /// <summary>
-  /// The column mappings this class reads live in <see cref="PhysicalFieldRegistry"/>, which is process static, and
-  /// four other classes in this assembly clear it before each of their tests. When the shared model registered its
-  /// columns only once per process, any of those classes running in between left every later test here reading the
-  /// columns as document members: a whole-project run failed this class and its SQL twin while either passed alone.
-  /// </summary>
-  [Test]
-  public async Task AfterAnotherClassClearsTheFieldRegistry_TheFilterIsStillClaimedAsync() {
-    Model.Register();
-    // What ComplexTypeJsonMappingTests, FullLinqSupportTests, UnifiedQuerySyntaxTests and PhysicalFieldRegistryTests
-    // do before each of their tests, in the same process.
-    PhysicalFieldRegistry.Clear();
-    var tag = "red";
-
-    await Assert.That(_containments(r => r.Data.Tags.Contains(tag))).IsEqualTo(1)
-      .Because("registering the shared model has to put its columns back whenever another class cleared them, or "
-        + "the result of this class depends on which classes ran before it");
   }
 
   private static Model _local(Model model) => model;

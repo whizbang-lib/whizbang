@@ -269,10 +269,10 @@ public class PhysicalJsonbContainmentSqlTests {
     /// </summary>
     /// <remarks>
     /// The two halves differ on purpose. A serializer context is appended to a registry that has no removal, so it is
-    /// registered once per process. The column mappings live in <see cref="PhysicalFieldRegistry"/>, which other test
-    /// classes in this assembly clear before each of their tests, so they are put back every time: registering a
-    /// mapping overwrites it, and a once-per-process guard here made every later test read the columns as document
-    /// members after any of those classes had run.
+    /// registered once per process. The column mappings live in <see cref="PhysicalFieldRegistry"/>, which a test that
+    /// runs alone may clear (<c>PhysicalFieldRegistryTests</c>, <c>PhysicalJsonbContainmentRegistryResetTests</c>), so
+    /// they are put back every time: registering a mapping overwrites it, and a once-per-process guard here made every
+    /// later test read the columns as document members after one of those had run.
     /// </remarks>
     internal static void Register() {
       // Under the lock, so a test running in parallel waits until both contexts are in the registry rather than seeing

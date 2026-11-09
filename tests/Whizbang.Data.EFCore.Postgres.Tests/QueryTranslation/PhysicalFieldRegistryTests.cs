@@ -12,11 +12,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// Unit tests for <see cref="PhysicalFieldRegistry"/>.
 /// </summary>
 /// <remarks>
-/// Shares the "PostgreSQL" not-in-parallel group with the other classes that mutate the static
-/// <see cref="PhysicalFieldRegistry"/> (ComplexTypeJsonMappingTests, UnifiedQuerySyntaxTests,
-/// FullLinqSupportTests, SplitModeProductionTests). A distinct key let this class's Clear()/Register()
-/// calls run concurrently with theirs, racing on the shared registry — intermittently clobbering a model's
-/// physical-field/JSON mapping and failing an unrelated test's setup. One shared group eliminates the race.
+/// Clears the static <see cref="PhysicalFieldRegistry"/>, so it runs alone (no key): every database test reads the
+/// registry, and a clear that overlapped one removed that test's mappings mid-setup. The classes that only register
+/// their own test-local models (<c>ParallelismPolicyGuardTests.RegisterWithoutClearing</c>) run in parallel (#2167).
 /// </remarks>
 [NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
