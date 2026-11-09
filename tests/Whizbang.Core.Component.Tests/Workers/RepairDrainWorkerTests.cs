@@ -407,13 +407,13 @@ public class RepairDrainWorkerTests {
     // answers puts on this service's store; the count of buckets still awaiting an answer does.
     var origin = TrackedGuid.New().Value;
     var logger = new FakeLogger<RepairDrainWorker>();
-    var metrics = _metrics();
-    using var listening = metrics.Listener;
+    var (metrics, holdCount, listener) = _metrics();
+    using var listening = listener;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
       MaxOutstandingRepairAnswers = 500,
-    }, origin, learnTopic: true, logger: logger, metrics: metrics.Metrics);
+    }, origin, learnTopic: true, logger: logger, metrics: metrics);
     coordinator.AnswerPending = 500;
     coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
 
@@ -429,7 +429,7 @@ public class RepairDrainWorkerTests {
     await Assert.That(holds.Count).IsEqualTo(1).Because("the hold is logged when it starts, not on every tick it lasts");
     await Assert.That(holds[0].Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(holds[0].Message).Contains("500");
-    await Assert.That(metrics.Holds()).IsEqualTo(1L).Because("one hold, counted once");
+    await Assert.That(holdCount()).IsEqualTo(1L).Because("one hold, counted once");
   }
 
   [Test]
