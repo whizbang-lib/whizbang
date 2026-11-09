@@ -46,6 +46,7 @@ public class WhizbangInstanceExitTests {
   [Arguments(ExitCause.ClusterEviction, 3, LogLevel.Error, "check for heartbeat starvation")]
   [Arguments(ExitCause.StartupFailure, 4, LogLevel.Error, "check database connectivity from this host")]
   [Arguments(ExitCause.SchemaIncompatible, 5, LogLevel.Error, "the schema was migrated by a newer release")]
+  [Arguments((ExitCause)99, 2, LogLevel.Error, "check the log entries just before this one")]
   public async Task EachCause_SetsItsExitCode_WritesOneEntryAtItsLevel_HaltsAndStopsTheHostOnceAsync(
       ExitCause cause, int exitCode, LogLevel level, string whatToCheck) {
     var h = new Harness();
@@ -186,6 +187,41 @@ public class WhizbangInstanceExitTests {
     await Assert.That(message).Contains("startup stage unknown, lifecycle phase unknown, up for an unknown time (no host start was seen); it had no accepted heartbeat.");
     await Assert.That(message).Contains("It held no roles, 0 leased stream(s) and 0 unit(s) of work in hand");
     await Assert.That(h.ExitCodes.Codes).IsEquivalentTo([3]);
+  }
+
+  /// <summary>
+  /// A host that reports stages but has not entered one yet (the exit came before the first stage) says the stage is
+  /// unknown rather than leaving it out or failing.
+  /// </summary>
+  [Test]
+  public async Task BeforeTheFirstStage_TheEntrySaysTheStageIsUnknownAsync() {
+    var h = new Harness(stage: null);
+
+    await h.Exit.ExitAsync(new InstanceExitRequest(ExitCause.StartupFailure, "the database could not be reached"), CancellationToken.None);
+
+    var entry = h.Entries.Single();
+    await Assert.That(entry.Message).Contains("At the exit it was in startup stage unknown, lifecycle phase Migrating");
+    await Assert.That(h.Exit.Report!.Record.StartupStage).IsNull();
+    await Assert.That(h.ExitCodes.Codes).IsEquivalentTo([4]);
+  }
+
+  /// <summary>
+  /// The row is written through a coordinator from its own scope, and that scope is disposed after the write even when
+  /// its disposal completes later (a database-backed coordinator closes its connection asynchronously): the exit
+  /// records the row, disposes the scope once, and completes.
+  /// </summary>
+  [Test]
+  public async Task TheCoordinatorsScope_IsDisposedAfterTheWrite_WhenItsDisposalCompletesLaterAsync() {
+    var h = new Harness();
+    h.Coordinator.YieldOnDispose = true;
+
+    await h.Exit.ExitAsync(new InstanceExitRequest(ExitCause.Crash, "a worker failed"), CancellationToken.None);
+
+    await Assert.That(h.Coordinator.Written).Count().IsEqualTo(1);
+    await Assert.That(h.Coordinator.Disposals).IsEqualTo(1);
+    await Assert.That(h.Coordinator.DisposedAfterWrite).IsTrue();
+    await Assert.That(_field(h.Entries.Single(), "ExitRecorded")).IsEqualTo("True");
+    await Assert.That(h.Exit.Completion.IsCompletedSuccessfully).IsTrue();
   }
 
   [Test]
@@ -410,7 +446,7 @@ public class WhizbangInstanceExitTests {
   private sealed class Harness {
     public Harness(
         bool withCoordinator = true, bool withIdentity = true, bool withLifetime = true, bool bare = false,
-        bool realRunControl = false, IHostedService[]? hosted = null) {
+        bool realRunControl = false, IHostedService[]? hosted = null, StartupStage? stage = StartupStage.Migrate) {
       var services = new ServiceCollection();
       services.AddSingleton<ILoggerProvider>(new CapturingProvider(Collector, RawStates));
       services.AddLogging();
@@ -424,7 +460,7 @@ public class WhizbangInstanceExitTests {
         if (withCoordinator) {
           services.AddScoped<IWorkCoordinator>(_ => Coordinator);
         }
-        services.AddSingleton<IStartupStageReporter>(new StageAt(StartupStage.Migrate));
+        services.AddSingleton<IStartupStageReporter>(new StageAt(stage));
         services.AddSingleton<IWhizbangLifecycleState>(new PhaseAt(LifecyclePhase.Migrating));
         services.AddSingleton<ILibraryVersionProvider>(new LibraryVersionProvider("9.9.9"));
         services.AddSingleton<ILastAcceptedHeartbeat>(Heartbeat);
@@ -525,8 +561,22 @@ public class WhizbangInstanceExitTests {
     public Task ResumeAsync(RunHaltReason reason, CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
-  internal sealed class RecordingCoordinator : IWorkCoordinator {
+  internal sealed class RecordingCoordinator : IWorkCoordinator, IAsyncDisposable {
     public List<InstanceExitRecord> Written { get; } = [];
+
+    /// <summary>When set, disposal yields before it completes, so the scope's disposal finishes after it returns.</summary>
+    public bool YieldOnDispose { get; set; }
+    public int Disposals { get; private set; }
+    public bool DisposedAfterWrite { get; private set; }
+
+    public async ValueTask DisposeAsync() {
+      DisposedAfterWrite = Written.Count > 0;
+      if (YieldOnDispose) {
+        await Task.Yield();
+      }
+      Disposals++;
+    }
+
     public Exception? Failure { get; set; }
     public Func<InstanceExitRecordResult> Results { get; set; } = () => InstanceExitRecordResult.Written(null);
 
@@ -551,8 +601,9 @@ public class WhizbangInstanceExitTests {
       => Task.CompletedTask;
   }
 
-  internal sealed class StageAt(StartupStage stage) : IStartupStageReporter {
-    public StartupStageSnapshot? Current { get; } = new(stage, "applying migrations", false, _start);
+  /// <summary>A reporter at <paramref name="stage"/>, or one that has entered no stage yet when it is null.</summary>
+  internal sealed class StageAt(StartupStage? stage) : IStartupStageReporter {
+    public StartupStageSnapshot? Current { get; } = stage is { } at ? new(at, "applying migrations", false, _start) : null;
     public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
     public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
     public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
