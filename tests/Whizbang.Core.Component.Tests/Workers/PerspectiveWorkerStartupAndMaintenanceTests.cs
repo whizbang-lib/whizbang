@@ -33,7 +33,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <item><description>_reconcileOrphanedLifecyclesAsync — replay of orphaned PostLifecycle events,
 /// per-orphan error isolation, skip when no perspectives registered, outer catch</description></item>
 /// <item><description>_scanAndRepairRewindsOnStartupAsync — clean scan, Background mode,
-/// Blocking mode re-poll loop, disabled scan, error swallow</description></item>
+/// Blocking mode starts the consumer loops and holds only the read-model barrier, disabled scan, error swallow</description></item>
 /// <item><description>_periodicGatherStatisticsAsync — 60-cycle cadence + failure swallow</description></item>
 /// <item><description>_periodicStaleTrackingCleanup — 10-cycle cadence + cleaned&gt;0 branch</description></item>
 /// <item><description>NOTIFY listener subscribe on start / unsubscribe on StopAsync + signal coalescing</description></item>
@@ -565,25 +565,30 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync(CancellationToken cancellationToken) {
+  public async Task Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync(CancellationToken cancellationToken) {
+    // #2214: the Blocking scan used to re-query the whole cursor table before any consumer loop had started, so it ran
+    // its full wait for rewinds only a consumer loop performs. Now the loops start at once; the read-model barrier alone
+    // waits for the scan-time cursors (PerspectiveWorkerStartupRewindBarrierTests covers how it opens).
     var coordinator = new StartupCoordinator();
     coordinator.RewindResults.Enqueue([
       new RewindCursorInfo(Guid.CreateVersion7(), "Test.Perspectives.OrderPerspective", null, Guid.CreateVersion7())
     ]);
-    // Second (and later) queries return [] → the blocking loop exits after one re-poll.
     var fx = _build(coordinator, _registryWithOnePerspective(),
-      options: new PerspectiveWorkerOptions {
-        PollingIntervalMilliseconds = 20,  // blocking-scan re-poll cadence (production timer)
-        MaxConcurrentDrainConsumers = 1,
-      },
       rewindOptions: new PerspectiveRewindOptions { StartupRewindMode = RewindStartupMode.Blocking });
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
-    await coordinator.WaitForRewindQueriesAsync(2, cancellationToken);
+    await coordinator.WaitForRewindQueriesAsync(1, cancellationToken);
 
-    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(2)
-      .Because("Blocking mode must re-query until the RewindRequired set drains: one initial query returning work + one re-poll returning clean.");
+    var cycleDone = new SemaphoreSlim(0, int.MaxValue);
+    fx.Worker.OnBatchCycleComplete += () => cycleDone.Release();
+    await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
+    await cycleDone.WaitAsync(cancellationToken);
+
+    await Assert.That(fx.Worker.StartupScanComplete.IsCompleted).IsFalse()
+      .Because("the flagged cursor has not cleared, so lens reads stay held while work flows");
+    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
+      .Because("the whole cursor table is scanned once; the wait never re-scans it");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);

@@ -132,7 +132,26 @@ public partial class PerspectiveWorker(
   /// must not read perspectives a migration may have left mid-repair. Canceled when the worker
   /// stops before the scan ran.
   /// </summary>
+  /// <remarks>
+  /// In <see cref="RewindStartupMode.Blocking"/> mode with cursors flagged at scan time, this completes when every one
+  /// of those cursors has cleared, or at the cap of 100 polling intervals with a Warning naming what is still
+  /// rewinding. The consumer loops, which perform the rewinds, run meanwhile; only lens reads wait (#2214). A cursor
+  /// flagged after the scan does not extend the wait.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#startup-modes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_BarrierHeldUntilEveryScanTimeCursorClears_RereadingOnlyThoseStreamsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_FlagRaisedAfterTheScan_DoesNotExtendTheWaitAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_ConsumerLoopsRunWhileTheBarrierIsHeldAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_AtTheCap_OpensTheBarrierAndWarnsNamingWhatIsStillRewindingAsync</tests>
   public Task StartupScanComplete => _startupScanTcs.Task;
+
+  // The cursors the Blocking startup scan found flagged, while the barrier waits on them; null otherwise, so the rewind
+  // path pays one null check once the wait is over (#2214).
+  private volatile StartupRewindSet? _startupRewinds;
+
+  // How many polling intervals the barrier waits for the scan-time cursors before opening reads anyway: the bound the
+  // scan's own re-poll loop always had.
+  private const int MAX_STARTUP_REWIND_POLLS = 100;
 
   /// <summary>
   /// The host stopped before Accept commands, so this worker never started (#1636): <see cref="StartupScanComplete"/>
@@ -575,15 +594,19 @@ public partial class PerspectiveWorker(
     }
 
     var isPerspectiveHost = await _initializePerspectiveRegistryAsync();
+    StartupRewindSet? startupRewinds = null;
     if (isPerspectiveHost) {
       _processInitialCheckpoints();
       await _reconcileOrphanedLifecyclesAsync(stoppingToken);
-      await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
+      startupRewinds = await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
     }
     // The read-model barrier waits on exactly this: the scan is what makes the read models
     // trustworthy after a migration, and lens reads resume when it (and Migrate) complete. With no
-    // registry there are no read models to protect, so it completes at once.
-    _startupScanTcs.TrySetResult();
+    // registry there are no read models to protect, so it completes at once. With cursors flagged in
+    // Blocking mode it waits for them below, while the consumer loops (which clear them) run (#2214).
+    if (startupRewinds is null) {
+      _startupScanTcs.TrySetResult();
+    }
 
     // Turnkey park: the core worker pipeline hosts this worker unconditionally, so a host with NO
     // perspective registry runs no startup repair and, until it is handed work, costs nothing: no drain
@@ -605,6 +628,11 @@ public partial class PerspectiveWorker(
     // are optional in the constructor only so existing test fixtures compile unchanged; runtime
     // requires them. Wire them by calling AddWhizbang() (which auto-invokes AddWhizbangWorkers).
 
+    // Started before the consumer loops and never awaited ahead of them: the rewinds it waits for are theirs to do.
+    using var startupRewindCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+    var startupRewindWait = startupRewinds is null
+      ? Task.CompletedTask
+      : _awaitStartupRewindsAsync(startupRewinds, startupRewindCts.Token);
     try {
       // Slice 17: spawn N parallel consumer loops. Each independently reads batches from the
       // shared channels and processes them. ProcessChannelBatchAsync itself fans out per
@@ -639,6 +667,10 @@ public partial class PerspectiveWorker(
         await watchdog.ConfigureAwait(false);
       }
     } finally {
+      // The loops have ended, so nothing will clear the scan-time cursors any more: the wait settles the barrier as
+      // canceled, and is awaited so the worker leaves nothing running behind it.
+      await startupRewindCts.CancelAsync().ConfigureAwait(false);
+      await startupRewindWait.ConfigureAwait(false);
       // The consumer loops have ended, so every abandoned apply has registered its release by now.
       await _awaitAbandonedApplyReleasesAsync().ConfigureAwait(false);
       // Graceful shutdown: drain any in-flight PostLifecycle task so background work
@@ -1108,17 +1140,22 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Scans for streams needing rewind on startup and processes them.
-  /// In Blocking mode, keeps processing work batches until no RewindRequired cursors remain.
-  /// In Background mode, logs the summary and lets normal polling handle them.
+  /// Scans for streams needing rewind on startup. In Blocking mode, returns the cursors it found flagged, which the
+  /// read-model barrier then waits on while the consumer loops rewind them (<see cref="_awaitStartupRewindsAsync"/>).
+  /// In Background mode, or when nothing is flagged, logs the summary and returns null, so the barrier opens at once.
   /// </summary>
+  /// <remarks>
+  /// It never waits itself: the rewinds are performed by the consumer loops, which start after it returns. Waiting here
+  /// held every lens read for the scan's full re-poll bound on each start, with nothing rewound (#2214).
+  /// </remarks>
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
-  private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:BackgroundMode_OpensTheBarrierAfterTheScan_WithNoRereadAsync</tests>
+  private async Task<StartupRewindSet?> _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
-      return;
+      return null;
     }
 
     try {
@@ -1126,39 +1163,83 @@ public partial class PerspectiveWorker(
       await using var scope = _scopeFactory.CreateAsyncScope();
       var workCoordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
       if (workCoordinator is null) {
-        return;
+        return null;
       }
 
       var rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
       if (rewindCursors.Count == 0) {
         PerspectiveStartupScanLog.LogStartupRewindScanClean(_startupScanLog);
-        return;
+        return null;
       }
 
-      var streamCount = rewindCursors.Select(c => c.StreamId).Distinct().Count();
-      var perspectiveCount = rewindCursors.Count;
-      PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLog, streamCount, perspectiveCount);
-
-      if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
-        var scanStarted = _timeProvider.GetTimestamp();
-        // Channel architecture: ClaimWorker drives claims in the background; our main loop
-        // reads from the channel. Wait for ClaimWorker + the channel consumer to drain rewinds
-        // by re-querying. The legacy _processWorkBatchAsync pump was removed.
-        const int maxIterations = 100;
-        for (var i = 0; i < maxIterations; i++) {
-          await Task.Delay(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), _timeProvider, ct);
-          rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
-          if (rewindCursors.Count == 0) {
-            break;
-          }
-        }
-        var scanMs = (long)_timeProvider.GetElapsedTime(scanStarted).TotalMilliseconds;
-        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, scanMs);
-      }
-      // Background mode: normal channel-consumer loop will pick them up.
+      var rewinds = new StartupRewindSet(rewindCursors);
+      PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLog, rewinds.StreamCount, rewinds.ScanTimeCount);
+      // Background mode: the consumer loops pick them up and reads do not wait for them.
+      return _rewindOptions.StartupRewindMode == RewindStartupMode.Blocking ? rewinds : null;
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLog, ex);
+      return null;
     }
+  }
+
+  /// <summary>
+  /// Holds the read-model barrier until every cursor the Blocking scan found flagged has cleared, then opens it (#2214).
+  /// A cursor clears when this worker completes a rewind of it (<see cref="StartupRewindSet.MarkRewound"/>, the
+  /// signal, no poll needed) or when a re-read of the remaining streams, by key, finds it no longer flagged (another
+  /// instance rewound it). The re-read runs once per polling interval on the worker's clock, at most
+  /// <see cref="MAX_STARTUP_REWIND_POLLS"/> times; at that cap the barrier opens with a Warning naming what is still
+  /// rewinding. A failed re-read is logged and opens the barrier, as a failed scan does; a stop settles it canceled.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_BarrierHeldUntilEveryScanTimeCursorClears_RereadingOnlyThoseStreamsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_ThisWorkersRewindOfTheScanTimeCursor_OpensTheBarrierWithoutAPollAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_AtTheCap_OpensTheBarrierAndWarnsNamingWhatIsStillRewindingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_RereadThrows_LogsAndOpensTheBarrierAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_RereadOnDisposedServices_SettlesTheBarrierCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs:Blocking_StopWhileWaiting_SettlesTheBarrierCanceledAndStopsCleanlyAsync</tests>
+  private async Task _awaitStartupRewindsAsync(StartupRewindSet rewinds, CancellationToken ct) {
+    var started = _timeProvider.GetTimestamp();
+    var poll = TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds);
+    _startupRewinds = rewinds;
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      for (var polls = 0; polls < MAX_STARTUP_REWIND_POLLS && !await _clearedBeforeNextPollAsync(rewinds.AllCleared, poll, ct); polls++) {
+        rewinds.ClearUnflagged(await workCoordinator.GetPerspectiveCursorsBatchAsync(rewinds.RemainingStreamIds(), ct));
+      }
+      var waitedMs = (long)_timeProvider.GetElapsedTime(started).TotalMilliseconds;
+      if (rewinds.AllCleared.IsCompleted) {
+        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(
+          _startupScanLog, rewinds.ClearedCount, rewinds.ScanTimeCount, rewinds.StreamCount, waitedMs);
+      } else {
+        PerspectiveStartupScanLog.LogStartupRewindWaitCapped(
+          _startupScanLog, waitedMs, rewinds.RemainingCount, rewinds.ScanTimeCount, rewinds.DescribeRemaining(20));
+      }
+      _startupScanTcs.TrySetResult();
+    } catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) {
+      // The worker is stopping: the barrier observes that rather than hanging or opening on unrepaired cursors.
+      _startupScanTcs.TrySetCanceled(CancellationToken.None);
+    } catch (Exception ex) {
+      PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLog, ex);
+      _startupScanTcs.TrySetResult();
+    } finally {
+      _startupRewinds = null;
+    }
+  }
+
+  /// <summary>
+  /// Waits for the scan-time set to clear or for one polling interval on the worker's clock, whichever comes first.
+  /// </summary>
+  /// <returns>True when the set cleared; false when the interval elapsed and a re-read is due.</returns>
+  private async Task<bool> _clearedBeforeNextPollAsync(Task allCleared, TimeSpan poll, CancellationToken ct) {
+    using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    var delay = Task.Delay(poll, _timeProvider, delayCts.Token);
+    if (await Task.WhenAny(allCleared, delay).ConfigureAwait(false) == allCleared) {
+      await delayCts.CancelAsync().ConfigureAwait(false);
+      return true;
+    }
+    await delay.ConfigureAwait(false); // a stop surfaces here, as a cancellation
+    return false;
   }
 
   /// <summary>
@@ -4792,6 +4873,8 @@ public partial class PerspectiveWorker(
     // The runner logs the actual snapshot decision (restore from snapshot vs full replay).
     LogRewindCompleted(_logger, perspectiveName, streamId, result.EventsProcessed,
       (long)rewindDurationMs, hasSnapshot ? "snapshot store available" : "no snapshot store");
+    // The signal the read-model barrier waits on for a cursor the startup scan found flagged (#2214).
+    _startupRewinds?.MarkRewound(streamId, perspectiveName, result.Status);
 
     return result;
   }
@@ -6132,7 +6215,7 @@ public partial class PerspectiveWorker(
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,
@@ -6144,9 +6227,16 @@ internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 55,
     Level = LogLevel.Information,
-    Message = "Startup rewind scan completed: {StreamCount} streams, {PerspectiveCount} perspectives rewound in {DurationMs}ms"
+    Message = "Startup rewind scan completed: {ClearedCount} of {PerspectiveCount} flagged cursors on {StreamCount} streams cleared in {DurationMs}ms; lens reads resume"
   )]
-  internal static partial void LogStartupRewindScanCompleted(ILogger logger, int streamCount, int perspectiveCount, long durationMs);
+  internal static partial void LogStartupRewindScanCompleted(ILogger logger, int clearedCount, int perspectiveCount, int streamCount, long durationMs);
+
+  [LoggerMessage(
+    EventId = 62,
+    Level = LogLevel.Warning,
+    Message = "Startup rewind wait reached its cap after {DurationMs}ms: {RemainingCount} of {PerspectiveCount} flagged cursors are still rewinding, and lens reads resume now. Still rewinding: {StillRewinding}"
+  )]
+  internal static partial void LogStartupRewindWaitCapped(ILogger logger, long durationMs, int remainingCount, int perspectiveCount, string stillRewinding);
 
   [LoggerMessage(
     EventId = 57,
