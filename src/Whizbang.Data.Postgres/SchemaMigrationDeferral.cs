@@ -161,29 +161,41 @@ public static class SchemaMigrationDeferral {
         return betweenSteps ? SchemaDeferralOutcome.FreeBetweenSteps : SchemaDeferralOutcome.MigratingInstanceGone;
       }
 
-      if (!held && betweenSteps) {
-        // Free between two of the holder's steps: it is not gone, and this instance contends for the next step.
-        SchemaMigrationDeferralLog.FreeBetweenSteps(log, schema, polls);
-        return SchemaDeferralOutcome.FreeBetweenSteps;
-      }
-
       if (!held) {
-        // The lock is gone and the schema is still behind. Whoever held it is not coming back.
-        SchemaMigrationDeferralLog.MigratorGone(log, schema, polls);
-        return SchemaDeferralOutcome.MigratingInstanceGone;
+        return _lockFreed(log, schema, polls, betweenSteps);
       }
 
-      if (polls == 0 && betweenSteps) {
-        SchemaMigrationDeferralLog.WaitingOutAStep(log, schema);
-      } else if (polls == 0) {
-        // Once, not once per poll: a fleet waiting out a long migration would otherwise fill its
-        // logs with the fact that it is still waiting.
-        SchemaMigrationDeferralLog.DeferringToMigrator(log, schema);
+      if (polls == 0) {
+        _firstWait(log, schema, betweenSteps);
       }
 
       polls++;
       await Task.Delay(delay, timeProvider, cancellationToken).ConfigureAwait(false);
       delay = NextPollDelay(delay);
+    }
+  }
+
+  /// <summary>How a wait ends when the lock is free and the schema is still behind.</summary>
+  private static SchemaDeferralOutcome _lockFreed(ILogger log, string schema, int polls, bool betweenSteps) {
+    if (betweenSteps) {
+      // Free between two of the holder's steps: it is not gone, and this instance contends for the next step.
+      SchemaMigrationDeferralLog.FreeBetweenSteps(log, schema, polls);
+      return SchemaDeferralOutcome.FreeBetweenSteps;
+    }
+    // The lock is gone and the schema is still behind. Whoever held it is not coming back.
+    SchemaMigrationDeferralLog.MigratorGone(log, schema, polls);
+    return SchemaDeferralOutcome.MigratingInstanceGone;
+  }
+
+  /// <summary>
+  /// The line a wait writes before its first poll: once, not once per poll, since a fleet waiting out a long
+  /// migration would otherwise fill its logs with the fact that it is still waiting.
+  /// </summary>
+  private static void _firstWait(ILogger log, string schema, bool betweenSteps) {
+    if (betweenSteps) {
+      SchemaMigrationDeferralLog.WaitingOutAStep(log, schema);
+    } else {
+      SchemaMigrationDeferralLog.DeferringToMigrator(log, schema);
     }
   }
 
