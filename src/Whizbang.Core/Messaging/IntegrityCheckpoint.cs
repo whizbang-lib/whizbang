@@ -731,6 +731,29 @@ public sealed class StreamIntegrityOptions {
   public int MaxOutstandingRepairAnswers { get; set; } = 500;
 
   /// <summary>
+  /// How long, in days, the origin that reported a repair-ledger row for a type no service owns may be silent before the
+  /// integrity audit forgets the row (default 7, #2185).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A type no service owns (no claim in the ownership map, and outside this service's own owned domains) is compared
+  /// against the origin that reports it, so while that origin reports, its next comparison heals or refreshes the row.
+  /// Once it stops, nothing compares the row again and no owner exists to repair it, so the row would hold
+  /// <c>whizbang.stream_integrity.unhealed_buckets</c> up for good. The audit forgets it once the origin's last report
+  /// (the later of its last checkpoint and the row's last report) is older than this. A week outlasts a weekend outage or
+  /// a paused deployment; an origin that comes back after it simply has its divergence found again by the next audit.
+  /// </para>
+  /// <para>
+  /// Rows recorded under an origin that does not own the type are forgotten at once, whatever this says. Must be at least
+  /// 1; host start fails otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerBranchCoverageTests.cs:RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:UnownedTypeOriginSilence_DefaultsToSevenDaysAsync</tests>
+  public int UnownedTypeOriginSilenceDays { get; set; } = 7;
+
+  /// <summary>
   /// How often the maintainer's integrity delivery drain runs, in seconds (default 15). Integrity deliveries (received
   /// checkpoints, manifest requests and chunks, redelivery requests, bundle reconciles) are recorded where they arrive
   /// and handled by the instance holding the maintainer duty on this cadence, under the housekeeping idle gate (#2001).

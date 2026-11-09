@@ -47,9 +47,13 @@ public class IntegrityLedgerUnownedAgeOutSqlTests : EFCoreTestBase {
     _ = await _coordinator().IntegrityTryBeginReportBatchAsync(
       origin, [new IntegrityReportObservation(key, 10, 20, 0, 0, IsDeficit: true)], _now, TimeSpan.FromMinutes(5));
     await using var ctx = CreateDbContext();
-    await ctx.Database.ExecuteSqlRawAsync(
-      "UPDATE wh_integrity_ledger SET last_reported_at = {0}, first_seen_at = {1} WHERE stream_id = {2}",
-      (object?)lastReported ?? DBNull.Value, firstSeen, stream);
+    if (lastReported is { } reported) {
+      await ctx.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_integrity_ledger SET last_reported_at = {0}, first_seen_at = {1} WHERE stream_id = {2}", reported, firstSeen, stream);
+    } else {
+      await ctx.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_integrity_ledger SET last_reported_at = NULL, first_seen_at = {0} WHERE stream_id = {1}", firstSeen, stream);
+    }
     return stream;
   }
 

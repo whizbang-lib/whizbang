@@ -2431,16 +2431,23 @@ public interface IWorkCoordinator {
   /// before comparisons ignored a non-owner's digests (#2032), when a service still reported events it had only received
   /// as its own. Run by the integrity audit each cycle: every distinct (origin, type) pair the ledger holds is judged
   /// once by <paramref name="isNotAuthoritative"/> (the audit passes
-  /// <see cref="IntegrityDomainOwnership.IsNotAuthoritative"/>), and every row of a judged pair is forgotten. Defaults to
-  /// nothing forgotten for engines with no ledger.
+  /// <see cref="IntegrityDomainOwnership.IsNotAuthoritative"/>), and every row of a judged pair is forgotten. The judge
+  /// also receives the origin's last report (the later of its last checkpoint and the pair's last report on the ledger),
+  /// so the audit forgets the rows of a type no service owns once their origin has been silent past
+  /// <c>UnownedTypeOriginSilenceDays</c> (#2185): no owner can repair them and their origin no longer answers. Defaults
+  /// to nothing forgotten for engines with no ledger.
   /// </summary>
-  /// <param name="isNotAuthoritative">The judge: true when the origin's count of the type does not stand.</param>
+  /// <param name="isNotAuthoritative">The judge, given the origin, the type and the origin's last report: true when no
+  /// owner will ever answer the pair's rows.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The ledger rows forgotten.</returns>
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetNonOwnerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnownedAgeOutSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync</tests>
   Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
-    Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
+    Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
     Task.FromResult(0);
 
   /// <summary>

@@ -117,9 +117,28 @@ public sealed class IntegrityDomainOwnership {
     if (FindOwner(storedEventType) is { } owner) {
       return owner.OwnerServiceId != originServiceId;
     }
-    return localOwnedDomains.Count > 0
-      && OwnedNamespaceMatcher.IsOwned(TypeNameFormatter.GetNamespace(storedEventType), localOwnedDomains);
+    return _ownedLocally(storedEventType, localOwnedDomains);
   }
+
+  /// <summary>
+  /// True when no service owns <paramref name="storedEventType"/>: the map names no owner (no claim contains it, or the
+  /// most specific one is contested) and it is outside this service's own owned domains (#2185). No owner can confirm
+  /// or repair such a type, so a ledger row for it clears only through the origin that reported it, and the integrity
+  /// audit forgets it once that origin has been silent past <c>UnownedTypeOriginSilenceDays</c>.
+  /// </summary>
+  /// <param name="storedEventType">A stored type name.</param>
+  /// <param name="localOwnedDomains">This service's own owned domains.</param>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="localOwnedDomains"/> is null.</exception>
+  /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs:HasNoOwner_ATypeNoClaimAndNoOwnDomainContains_HasNoOwnerAsync</tests>
+  public bool HasNoOwner(string storedEventType, IReadOnlyCollection<string> localOwnedDomains) {
+    ArgumentNullException.ThrowIfNull(localOwnedDomains);
+    return FindOwner(storedEventType) is null && !_ownedLocally(storedEventType, localOwnedDomains);
+  }
+
+  private static bool _ownedLocally(string storedEventType, IReadOnlyCollection<string> localOwnedDomains) =>
+    localOwnedDomains.Count > 0
+    && OwnedNamespaceMatcher.IsOwned(TypeNameFormatter.GetNamespace(storedEventType), localOwnedDomains);
 
   /// <summary>
   /// A stable fingerprint of the map together with this service's own owned domains, independent of order and case.

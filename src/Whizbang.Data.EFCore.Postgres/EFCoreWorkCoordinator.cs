@@ -1175,12 +1175,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs
-  /// (<c>wh_integrity_ledger_origin_types</c>, migration 370), then the judged ones forgotten
+  /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs with their origin's last report
+  /// (<c>wh_integrity_ledger_origin_types</c>, migrations 370 and 372), then the judged ones forgotten
   /// (<c>wh_integrity_forget_origin_types</c>); the second is skipped when nothing is judged. Best-effort: a prune that
   /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
   public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
-      Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+      Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(isNotAuthoritative);
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
@@ -1192,12 +1192,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await using (var read = __scope.Connection.CreateCommand().WithCoordinatorTimeout()) {
 #pragma warning disable S2077 // Function name is a compile-time constant; there are no arguments.
         read.CommandText =
-          $"SELECT origin_service_id, event_type FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_origin_types")}()";
+          $"SELECT origin_service_id, event_type, origin_last_reported_at FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_origin_types")}()";
 #pragma warning restore S2077
         await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
           var (origin, type) = (reader.GetGuid(0), reader.GetString(1));
-          if (isNotAuthoritative(origin, type)) {
+          var lastReported = await reader.GetFieldValueAsync<DateTimeOffset>(2, cancellationToken).ConfigureAwait(false);
+          if (isNotAuthoritative(origin, type, lastReported)) {
             origins.Add(origin);
             types.Add(type);
           }
