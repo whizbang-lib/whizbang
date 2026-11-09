@@ -114,7 +114,7 @@ public static class SchemaBootstrapPhase {
 
     // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
     var log = logger ?? NullLogger.Instance;
-    var target = string.IsNullOrEmpty(request.Schema) ? "public" : request.Schema.Replace("\"", string.Empty);
+    var target = _targetSchema(request.Schema);
     var closure = BootstrapClosure.Of(request.Scripts);
     var attempt = new BootstrapAttempt(
       request.ConnectionFactory, request.LockId, closure, target, request.CommandTimeoutSeconds, services, log);
@@ -415,6 +415,10 @@ public static class SchemaBootstrapPhase {
   private const string SEARCH_PATH = "<search path>";
   private const string ELECTION_PROBE = "<election probe>";
 
+  /// <summary>The schema a bootstrap call targets, unquoted: <c>public</c> when none is named.</summary>
+  private static string _targetSchema(string? schema) =>
+    string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+
 
   /// <summary>The wait before the bootstrap's next attempt after its <paramref name="attempt"/>th transient failure.</summary>
   /// <param name="attempt">Which attempt failed, from 1.</param>
@@ -455,7 +459,7 @@ public static class SchemaBootstrapPhase {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
 
-    var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+    var target = _targetSchema(schema);
 
     // Counted, not tested one by one: (relname) is unique within a schema, and so is (proname, argument types).
     await using var command = new NpgsqlCommand(
@@ -517,7 +521,7 @@ public static class SchemaBootstrapPhase {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(instance);
 
-    var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+    var target = _targetSchema(schema);
 
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken);
@@ -569,7 +573,7 @@ public static class SchemaBootstrapPhase {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-    var target = _quoteIdentifier(string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty));
+    var target = _quoteIdentifier(_targetSchema(schema));
 
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken);
