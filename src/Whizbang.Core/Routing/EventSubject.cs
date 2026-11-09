@@ -19,7 +19,8 @@ public static class EventSubject {
   /// <exception cref="ArgumentException">Thrown when <paramref name="typeName"/> is null, empty or whitespace.</exception>
   /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubjectTests.cs:For_WireForm_IsTheLowercasedClrFormAsync</tests>
   public static string For(string typeName) {
-    throw new NotImplementedException();
+    ArgumentException.ThrowIfNullOrWhiteSpace(typeName);
+    return TypeNameFormatter.GetFullName(typeName).ToLowerInvariant();
   }
 
   /// <summary>The subject of an event type.</summary>
@@ -27,6 +28,7 @@ public static class EventSubject {
   /// <returns>The lowercased CLR form.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubjectTests.cs:For_Type_IsTheSubjectOfItsWireFormAsync</tests>
   public static string For(Type eventType) {
-    throw new NotImplementedException();
+    ArgumentNullException.ThrowIfNull(eventType);
+    return For(TypeNameFormatter.FormatClrTypeName(eventType));
   }
 }

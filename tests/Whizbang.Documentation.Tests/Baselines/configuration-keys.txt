@@ -220,6 +220,7 @@ Whizbang:Routing:ControlClass:NonDurableReceive
 Whizbang:Routing:ControlClass:SessionlessSubscriptions
 Whizbang:Routing:ControlClass:TimeToLive
 Whizbang:Routing:ControlClass:TimeToLiveFloor
+Whizbang:Routing:ExcludedEventTypes:*
 Whizbang:Routing:PoisonMessages
 Whizbang:Routing:PoisonMessages:AgeThreshold
 Whizbang:Routing:PoisonMessages:AgeThresholdFloor

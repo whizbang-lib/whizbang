@@ -202,12 +202,14 @@ public sealed class TransportSubscriptionBuilder {
     // The opt-out list (#2175), checked here so every path that builds event destinations refuses an excluded type
     // this service consumes. Each destination carries its subjects, empty when it excludes nothing, so a transport
     // converges a subscription back to delivering everything when a type leaves the list.
-    _ = (_messageCatalog, _logger);
+    var excluded = ExcludedEventTypePlanner.Plan(
+      _routingOptions, eventNamespaces, _receptorRegistry, _discovery.RuntimeEventTypes, _messageCatalog, _logger);
 
     foreach (var ns in eventNamespaces) {
       // Add SubscriberName for deterministic queue naming (critical for competing consumers)
       var metadata = new Dictionary<string, System.Text.Json.JsonElement> {
-        ["SubscriberName"] = JsonElementHelper.FromString(_serviceName)
+        ["SubscriberName"] = JsonElementHelper.FromString(_serviceName),
+        [EXCLUDED_EVENT_SUBJECTS_METADATA_KEY] = JsonElementHelper.FromStringArray(excluded[ns])
       };
 
       destinations.Add(new TransportDestination(

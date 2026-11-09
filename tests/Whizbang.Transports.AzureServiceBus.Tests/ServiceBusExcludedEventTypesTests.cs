@@ -320,15 +320,19 @@ internal sealed class StatefulRuleAdminClient(params RuleProperties[] rules) : I
     return Task.CompletedTask;
   }
 
-  public Task DeleteRuleAsync(string topicName, string subscriptionName, string ruleName,
+  // Completes asynchronously, as the broker call does, so the caller's resume path after the await runs too.
+  public async Task DeleteRuleAsync(string topicName, string subscriptionName, string ruleName,
       CancellationToken cancellationToken = default) {
+    await Task.Yield();
     Writes.Add($"delete {ruleName}");
     if (DeleteException is not null) {
-      return Task.FromException(DeleteException);
+      throw DeleteException;
     }
     Rules.RemoveAll(r => r.Name == ruleName);
     NeverWithoutARule &= Rules.Count > 0;
-    return DeleteNotFound ? Task.FromException(new RequestFailedException(404, "gone")) : Task.CompletedTask;
+    if (DeleteNotFound) {
+      throw new RequestFailedException(404, "gone");
+    }
   }
 
   public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) =>

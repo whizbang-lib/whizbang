@@ -263,8 +263,9 @@ public sealed class RoutingOptions {
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_NestedType_RecordsTheWireFormAsync</tests>
   public RoutingOptions ExcludeEventType(Type eventType) {
-    _ = (_excludedEventTypes, eventType);
-    throw new NotImplementedException();
+    ArgumentNullException.ThrowIfNull(eventType);
+    _excludedEventTypes.Add(TypeNameFormatter.Format(eventType));
+    return this;
   }
 
   /// <summary>
@@ -278,8 +279,11 @@ public sealed class RoutingOptions {
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventTypes_Names_StripVersionAndSkipBlankAsync</tests>
   public RoutingOptions ExcludeEventTypes(params string[] typeNames) {
-    _ = (_excludedEventTypes, typeNames);
-    throw new NotImplementedException();
+    ArgumentNullException.ThrowIfNull(typeNames);
+    _excludedEventTypes.UnionWith(typeNames
+      .Where(name => !string.IsNullOrWhiteSpace(name))
+      .Select(name => Messaging.EventTypeMatchingHelper.NormalizeTypeName(name.Trim())));
+    return this;
   }
 
   /// <summary>

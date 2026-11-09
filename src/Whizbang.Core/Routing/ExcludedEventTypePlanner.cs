@@ -12,7 +12,7 @@ namespace Whizbang.Core.Routing;
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/ExcludedEventTypePlannerTests.cs</tests>
-internal static class ExcludedEventTypePlanner {
+internal static partial class ExcludedEventTypePlanner {
   /// <summary>
   /// The excluded subjects per subscribed event topic. Every topic in <paramref name="eventTopics"/> is in the answer,
   /// with an empty list when nothing published to it is excluded.
@@ -32,6 +32,93 @@ internal static class ExcludedEventTypePlanner {
       IEnumerable<Type> runtimeEventTypes,
       IMessageTypeCatalog? messageCatalog,
       ILogger logger) {
-    throw new NotImplementedException();
+    ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(eventTopics);
+    ArgumentNullException.ThrowIfNull(consumers);
+    ArgumentNullException.ThrowIfNull(runtimeEventTypes);
+    ArgumentNullException.ThrowIfNull(logger);
+
+    var plan = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var topic in eventTopics) {
+      plan[topic] = new SortedSet<string>(StringComparer.Ordinal);
+    }
+
+    if (options.ExcludedEventTypes.Count > 0) {
+      _planExclusions(options, plan, consumers, runtimeEventTypes, messageCatalog, logger);
+    }
+
+    return plan.ToDictionary(
+      entry => entry.Key,
+      entry => (IReadOnlyList<string>)[.. entry.Value],
+      StringComparer.OrdinalIgnoreCase);
   }
+
+  /// <summary>Checks every excluded type and adds each one to the topic it is published to.</summary>
+  private static void _planExclusions(
+      RoutingOptions options,
+      Dictionary<string, SortedSet<string>> plan,
+      IConsumerRegistry consumers,
+      IEnumerable<Type> runtimeEventTypes,
+      IMessageTypeCatalog? messageCatalog,
+      ILogger logger) {
+    // The subjects this service consumes. A subject is what the broker filters on, so an excluded subject that matches
+    // a consumed one would drop a message this service handles: the comparison is the broker's own.
+    var consumedSubjects = new HashSet<string>(
+      consumers.GetConsumedMessages().Select(consumed => EventSubject.For(consumed.TypeName)), StringComparer.Ordinal);
+    consumedSubjects.UnionWith(runtimeEventTypes.Select(EventSubject.For));
+
+    HashSet<string>? declaredSubjects = messageCatalog is { IsAvailable: true }
+      ? new HashSet<string>(messageCatalog.GetAll().Select(entry => EventSubject.For(entry.ClrTypeName)), StringComparer.Ordinal)
+      : null;
+
+    var violations = new List<string>();
+    foreach (var typeName in options.ExcludedEventTypes.Order(StringComparer.Ordinal)) {
+      var subject = EventSubject.For(typeName);
+      var topic = TypeNameFormatter.GetNamespace(typeName)?.ToLowerInvariant();
+
+      if (consumedSubjects.Contains(subject) || consumers.HasAnyConsumer(typeName)) {
+        violations.Add($"'{typeName}' (this service consumes it)");
+        continue;
+      }
+      if (topic is not null && options.AbsorbedNamespaces.Contains(topic)) {
+        violations.Add($"'{typeName}' (its namespace '{topic}' is absorbed)");
+        continue;
+      }
+
+      if (declaredSubjects?.Contains(subject) == false) {
+        LogUndeclaredType(logger, typeName);
+      }
+
+      if (topic is null || !plan.TryGetValue(topic, out var subjects)) {
+        LogUnsubscribedTopic(logger, typeName, topic ?? "");
+        continue;
+      }
+      subjects.Add(subject);
+    }
+
+    if (violations.Count > 0) {
+      throw new InvalidOperationException(
+        "Routing excludes event types this service cannot do without: " + string.Join(", ", violations)
+        + ". An excluded type is dropped by the broker and never reaches this service, so a type it consumes (through "
+        + "a receptor, a perspective, a tag consumer or a runtime subscription) would silently stop arriving, and a "
+        + "type on an absorbed namespace would never be stored. Remove it from ExcludeEventType / "
+        + "Whizbang:Routing:ExcludedEventTypes, or stop consuming or absorbing it.");
+    }
+
+    foreach (var (topic, subjects) in plan.Where(entry => entry.Value.Count > 0)) {
+      LogEffectiveExclusions(logger, topic, subjects.Count, subjects);
+    }
+  }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "Excluded event type '{EventType}' is not a message type this application declares. It is still excluded, in case a peer publishes it, but check the name for a typo")]
+  private static partial void LogUndeclaredType(ILogger logger, string eventType);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+    Message = "Excluded event type '{EventType}' is published to topic '{Topic}', which this service does not subscribe to, so it is never delivered here and excluding it has no effect")]
+  private static partial void LogUnsubscribedTopic(ILogger logger, string eventType, string topic);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information,
+    Message = "Event subscription to topic '{Topic}' excludes {Count} event type(s) at the broker: {Subjects}")]
+  private static partial void LogEffectiveExclusions(ILogger logger, string topic, int count, IEnumerable<string> subjects);
 }
