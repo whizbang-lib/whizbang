@@ -92,15 +92,6 @@ public sealed class IntegrityDomainOwnership {
   }
 
   /// <summary>
-  /// True when a known owner other than <paramref name="originServiceId"/> owns <paramref name="storedEventType"/>:
-  /// that origin's counts and digests for the type are not authoritative, and repair is not asked of it.
-  /// </summary>
-  /// <param name="storedEventType">A stored type name.</param>
-  /// <param name="originServiceId">The origin that advertised the type.</param>
-  public bool IsOwnedByAnother(string storedEventType, Guid originServiceId) =>
-    FindOwner(storedEventType) is { } owner && owner.OwnerServiceId != originServiceId;
-
-  /// <summary>
   /// True when <paramref name="originServiceId"/>'s counts and digests for <paramref name="storedEventType"/> do not
   /// stand: a known owner other than that origin owns the type, or, when the map names no owner, the type is in one of
   /// this service's own owned domains (a service never announces its own domains to itself, so the map alone cannot
@@ -110,6 +101,8 @@ public sealed class IntegrityDomainOwnership {
   /// <remarks>
   /// An origin the map names as the type's owner stands even when this service also owns the domain: two services
   /// claiming one domain is a contest the checkpoint reports (<see cref="IntegrityOwnershipConflicts"/>), not a verdict.
+  /// This is the integrity engine's one ownership judgment (#2186): the checkpoint gap tracker, the manifest comparison
+  /// and the ledger sweep all call it, and a source guard fails any comparison path that judges another way.
   /// </remarks>
   /// <param name="storedEventType">A stored type name.</param>
   /// <param name="originServiceId">The origin that reported the type.</param>
@@ -117,6 +110,8 @@ public sealed class IntegrityDomainOwnership {
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="localOwnedDomains"/> is null.</exception>
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs:IsNotAuthoritative_ATypeThisServiceOwns_IsNoOtherOriginsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntegrityOwnershipRuleSourceGuardTests.cs:ComparisonPaths_JudgeOwnershipOnlyThroughTheSharedRuleAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs:Checkpoint_ABucketOfATypeThisServiceOwns_IsNotVerifiedAgainstAnotherOriginAsync</tests>
   public bool IsNotAuthoritative(string storedEventType, Guid originServiceId, IReadOnlyCollection<string> localOwnedDomains) {
     ArgumentNullException.ThrowIfNull(localOwnedDomains);
     if (FindOwner(storedEventType) is { } owner) {

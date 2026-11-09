@@ -81,15 +81,12 @@ public class IntegrityDomainOwnershipTests {
   }
 
   [Test]
-  public async Task IsOwnedByAnother_AnswersAgainstTheOriginThatAdvertisedTheTypeAsync() {
+  public async Task IsNotAuthoritative_ATypeNobodyClaims_TakesTheOriginAtItsWordAsync() {
     var ownership = new IntegrityDomainOwnership([_claim("app.contracts.orders", _orders, "orders-svc")]);
-    const string placed = "App.Contracts.Orders.OrderPlaced, App.Contracts";
 
-    await Assert.That(ownership.IsOwnedByAnother(placed, _billing)).IsTrue()
-      .Because("billing advertising an orders event is not authoritative for it; orders is");
-    await Assert.That(ownership.IsOwnedByAnother(placed, _orders)).IsFalse();
-    await Assert.That(ownership.IsOwnedByAnother("App.Contracts.Billing.Raised, App.Contracts", _billing)).IsFalse()
-      .Because("with no known owner, the advertising origin is taken at its word, as before");
+    await Assert.That(ownership.IsNotAuthoritative("App.Contracts.Billing.Raised, App.Contracts", _billing, ["App.Contracts.Self"]))
+      .IsFalse()
+      .Because("with no known owner and the type outside this service's own domains, the advertising origin stands, as before");
   }
 
   [Test]

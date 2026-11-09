@@ -70,7 +70,9 @@ public partial class IntegrityOwnershipRuleSourceGuardTests {
   [GeneratedRegex(@"new\s+(?:[\w.]+\.)?IntegrityDomainOwnership\s*\(")]
   private static partial Regex _mapBuilt();
 
-  [GeneratedRegex(@"OwnedNamespaceMatcher\.")]
+  // Matching a type against owned domains by hand. IsLocalEventType stays allowed: it is the answering side's "is this
+  // type mine to report", not a judgment of another origin's count.
+  [GeneratedRegex(@"OwnedNamespaceMatcher\.(?:IsOwned|FindOwner)\(")]
   private static partial Regex _domainMatcher();
 
   /// <summary>Every comparison path calls the shared rule, and judges ownership no other way.</summary>
