@@ -200,6 +200,50 @@ public class SeedMutationsTests {
   }
 
   /// <summary>
+  /// Tests that SeedProducts uses caller-supplied product ids, in order, so a caller (an
+  /// integration test) knows the seeded streams before the commands are dispatched.
+  /// </summary>
+  [Test]
+  public async Task SeedProducts_WithSuppliedProductIds_UsesThemInOrderAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var productLens = new TestProductCatalogLens([]);
+    var logger = NullLogger<SeedMutations>.Instance;
+    var productIds = Enumerable.Range(0, SeedMutations.SeedProductCount).Select(_ => Guid.CreateVersion7()).ToList();
+
+    var sut = new SeedMutations(dispatcher, productLens, logger);
+
+    // Act
+    var result = await sut.SeedProductsAsync(productIds);
+
+    // Assert
+    await Assert.That(result).IsEqualTo(SeedMutations.SeedProductCount);
+    var sentIds = dispatcher.SentCommands.Cast<CreateProductCommand>().Select(c => c.ProductId.Value).ToList();
+    await Assert.That(sentIds).IsEquivalentTo(productIds);
+    await Assert.That(sentIds.SequenceEqual(productIds)).IsTrue();
+  }
+
+  /// <summary>
+  /// Tests that SeedProducts rejects a product id list whose length is not the seed count,
+  /// before dispatching anything.
+  /// </summary>
+  [Test]
+  public async Task SeedProducts_WithWrongProductIdCount_ThrowsBeforeDispatchingAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var productLens = new TestProductCatalogLens([]);
+    var logger = NullLogger<SeedMutations>.Instance;
+    var productIds = new[] { Guid.CreateVersion7() };
+
+    var sut = new SeedMutations(dispatcher, productLens, logger);
+
+    // Act & Assert
+    await Assert.That(async () => await sut.SeedProductsAsync(productIds))
+      .Throws<ArgumentException>();
+    await Assert.That(dispatcher.SendCount).IsEqualTo(0);
+  }
+
+  /// <summary>
   /// Tests that SeedProducts propagates exceptions from dispatcher.
   /// </summary>
   [Test]

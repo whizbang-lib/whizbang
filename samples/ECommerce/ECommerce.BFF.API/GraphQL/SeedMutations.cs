@@ -22,12 +22,34 @@ public class SeedMutations(
   private readonly ILogger<SeedMutations> _logger = logger;
 
   /// <summary>
+  /// The number of products <see cref="SeedProductsAsync(CancellationToken)"/> seeds.
+  /// </summary>
+  public const int SeedProductCount = 12;
+
+  /// <summary>
   /// Seeds 12 products matching the frontend mock data.
   /// Idempotent - skips seeding if products already exist.
   /// Dispatches CreateProductCommand to InventoryWorker via Service Bus.
   /// </summary>
   /// <returns>Number of products seeded</returns>
-  public async Task<int> SeedProductsAsync(CancellationToken cancellationToken = default) {
+  public Task<int> SeedProductsAsync(CancellationToken cancellationToken = default) =>
+    SeedProductsAsync([.. Enumerable.Range(0, SeedProductCount).Select(_ => Guid.CreateVersion7())], cancellationToken);
+
+  /// <summary>
+  /// Seeds the 12 products using caller-supplied product ids, in order, so the caller knows the
+  /// seeded streams before the commands are dispatched (for example, to wait on exactly those
+  /// streams' perspective processing).
+  /// Idempotent - skips seeding if products already exist.
+  /// </summary>
+  /// <param name="productIds">Exactly <see cref="SeedProductCount"/> product ids.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of products seeded</returns>
+  public async Task<int> SeedProductsAsync(IReadOnlyList<Guid> productIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(productIds);
+    if (productIds.Count != SeedProductCount) {
+      throw new ArgumentException($"Expected exactly {SeedProductCount} product ids, got {productIds.Count}.", nameof(productIds));
+    }
+
     _logger.LogInformation("SeedProducts mutation called - checking if seeding is needed...");
 
     // Check if any products already exist (idempotency check)
@@ -41,19 +63,19 @@ public class SeedMutations(
       return 0;
     }
 
-    // Generate UUIDv7 IDs for the 12 products
-    var prod1 = Guid.CreateVersion7();
-    var prod2 = Guid.CreateVersion7();
-    var prod3 = Guid.CreateVersion7();
-    var prod4 = Guid.CreateVersion7();
-    var prod5 = Guid.CreateVersion7();
-    var prod6 = Guid.CreateVersion7();
-    var prod7 = Guid.CreateVersion7();
-    var prod8 = Guid.CreateVersion7();
-    var prod9 = Guid.CreateVersion7();
-    var prod10 = Guid.CreateVersion7();
-    var prod11 = Guid.CreateVersion7();
-    var prod12 = Guid.CreateVersion7();
+    // The 12 product ids, in seed order
+    var prod1 = productIds[0];
+    var prod2 = productIds[1];
+    var prod3 = productIds[2];
+    var prod4 = productIds[3];
+    var prod5 = productIds[4];
+    var prod6 = productIds[5];
+    var prod7 = productIds[6];
+    var prod8 = productIds[7];
+    var prod9 = productIds[8];
+    var prod10 = productIds[9];
+    var prod11 = productIds[10];
+    var prod12 = productIds[11];
 
     _logger.LogInformation("Seeding 12 products via CreateProductCommand...");
 
