@@ -101,7 +101,7 @@ public class DapperSchemaRollbackTests {
     var services = new ServiceCollection();
     services.AddSingleton(new StartupAssessmentSource(
       new FixedAssessor(new StartupAssessment(StartupVerdict.Migrate, "owed") { Rollback = new RollbackPlan([change], false) }),
-      new NullStartupStageReporter(), new FakeTimeProvider(), NullLogger<StartupAssessmentSource>.Instance));
+      NullStartupStageReporter.Instance, new FakeTimeProvider(), NullLogger<StartupAssessmentSource>.Instance));
     var runner = new DapperSchemaInitializationRunner(
       _database.ConnectionString, new PostgresOptions(),
       () => new PostgresSchemaInitializer(_database.ConnectionString, _entries, applicationVersion: "1.9.0"),
