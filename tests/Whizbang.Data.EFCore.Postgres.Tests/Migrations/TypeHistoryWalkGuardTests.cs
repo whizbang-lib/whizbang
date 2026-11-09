@@ -16,8 +16,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// read, and none may compare event ids as a range, which is what walking the primary key looks like.
 /// </summary>
 /// <remarks>
-/// A type-scoped history function is one named <c>*_history_*</c> or one that reads the walker's cursor table
-/// (<c>wh_type_history_walks</c>), so a new operation on the walker is covered without being listed here.
+/// A type-scoped history function is one named <c>*_history_*</c> or one that uses the walker (its cursor table
+/// <c>wh_type_history_walks</c> or its <c>_wh_type_history_*</c> helpers), so a new operation is covered without being
+/// listed here. A function named <c>*_history_*</c> that walks the whole store by design is exempt only by name, with its
+/// reason, in <see cref="_storeWide"/>.
 /// </remarks>
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/374_HistoryWalksReadTheirOwnType.sql</code-under-test>
@@ -28,8 +30,17 @@ public partial class TypeHistoryWalkGuardTests {
   [GeneratedRegex(@"\bevent_id\s*(>|<)=?\s*", RegexOptions.IgnoreCase)]
   private static partial Regex EventIdRange();
 
-  [GeneratedRegex(@"_history_|wh_type_history_walks", RegexOptions.IgnoreCase)]
-  private static partial Regex TypeScopedHistory();
+  [GeneratedRegex(@"_history_", RegexOptions.IgnoreCase)]
+  private static partial Regex HistoryName();
+
+  [GeneratedRegex(@"wh_type_history_walks|_wh_type_history_", RegexOptions.IgnoreCase)]
+  private static partial Regex UsesTheWalker();
+
+  /// <summary>Functions named like a history walk that are about every event of the store, not one type's.</summary>
+  private static readonly Dictionary<string, string> _storeWide = new(StringComparer.Ordinal) {
+    ["wh_convert_event_metadata_history"] =
+      "converts the stored metadata of every event, of every type, to the slim form (#1727): a walk of the store by design",
+  };
 
   [Test]
   public async Task NoTypeScopedHistoryFunction_WalksTheStoreByEventIdAsync() {
@@ -73,12 +84,18 @@ public partial class TypeHistoryWalkGuardTests {
           PERFORM 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id > p_after;
         END;
         $$ LANGUAGE plpgsql;
+        CREATE OR REPLACE FUNCTION __SCHEMA__.wh_convert_event_metadata_history(p_after UUID) RETURNS void AS $$
+        BEGIN
+          PERFORM 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id > p_after;
+        END;
+        $$ LANGUAGE plpgsql;
         """),
     ]);
 
     await Assert.That(flagged.Keys.Order(StringComparer.Ordinal).ToList())
       .IsEquivalentTo(["wh_probe_history_by_type", "wh_probe_history_window", "wh_probe_reads_the_cursor"])
-      .Because("a function named *_history_* or reading the walker's cursor is type-scoped; an unrelated one is not");
+      .Because("a function named *_history_* or using the walker is type-scoped; an unrelated one, or a store-wide one "
+        + "exempt by name with its reason, is not");
     await Assert.That(EventIdRange().IsMatch(flagged["wh_probe_history_window"])).IsTrue();
     await Assert.That(EventIdRange().IsMatch(flagged["wh_probe_reads_the_cursor"])).IsTrue();
     await Assert.That(EventIdRange().IsMatch(flagged["wh_probe_history_by_type"])).IsFalse()
@@ -87,7 +104,7 @@ public partial class TypeHistoryWalkGuardTests {
 
   private static Dictionary<string, string> _historyFunctions(IEnumerable<(string Name, string Sql)> migrations) =>
     MigrationFunctionBodies.LastWord(migrations)
-      .Where(f => TypeScopedHistory().IsMatch(f.Key) || TypeScopedHistory().IsMatch(f.Value.NormalizedBody))
+      .Where(f => (HistoryName().IsMatch(f.Key) && !_storeWide.ContainsKey(f.Key)) || UsesTheWalker().IsMatch(f.Value.NormalizedBody))
       .ToDictionary(f => f.Key, f => f.Value.NormalizedBody, StringComparer.Ordinal);
 
   private static IEnumerable<(string Name, string Sql)> _migrations(string directory) =>
