@@ -174,6 +174,12 @@ An advisory is not finished when it reads well:
   section at the top of that version's GitHub release, one linked id per line and nothing else. The notes
   are public, so a summary there discloses the issue before the advisory is published. Immutable releases
   lock the tag and assets, not the notes: `gh release edit <tag> --notes-file <file>` works on them.
+- Name it in `CHANGELOG.md` too, under that version's section, in a `### Security` category entry (one
+  linked id per line). The fix's own changelog fragment (`changelog.d/<issue>.md`) is public as soon as it
+  is pushed, so it says no more than the commit message may: the visible behavior change, not the
+  vulnerability. Once the advisory is published, add the id by a pull request: into the release branch
+  while the release is open, otherwise into `develop`, editing the released section (allowed; only
+  additions under `[Unreleased]` are refused).
 
 ## 6. The docs site renders the published advisories; nobody maintains a list by hand
 
@@ -206,4 +212,4 @@ up, going stale silently while contradicting the machine-readable record.
 - [ ] No proof of concept or exploit steps.
 - [ ] Finder and reporter in the credits field, as they asked.
 - [ ] The patched version is published on NuGet.
-- [ ] The release notes for that version name the `GHSA-…` id.
+- [ ] The release notes for that version, and its `CHANGELOG.md` section, name the `GHSA-…` id.

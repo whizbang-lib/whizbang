@@ -6,14 +6,20 @@
 
 <#
 .SYNOPSIS
-    Decides the "Gate - Pull request type" check: the title is a Conventional Commit, and a breaking
-    change records an upgrade note.
+    Decides the "Gate - Pull request type" check: the title is a Conventional Commit, a breaking change
+    records an upgrade note, and a changelog entry is written where the release cut gathers it.
 
 .DESCRIPTION
     The title becomes the squash commit, so it carries the change's type (CONTRIBUTING.md, "Commit
     Messages"): type(scope)?!?: description, the type one of feat, fix, docs, perf, refactor, test, ci,
-    build, chore or revert. A `!` marks a breaking change, which must add a CHANGELOG.md entry with an
+    build, chore or revert. A `!` marks a breaking change, which must add a changelog entry with an
     **Upgrade:** note telling a consumer what to do.
+
+    Changelog entries (#2168): a pull request into develop writes its entry as a fragment,
+    changelog.d/<issue>.md, which Start Release gathers into the version's section; one that adds lines under
+    [Unreleased] in CHANGELOG.md is refused, so two pull requests never conflict over that file. The sync back
+    from main (sync/*) is exempt. A pull request into a release branch edits CHANGELOG.md's section for that
+    version instead, and a fragment there is refused: the cut that gathers fragments has already run.
 
     Exempt, and reported as exempt: pull requests opened by a bot, and the release pull request into main.
 
@@ -57,6 +63,39 @@ function Get-PatchAddedLines {
   }
 }
 
+function Test-ChangelogFragmentPath {
+  <# .SYNOPSIS Whether a repository path is a changelog fragment (changelog.d/*.md other than the README). #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+  return ($Path -match '^changelog\.d/[^/]+\.md$') -and ($Path -ne 'changelog.d/README.md')
+}
+
+function Get-UnreleasedAddedLines {
+  <#
+  .SYNOPSIS
+      The non-blank lines a CHANGELOG.md patch adds under ## [Unreleased], given the file as the pull request
+      leaves it (each hunk header gives the new line numbers; the head file says where [Unreleased] ends).
+  #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Patch, [Parameter(Mandatory)][AllowEmptyString()][string]$Content)
+  $lines = @($Content -split "\r?\n")
+  $start = -1
+  for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^## \[Unreleased\]') { $start = $i + 1; break } }
+  if ($start -lt 0) { return }
+  $end = $lines.Count + 1
+  for ($i = $start; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^## ') { $end = $i + 1; break } }
+  # 1-based: [Unreleased] holds the lines after its heading ($start) and before the next one ($end).
+  $number = 0
+  foreach ($line in $Patch -split "\n") {
+    $hunk = [regex]::Match($line, '^@@ -\d+(?:,\d+)? \+(?<new>\d+)')
+    if ($hunk.Success) { $number = [int]$hunk.Groups['new'].Value; continue }
+    if ($line.StartsWith('-') -or $line.StartsWith('\')) { continue }
+    if ($line.StartsWith('+')) {
+      $text = $line.Substring(1)
+      if ($number -gt $start -and $number -lt $end -and $text.Trim()) { $text }
+    }
+    $number++
+  }
+}
+
 function Get-PullRequestTypeVerdict {
   <# .SYNOPSIS The decision, with no I/O: Pass, Exempt, Type, Breaking, Reason and the problems found. #>
   param(
@@ -64,7 +103,12 @@ function Get-PullRequestTypeVerdict {
     [bool]$AuthorIsBot = $false,
     [Parameter(Mandatory)][string]$BaseRef,
     [Parameter(Mandatory)][string]$HeadRef,
-    [AllowEmptyCollection()][string[]]$ChangelogAdded = @()
+    # Lines the pull request adds to CHANGELOG.md, and of them those under [Unreleased].
+    [AllowEmptyCollection()][string[]]$ChangelogAdded = @(),
+    [AllowEmptyCollection()][string[]]$UnreleasedAdded = @(),
+    # The changelog fragments the pull request adds or changes, and the lines it adds to them.
+    [AllowEmptyCollection()][string[]]$FragmentPaths = @(),
+    [AllowEmptyCollection()][string[]]$FragmentAdded = @()
   )
   if ($AuthorIsBot) {
     return [pscustomobject]@{ Pass = $true; Exempt = $true; Type = ''; Breaking = $false; Reason = 'opened by a bot'; Problems = @() }
@@ -82,10 +126,30 @@ function Get-PullRequestTypeVerdict {
   }
   $type = $match.Groups['type'].Value
   $breaking = $match.Groups['breaking'].Success
-  if ($breaking -and -not ($ChangelogAdded | Where-Object { $_ -match 'Upgrade' })) {
-    $problem = 'This is a breaking change (! in the title), so it adds a CHANGELOG.md entry under Unreleased with an ' +
-      '**Upgrade:** note saying what a consumer has to change.'
-    return [pscustomobject]@{ Pass = $false; Exempt = $false; Type = $type; Breaking = $true; Reason = 'no upgrade note'; Problems = @($problem) }
+  $intoRelease = $BaseRef -like 'release/*'
+  $problems = [System.Collections.Generic.List[string]]::new()
+  $reasons = [System.Collections.Generic.List[string]]::new()
+  if ($BaseRef -eq 'develop' -and $HeadRef -notlike 'sync/*' -and $UnreleasedAdded.Count -gt 0) {
+    $problems.Add('This pull request adds lines under [Unreleased] in CHANGELOG.md. A pull request into develop writes its ' +
+      'entry as a changelog fragment instead, changelog.d/<issue>.md (changelog.d/README.md), which cutting a release ' +
+      'gathers into the version''s section; two pull requests then never conflict over CHANGELOG.md. Move the entry ' +
+      'into a fragment and re-run this job.')
+    $reasons.Add('changelog')
+  }
+  if ($intoRelease -and $FragmentPaths.Count -gt 0) {
+    $problems.Add("This pull request into $BaseRef adds $($FragmentPaths -join ', '). The release was cut, so no gather " +
+      "would put it in this release: write the entry in CHANGELOG.md's section for this version instead.")
+    $reasons.Add('changelog')
+  }
+  $notes = if ($intoRelease) { $ChangelogAdded } else { @($FragmentAdded) + @($ChangelogAdded) }
+  if ($breaking -and -not ($notes | Where-Object { $_ -match 'Upgrade' })) {
+    $where = if ($intoRelease) { "an entry in CHANGELOG.md's section for this version" } else { 'a changelog fragment, changelog.d/<issue>.md,' }
+    $problems.Add("This is a breaking change (! in the title), so it adds $where with an **Upgrade:** note saying what a " +
+      'consumer has to change.')
+    $reasons.Add('no upgrade note')
+  }
+  if ($problems.Count -gt 0) {
+    return [pscustomobject]@{ Pass = $false; Exempt = $false; Type = $type; Breaking = $breaking; Reason = ($reasons | Select-Object -Unique) -join ', '; Problems = $problems.ToArray() }
   }
   return [pscustomobject]@{ Pass = $true; Exempt = $false; Type = $type; Breaking = $breaking; Reason = $type + $(if ($breaking) { ' (breaking)' } else { '' }); Problems = @() }
 }
@@ -101,12 +165,23 @@ if ($number -le 0) {
 
 $pr = gh api "repos/$Repository/pulls/$number" | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { Write-Output "::error::Reading pull request #$number failed (gh exit $LASTEXITCODE)."; exit 1 }
-$files = @(gh api --paginate "repos/$Repository/pulls/$number/files" --jq '.[] | select(.filename == "CHANGELOG.md") | .patch // ""')
+$files = @(gh api --paginate "repos/$Repository/pulls/$number/files" --jq '.[] | {filename, status, patch: (.patch // "")} | @json' | ForEach-Object { $_ | ConvertFrom-Json })
 if ($LASTEXITCODE -ne 0) { Write-Output "::error::Reading pull request #$number's files failed (gh exit $LASTEXITCODE)."; exit 1 }
-$changelogAdded = @(Get-PatchAddedLines -Patch ($files -join "`n"))
+$changelog = @($files | Where-Object { $_.filename -eq 'CHANGELOG.md' -and $_.status -ne 'removed' })
+$fragments = @($files | Where-Object { $_.status -ne 'removed' -and (Test-ChangelogFragmentPath -Path $_.filename) })
+$changelogAdded = @($changelog | ForEach-Object { Get-PatchAddedLines -Patch $_.patch })
+$fragmentAdded = @($fragments | ForEach-Object { Get-PatchAddedLines -Patch $_.patch })
+$unreleasedAdded = @()
+if ($changelog.Count -gt 0 -and [string]$pr.base.ref -eq 'develop') {
+  # Where [Unreleased] ends is read from the file as the pull request leaves it.
+  $content = gh api "repos/$Repository/contents/CHANGELOG.md?ref=$($pr.head.sha)" -H 'Accept: application/vnd.github.raw'
+  if ($LASTEXITCODE -ne 0) { Write-Output "::error::Reading CHANGELOG.md at $($pr.head.sha) failed (gh exit $LASTEXITCODE)."; exit 1 }
+  $unreleasedAdded = @(Get-UnreleasedAddedLines -Patch $changelog[0].patch -Content ($content -join "`n"))
+}
 
 $verdict = Get-PullRequestTypeVerdict -Title ([string]$pr.title) -AuthorIsBot ($pr.user.type -eq 'Bot') `
-  -BaseRef ([string]$pr.base.ref) -HeadRef ([string]$pr.head.ref) -ChangelogAdded $changelogAdded
+  -BaseRef ([string]$pr.base.ref) -HeadRef ([string]$pr.head.ref) -ChangelogAdded $changelogAdded `
+  -UnreleasedAdded $unreleasedAdded -FragmentPaths @($fragments | ForEach-Object filename) -FragmentAdded $fragmentAdded
 $summary = if ($verdict.Exempt) { "Pull request type: exempt, $($verdict.Reason)." }
   elseif ($verdict.Pass) { "Pull request type: $($verdict.Reason)." }
   else { "Pull request type: failed, $($verdict.Reason)." }
