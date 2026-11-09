@@ -2446,6 +2446,25 @@ public interface IWorkCoordinator {
     Task.FromResult(0);
 
   /// <summary>
+  /// Forgets the repair-ledger rows recorded under an origin that does not own the row's event type. An origin's answer
+  /// leaves out every type it does not own (#2008), so such a row is never compared again: it can neither heal nor clear,
+  /// and with repair on it is marked unhealable and holds the unhealed gauge up for good. Rows like these were written
+  /// before comparisons ignored a non-owner's digests (#2032), when a service still reported events it had only received
+  /// as its own. Run by the integrity audit each cycle: every distinct (origin, type) pair the ledger holds is judged
+  /// once by <paramref name="isNotAuthoritative"/> (the audit passes
+  /// <see cref="IntegrityDomainOwnership.IsNotAuthoritative"/>), and every row of a judged pair is forgotten. Defaults to
+  /// nothing forgotten for engines with no ledger.
+  /// </summary>
+  /// <param name="isNotAuthoritative">The judge: true when the origin's count of the type does not stand.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows forgotten.</returns>
+  /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetNonOwnerSqlTests.cs</tests>
+  Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+    Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>

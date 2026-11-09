@@ -1209,6 +1209,56 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs
+  /// (<c>wh_integrity_ledger_origin_types</c>, migration 370), then the judged ones forgotten
+  /// (<c>wh_integrity_forget_origin_types</c>); the second is skipped when nothing is judged. Best-effort: a prune that
+  /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
+  public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
+      Func<Guid, string, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(isNotAuthoritative);
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      var origins = new List<Guid>();
+      var types = new List<string>();
+      await using (var read = __scope.Connection.CreateCommand().WithCoordinatorTimeout()) {
+#pragma warning disable S2077 // Function name is a compile-time constant; there are no arguments.
+        read.CommandText =
+          $"SELECT origin_service_id, event_type FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_origin_types")}()";
+#pragma warning restore S2077
+        await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          var (origin, type) = (reader.GetGuid(0), reader.GetString(1));
+          if (isNotAuthoritative(origin, type)) {
+            origins.Add(origin);
+            types.Add(type);
+          }
+        }
+      }
+      if (origins.Count == 0) {
+        return 0;
+      }
+      await using var forget = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      forget.Parameters.AddWithValue("p_origins", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, origins.ToArray());
+      forget.Parameters.AddWithValue("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, types.ToArray());
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      forget.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_forget_origin_types")}(@p_origins,@p_types)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await forget.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next audit cycle prunes.
+      _log.LogWarning(ex,
+        "Integrity ledger prune of rows recorded under an origin that does not own their type failed; they stay until the next audit cycle.");
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
   /// <remarks>Best-effort: a mark that cannot reach the ledger is logged and answers 0, and the requested buckets wait
   /// out their backoff only, as before.</remarks>
   public async Task<int> IntegrityMarkAnswerPendingAsync(

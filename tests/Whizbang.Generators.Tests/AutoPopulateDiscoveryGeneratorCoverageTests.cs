@@ -30,11 +30,11 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     var references = new List<MetadataReference> {
-      MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-      MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")),
-      MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")),
-      MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")),
-      MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")),
+      SharedMetadataReferences.FromFile(typeof(object).Assembly.Location),
+      SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")),
+      SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")),
+      SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")),
+      SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")),
     };
 
     var compilation = CSharpCompilation.Create(

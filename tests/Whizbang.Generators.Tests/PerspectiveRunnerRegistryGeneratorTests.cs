@@ -640,10 +640,13 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
 
-    // Assert - DI registration should include IEventTypeProvider
+    // Assert - the registry is a contribution to the served IEventTypeProvider, never the provider itself:
+    // with several perspective assemblies, a plain AddSingleton let the last one displace the others (#2146).
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource).Contains("services.AddSingleton<IEventTypeProvider>");
+    await Assert.That(registrySource).Contains(
+      "global::Whizbang.Core.Messaging.EventTypeProviderServiceCollectionExtensions.AddEventTypeProviderContribution<PerspectiveRunnerRegistry>(services);");
+    await Assert.That(registrySource).DoesNotContain("services.AddSingleton<IEventTypeProvider>");
     await Assert.That(registrySource).Contains("using Whizbang.Core.Messaging;");
   }
 
