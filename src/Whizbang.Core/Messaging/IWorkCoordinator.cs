@@ -4067,10 +4067,13 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// Why the consumer decided not to process this message, set when it skipped it on receive (one of
   /// <see cref="InboxReceiveDiscard"/>). The message is still stored, so the skip is durable and inspectable: the store
   /// writes the row already settled (Stored and Published) with the reason in its error column, and never claims,
-  /// copies or dispatches it (#1720). Null for every message the consumer processes.
+  /// copies or dispatches it (#1720). The row keeps no body: its envelope and metadata are stored empty, since nothing
+  /// reads a settled row's body and deduplication does not need it (migration 368). Null for every message the
+  /// consumer processes.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:AMessageDiscardedOnReceive_IsStoredWithoutItsBody_AndIsStillADuplicateOnRedeliveryAsync</tests>
   public string? DiscardedOnReceive { get; init; }
 
   /// <summary>
