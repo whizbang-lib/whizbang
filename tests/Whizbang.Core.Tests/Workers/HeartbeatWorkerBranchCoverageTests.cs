@@ -166,6 +166,32 @@ public class HeartbeatWorkerBranchCoverageTests {
       .Because("the publish resumed after suspending and ran to completion before stop returned");
   }
 
+  // ── beat loop exit ─────────────────────────────────────────────────────
+
+  [Test]
+  public async Task ExecuteAsync_HostStopsDuringAnAcceptedBeat_LoopExitsOnItsStopCheckWithoutRequestingExitAsync() {
+    // The host stops while a beat is in flight, and the registry still accepts that beat without observing the token.
+    // No wait and no beat sees the cancellation as an exception, so the loop's own stop check is what ends it: the
+    // worker stops cleanly after exactly one beat and does not ask the instance to exit.
+    using var hostStop = new CancellationTokenSource();
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var (worker, coordinator) = _worker(new FakeTimeProvider(_start), () => {
+      hostStop.Cancel();
+      return Task.FromResult(true);
+    }, _options(), instanceExit: exit);
+
+    await worker.StartAsync(hostStop.Token);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(coordinator.Beats).IsEqualTo(1)
+      .Because("the worker body ran one beat, and the stop it saw afterwards ended the loop before a second");
+    await Assert.That(worker.LastAcceptedAt).IsEqualTo(_start)
+      .Because("the beat returned normally and was recorded as accepted, so no cancellation was thrown out of it");
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(exit.Requests).IsEmpty()
+      .Because("a host stop is not an eviction: only a refused beat asks the instance to exit");
+  }
+
   // ── helpers ────────────────────────────────────────────────────────────
 
   private sealed class YieldingBus : ISignalBus {
@@ -236,7 +262,8 @@ public class HeartbeatWorkerBranchCoverageTests {
       Func<Task<bool>> onBeat,
       HeartbeatWorkerOptions options,
       ISignalBus? bus = null,
-      InstanceLivenessMetrics? metrics = null) {
+      InstanceLivenessMetrics? metrics = null,
+      Whizbang.Testing.Lifecycle.RecordingInstanceExit? instanceExit = null) {
     var coordinator = new ScriptedHeartbeatCoordinator(onBeat);
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -252,7 +279,7 @@ public class HeartbeatWorkerBranchCoverageTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: bus ?? NullSignalBus.Instance,
-      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
+      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: instanceExit ?? new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       timeProvider: clock,
       metrics: metrics);
     return (worker, coordinator);
