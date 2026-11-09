@@ -46,8 +46,8 @@ public class EventTypeProviderContributionTests {
     public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
-  private static IServiceCollection _twoAssemblies() {
-    IServiceCollection services = new ServiceCollection();
+  private static IServiceCollection _twoAssemblies(IServiceCollection? services = null) {
+    services ??= new ServiceCollection();
     services.AddSingleton<OrdersAssemblyRegistry>();
     services.AddEventTypeProviderContribution<OrdersAssemblyRegistry>();
     services.AddSingleton<BillingAssemblyRegistry>();
@@ -61,18 +61,17 @@ public class EventTypeProviderContributionTests {
 
     var types = provider.GetRequiredService<IEventTypeProvider>().GetEventTypes();
 
-    await Assert.That(types).IsEquivalentTo(
-      [typeof(OrderPlaced), typeof(OrderShipped), typeof(InvoiceIssued), typeof(TenantRenamedCollective)])
-      .Because("the first assembly's events must not vanish because a second assembly registered after it");
+    Type[] expected = [typeof(OrderPlaced), typeof(OrderShipped), typeof(InvoiceIssued), typeof(TenantRenamedCollective)];
+    await Assert.That(types.SequenceEqual(expected)).IsTrue()
+      .Because("the first assembly's events must not vanish because a second assembly registered after it, and the "
+             + $"union keeps the contributions' order; served: {string.Join(", ", types.Select(t => t.Name))}");
   }
 
   [Test]
   public async Task TwoAssemblies_AfterTheDefaults_TheServedProviderIsTheUnionAndAvailableAsync() {
     IServiceCollection services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
-    foreach (var descriptor in _twoAssemblies()) {
-      services.Add(descriptor);
-    }
+    _twoAssemblies(services);
     await using var provider = services.BuildServiceProvider();
 
     var served = provider.GetRequiredService<IEventTypeProvider>();
@@ -112,9 +111,7 @@ public class EventTypeProviderContributionTests {
   public async Task AHostsOwnProvider_RegisteredFirst_IsTheOneServedAsync() {
     IServiceCollection services = new ServiceCollection();
     services.AddSingleton<IEventTypeProvider>(new HostsOwnProvider());
-    foreach (var descriptor in _twoAssemblies()) {
-      services.Add(descriptor);
-    }
+    _twoAssemblies(services);
     await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetRequiredService<IEventTypeProvider>()).IsTypeOf<HostsOwnProvider>()
