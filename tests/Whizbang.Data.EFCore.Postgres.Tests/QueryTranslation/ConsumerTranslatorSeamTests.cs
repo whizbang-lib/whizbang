@@ -93,8 +93,16 @@ public class ConsumerTranslatorSeamTests {
   /// <summary>
   /// Builds options the way a consumer would, with both calls, in the given order.
   /// </summary>
+  /// <remarks>
+  /// Each plugin set gives Entity Framework a different internal service provider, and Entity Framework counts those
+  /// process-wide and throws past twenty. In an unsharded run of this project the other classes have built about twenty
+  /// before these run, so the probe's own would fail construction with <c>ManyServiceProvidersCreatedWarning</c> (#2157).
+  /// The count measures the test process, not the seam, so the warning is ignored here as
+  /// <see cref="EFCoreTestBase"/> ignores it for every other context in the project.
+  /// </remarks>
   private static DbContextOptions<ProbeContext> _options(bool consumerFirst, bool registerTwice = false) {
     var builder = new DbContextOptionsBuilder<ProbeContext>();
+    builder.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
     builder.UseNpgsql("Host=localhost;Database=unused", npgsql => {
       if (consumerFirst) {
         npgsql.AddWhizbangQueryTranslator<ConsumerPlugin>();
