@@ -1424,16 +1424,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
-- **The completed-inbox purge deletes at most a batch per maintenance cycle, so a large backlog can no longer stop
-  maintenance for good (migration 366).** The purge was one unbounded statement inside the single maintenance call,
-  which runs under a fixed command budget. A consumer that stores many arrivals settled (every message discarded on
-  receive, such as one addressed to another service, is stored processed with its body, and only this purge removes
-  it) could accumulate more completed rows than one statement finishes inside that budget. The call then timed out,
-  the cycle rolled back, and the backlog only grew; every sweep the worker runs after the call in the same cycle (the
-  perspective row retention sweeps, lifecycle-completion cleanup, the offload sweep, bloat detection, the stuck-row
-  sentinel and registered maintenance steps) was skipped with it. The purge now takes at most
-  `completed_inbox_purge_batch_size` rows per call (default 50000, never below 1), settable as
-  `Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize`; a value below 1 is rejected at startup.
 - **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
   longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
   state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
