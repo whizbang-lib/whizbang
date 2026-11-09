@@ -10,7 +10,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
-namespace Whizbang.Core.Tests;
+namespace Whizbang.Core.Component.Tests;
 
 /// <summary>
 /// The startup report of items two assemblies both register (#2201): a Warning per collision naming the item and both

@@ -15,7 +15,7 @@ namespace Whizbang.Core;
 /// (<c>Whizbang:Startup:RegistrationCollisions</c>).
 /// </summary>
 /// <docs>extending/extensibility/replaceable-services#registration-collisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
 public enum RegistrationCollisionMode {
   /// <summary>One Warning per collision, naming the item and both assemblies; the latest registration is used. The default.</summary>
   Warn = 0,
@@ -26,7 +26,7 @@ public enum RegistrationCollisionMode {
 
 /// <summary>Startup settings, bound from <c>Whizbang:Startup</c>.</summary>
 /// <docs>extending/extensibility/replaceable-services#registration-collisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
 public sealed class WhizbangStartupOptions {
   /// <summary>
   /// What to do when two different assemblies register the same item (<c>Whizbang:Startup:RegistrationCollisions</c>).
@@ -41,7 +41,7 @@ public sealed class WhizbangStartupOptions {
 /// configuration keeps the code values.
 /// </summary>
 /// <docs>extending/extensibility/replaceable-services#registration-collisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
 internal sealed class ConfigureWhizbangStartupOptions(IConfiguration? configuration) : IConfigureOptions<WhizbangStartupOptions> {
   public void Configure(WhizbangStartupOptions options) {
     if (configuration is null) {
@@ -65,7 +65,7 @@ internal sealed class ConfigureWhizbangStartupOptions(IConfiguration? configurat
 /// <param name="options">The bound <c>Whizbang:Startup</c> settings.</param>
 /// <param name="logger">Where the warnings go.</param>
 /// <docs>extending/extensibility/replaceable-services#registration-collisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
 internal sealed partial class RegistrationCollisionStartupValidator(
     IEnumerable<IRegistrationCollisionSource> sources,
     IOptions<WhizbangStartupOptions> options,
@@ -100,7 +100,7 @@ internal sealed partial class RegistrationCollisionStartupValidator(
 /// Adds a per-assembly registration's collision source, and with it the startup check that reports collisions.
 /// </summary>
 /// <docs>extending/extensibility/replaceable-services#registration-collisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
 public static class RegistrationCollisionServiceCollectionExtensions {
   /// <summary>
   /// Adds <paramref name="source"/> to the sources the startup check reads, and the check itself once.
@@ -108,7 +108,7 @@ public static class RegistrationCollisionServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <param name="source">The registration's collision source.</param>
   /// <returns>The service collection.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs:ACollision_UnderWarn_IsLoggedNamingBothAssemblies_AndStartsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RegistrationCollisionStartupValidatorTests.cs:ACollision_UnderWarn_IsLoggedNamingBothAssemblies_AndStartsAsync</tests>
   public static IServiceCollection AddRegistrationCollisionSource(this IServiceCollection services, IRegistrationCollisionSource source) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(source);
