@@ -13,8 +13,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// A <c>[WhizbangId(AcceptAnyVersion = true)]</c> id stored in a perspective document reads back whatever its
-/// Guid version, in both stored forms (the object form EF writes and the scalar form older rows hold), and an
-/// empty id is refused the same way <c>From</c> refuses it.
+/// Guid version, in both stored forms (the object form EF writes and the scalar form older rows hold). A row whose
+/// id field was never set holds an empty id; it loads, because the load path (the constructor and the
+/// <c>Value</c> initializer) stays unchecked on every id.
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/WhizbangIdGenerator.cs</code-under-test>
 [Category("Shard1")]
@@ -40,10 +41,12 @@ public class PerspectivePersistenceAnyVersionIdTests {
   }
 
   [Test]
-  public async Task AnyVersionId_EmptyStoredValue_IsRefusedAsync() {
+  public async Task AnyVersionId_NeverSetStoredValue_LoadsAsync() {
     var typeInfo = _options().GetTypeInfo(typeof(TestAnyVersionId));
     var json = $"{{\"Value\":\"{Guid.Empty}\"}}";
 
-    await Assert.That(() => JsonSerializer.Deserialize(json, typeInfo)).ThrowsExactly<ArgumentException>();
+    var loaded = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;
+
+    await Assert.That(loaded.Value).IsEqualTo(Guid.Empty);
   }
 }

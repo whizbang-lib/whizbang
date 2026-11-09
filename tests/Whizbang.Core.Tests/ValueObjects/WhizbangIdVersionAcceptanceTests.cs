@@ -12,9 +12,10 @@ namespace Whizbang.Core.Tests.ValueObjects;
 
 /// <summary>
 /// Which Guids a generated strong id takes. By default only UUIDv7; with
-/// <c>[WhizbangId(AcceptAnyVersion = true)]</c>, any non-empty Guid, through every way in: <c>From</c>,
-/// <c>Parse</c>, the explicit cast, JSON (default and persistence profiles), the constructor and the
-/// <c>Value</c> initializer.
+/// <c>[WhizbangId(AcceptAnyVersion = true)]</c>, any non-empty Guid, through the checked entry points: <c>From</c>,
+/// <c>Parse</c>, the explicit cast and JSON (default and persistence profiles). The constructor and the
+/// <c>Value</c> initializer are the load path for EF Core and the persistence converter, so they stay unchecked
+/// on every id.
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/WhizbangIdGenerator.cs</code-under-test>
 [Category("ValueObjects")]
@@ -124,17 +125,29 @@ public class WhizbangIdVersionAcceptanceTests {
   }
 
   [Test]
-  public async Task AnyVersion_EmptyGuid_IsRejectedEverywhereAsync() {
+  public async Task AnyVersion_EmptyGuid_IsRejectedByTheCheckedEntryPointsAsync() {
     var empty = Guid.Empty;
 
     await Assert.That(() => AnyVersionTestId.From(empty)).ThrowsExactly<ArgumentException>();
     await Assert.That(() => AnyVersionTestId.From(TrackedGuid.FromExternal(empty))).ThrowsExactly<ArgumentException>();
     await Assert.That(() => AnyVersionTestId.Parse(empty.ToString())).ThrowsExactly<ArgumentException>();
     await Assert.That(() => (AnyVersionTestId)empty).ThrowsExactly<ArgumentException>();
-    await Assert.That(() => new AnyVersionTestId(empty)).ThrowsExactly<ArgumentException>();
-    await Assert.That(() => new AnyVersionTestId { Value = empty }).ThrowsExactly<ArgumentException>();
     await Assert.That(() => _readJson<AnyVersionTestId>(empty.ToString(), SerializationProfile.Default))
       .Throws<Exception>();
+  }
+
+  /// <summary>
+  /// The constructor and the <c>Value</c> initializer are the load path (EF Core materialization, the persistence
+  /// converter), so they take an empty Guid on an opt-in id as they do on a default one: a stored row whose id
+  /// field was never set still loads.
+  /// </summary>
+  [Test]
+  public async Task AnyVersion_ConstructorAndValueInit_TakeAnEmptyGuidAsync() {
+    var constructed = new AnyVersionTestId(Guid.Empty);
+    var initialized = new AnyVersionTestId { Value = Guid.Empty };
+
+    await Assert.That(constructed.Value).IsEqualTo(Guid.Empty);
+    await Assert.That(initialized.Value).IsEqualTo(Guid.Empty);
   }
 
   [Test]

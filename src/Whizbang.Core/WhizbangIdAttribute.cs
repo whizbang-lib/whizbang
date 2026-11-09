@@ -145,6 +145,7 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_AcceptAnyVersionProperty_CanBeSetAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdVersionAcceptanceTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdAcceptAnyVersionTests.cs</tests>
   /// <remarks>
   /// <para>
   /// By default (<c>false</c>) <c>From(Guid)</c>, <c>From(TrackedGuid)</c>, <c>Parse</c>, the explicit cast and the
@@ -153,9 +154,23 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// issued by an external identity provider.
   /// </para>
   /// <para>
-  /// With the option, every way in (<c>From</c>, <c>Parse</c>, the cast, JSON in every profile, the public
-  /// constructor and the <c>Value</c> initializer) takes any Guid except <see cref="Guid.Empty"/>, which throws
-  /// <see cref="ArgumentException"/>. <c>New()</c> still produces a UUIDv7.
+  /// With the option, the checked entry points (<c>From</c>, <c>Parse</c>, the explicit cast and the transport JSON
+  /// reader) take any Guid except <see cref="Guid.Empty"/>, which throws <see cref="ArgumentException"/>.
+  /// <c>New()</c> still produces a UUIDv7. The public constructor and the <c>Value</c> initializer stay unchecked on
+  /// every id, with or without the option: they are the load path for EF Core materialization and the persistence
+  /// converter, so a stored row whose id field was never set still loads.
+  /// </para>
+  /// <para>
+  /// On an id with the option, values are no longer known to be UUIDv7: <c>CompareTo</c> and the <c>&lt;</c>,
+  /// <c>&lt;=</c>, <c>&gt;</c> and <c>&gt;=</c> operators no longer order by creation time, and for a value that is
+  /// not UUIDv7, <c>IsTimeOrdered</c> is <c>false</c> and <c>GetTimestamp()</c> returns no meaningful time. The id
+  /// type also loses the index locality that time-ordered values give a database. The framework's ordering
+  /// guarantees are unaffected: they rely on the message and event ids the framework mints, and a stream id is only
+  /// hashed for partitioning and sorted for lock ordering, neither of which depends on its version.
+  /// </para>
+  /// <para>
+  /// Set the option the same way on every <c>[WhizbangId]</c> for an id (the struct, a property, a parameter). When
+  /// they disagree, the id keeps the UUIDv7 rule and WHIZ029 is reported at each ignored opt-in.
   /// </para>
   /// </remarks>
   /// <example>

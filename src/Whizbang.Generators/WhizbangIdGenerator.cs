@@ -416,10 +416,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       List<WhizbangIdInfo> validIds) {
 
-    // Group by fully qualified name to deduplicate
+    // Group by fully qualified name to deduplicate; routes that disagree on AcceptAnyVersion resolve the same
+    // way whatever the discovery order, and are reported (WHIZ029)
     var deduplicated = validIds
         .GroupBy(id => id.FullyQualifiedName)
-        .Select(group => group.First())  // Take first occurrence
+        .Select(routes => _resolveRoutes(context, routes))
         .ToList();
 
     // Detect collisions (same type name in different namespaces)
@@ -440,6 +441,30 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     return (deduplicated, collidingTypeNames);
+  }
+
+  /// <summary>
+  /// The one id that the routes discovering the same type resolve to. When every route agrees on
+  /// <c>AcceptAnyVersion</c>, the first is kept, as before. When they disagree, the id keeps the UUIDv7 rule (a
+  /// route without the option is kept) whatever the discovery order, and WHIZ029 is reported at each opt-in that
+  /// is ignored (#2071).
+  /// </summary>
+  private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
+    var all = routes.ToList();
+    var strict = all.Find(id => !id.AcceptAnyVersion);
+    if (strict is null) {
+      return all[0];
+    }
+
+    foreach (var ignoredOptIn in all.Where(id => id.AcceptAnyVersion)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdAcceptAnyVersionDisagrees,
+          ignoredOptIn.Location,
+          ignoredOptIn.FullyQualifiedName
+      ));
+    }
+
+    return strict;
   }
 
   /// <summary>
@@ -504,7 +529,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Uses init accessor for EF Core ComplexProperty().ToJson() deserialization
     // When EF Core deserializes, it sets Value which creates an untracked TrackedGuid
     sb.AppendLine("  /// <summary>Gets the underlying Guid value.</summary>");
-    sb.AppendLine($"  public Guid Value {{ get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal({_checked(id, "value", "Value")}); }}");
+    sb.AppendLine("  public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(value); }");
     sb.AppendLine();
 
     // IWhizbangId.ToGuid() implementation
@@ -558,7 +583,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Parameter name MUST match property name (Value) for EF Core constructor binding
     // Creates untracked TrackedGuid since we don't know the original source
     sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Parameter name matches property for EF Core binding.</summary>");
-    sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal({_checked(id, "Value", "Value")});");
+    sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal(Value);");
     sb.AppendLine();
 
     if (id.AcceptAnyVersion) {
@@ -662,14 +687,6 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private static string _rejected(WhizbangIdInfo id) =>
     id.AcceptAnyVersion ? "the Guid is empty" : "not UUIDv7";
 
-  /// <summary>
-  /// The expression a constructor or initializer stores: the Guid as given for a default id, which has always
-  /// stored it unchecked, or the Guid checked non-empty for an id that takes any version, so that every way in
-  /// agrees with <c>From</c> (#2071).
-  /// </summary>
-  private static string _checked(WhizbangIdInfo id, string value, string parameterName) =>
-    id.AcceptAnyVersion ? $"_requireNonEmpty({value}, nameof({parameterName}))" : value;
-
   /// <summary>The default factories: <c>From</c> takes UUIDv7 only.</summary>
   private static void _appendUuidV7Factories(StringBuilder sb, string typeName) {
     // From(TrackedGuid) factory method - preserves tracking metadata
@@ -692,7 +709,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The factories of an id declared with <c>AcceptAnyVersion = true</c>: <c>From</c> takes any Guid but the empty
-  /// one, and so do the constructor and the <c>Value</c> initializer, through the same check (#2071).
+  /// one (#2071). The constructor and the <c>Value</c> initializer stay unchecked, as on every id: they are the load
+  /// path for EF Core materialization and the persistence converter.
   /// </summary>
   private static void _appendAnyVersionFactories(StringBuilder sb, string typeName) {
     sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid of any version, preserving tracking metadata. Throws if the Guid is empty.</summary>");
