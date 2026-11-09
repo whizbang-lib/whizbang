@@ -2280,6 +2280,23 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<double>?>(null);
 
   /// <summary>
+  /// Durable <see cref="IIntegrityRepairLedger.MarkTypesHealedWithAgesAsync"/>: forgets every ledger row of each
+  /// (origin, tenant, type) in <paramref name="typeKeys"/>, the type lane and every per-stream row (a key's stream id is
+  /// not read), and returns each forgotten row's age in seconds (first sighting to heal). Null = unsupported; an empty
+  /// list is a real answer (no row of those types was tracked).
+  /// </summary>
+  /// <param name="originServiceId">The origin the types were proven complete for.</param>
+  /// <param name="typeKeys">The proven (tenant, type) pairs.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ages of the rows forgotten, or null when unsupported or failed.</returns>
+  /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityTypeHealSqlTests.cs</tests>
+  Task<IReadOnlyList<double>?> IntegrityMarkTypesHealedWithAgesAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
   /// Durable <see cref="IIntegrityRepairLedger.MarkUnhealableBatchAsync"/>: marks the tracked ledger rows of
   /// <paramref name="keys"/> as buckets repair cannot change, and returns the keys this call marked (a row already
   /// marked, or a key with no row, is not returned). Null = unsupported.

@@ -164,6 +164,22 @@ public interface IIntegrityRepairLedger {
   }
 
   /// <summary>
+  /// Forgets every bucket of each (origin, tenant, type) in <paramref name="typeKeys"/>: its type lane (the empty
+  /// stream) and every per-stream bucket, returning each forgotten bucket's age in seconds as
+  /// <see cref="MarkHealedBatchWithAgesAsync"/> does. Called when a comparison proved the whole history of the type
+  /// complete, which proves every stream of it complete, so a per-stream bucket still tracked is a phantom. A key's
+  /// stream id is not read. The default cannot enumerate the per-stream buckets, so it forgets the type lanes only.
+  /// </summary>
+  /// <param name="typeKeys">The proven (origin, tenant, type) triples.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ages of the buckets forgotten; empty when not measured.</returns>
+  /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs</tests>
+  ValueTask<IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys, CancellationToken cancellationToken = default) =>
+    MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k with { StreamId = Guid.Empty })], cancellationToken);
+
+  /// <summary>
   /// Records that repair requests for <paramref name="keys"/> left (#2029): neither grant path asks again until
   /// <paramref name="timeout"/> passes or the answer lands (<see cref="MarkAnsweredAsync"/>). A type-lane key (an empty
   /// stream id: a bulk or checkpoint request for the whole type) also covers the tracked per-stream buckets of its type

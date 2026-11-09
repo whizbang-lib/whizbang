@@ -88,6 +88,7 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.IntegrityMarkHealedAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkHealedBatchAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkHealedBatchWithAgesAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.IntegrityMarkTypesHealedWithAgesAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityMarkUnhealableBatchAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityProbeRepairBacklogAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityRecordBundleAnswerAsync)] = INTEGRITY,

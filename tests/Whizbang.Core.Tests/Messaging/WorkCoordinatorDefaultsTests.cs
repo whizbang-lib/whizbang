@@ -647,6 +647,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityMarkTypesHealedWithAgesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkTypesHealedWithAgesAsync(Guid.Empty, []);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
   public async Task IntegrityTakeDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
