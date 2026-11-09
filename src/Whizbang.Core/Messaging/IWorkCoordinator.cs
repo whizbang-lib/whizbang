@@ -2452,7 +2452,9 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
-  /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
+  /// the age of the oldest; the answer states and the integrity delivery queue; and the deficit
+  /// events left to heal with the unhealable buckets (#2203). Defaults to "nothing to report" for
+  /// engines with no ledger.
   /// </summary>
   /// <param name="maxRepairAttempts">The repair budget, so the query can count who has spent it.</param>
   /// <param name="cancellationToken">Cancellation.</param>

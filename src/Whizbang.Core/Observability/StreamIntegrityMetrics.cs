@@ -449,6 +449,14 @@ public sealed class StreamIntegrityMetrics {
       () => _ledger.AnsweredBuckets,
       description: "Buckets a redelivery answered that wait for the next comparison to decide healed or still divergent");
     _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unhealed_deficit_events",
+      () => _ledger.UnhealedDeficitEvents,
+      description: "Missing events, summed, in the buckets repair can still act on (neither unhealable nor exhausted); the data left to heal");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unhealable_buckets",
+      () => _ledger.UnhealableBuckets,
+      description: "Ledger rows marked unhealable, which repair cannot change; splits unhealed_buckets into repairable and unhealable");
+    _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.deliveries_pending",
       () => _ledger.IntegrityDeliveriesPending,
       description: "Integrity deliveries waiting for the maintainer's drain; one value per service");
