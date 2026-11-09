@@ -19,8 +19,10 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// So the generated registry is registered under <see cref="CONTRIBUTION_KEY"/>, once per registry type, and the
-/// served registry is a <see cref="CompositePerspectiveRunnerRegistry"/> over every contribution, in registration
-/// order; when two assemblies declare the same perspective, the first contribution answers for it. A registry the host
+/// served registry is a <see cref="CompositePerspectiveRunnerRegistry"/> over every contribution, latest registered
+/// first. When two assemblies declare the same perspective, the latest one answers for it, and startup reports the
+/// collision naming the perspective and both assemblies (<see cref="RegistrationCollisions"/>); under
+/// <c>Whizbang:Startup:RegistrationCollisions = Fail</c> it stops startup instead (#2201). A registry the host
 /// registers itself before the contributions is left alone. Contributing a registry also contributes its event types
 /// through <see cref="EventTypeProviderServiceCollectionExtensions.AddEventTypeProviderContribution{TProvider}"/>
 /// (#2146), so the generated code makes one call for both.
@@ -43,12 +45,15 @@ public static class PerspectiveRunnerRegistryServiceCollectionExtensions {
   /// <remarks>Idempotent per registry type: an assembly registered twice contributes once.</remarks>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AnAssemblyRegisteredTwice_ListsItsPerspectivesOnceAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AHostsOwnRegistry_RegisteredFirst_IsTheOneServedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:SamePerspectiveInTwoAssemblies_IsReportedAsACollisionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_EventTypes_AreTheUnion_OnTheRegistryAndTheServedProviderAsync</tests>
   public static IServiceCollection AddPerspectiveRunnerRegistryContribution<TRegistry>(this IServiceCollection services)
       where TRegistry : class, IPerspectiveRunnerRegistry {
     ArgumentNullException.ThrowIfNull(services);
     services.AddContribution<IPerspectiveRunnerRegistry, TRegistry>(
-      CONTRIBUTION_KEY, static registries => new CompositePerspectiveRunnerRegistry(registries));
+      CONTRIBUTION_KEY,
+      static registries => new CompositePerspectiveRunnerRegistry(registries),
+      static registry => registry.GetRegisteredPerspectives().Select(perspective => perspective.ClrTypeName));
     services.AddEventTypeProviderContribution<TRegistry>();
     return services;
   }

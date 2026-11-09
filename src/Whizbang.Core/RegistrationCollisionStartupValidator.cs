@@ -66,7 +66,7 @@ internal sealed class ConfigureWhizbangStartupOptions(IConfiguration? configurat
 /// <param name="logger">Where the warnings go.</param>
 /// <docs>extending/extensibility/replaceable-services#registration-collisions</docs>
 /// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionStartupValidatorTests.cs</tests>
-internal sealed class RegistrationCollisionStartupValidator(
+internal sealed partial class RegistrationCollisionStartupValidator(
     IEnumerable<IRegistrationCollisionSource> sources,
     IOptions<WhizbangStartupOptions> options,
     ILogger<RegistrationCollisionStartupValidator> logger) : IHostedService {
@@ -76,12 +76,24 @@ internal sealed class RegistrationCollisionStartupValidator(
   /// <inheritdoc />
   /// <exception cref="InvalidOperationException">The mode is Fail and an item is registered by two assemblies.</exception>
   public Task StartAsync(CancellationToken cancellationToken) {
-    _ = (sources, options, logger);
+    var collisions = sources.SelectMany(source => source.GetCollisions()).ToList();
+    foreach (var collision in collisions) {
+      LogCollision(logger, collision.Registration, collision.Item, collision.HiddenAssembly, collision.WinningAssembly);
+    }
+    if (options.Value.RegistrationCollisions == RegistrationCollisionMode.Fail && collisions.Count > 0) {
+      throw new InvalidOperationException(
+        "Two assemblies register the same item: " + string.Join("; ", collisions)
+        + $". Remove one of each pair, or set {MODE_KEY} to Warn to start with the latest registration of each.");
+    }
     return Task.CompletedTask;
   }
 
   /// <inheritdoc />
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "{Registration} '{Item}' is registered by both {HiddenAssembly} and {WinningAssembly}. {WinningAssembly} was registered latest and is used; {HiddenAssembly}'s registration is hidden")]
+  private static partial void LogCollision(ILogger logger, string registration, string item, string hiddenAssembly, string winningAssembly);
 }
 
 /// <summary>

@@ -62,6 +62,18 @@ public static class RegistrationCollisions {
       string registration, IEnumerable<(string Assembly, IEnumerable<string> Items)> contributions) {
     ArgumentNullException.ThrowIfNull(registration);
     ArgumentNullException.ThrowIfNull(contributions);
-    return [];
+    var winners = new Dictionary<string, string>(StringComparer.Ordinal);
+    var reported = new HashSet<(string Item, string Hidden)>();
+    var collisions = new List<RegistrationCollision>();
+    foreach (var (assembly, items) in contributions.Reverse()) {
+      foreach (var item in items) {
+        if (!winners.TryGetValue(item, out var winner)) {
+          winners[item] = assembly;
+        } else if (winner != assembly && reported.Add((item, assembly))) {
+          collisions.Add(new RegistrationCollision(registration, item, winner, assembly));
+        }
+      }
+    }
+    return collisions;
   }
 }

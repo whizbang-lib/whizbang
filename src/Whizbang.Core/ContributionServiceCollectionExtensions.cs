@@ -57,8 +57,27 @@ internal static class ContributionServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     services.TryAddEnumerable(ServiceDescriptor.KeyedSingleton<TService, TContribution>(
       contributionKey, static (sp, _) => sp.GetRequiredService<TContribution>()));
-    services.TryAddSingletonOverNullDefault<TService>(sp => compose([.. sp.GetKeyedServices<TService>(contributionKey)]));
-    _ = items;
+    services.TryAddSingletonOverNullDefault<TService>(sp => compose(_latestFirst(sp.GetKeyedServices<TService>(contributionKey))));
+    if (items is not null) {
+      services.TryAddEnumerable(ServiceDescriptor.Singleton<IRegistrationCollisionSource, ContributionCollisionSource<TService>>(
+        sp => new ContributionCollisionSource<TService>(sp, contributionKey, items)));
+      services.AddRegistrationCollisionCheck();
+    }
     return services;
+  }
+
+  private static TService[] _latestFirst<TService>(IEnumerable<TService> contributions) {
+    var ordered = contributions.ToArray();
+    Array.Reverse(ordered);
+    return ordered;
+  }
+
+  /// <summary>The collisions among one service's contributions, each named by the assembly that declares it.</summary>
+  private sealed class ContributionCollisionSource<TService>(
+      IServiceProvider services, string contributionKey, Func<TService, IEnumerable<string>> items) : IRegistrationCollisionSource
+      where TService : class {
+    public IReadOnlyList<RegistrationCollision> GetCollisions() =>
+      RegistrationCollisions.Find(typeof(TService).Name, services.GetKeyedServices<TService>(contributionKey)
+        .Select(contribution => (contribution.GetType().Assembly.GetName().Name!, items(contribution))));
   }
 }
