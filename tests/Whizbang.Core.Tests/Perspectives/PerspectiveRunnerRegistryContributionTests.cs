@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// Registered as a plain singleton, the last assembly's registry displaced the others, so the perspective worker, the
 /// rebuilder, the maintenance worker and the stream disposition step found no runner for any perspective another
 /// assembly declared. These pin the lookup across assemblies, the listing, which contribution answers when two declare
-/// the same perspective, and that a host's own registry and the event-type union each keep their meaning.
+/// the same perspective (the latest, #2201), and that a host's own registry and the event-type union each keep their meaning.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRunnerRegistryServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/CompositePerspectiveRunnerRegistry.cs</code-under-test>
@@ -116,20 +116,20 @@ public class PerspectiveRunnerRegistryContributionTests {
   }
 
   [Test]
-  public async Task TwoAssemblies_TheServedRegistry_ListsBothAssembliesPerspectivesInContributionOrderAsync() {
+  public async Task TwoAssemblies_TheServedRegistry_ListsBothAssembliesPerspectives_LatestRegisteredFirstAsync() {
     await using var provider = _twoAssemblies().BuildServiceProvider();
 
     var listed = provider.GetRequiredService<IPerspectiveRunnerRegistry>().GetRegisteredPerspectives()
       .Select(p => p.ClrTypeName).ToArray();
 
-    await Assert.That(listed.SequenceEqual([ORDERS_PERSPECTIVE, BILLING_PERSPECTIVE])).IsTrue()
-      .Because($"every assembly's perspectives are listed, in contribution order; listed: {string.Join(", ", listed)}");
+    await Assert.That(listed.SequenceEqual([BILLING_PERSPECTIVE, ORDERS_PERSPECTIVE])).IsTrue()
+      .Because($"every assembly's perspectives are listed, the latest registered first; listed: {string.Join(", ", listed)}");
   }
 
   [Test]
   [Arguments(true)]
   [Arguments(false)]
-  public async Task SamePerspectiveInTwoAssemblies_TheFirstContributionAnswers_AndIsListedOnceAsync(bool ordersFirst) {
+  public async Task SamePerspectiveInTwoAssemblies_TheLatestContributionAnswers_AndIsListedOnceAsync(bool ordersFirst) {
     IServiceCollection services = new ServiceCollection();
     if (ordersFirst) {
       _add<OrdersAssemblyRegistry>(services);
@@ -140,16 +140,16 @@ public class PerspectiveRunnerRegistryContributionTests {
     }
     await using var provider = services.BuildServiceProvider();
     var registry = provider.GetRequiredService<IPerspectiveRunnerRegistry>();
-    var first = ordersFirst ? "Orders" : "ShadowOrders";
+    var latest = ordersFirst ? "ShadowOrders" : "Orders";
 
     var runner = registry.GetRunner(ORDERS_PERSPECTIVE, provider) as OwnedRunner;
     var listed = registry.GetRegisteredPerspectives().Where(p => p.ClrTypeName == ORDERS_PERSPECTIVE).ToArray();
 
-    await Assert.That(runner?.Owner).IsEqualTo(first)
-      .Because("the first contribution that declares a perspective answers for it, as the event-type union keeps a "
-             + "type two assemblies know at its first position");
+    await Assert.That(runner?.Owner).IsEqualTo(latest)
+      .Because("the latest contribution that declares a perspective answers for it: the rule every per-assembly "
+             + "registration follows (#2201)");
     await Assert.That(listed.Length).IsEqualTo(1).Because("a perspective two assemblies declare is listed once");
-    await Assert.That(listed[0].ModelType).IsEqualTo($"global::{first}.Model")
+    await Assert.That(listed[0].ModelType).IsEqualTo($"global::{latest}.Model")
       .Because("the listing describes the registration whose runner the lookup returns");
   }
 
@@ -171,7 +171,7 @@ public class PerspectiveRunnerRegistryContributionTests {
     var fromRegistry = provider.GetRequiredService<IPerspectiveRunnerRegistry>().GetEventTypes();
     var fromProvider = provider.GetRequiredService<IEventTypeProvider>().GetEventTypes();
 
-    Type[] expected = [typeof(OrderPlaced), typeof(InvoiceIssued), typeof(TenantRenamedCollective)];
+    Type[] expected = [typeof(InvoiceIssued), typeof(OrderPlaced), typeof(TenantRenamedCollective)];
     await Assert.That(fromRegistry.SequenceEqual(expected)).IsTrue()
       .Because($"the registry's types are every assembly's, once each; listed: {string.Join(", ", fromRegistry.Select(t => t.Name))}");
     await Assert.That(fromProvider.SequenceEqual(expected)).IsTrue()
@@ -186,6 +186,23 @@ public class PerspectiveRunnerRegistryContributionTests {
 
     await Assert.That(stages.SetEquals([LifecycleStage.PostPerspectiveDetached, LifecycleStage.PostPerspectiveInline])).IsTrue()
       .Because("a stage with a receptor in any assembly must not be skipped");
+  }
+
+  [Test]
+  public async Task SamePerspectiveInTwoAssemblies_IsReportedAsACollisionAsync() {
+    IServiceCollection services = new ServiceCollection();
+    _add<OrdersAssemblyRegistry>(services);
+    _add<ShadowOrdersAssemblyRegistry>(services);
+    await using var provider = services.BuildServiceProvider();
+
+    var sources = provider.GetServices<IRegistrationCollisionSource>().ToArray();
+    var collisions = sources.SelectMany(s => s.GetCollisions()).ToArray();
+
+    await Assert.That(sources.Length).IsEqualTo(1)
+      .Because("contributing a runner registry reports the perspectives two assemblies both declare at startup");
+    await Assert.That(collisions).IsEmpty()
+      .Because("both stand-in registries are declared in this one test assembly, and an assembly cannot hide its own "
+             + "registration; the cross-assembly report is pinned in RegistrationCollisionsTests");
   }
 
   [Test]
