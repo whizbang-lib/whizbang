@@ -205,4 +205,23 @@ public class StreamIntegrityOptionsValidatorTests {
     await Assert.That(options.LedgerRecheckAfterMinutes).IsEqualTo(2 * options.AuditSettleWindowMinutes)
       .Because("twice the settle window: a row reported more recently than that was compared over settled history already");
   }
+
+  // ── #2184: the outstanding repair-answer cap ──
+
+  [Test]
+  public async Task Validate_ANegativeOutstandingAnswerCap_FailsNamingTheKeyAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { MaxOutstandingRepairAnswers = -1 });
+
+    await Assert.That(result.Failed).IsTrue();
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers");
+  }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(1)]
+  public async Task Validate_AnOutstandingAnswerCapOfZeroOrMore_SucceedsAsync(int cap) {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { MaxOutstandingRepairAnswers = cap });
+
+    await Assert.That(result.Succeeded).IsTrue().Because("0 turns the cap off; any positive bound is a cap");
+  }
 }

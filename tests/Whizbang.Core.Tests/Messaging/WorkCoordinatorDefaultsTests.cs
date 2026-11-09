@@ -683,6 +683,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var pending = await coordinator.IntegrityCountAnswerPendingAsync(DateTimeOffset.MinValue, 500);
+
+    await Assert.That(pending).IsEqualTo(0).Because("#2184: an engine without the ledger has no answer outstanding");
+  }
+
+  [Test]
   public async Task ComputeStreamDigestsWindowedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

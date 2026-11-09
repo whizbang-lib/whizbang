@@ -8,7 +8,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -397,10 +399,141 @@ public class RepairDrainWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  // ── #2184: the outstanding-answer cap ──────────────────────────────────
+
+  [Test]
+  public async Task DrainTick_AtTheOutstandingAnswerCap_ClaimsNothing_AndSaysSoOnceAsync() {
+    // Answers can land hours after their requests, so the request rate alone does not bound the load a burst of late
+    // answers puts on this service's store; the count of buckets still awaiting an answer does.
+    var origin = TrackedGuid.New().Value;
+    var logger = new FakeLogger<RepairDrainWorker>();
+    var metrics = _metrics();
+    using var listening = metrics.Listener;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+    }, origin, learnTopic: true, logger: logger, metrics: metrics.Metrics);
+    coordinator.AnswerPending = 500;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+    await worker.DrainTickAsync(1.0, _fixedNow.AddSeconds(1), CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls).IsEmpty()
+      .Because("with the cap's worth of answers on the way, the drain claims no row, so no attempt is stamped");
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(coordinator.CountCalls).IsEquivalentTo([(_fixedNow, 500), (_fixedNow.AddSeconds(1), 500)])
+      .Because("the count is asked at the tick's own instant and needs to read no further than the cap");
+    var holds = logger.Collector.GetSnapshot().Where(r => r.Message.Contains("holding", StringComparison.Ordinal)).ToList();
+    await Assert.That(holds.Count).IsEqualTo(1).Because("the hold is logged when it starts, not on every tick it lasts");
+    await Assert.That(holds[0].Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(holds[0].Message).Contains("500");
+    await Assert.That(metrics.Holds()).IsEqualTo(1L).Because("one hold, counted once");
+  }
+
+  [Test]
+  public async Task DrainTick_UnderTheCap_ClaimsNoMoreThanTheRoomLeftAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+    }, origin, learnTopic: true);
+    coordinator.AnswerPending = 498;
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls.Single().Limit).IsEqualTo(2)
+      .Because("the tokens afford ten rows, but only two more answers fit under the cap");
+  }
+
+  [Test]
+  public async Task DrainTick_WhenThePendingCountFallsUnderTheCap_ResumesAndSaysSoOnceAsync() {
+    var origin = TrackedGuid.New().Value;
+    var logger = new FakeLogger<RepairDrainWorker>();
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 5,
+    }, origin, learnTopic: true, logger: logger);
+    coordinator.AnswerPending = 5;
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+    coordinator.AnswerPending = 3;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.DrainTickAsync(1.0, _fixedNow.AddSeconds(1), CancellationToken.None);
+    await worker.DrainTickAsync(1.0, _fixedNow.AddSeconds(2), CancellationToken.None);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1).Because("answers landed, so there is room to ask again");
+    var resumed = logger.Collector.GetSnapshot().Where(r => r.Message.Contains("resumed", StringComparison.Ordinal)).ToList();
+    await Assert.That(resumed.Count).IsEqualTo(1).Because("the release is logged once, when the hold ends");
+    await Assert.That(resumed[0].Level).IsEqualTo(LogLevel.Information);
+  }
+
+  [Test]
+  public async Task DrainTick_WithTheCapOff_NeverCountsTheAnswersAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 0,
+    }, origin, learnTopic: true);
+    coordinator.AnswerPending = 1_000_000;
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.CountCalls).IsEmpty().Because("0 turns the cap off, and an off cap costs no query");
+    await Assert.That(coordinator.ClaimCalls.Single().Limit).IsEqualTo(10);
+  }
+
+  [Test]
+  public async Task DrainTick_AtTheCap_OnAHostWithoutMetrics_StillHoldsAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 1,
+    }, origin, learnTopic: true);
+    coordinator.AnswerPending = 1;
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls).IsEmpty();
+  }
+
+  [Test]
+  public async Task Options_MaxOutstandingRepairAnswers_DefaultsTo500Async() {
+    await Assert.That(new StreamIntegrityOptions().MaxOutstandingRepairAnswers).IsEqualTo(500)
+      .Because("at the default 5 rows a second, 500 answers is 100 seconds of requests: answers that land in under that "
+             + "never meet the cap, and answers that lag are paced to the rate they land at");
+  }
+
+  private static (StreamIntegrityMetrics Metrics, Func<long> Holds, IDisposable Listener) _metrics() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    long holds = 0;
+    // This instance's counter only, read on demand: a passive counter reports its cumulative count when observed.
+    var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.RepairDrainHolds.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Exchange(ref holds, value));
+    listener.Start();
+    return (metrics, () => {
+      listener.RecordObservableInstruments();
+      return Interlocked.Read(ref holds);
+    }, listener);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _build(
-      StreamIntegrityOptions options, Guid origin, bool learnTopic) {
+      StreamIntegrityOptions options, Guid origin, bool learnTopic, ILogger<RepairDrainWorker>? logger = null,
+      StreamIntegrityMetrics? metrics = null) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -414,6 +547,9 @@ public class RepairDrainWorkerTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
@@ -423,7 +559,7 @@ public class RepairDrainWorkerTests {
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options),
-      NullLogger<RepairDrainWorker>.Instance);
+      logger ?? NullLogger<RepairDrainWorker>.Instance);
     return (worker, coordinator, transport, tracker);
   }
 
@@ -453,6 +589,15 @@ public class RepairDrainWorkerTests {
     }
 
     public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, DateTimeOffset Now, TimeSpan Timeout)> PendingMarks { get; } = [];
+
+    /// <summary>The buckets awaiting an answer, as the ledger would count them (#2184).</summary>
+    public int AnswerPending { get; set; }
+    public List<(DateTimeOffset Now, int Limit)> CountCalls { get; } = [];
+
+    public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) {
+      CountCalls.Add((now, limit));
+      return Task.FromResult(Math.Min(AnswerPending, limit));
+    }
 
     public Task<int> IntegrityMarkAnswerPendingAsync(
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
