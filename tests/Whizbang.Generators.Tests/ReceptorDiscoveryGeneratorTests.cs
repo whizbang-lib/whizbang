@@ -1554,7 +1554,10 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).IsNotNull();
     await Assert.That(registrations).Contains("AddWhizbangReceptorRegistry");
-    await Assert.That(registrations).Contains("IReceptorRegistry, GeneratedReceptorRegistry");
+    // #2197: a contribution to the one registry the host serves, never the registry itself
+    await Assert.That(registrations).Contains(
+      "global::Whizbang.Core.Messaging.ReceptorRegistryServiceCollectionExtensions.AddReceptorRegistryContribution<GeneratedReceptorRegistry>(services);");
+    await Assert.That(registrations).DoesNotContain("AddSingleton<IReceptorRegistry");
     await Assert.That(registrations).Contains("AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(");
     await Assert.That(registrations).Contains("TryAddSingleton<global::Whizbang.Core.Messaging.IEventCascader>")
       .Because("the invoker cascades what a receptor returns at a worker stage in every host, not only one with a transport consumer");
