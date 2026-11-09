@@ -158,9 +158,10 @@ public static class UpgradeOrder {
   public static NewerVersionFound? FindNewer(VersionSighting own, IEnumerable<VersionSighting> seen) {
     ArgumentNullException.ThrowIfNull(own);
     ArgumentNullException.ThrowIfNull(seen);
-    // An instance's own row is never a sighting: a null id (the ledger) is never equal to it.
+    // An instance's own row is never a sighting: a null id (the ledger) is never equal to it. Spelled out rather than
+    // as a lifted comparison of two nullable ids, whose both-null outcome cannot happen once this instance has an id.
     return seen
-      .Where(s => own.InstanceId is null || s.InstanceId != own.InstanceId)
+      .Where(s => own.InstanceId is not { } ownId || s.InstanceId is not { } theirs || theirs != ownId)
       .Select(s => _newerThan(own, s))
       .OfType<NewerVersionFound>()
       .Aggregate((NewerVersionFound?)null, (best, found) => best is null || _outranks(found, best) ? found : best);

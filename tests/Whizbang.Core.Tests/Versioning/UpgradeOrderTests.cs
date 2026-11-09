@@ -151,6 +151,26 @@ public class UpgradeOrderTests {
     await Assert.That(found).IsNull();
   }
 
+  [Test]
+  public async Task AnInstanceWithNoId_CountsEverySighting_OnlineOrInTheLedgerAsync() {
+    // No id to compare: nothing seen can be its own row.
+    var own = new VersionSighting("1.0.0", "1.0.0");
+
+    await Assert.That(UpgradeOrder.FindNewer(own, [new VersionSighting("2.0.0", "1.0.0", _peer)])!.InstanceId).IsEqualTo(_peer);
+    await Assert.That(UpgradeOrder.FindNewer(own, [new VersionSighting("2.0.0", "1.0.0", null)])!.InstanceId).IsNull();
+  }
+
+  [Test]
+  public async Task TheLedger_IsNeverTheInstancesOwnRow_EvenForTheEmptyIdAsync() {
+    // The ledger records no id; an instance whose id is the empty value is still not the ledger.
+    var own = new VersionSighting("1.0.0", "1.0.0", Guid.Empty);
+
+    var found = UpgradeOrder.FindNewer(own, [new VersionSighting("2.0.0", "1.0.0", null)]);
+
+    await Assert.That(found).IsNotNull();
+    await Assert.That(found!.InstanceId).IsNull();
+  }
+
   // ── which finding is reported ───────────────────────────────────────
 
   [Test]
