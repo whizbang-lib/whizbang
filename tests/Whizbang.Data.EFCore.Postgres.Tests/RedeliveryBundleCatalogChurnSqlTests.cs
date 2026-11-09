@@ -52,6 +52,29 @@ public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
       .Because("the working table is made once per connection; making and dropping it per bundle was the churn");
   }
 
+  /// <summary>
+  /// A pooled connection is reset (<c>DISCARD ALL</c>) each time the pool hands it out, which drops every temporary
+  /// table the session made. A working table kept per connection was therefore made again on almost every bundle in a
+  /// deployed consumer: catalog writes, an invalidation for every other session, and new statement entries each time.
+  /// </summary>
+  [Test]
+  public async Task RecordBundleAnswer_AfterTheSessionIsReset_WritesNothingToTheSystemCatalogAsync() {
+    await using var conn = await _openAsync();
+    await _recordAnswerAsync(conn, transaction: null);
+    await using (var reset = new NpgsqlCommand("DISCARD ALL", conn)) {
+      await reset.ExecuteNonQueryAsync();
+    }
+
+    await using var tx = await conn.BeginTransactionAsync();
+    var before = await _catalogWritesAsync(conn, tx);
+    await _recordAnswerAsync(conn, tx);
+    var writes = await _catalogWritesAsync(conn, tx) - before;
+    await tx.CommitAsync();
+
+    await Assert.That(writes).IsEqualTo(0L)
+      .Because("the pool resets a connection each time it hands it out, so anything kept per connection is made per call");
+  }
+
   [Test]
   public async Task ReconcileBundle_ASecondCallOnTheConnection_WritesNothingToTheSystemCatalogAsync() {
     await using var conn = await _openAsync();
