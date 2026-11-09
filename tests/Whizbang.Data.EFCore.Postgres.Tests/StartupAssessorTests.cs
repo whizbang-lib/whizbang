@@ -192,6 +192,8 @@ public class StartupAssessorTests : EFCoreTestBase {
   public async Task StoredForms_AreSettledOnlyWhenEveryLedgerSaysSoAsync(CancellationToken cancellationToken) {
     await _execAsync("""
       CREATE TABLE wh_per_settle_probe (id uuid PRIMARY KEY, status text, amount integer);
+      INSERT INTO wh_per_settle_probe (id) VALUES (gen_random_uuid());
+      CREATE TABLE wh_per_never_written (id uuid PRIMARY KEY);
       CREATE TABLE wh_per_settled (id uuid PRIMARY KEY);
       CREATE TABLE wh_per_open (id uuid PRIMARY KEY);
       INSERT INTO wh_perspective_forms (table_name, temporal_form, applied_at, settled_at) VALUES ('wh_per_settled', 1, now(), now());
@@ -211,7 +213,9 @@ public class StartupAssessorTests : EFCoreTestBase {
       .IsTrue();
     await Assert.That(await settledAsync(["wh_per_open"], [], [])).IsFalse().Because("a temporal rewrite not yet settled");
     await Assert.That(await settledAsync(["wh_per_settle_probe"], [], [])).IsFalse()
-      .Because("a table that exists and that the rewrite never recorded has not been checked yet");
+      .Because("a table holding rows that the rewrite never recorded has not been checked yet");
+    await Assert.That(await settledAsync(["wh_per_never_written"], [("m-never-recorded", "wh_per_never_written")], [])).IsTrue()
+      .Because("#2194: a table with no row and no record has nothing to convert, as on a database one pass has just built");
     await Assert.That(await settledAsync(["wh_per_not_created"], [("m-never-declared", "wh_per_not_created")], [])).IsTrue()
       .Because("a conversion waits for its table: with no table there is nothing to convert");
     await Assert.That(await settledAsync([], [("m-open", "wh_per_open")], [])).IsFalse().Because("a stored-form migration not yet settled");

@@ -1,51 +1,38 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
-using Whizbang.Data.EFCore.Postgres.Tests.Generated;
-using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
-/// #2194: a database one complete schema pass has built reads as current on the next start. The stored-form rewrite
-/// runs before the pass creates the perspective tables, so on a new database it finds no table to settle; the pass then
-/// settles the tables it created, and the next start's Assess reads Current instead of running a pass it does not need.
+/// #2194: a database one complete schema pass has built reads as current on the next start. The stored-form conversions
+/// run before the pass creates the perspective tables, so on a new database they record nothing about them; a table with
+/// no row and no record has nothing to convert, so the next start's Assess reads Current instead of running a pass it
+/// does not need.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
+/// <remarks>
+/// The run's schema template is exactly that database: one <c>EnsureWhizbangDatabaseInitializedAsync</c> on an empty
+/// one (<see cref="EFCoreSchemaTemplate"/>), and each test gets a copy of it.
+/// </remarks>
+/// <code-under-test>src/Whizbang.Data.Postgres/StoredFormSettlement.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
-public class OnePassReadsCurrentTests {
+public class OnePassReadsCurrentTests : EFCoreTestBase {
   [Test]
-  [Timeout(240000)]
+  [Timeout(120000)]
   public async Task ADatabaseOnePassBuilt_ReadsAsCurrentOnTheNextStartAsync(CancellationToken ct) {
-    await SharedPostgresContainer.InitializeAsync(ct);
-    var database = await PerTestDatabaseFactory.CreateAsync("efonepass", cancellationToken: ct);
-    try {
-      var connectionString = new NpgsqlConnectionStringBuilder(database.ConnectionString) { Timezone = "UTC" }.ConnectionString;
-      var (dataSource, options) = EFCoreTestBase.CreateContextOptions(connectionString);
-      await using (dataSource) {
-        await using (var first = new WorkCoordinationDbContext(options)) {
-          // The premise: the model declares conversions on tables only the pass creates, so the rewrite that runs
-          // before the pass finds none of them. Without one, this test would prove nothing.
-          var declared = CanonicalTemporalRewrite.ForModel(first.Model, PerspectiveDocumentSerialization.Options, "public").Length
-            + DeclaredKeyShapes.ForModel(first.Model, PerspectiveDocumentSerialization.Options).Length;
-          await Assert.That(declared).IsGreaterThan(0);
+    await using var context = CreateDbContext();
+    // The premise: the model declares conversions on tables only the pass creates, so the conversions that run before
+    // the pass find none of them. Without one, this test would prove nothing.
+    var declared = CanonicalTemporalRewrite.ForModel(context.Model, PerspectiveDocumentSerialization.Options, "public").Length
+      + DeclaredKeyShapes.ForModel(context.Model, PerspectiveDocumentSerialization.Options).Length;
+    await Assert.That(declared).IsGreaterThan(0);
 
-          await first.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: ct);
-        }
-
-        await using var next = new WorkCoordinationDbContext(options);
-        await Assert.That(await next.IsWhizbangSchemaCurrentAsync(ct)).IsTrue()
-          .Because("one complete pass built every table and settled every conversion on them; a second pass owes nothing");
-      }
-    } finally {
-      NpgsqlConnection.ClearAllPools();
-      await PerTestDatabaseFactory.DropAsync(database.Name, cancellationToken: CancellationToken.None);
-    }
+    await Assert.That(await context.IsWhizbangSchemaCurrentAsync(ct)).IsTrue()
+      .Because("one complete pass built every table, and a table with no row has nothing to convert");
   }
 }

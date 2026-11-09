@@ -285,19 +285,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       // Announced to the observers, not as a stage: these phases run on a restart too, and Migrate stays the pass's
       // stage. Their progress is said in the log (#2128).
       await Whizbang.Data.Postgres.SchemaInitializationObservers.PreLockPhasesStartingAsync(serviceProvider, "__SCHEMA__", cancellationToken);
-      await convertStoredFormsAsync(rewriteConnectionFactory, warnAboutTheFleet: true);
-    }
-
-    // The conversions themselves: before the pass (above), and once more after a pass that built tables they were
-    // waiting for (#2194), so a database one complete pass built has every conversion settled.
-    async Task convertStoredFormsAsync(Func<Npgsql.NpgsqlConnection> rewriteConnectionFactory, bool warnAboutTheFleet) {
       try {
         // A rewrite that changes a stored unit is not safe under a mixed fleet: an older instance
         // keeps writing the old unit into a table the ledger already says is converted, and nothing
         // can tell those rows apart afterward. The migrator cannot refuse to run, because under a
         // rolling update the older instances stay until the newer ones are ready. It can say so.
-        if (warnAboutTheFleet
-            && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.ILibraryVersionProvider))
+        if (serviceProvider?.GetService(typeof(Whizbang.Core.Observability.ILibraryVersionProvider))
               is Whizbang.Core.Observability.ILibraryVersionProvider libraryVersion
             && serviceProvider.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
               is Whizbang.Core.Observability.IServiceInstanceProvider thisInstance) {
@@ -450,8 +443,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter.
     var retryAttempt = 0;
     TimeSpan? plannedRetryDelay = null;
-    // #2194: set once this instance completed a pass, which may have built tables a conversion was waiting for.
-    var passCompletedHere = false;
     // A Current schema has no pass to run (#1992): the loop, its fast path and its lock are skipped whole.
     while (!schemaIsCurrent) {
       cancellationToken.ThrowIfCancellationRequested();
@@ -663,7 +654,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             break;
           }
           steps.CompletePass();
-          passCompletedHere = true;
 
           sw.Stop();
           var phaseSummary = string.Join(", ", phases.Select(p => $"{p.Name}={p.Ms}ms({p.Status})"));
@@ -721,26 +711,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.FailedToCloseConnection(logger, ex, "__SCHEMA__");
           }
         }
-      }
-    }
-
-    // #2194: the conversions ran before the pass, when a table the pass has just built did not exist yet, so they settled
-    // nothing on it. The instance that completed the pass settles them now, while it still holds the migrator role:
-    // without this, a new database reads as current only from its third start. Asked first, so an upgrade whose
-    // conversions all settled before the pass pays one read.
-    if (passCompletedHere && segmentConnectionFactory is not null) {
-      bool settled;
-      try {
-        settled = await _storedFormsSettledOnAsync(dbContext, segmentConnectionFactory, cancellationToken);
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Never fatal, like the conversions themselves: the next start reads the same records and settles them.
-        logger?.LogWarning(ex,
-          "Could not read whether the stored-form conversions in schema {Schema} settled after the pass; the next "
-          + "start settles any that did not", "__SCHEMA__");
-        settled = true;
-      }
-      if (!settled) {
-        await convertStoredFormsAsync(segmentConnectionFactory, warnAboutTheFleet: false);
       }
     }
 
@@ -1003,23 +973,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         connection, "__SCHEMA__", GetManagedSchemaObjects(), cancellationToken)).Count > 0) {
       return false;
     }
-    return await _storedFormsSettledAsync(dbContext, connection, cancellationToken);
-  }
-
-  /// <summary>Whether every stored-form conversion the model declares has settled, on a connection of its own (#2194).</summary>
-  private static async Task<bool> _storedFormsSettledOnAsync(
-      __DBCONTEXT_FQN__ dbContext, Func<Npgsql.NpgsqlConnection> connectionFactory, CancellationToken cancellationToken) {
-    await using var connection = connectionFactory();
-    await connection.OpenAsync(cancellationToken);
-    return await _storedFormsSettledAsync(dbContext, connection, cancellationToken);
-  }
-
-  /// <summary>
-  /// Whether every stored-form conversion the model declares has settled: the question Current asks (#1992), and the one
-  /// the instance that completed a pass asks before settling the tables it built (#2194).
-  /// </summary>
-  private static async Task<bool> _storedFormsSettledAsync(
-      __DBCONTEXT_FQN__ dbContext, Npgsql.NpgsqlConnection connection, CancellationToken cancellationToken) {
     var documentOptions = Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options;
     return await global::Whizbang.Data.Postgres.StoredFormSettlement.IsSettledAsync(
       connection,
