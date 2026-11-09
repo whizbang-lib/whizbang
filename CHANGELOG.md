@@ -1655,16 +1655,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registered keeps the earlier behavior exactly. The namespace rule is `OwnedNamespaceMatcher` (new `IsLocalEventType`
   and `NormalizeDomain`), which the dispatcher, the receptor invoker and the transport consumer now share instead of
   each keeping a copy.
-- **A generic base message with a strong-id stream id compiles (#2072).** A base such as
-  `BaseCommand<TStreamId>` whose `[StreamId]` is a type parameter made the stream-id generator emit extractors that
-  name the open type and `TStreamId`, and the JSON-context generator emit a polymorphic factory for the constructed
-  base (`BaseCommand<OrderId>`) whose name was not an identifier. An open generic type now gets no extractor of its
-  own; each message that closes it is discovered on its own and routes by the inherited property, typed with its type
-  argument. An abstract constructed generic base is left out of polymorphic serialization, as an abstract base already
-  was, and a concrete one's factory is named with identifier characters only.
-- **Strong ids in more than one namespace of an assembly compile (#2072).** The provider registration is emitted once
-  per assembly, under the first id's namespace, and named every other id's provider relative to it, so an id declared
-  in a second namespace failed with CS0246. The registration now names every id and provider from `global::`.
 - **Pre-origin history is re-attributed to the service that wrote it (#2008).** A new maintainer worker
   (`OriginReattributionWorker`) walks the store in commit-sequence batches under the housekeeping idle gate (forced
   through after `Whizbang:Housekeeping:MaxDeferral`), only when owned domains are registered. An event with no origin
