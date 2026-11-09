@@ -33,13 +33,13 @@ public sealed class ProcessCrashEvents : IProcessCrashEvents {
 
   /// <inheritdoc />
   /// <remarks>
-  /// The runtime's event takes its own delegate type, so each handler is wrapped as one bound to the handler's
-  /// <c>Invoke</c>. Two wrappers of the same handler are equal (same target, same method), so removal finds the one
-  /// that was added.
+  /// The runtime's event takes its own delegate type, so each handler is passed as its <c>Invoke</c> method, which
+  /// converts to that type. Two conversions of the same handler are equal (same target, same method), so removal
+  /// finds the one that was added.
   /// </remarks>
   public event EventHandler<UnhandledExceptionEventArgs> UnhandledException {
-    add => AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(value.Invoke);
-    remove => AppDomain.CurrentDomain.UnhandledException -= new UnhandledExceptionEventHandler(value.Invoke);
+    add => AppDomain.CurrentDomain.UnhandledException += value.Invoke;
+    remove => AppDomain.CurrentDomain.UnhandledException -= value.Invoke;
   }
 
   /// <inheritdoc />
