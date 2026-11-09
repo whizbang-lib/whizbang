@@ -573,46 +573,58 @@ public sealed partial class PgSharedNotifyConnection(
 
   /// <summary>
   /// One pass of the dispatch loop: resyncs the LISTEN set if asked, waits for a notification, a
-  /// keepalive or a resync, and on a keepalive checks the connection with <c>SELECT 1</c>.
+  /// resync or the keepalive interval to pass, and on a keepalive checks the connection with
+  /// <c>SELECT 1</c>.
   /// </summary>
   /// <remarks>
-  /// A stop ends the pass on the stopping token itself, not on the wait noticing it. Npgsql's wait
-  /// checks its token and then re-arms the read's own cancellation source, and re-arming discards a
-  /// cancellation delivered in between (Npgsql 10.0.1, <c>NpgsqlConnector.Wait</c> and
-  /// <c>ResettableCancellationTokenSource</c>), so a stop landing as the loop parks can go unseen
-  /// while the wait sits on an idle socket. See <see cref="_awaitWaitOrStopAsync"/>.
+  /// <para>
+  /// Npgsql's wait checks its token and then re-arms the read's own cancellation source, and
+  /// re-arming discards a cancellation delivered in between (Npgsql 10.0.1, <c>NpgsqlConnector.Wait</c>
+  /// and <c>ResettableCancellationTokenSource</c>). So a token cancel can go unseen while the wait sits
+  /// on an idle socket, and nothing here relies on one alone:
+  /// </para>
+  /// <list type="bullet">
+  /// <item>A stop ends the pass on the stopping token itself (see <see cref="AwaitWaitOrStopAsync"/>).</item>
+  /// <item>The keepalive is the wait's own timeout, <see cref="WhizbangNotificationOptions.ListenKeepaliveInterval"/>.
+  /// Npgsql arms its timeout afresh on every read, after the reset that loses a cancel, so it cannot be
+  /// lost; a wait that times out returns false and leaves the connection open (#2155).</item>
+  /// <item>A resync still cancels the wait, which usually works and syncs at once. When the cancel is
+  /// lost, the wait times out within one keepalive interval, and the next pass drains the resync latch
+  /// before it parks again, so the late subscription is listened on by then (#2155).</item>
+  /// </list>
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Keepalive_WhoseWakeIsLost_RunsSelectOneOnceTheWaitTimesOutAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Keepalive_DuringIdlePeriod_IssuesSelectOneAndStaysAvailableAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NpgsqlWaitTimeoutTests.cs:WaitAsync_TimeoutElapses_ReturnsFalseAndLeavesTheSameSessionOpenAsync</tests>
   private async Task _listenOnceAsync(
       NpgsqlConnection conn, ListenConnectionLifetime lifetime, CancellationToken stoppingToken) {
-    using var keepalive = new CancellationTokenSource(_options.ListenKeepaliveInterval, _timeProvider);
     using var resync = new CancellationTokenSource();
     Volatile.Write(ref _resyncSignal, resync);
-    using var combined = CancellationTokenSource.CreateLinkedTokenSource(
-      stoppingToken, keepalive.Token, resync.Token);
+    using var combined = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, resync.Token);
 
     // Drain the latch AFTER publishing the handle, so a request racing this point either
-    // is seen here or finds the handle and cancels the wait below. Covers both the request
-    // that woke us and any that landed while we were syncing.
+    // is seen here or finds the handle and cancels the wait below. Covers the request that
+    // woke us, any that landed while we were syncing, and one whose cancel the wait lost.
     if (Interlocked.Exchange(ref _resyncPending, 0) == 1) {
       await SyncListensAsync(conn, stoppingToken).ConfigureAwait(false);
     }
 
-    var keepaliveFired = false;
+    var keepaliveDue = false;
     try {
-      var wait = WaitForMessageAsync(conn, combined.Token);
+      var wait = WaitForMessageAsync(conn, _options.ListenKeepaliveInterval, combined.Token);
       lifetime.PendingWait = wait;
-      await AwaitWaitOrStopAsync(wait, lifetime, stoppingToken).ConfigureAwait(false);
-      // Notification arrived (or backend message) — handler ran synchronously inside
-      // WaitAsync. Loop again to wait for the next one.
+      // True: a notification arrived (or another backend message); the handler ran synchronously
+      // inside the wait. False: the keepalive interval passed with nothing to read.
+      keepaliveDue = !await AwaitWaitOrStopAsync(wait, lifetime, stoppingToken).ConfigureAwait(false);
     } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested && combined.Token.IsCancellationRequested) {
-      // A keepalive or resync woke the wait: not a stop, and one of our own tokens. Asked in
-      // this order so the stop, the case that matters, is the decision; a cancellation from
-      // none of our tokens still escapes to the reconnect below.
-      keepaliveFired = keepalive.IsCancellationRequested;
+      // A resync woke the wait: not a stop, and our own token. Asked in this order so the stop,
+      // the case that matters, is the decision; a cancellation from none of our tokens still
+      // escapes to the reconnect below. The next pass drains the latch and syncs.
     } finally {
       Volatile.Write(ref _resyncSignal, null);
     }
-    if (keepaliveFired) {
+    if (keepaliveDue) {
       // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
       // the outer catch and reconnect.
       await using var ping = new NpgsqlCommand("SELECT 1", conn);
@@ -630,6 +642,7 @@ public sealed partial class PgSharedNotifyConnection(
   /// <param name="wait">The wait the loop parked on.</param>
   /// <param name="lifetime">The connection's lifetime, which the stop closes.</param>
   /// <param name="stoppingToken">The host's stopping token.</param>
+  /// <returns>The wait's own answer: true when a message arrived, false when its timeout passed.</returns>
   /// <remarks>
   /// On a stop with no delivery running, the lifetime is closed to deliveries and the stop leaves by
   /// exception at once, with the wait still reading if it missed the cancellation; the lifetime
@@ -639,21 +652,21 @@ public sealed partial class PgSharedNotifyConnection(
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Stop_WhileTheWaitMissesItsCancellation_StillCompletesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ListenConnectionLifetimeTests.cs:AwaitWaitOrStop_AStopDuringADelivery_WaitsForTheWaitAsync</tests>
-  internal static async Task AwaitWaitOrStopAsync(
-      Task wait, ListenConnectionLifetime lifetime, CancellationToken stoppingToken) {
+  internal static async Task<bool> AwaitWaitOrStopAsync(
+      Task<bool> wait, ListenConnectionLifetime lifetime, CancellationToken stoppingToken) {
     try {
-      await wait.WaitAsync(stoppingToken).ConfigureAwait(false);
-      return;
+      return await wait.WaitAsync(stoppingToken).ConfigureAwait(false);
     } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
       if (lifetime.TryClose()) {
         throw;
       }
     }
-    await wait.ConfigureAwait(false);
+    return await wait.ConfigureAwait(false);
   }
 
   /// <summary>
-  /// The wait the dispatch loop parks on between notifications: Npgsql's own <c>WaitAsync</c>.
+  /// The wait the dispatch loop parks on between notifications: Npgsql's own <c>WaitAsync</c>,
+  /// bounded by a timeout. Returns true when a message arrived and false when the timeout passed.
   /// </summary>
   /// <remarks>
   /// Replaceable so a test can hand the loop a wait that never sees its cancellation, the way
@@ -661,8 +674,10 @@ public sealed partial class PgSharedNotifyConnection(
   /// Npgsql a test cannot time; a wait that ignores its token makes the same state certain.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Stop_WhileTheWaitMissesItsCancellation_StillCompletesAsync</tests>
-  internal Func<NpgsqlConnection, CancellationToken, Task> WaitForMessageAsync { get; set; } =
-    static (conn, cancellationToken) => conn.WaitAsync(cancellationToken);
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NpgsqlWaitTimeoutTests.cs:WaitAsync_NotificationAfterATimeout_ArrivesOnTheSameConnectionAsync</tests>
+  internal Func<NpgsqlConnection, TimeSpan, CancellationToken, Task<bool>> WaitForMessageAsync { get; set; } =
+    static (conn, timeout, cancellationToken) => conn.WaitAsync(timeout, cancellationToken);
 
   /// <summary>
   /// Raised each time this connection claims the instance's alive-lock: when it opens, or on a later keepalive when it

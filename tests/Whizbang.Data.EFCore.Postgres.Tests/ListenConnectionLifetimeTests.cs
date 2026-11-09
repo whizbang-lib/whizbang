@@ -70,7 +70,7 @@ public class ListenConnectionLifetimeTests {
     });
     var delivery = Task.Run(() => lifetime.Deliver("wh_channel", "outbox"));
     await entered.Task;
-    var wait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var wait = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var stopped = new CancellationTokenSource();
     await stopped.CancelAsync();
 
@@ -78,13 +78,15 @@ public class ListenConnectionLifetimeTests {
     var leftDuringDelivery = stop.IsCompleted;
     release.Release();
     await delivery;
-    wait.SetResult();
-    await stop;
+    wait.SetResult(true);
+    var delivered = await stop;
 
     await Assert.That(leftDuringDelivery).IsFalse()
       .Because("a stop that finds a delivery running waits for the wait instead of leaving mid-delivery");
     await Assert.That(lifetime.TryClose()).IsTrue()
       .Because("the refused close left the lifetime open, and the finished delivery no longer holds it");
+    await Assert.That(delivered).IsTrue()
+      .Because("the wait's own answer (a message arrived) is what the loop acts on after the stop waited for it");
   }
 
   [Test]
