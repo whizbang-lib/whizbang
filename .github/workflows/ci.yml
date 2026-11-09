@@ -245,8 +245,10 @@ jobs:
     #   DEVELOP: the merge queue fast-forwards develop to the exact SHA its run just validated.
     #   RELEASE CUT: release/vX.Y.Z is the develop commit it was cut from, plus main's version file
     #     and the new version, all in Directory.Build.props, which the build does not read (the
-    #     version is stamped from the branch name). Reused only when that file is the ONLY
-    #     difference; a stabilization fix, or a hotfix cut from a tag, runs the full matrix.
+    #     version is stamped from the branch name), and the changelog the cut gathered (CHANGELOG.md
+    #     and the deleted changelog.d/ fragments, #2168), which nothing builds or tests. Reused only
+    #     when those are the ONLY differences; a stabilization fix, or a hotfix cut from a tag, runs
+    #     the full matrix.
     # Either way the evidence comes from find-tested-run (the queue run, or on a fast-forward the PR
     # run), and validated is true only when both its coverage and its build manifest are still
     # available. Anything less runs the full matrix: this job never fails the run.
@@ -281,13 +283,13 @@ jobs:
           # branch was cut from) and every file that differs from it.
           CMP=$(gh api "repos/$REPO/compare/develop...$SHA" 2>/dev/null) || none "cannot compare with develop"
           BASE=$(jq -r '.merge_base_commit.sha // ""' <<< "$CMP")
-          OTHER=$(jq -r '[.files[].filename | select(. != "Directory.Build.props")] | join(", ")' <<< "$CMP")
+          OTHER=$(jq -r '[.files[].filename | select(. != "Directory.Build.props" and . != "CHANGELOG.md" and (startswith("changelog.d/") | not))] | join(", ")' <<< "$CMP")
           [ -n "$BASE" ] || none "no merge base with develop"
-          [ -z "$OTHER" ] || none "the branch changes more than Directory.Build.props relative to develop ($OTHER)"
+          [ -z "$OTHER" ] || none "the branch changes more than Directory.Build.props and the changelog relative to develop ($OTHER)"
           # The evidence is the run that TESTED $BASE (its queue run, or PR run on a fast-forward),
           # which find-tested-run requires next. Its develop push run adds nothing: it reused that
           # same evidence, and may have been canceled by a later push without anything being wrong.
-          echo "Release cut from develop $BASE; only Directory.Build.props differs."
+          echo "Release cut from develop $BASE; only Directory.Build.props and the changelog differ."
           echo "sha=$BASE" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the resolver action
@@ -1509,8 +1511,9 @@ jobs:
 
   pr-type:
     name: Gate · Pull request type
-    # The title is a Conventional Commit (it becomes the squash commit), and a breaking change (! in the
-    # title) adds a CHANGELOG.md entry with an Upgrade note (CONTRIBUTING.md, "Commit Messages"). Bots and
+    # The title is a Conventional Commit (it becomes the squash commit), a breaking change (! in the
+    # title) adds a changelog entry with an Upgrade note, and a pull request into develop writes its entry
+    # as a changelog.d/ fragment, not under [Unreleased] in CHANGELOG.md (CONTRIBUTING.md, "Commit Messages"). Bots and
     # the release pull request into main are exempt; the rules live in .github/scripts/Test-PullRequestType.ps1,
     # tested by script-tests. Read from the API, so retitling and re-running this job is enough; it runs
     # again in the merge queue, for every pull request in the group (queue-prs). In ci-result's needs.

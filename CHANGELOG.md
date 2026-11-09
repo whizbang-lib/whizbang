@@ -1478,6 +1478,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
+- **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
+  longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
+  state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
+  buffers per call on a service holding 1.6M processed rows, asked on every integrity checkpoint). It now counts
+  unprocessed rows only, through the expiry index (1.0 ms on a copy of that table), and a row the store pass completed
+  without clearing its lease no longer keeps the service from settling.
+
 - **A rebuild dates a row at its stream's start once the stream's first event is gone (Fixes #2152).** A perspective
   row's `CreatedAt` is business time from the events folded into it, and an update never moves it. After the
   superseding reaper or a prefix truncate deleted a stream's first event, a rebuild that writes the row afresh
