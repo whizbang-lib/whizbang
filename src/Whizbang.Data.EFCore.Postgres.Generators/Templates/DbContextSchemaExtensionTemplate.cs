@@ -100,6 +100,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var incompatibilityOverride = assessment?.OverriddenReason;
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     _ledgerApplicationVersion.Value = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(serviceProvider);
+    // #2131: every stored-form conversion this start applies records the versions that applied it, so the rollback gate
+    // counts it like a migration. Set here, for the whole start, so no conversion has to be handed it.
+    using var storedFormApplier = Whizbang.Data.Postgres.StoredFormApplier.ScopeTo(new Whizbang.Data.Postgres.StoredFormApplier(
+      "__LIBRARY_VERSION__", _ledgerApplicationVersion.Value ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN));
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();

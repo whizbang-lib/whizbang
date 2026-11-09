@@ -268,6 +268,10 @@ public sealed class PostgresSchemaInitializer {
       || (await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(connection, schema, declared, cancellationToken)).Count == 0;
   }
 
+  /// <summary>The application version the ledger and the stored-form journal record (#2027, #2131); never null.</summary>
+  private string _recordedApplicationVersion =>
+    LedgerApplicationVersion ?? _applicationVersion ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN;
+
   private IEnumerable<(string Name, string Hash, string? Version)> _applicationObjectHashes() =>
     (_applicationObjects?.BeforePerspectives ?? []).Select(o => ($"app:before:{o.Name}", _sha256(o.Sql), (string?)null))
       .Concat((_applicationObjects?.AfterPerspectives ?? []).Select(o => ($"app:after:{o.Name}", _sha256(o.Sql), (string?)null)));
@@ -368,6 +372,8 @@ public sealed class PostgresSchemaInitializer {
     // case are moved to the declared name, and a required member still missing is reported (#1874). A row holding
     // both spellings with different values stops startup.
     if (DeclaredKeyTables is { } declaredKeyTables) {
+      // #2131: the keys it moves are a conversion this version applied, and the journal records so.
+      using var applier = StoredFormApplier.ScopeTo(new StoredFormApplier(_migrationProvider.Version, _recordedApplicationVersion));
       await Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.ApplyAsync(
         () => new NpgsqlConnection(_connectionString), schema, declaredKeyTables,
         SchemaCommandTimeout.Resolve(_connectionString), Logger, cancellationToken);
@@ -1061,7 +1067,7 @@ public sealed class PostgresSchemaInitializer {
       RETURNING id";
     cmd.Parameters.AddWithValue("version", _migrationProvider.Version);
     // #2027: the ledger records the application version; never NULL, which would add a row on every pass.
-    cmd.Parameters.AddWithValue("appVersion", LedgerApplicationVersion ?? _applicationVersion ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN);
+    cmd.Parameters.AddWithValue("appVersion", _recordedApplicationVersion);
     cmd.Parameters.AddWithValue("notes", (object?)_migrationProvider.ReleaseNotes ?? DBNull.Value);
     cmd.CommandTimeout = 10;
 

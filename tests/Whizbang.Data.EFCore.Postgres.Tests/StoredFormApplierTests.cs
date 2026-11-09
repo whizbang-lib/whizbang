@@ -216,6 +216,18 @@ public class StoredFormApplierTests : EFCoreTestBase {
     await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
   }
 
+  [Test]
+  [Timeout(60000)]
+  public async Task OnJournalsOlderThanTheRecord_TheGateReadsTheLedgerAloneAsync(CancellationToken ct) {
+    var library = (await _libraryAsync(ct))!;
+    await _execAsync("ALTER TABLE wh_stored_form_migrations DROP COLUMN applied_library_version, DROP COLUMN applied_application_version", ct);
+    await _execAsync("ALTER TABLE wh_perspective_forms DROP COLUMN applied_library_version, DROP COLUMN applied_application_version", ct);
+
+    var assessment = await _assessor(library, null).AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+  }
+
   private sealed class NoRowsMigration : IStoredFormMigration {
     public string Name => "applier:custom";
     public string BuildSql(StoredFormMigrationTarget target) => $"UPDATE {target.QualifiedTable} SET data = data WHERE false";

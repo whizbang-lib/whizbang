@@ -23,7 +23,7 @@ public class OnePassReadsCurrentTests {
   [Test]
   [Timeout(240000)]
   public async Task ADatabaseOnePassBuilt_ReadsAsCurrentOnTheNextStartAsync(CancellationToken ct) {
-    await SharedPostgresContainer.InitializeAsync();
+    await SharedPostgresContainer.InitializeAsync(ct);
     var database = await PerTestDatabaseFactory.CreateAsync("efonepass", cancellationToken: ct);
     try {
       var connectionString = new NpgsqlConnectionStringBuilder(database.ConnectionString) { Timezone = "UTC" }.ConnectionString;
@@ -45,7 +45,7 @@ public class OnePassReadsCurrentTests {
       }
     } finally {
       NpgsqlConnection.ClearAllPools();
-      await PerTestDatabaseFactory.DropAsync(database.Name);
+      await PerTestDatabaseFactory.DropAsync(database.Name, cancellationToken: CancellationToken.None);
     }
   }
 }

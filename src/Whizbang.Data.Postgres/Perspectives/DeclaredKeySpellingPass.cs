@@ -434,6 +434,18 @@ public static class DeclaredKeySpellingPass {
       record.Parameters.AddWithValue(rowsChanged);
       record.Parameters.AddWithValue(settled);
       await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      if (rowsChanged > 0 && StoredFormApplier.Current is { } applier) {
+        // #2131: keys moved are a conversion, and the journal records who applied it. The applier rides in transaction
+        // settings for the one statement that records it, as in the rewrite phase.
+        await using var stamp = _command(
+          $"SELECT set_config('{StoredFormApplier.LIBRARY_SETTING}', $1, true), set_config('{StoredFormApplier.APPLICATION_SETTING}', $2, true);\n"
+          + "DO $wh_dk_applier$\nBEGIN\n"
+          + StoredFormApplier.RecordSql(_journal, "name", SqlText.Literal(table.JournalName), "  ")
+          + "END $wh_dk_applier$;");
+        stamp.Parameters.AddWithValue(applier.LibraryVersion);
+        stamp.Parameters.AddWithValue(applier.ApplicationVersion);
+        await stamp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
     }
 
     private async Task<List<ChunkRow>> _readChunkAsync(string select, Guid? after, int columnCount, CancellationToken cancellationToken) {

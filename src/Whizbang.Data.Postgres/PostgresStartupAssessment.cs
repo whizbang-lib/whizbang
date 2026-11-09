@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
+using System.Text;
 using Npgsql;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Versioning;
@@ -183,7 +185,8 @@ internal static class PostgresStartupAssessment {
   }
 
   /// <summary>What the database has: the ledger, its version table and owner column, and what reading who is online needs.</summary>
-  private readonly record struct Probe(bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online, bool AppliedBy);
+  private readonly record struct Probe(
+    bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online, bool AppliedBy, bool StoredForms, bool TemporalForms);
 
   private static async Task<Probe> _probeAsync(NpgsqlConnection connection, string prefix, CancellationToken cancellationToken) {
     await using var probe = connection.CreateCommand();
@@ -194,16 +197,20 @@ internal static class PostgresStartupAssessment {
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($2) AND attname = 'application_version' AND NOT attisdropped),
              to_regprocedure($3) IS NOT NULL
                AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($4) AND attname = 'application_version' AND NOT attisdropped),
-             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'applied_version_id' AND NOT attisdropped)
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'applied_version_id' AND NOT attisdropped),
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($5) AND attname = 'applied_library_version' AND NOT attisdropped),
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($6) AND attname = 'applied_library_version' AND NOT attisdropped)
       """;
     probe.Parameters.AddWithValue(prefix + "wh_schema_migrations");
     probe.Parameters.AddWithValue(prefix + "wh_schema_versions");
     probe.Parameters.AddWithValue(prefix + "wh_live_instance_ids()");
     probe.Parameters.AddWithValue(prefix + "wh_service_instances");
+    probe.Parameters.AddWithValue(prefix + StoredFormMigrationSql.JOURNAL);
+    probe.Parameters.AddWithValue(prefix + "wh_perspective_forms");
     await using var reader = await probe.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return new Probe(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetBoolean(4),
-      reader.GetBoolean(5));
+      reader.GetBoolean(5), reader.GetBoolean(6), reader.GetBoolean(7));
   }
 
   private static async Task<IReadOnlyList<AppliedSchemaChange>> _readLedgerAsync(
@@ -222,11 +229,12 @@ internal static class PostgresStartupAssessment {
     await using var command = connection.CreateCommand();
 #pragma warning disable S2077 // the prefix is quoted by PgIdentifier; the fragments are this method's own literals
     command.CommandText = $"""
-      SELECT m.file_name, {kind}, v.library_version, {application}
+      SELECT m.file_name AS name, {kind} AS application, v.library_version, {application} AS application_version
       FROM {prefix}wh_schema_migrations m
       LEFT JOIN {prefix}wh_schema_versions v ON v.id = {applier}
       WHERE {notStep}
-      ORDER BY m.file_name
+      {_conversions(prefix, probe)}
+      ORDER BY name
       """;
 #pragma warning restore S2077
     var changes = new List<AppliedSchemaChange>();
@@ -238,6 +246,32 @@ internal static class PostgresStartupAssessment {
         reader.GetValue(2) as string, reader.GetValue(3) as string));
     }
     return changes;
+  }
+
+  /// <summary>
+  /// The stored-form conversions as changes (#2131): each conversion a known version applied, from the journal that records
+  /// it (376). An application schema change, since the library converts what the application's model declares. Nothing
+  /// on a journal older than the record, and a conversion nobody known applied is not read.
+  /// </summary>
+  private static string _conversions(string prefix, Probe probe) {
+    var union = new StringBuilder();
+    if (probe.StoredForms) {
+      union.Append(CultureInfo.InvariantCulture, $"""
+        UNION ALL
+        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version
+        FROM {prefix}{StoredFormMigrationSql.JOURNAL} j WHERE j.applied_library_version IS NOT NULL
+
+        """);
+    }
+    if (probe.TemporalForms) {
+      union.Append(CultureInfo.InvariantCulture, $"""
+        UNION ALL
+        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version
+        FROM {prefix}wh_perspective_forms f WHERE f.applied_library_version IS NOT NULL
+
+        """);
+    }
+    return union.ToString();
   }
 
   private static async Task<IReadOnlyList<VersionSighting>> _readOnlineAsync(
