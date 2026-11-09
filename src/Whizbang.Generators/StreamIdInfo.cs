@@ -40,13 +40,7 @@ public sealed record StreamIdInfo(
     Location? PropertyLocation = null,
     int InheritanceDepth = 0,
     bool DeclinesInheritedGenerate = false
-) {
-  /// <summary>
-  /// True if the stream id's type is a [WhizbangId] strong id, which the generated SetStreamId writes as a new id
-  /// wrapping the Guid (#2072). A property rather than a parameter, so the constructor and Deconstruct stay as they were.
-  /// </summary>
-  public bool IsPropertyStrongId { get; init; }
-}
+);
 
 /// <summary>
 /// Value type containing information about a discovered event without stream key.
@@ -93,10 +87,4 @@ public sealed record CommandStreamIdInfo(
     Location? PropertyLocation = null,
     int InheritanceDepth = 0,
     bool DeclinesInheritedGenerate = false
-) {
-  /// <summary>
-  /// True if the stream id's type is a [WhizbangId] strong id, which the generated SetStreamId writes as a new id
-  /// wrapping the Guid (#2072). A property rather than a parameter, so the constructor and Deconstruct stay as they were.
-  /// </summary>
-  public bool IsPropertyStrongId { get; init; }
-}
+);
