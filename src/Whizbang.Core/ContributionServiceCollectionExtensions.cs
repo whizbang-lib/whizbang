@@ -34,6 +34,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
 internal static class ContributionServiceCollectionExtensions {
   /// <summary>
   /// Adds <typeparamref name="TContribution"/> under <paramref name="contributionKey"/> and serves
@@ -63,6 +64,27 @@ internal static class ContributionServiceCollectionExtensions {
         sp => new ContributionCollisionSource<TService>(sp, contributionKey, items)));
       services.AddRegistrationCollisionCheck();
     }
+    return services;
+  }
+
+  /// <summary>
+  /// The scoped form of <see cref="AddContribution{TService, TContribution}"/>, for a service that holds per-scope
+  /// state: each scope gets its own contributions and its own composite over them. Scoped contributions report no
+  /// collisions of their own; the singleton registration that names the same items reports them.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="contributionKey">The key every contribution of the service is registered under.</param>
+  /// <param name="compose">Builds the served service from the scope's contributions, latest registered first.</param>
+  internal static IServiceCollection AddScopedContribution<TService, TContribution>(
+      this IServiceCollection services,
+      string contributionKey,
+      Func<IReadOnlyList<TService>, TService> compose)
+      where TService : class
+      where TContribution : class, TService {
+    ArgumentNullException.ThrowIfNull(services);
+    services.TryAddEnumerable(ServiceDescriptor.KeyedScoped<TService, TContribution>(
+      contributionKey, static (sp, _) => sp.GetRequiredService<TContribution>()));
+    services.TryAddScoped(sp => compose(_latestFirst(sp.GetKeyedServices<TService>(contributionKey))));
     return services;
   }
 

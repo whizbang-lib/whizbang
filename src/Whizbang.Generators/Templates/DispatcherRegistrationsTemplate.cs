@@ -67,7 +67,10 @@ namespace Whizbang.Core.Generated {
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangPerspectiveInvoker(this IServiceCollection services) {
-      services.AddScoped<IPerspectiveInvoker, GeneratedPerspectiveInvoker>();
+      // #2200: a contribution to the one invoker the host serves, never the invoker itself. Every assembly with
+      // perspectives registers here, and a plain AddScoped let the last one hide every other's perspectives.
+      services.TryAddScoped<GeneratedPerspectiveInvoker>();
+      global::Whizbang.Core.Perspectives.PerspectiveInvokerServiceCollectionExtensions.AddPerspectiveInvokerContribution<GeneratedPerspectiveInvoker>(services);
       return services;
     }
 
