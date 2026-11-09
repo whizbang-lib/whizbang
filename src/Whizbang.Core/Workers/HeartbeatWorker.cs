@@ -223,15 +223,23 @@ public partial class HeartbeatWorker(
       return;
     }
 
-    var lead = HeartbeatLivenessThreshold.WatchdogLead(_options);
+    await _beatUntilStoppedOrEvictedAsync(HeartbeatLivenessThreshold.WatchdogLead(_options), stoppingToken);
 
+    LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// The beat loop: plans each tick, waits or beats, and returns when the host stops or the registry refuses a beat
+  /// (the instance was evicted and has asked to exit).
+  /// </summary>
+  private async Task _beatUntilStoppedOrEvictedAsync(TimeSpan lead, CancellationToken stoppingToken) {
     while (!stoppingToken.IsCancellationRequested) {
       var plan = PlanNextTick(_time.GetUtcNow());
       if (!plan.BeatNow) {
         try {
           await WaitForNextTickAsync(plan.Wait, stoppingToken);
         } catch (OperationCanceledException) {
-          break;
+          return;
         }
         continue;
       }
@@ -240,7 +248,7 @@ public partial class HeartbeatWorker(
       try {
         accepted = await _beatAsync(plan, lead, stoppingToken);
       } catch (OperationCanceledException) {
-        break;
+        return;
       }
 
       if (!accepted) {
@@ -252,11 +260,9 @@ public partial class HeartbeatWorker(
           _isSchemaReady
             ? "its heartbeat was refused: the fleet evicted this instance (a peer reaped it and tombstoned it)"
             : "its startup heartbeat was refused: the fleet evicted this instance while it was still starting (a peer reaped it and tombstoned it)"));
-        break;
+        return;
       }
     }
-
-    LogStopped(_logger);
   }
 
   /// <summary>Whether the schema-ready gate has opened.</summary>
