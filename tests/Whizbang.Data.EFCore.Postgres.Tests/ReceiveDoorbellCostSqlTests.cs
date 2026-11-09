@@ -12,14 +12,14 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// What a receiver pays to ring doorbells while it absorbs work, most visibly repair answers arriving in bulk (365).
+/// What a receiver pays to ring doorbells while it absorbs work, most visibly repair answers arriving in bulk (369).
 /// A handler commit that stores inbox children rings through the store's own rule and nothing more: once for a stream
 /// with no pending work, never for a child already seen, never for a stream whose owner already has work queued. And a
 /// doorbell judges liveness once per call however many owners it rings: the rule reads <c>pg_locks</c> and, called per
 /// owner, was planned and run again for every one.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/365_RepairAnswersAreAbsorbedCheaply.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/369_RepairAnswersAreAbsorbedCheaply.sql</code-under-test>
 [Category("Shard5")]
 public class ReceiveDoorbellCostSqlTests : EFCoreTestBase {
 
