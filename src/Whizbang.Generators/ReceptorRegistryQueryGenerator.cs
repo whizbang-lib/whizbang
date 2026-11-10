@@ -77,6 +77,15 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       (node is ClassDeclarationSyntax c && c.AttributeLists.Any()) || (node is RecordDeclarationSyntax r && r.AttributeLists.Any());
 
   /// <summary>
+  /// Syntax predicate: admits a method declaration with at least one attribute, the shape a [CollectiveApplyFor]
+  /// handler has (#2145). It is the collective generator's own predicate, so both bind the same methods.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedMethodCandidate(SyntaxNode node) =>
+      CollectiveApplyDiscoveryGenerator.IsAttributedMethodCandidate(node);
+
+  /// <summary>
   /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
@@ -123,7 +132,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     // merely consumed above. The store gates its __collective__ rows on this list, so it is bound by the same shape the
     // collective generator binds (CollectiveApplyShape): a method that generator rejects handles nothing.
     var handledCollectiveTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => CollectiveApplyDiscoveryGenerator.IsAttributedMethodCandidate(node),
+        predicate: static (node, _) => IsAttributedMethodCandidate(node),
         transform: static (ctx, ct) => _extractHandledCollectiveType(ctx, ct)
     ).Where(static name => name is not null);
 
