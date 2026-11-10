@@ -35,7 +35,7 @@ public sealed class OutboxPublishWorkerTrackingEndsTests {
 
   [Test]
   public async Task SingularPublishThrows_EndsTheMessagesTracking_BeforeRoutingTheFailureAsync() {
-    var harness = new Harness(new ThrowingStrategy(bulk: false), bulk: false);
+    using var harness = new Harness(new ThrowingStrategy(bulk: false), bulk: false);
     var work = _work();
 
     var routed = await harness.RunUntilFailureAsync(work);
@@ -47,7 +47,7 @@ public sealed class OutboxPublishWorkerTrackingEndsTests {
 
   [Test]
   public async Task BulkPublishThrows_EndsEveryMessagesTracking_BeforeRoutingTheFailuresAsync() {
-    var harness = new Harness(new ThrowingStrategy(bulk: true), bulk: true);
+    using var harness = new Harness(new ThrowingStrategy(bulk: true), bulk: true);
     var work = _work();
 
     var routed = await harness.RunUntilFailureAsync(work);
@@ -78,7 +78,7 @@ public sealed class OutboxPublishWorkerTrackingEndsTests {
     };
   }
 
-  private sealed class Harness {
+  private sealed class Harness : IDisposable {
     private readonly LifecycleCoordinator _coordinator = new(NullLogger<LifecycleCoordinator>.Instance);
     private readonly WorkChannel _channel = new();
     private readonly FailureChannel _failure;
@@ -111,6 +111,8 @@ public sealed class OutboxPublishWorkerTrackingEndsTests {
     }
 
     public int TrackedCountAtFailure => _failure.TrackedCountAtFirstFailure;
+
+    public void Dispose() => _worker.Dispose();
 
     public async Task<MessageFailure> RunUntilFailureAsync(OutboxWork work) {
       using var timeout = new CancellationTokenSource(_testTimeout);
