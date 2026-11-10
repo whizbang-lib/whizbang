@@ -32,6 +32,9 @@ Worker groups claimed work by (stream, perspective) and runs `Parallel.ForEachAs
 
 ## Design: split each pair into prepare and commit, and write the batch in between
 
+Decided 2026-11-10 over a group-commit sink inside the store (runners unchanged, a counting barrier across parallel
+runners): the split is deterministic, has no barrier, and lets the reads be batched as well as the writes.
+
 The runner gains two entry points next to `RunWithEventsAsync`, which stays as the per-pair path:
 
 - **Prepare**: load state from the batch's state source, then the idempotency filter and fold. It returns a
