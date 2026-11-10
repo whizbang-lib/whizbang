@@ -82,6 +82,8 @@ public sealed class RunPermitAuditTests {
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     // Reports items two assemblies both register, from what the registrations already hold (#2201).
     "RegistrationCollisionStartupValidator",
+    // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
+    "ServiceAssemblyScopeStartupReporter",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer", "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar",
