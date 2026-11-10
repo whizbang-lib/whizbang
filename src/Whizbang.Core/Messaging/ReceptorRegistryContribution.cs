@@ -48,4 +48,10 @@ public sealed class ReceptorRegistryContribution {
   /// </summary>
   /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
   public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; init; } = [];
+
+  /// <summary>
+  /// The assembly that declared these receptors, so a host's view counts only its own service's (#2243).
+  /// <see langword="null"/> for a contribution built without one, which every host counts.
+  /// </summary>
+  public string? AssemblyName { get; init; }
 }
