@@ -177,7 +177,7 @@ public interface IIntegrityRepairLedger {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs</tests>
   ValueTask<IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys, CancellationToken cancellationToken = default) =>
-    MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k with { StreamId = Guid.Empty })], cancellationToken);
+    MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k.TypeLane)], cancellationToken);
 
   /// <summary>
   /// Records that repair requests for <paramref name="keys"/> left (#2029): neither grant path asks again until

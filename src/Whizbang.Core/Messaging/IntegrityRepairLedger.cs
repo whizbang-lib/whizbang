@@ -34,7 +34,12 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
 
   /// <summary>One divergent bucket — stream-level entries carry the stream id; type- or
   /// window-level entries use <see cref="Guid.Empty"/>.</summary>
-  public readonly record struct DivergenceKey(Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId);
+  public readonly record struct DivergenceKey(Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId) {
+    /// <summary>The same (origin, tenant, type) bucket at the type level: its stream id is <see cref="Guid.Empty"/>.</summary>
+    /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs</tests>
+    public DivergenceKey TypeLane => new(OriginServiceId, TenantScope, EventType, Guid.Empty);
+  }
 
   private sealed class Entry {
     public long OriginLo;
