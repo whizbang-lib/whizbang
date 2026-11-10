@@ -47,11 +47,11 @@ public class ClaimInboxWorkingSetSqlTests : EFCoreTestBase {
     ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()
     """, instance);
 
-  private static Task _seedUnclaimedInboxAsync(NpgsqlConnection conn) => _execAsync(conn, $"""
+  private static Task _seedUnclaimedInboxAsync(NpgsqlConnection conn) => _execAsync(conn, $$"""
     WITH m AS (
       INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"{}"}', '{"{}"}', NOW() - (g || ' seconds')::INTERVAL, gen_random_uuid()
-      FROM generate_series(1, {BACKLOG}) AS g
+      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', NOW() - (g || ' seconds')::INTERVAL, gen_random_uuid()
+      FROM generate_series(1, {{BACKLOG}}) AS g
       RETURNING message_id, stream_id, received_at, priority, is_event
     )
     INSERT INTO wh_inbox_state

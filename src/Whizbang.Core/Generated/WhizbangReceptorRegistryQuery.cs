@@ -164,15 +164,7 @@ public static class WhizbangReceptorRegistryQuery {
       foreach (var t in contribution.InboxHandlerTypes) {
         inbox.Add(t);
       }
-      foreach (var (stage, types) in contribution.StageTypes) {
-        if (!stages.TryGetValue(stage, out var set)) {
-          set = new HashSet<string>(System.StringComparer.Ordinal);
-          stages[stage] = set;
-        }
-        foreach (var t in types) {
-          set.Add(t);
-        }
-      }
+      _addStageTypes(stages, contribution.StageTypes);
       foreach (var handled in contribution.HandledMessages) {
         // Dedupe by type name across assemblies (first contribution wins — the same type
         // handled in two assemblies carries identical namespace/kind metadata anyway).
@@ -194,6 +186,21 @@ public static class WhizbangReceptorRegistryQuery {
     return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName) {
       HandledCollective = handledCollectiveKnown ? [.. handledCollective] : null,
     };
+  }
+
+  /// <summary>Merges one contribution's types per lifecycle stage into the snapshot's per-stage sets.</summary>
+  private static void _addStageTypes(
+      Dictionary<LifecycleStage, HashSet<string>> stages,
+      IReadOnlyDictionary<LifecycleStage, IReadOnlyCollection<string>> contributed) {
+    foreach (var (stage, types) in contributed) {
+      if (!stages.TryGetValue(stage, out var set)) {
+        set = new HashSet<string>(System.StringComparer.Ordinal);
+        stages[stage] = set;
+      }
+      foreach (var t in types) {
+        set.Add(t);
+      }
+    }
   }
 
   /// <summary>

@@ -31,12 +31,12 @@ public class RetentionUpdatedAtIndexReconcileTests : EFCoreTestBase {
 
   [Before(Test)]
   public async Task CreateProbeTableAsync() =>
-    await _execAsync($"""
-      CREATE TABLE {TABLE} (
+    await _execAsync($$"""
+      CREATE TABLE {{TABLE}} (
         id uuid PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now());
       INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name)
-      VALUES ('{CLR}', '{TABLE}', '{"{}"}'::jsonb, 'probe-hash', 'probe-svc');
+      VALUES ('{{CLR}}', '{{TABLE}}', '{}'::jsonb, 'probe-hash', 'probe-svc');
       """);
 
   private async Task _execAsync(string sql) {
@@ -233,10 +233,10 @@ public class RetentionUpdatedAtIndexReconcileTests : EFCoreTestBase {
   [Test]
   public async Task ALongTableName_GetsTheGeneratorsIndexNameAsync() {
     var table = "wh_per_" + new string('r', 50);
-    await _execAsync($"""
-      CREATE TABLE {table} (id uuid PRIMARY KEY, updated_at timestamptz NOT NULL DEFAULT now());
+    await _execAsync($$"""
+      CREATE TABLE {{table}} (id uuid PRIMARY KEY, updated_at timestamptz NOT NULL DEFAULT now());
       INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name, row_retention_enrolled)
-      VALUES ('Probe.Long', '{table}', '{"{}"}'::jsonb, 'h', 'probe-svc', TRUE);
+      VALUES ('Probe.Long', '{{table}}', '{}'::jsonb, 'h', 'probe-svc', TRUE);
       """);
 
     await _reconcileAsync();

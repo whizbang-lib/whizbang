@@ -197,9 +197,9 @@ public class StartupParityTests {
 
   /// <summary>Marks the driver's table as one that declares row retention, as the retention sync does.</summary>
   private Task _enrollAsync(StartupDriver driver) =>
-    _execAsync($"""
+    _execAsync($$"""
       INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name, row_retention_enrolled)
-      VALUES ('Parity.RetentionProbe', '{driver.Table}', '{"{}"}'::jsonb, 'parity-hash', 'parity-retention', TRUE)
+      VALUES ('Parity.RetentionProbe', '{{driver.Table}}', '{}'::jsonb, 'parity-hash', 'parity-retention', TRUE)
       """);
 
   private Task<long> _updatedAtIndexCountAsync(StartupDriver driver) =>

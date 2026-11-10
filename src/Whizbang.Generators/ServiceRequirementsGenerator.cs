@@ -440,14 +440,16 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
         continue;
       }
       var condition = _branchCondition(ctx, call, invocation, ct);
-      List<string>? bucket;
+      var name = TypeNameUtilities.FullyQualified(dep);
       if (condition is null) {
-        bucket = unconditional;
-      } else if (!dependencies.TryGetValue(condition, out bucket)) {
+        unconditional.Add(name);
+        continue;
+      }
+      if (!dependencies.TryGetValue(condition, out var bucket)) {
         bucket = [];
         dependencies[condition] = bucket;
       }
-      bucket.Add(TypeNameUtilities.FullyQualified(dep));
+      bucket.Add(name);
     }
 
     // The requirement is named after the type argument, which is the descriptor's service type for
