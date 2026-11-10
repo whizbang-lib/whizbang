@@ -98,6 +98,28 @@ public class StandbyWatcherTests {
     }
   }
 
+  /// <summary>Answers each assessment with the next scripted one, repeating the last.</summary>
+  private sealed class SequenceAssessor(params StartupAssessment[] assessments) : IStartupAssessor {
+    private int _next;
+    public int Calls { get; private set; }
+    public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
+      Calls++;
+      return Task.FromResult(assessments[Math.Min(_next++, assessments.Length - 1)]);
+    }
+  }
+
+  private const string ROLLBACK_REASON = "every one can be reversed: rolling back 386_X.sql";
+
+  /// <summary>#2122: the verdict a newer peer that applied only reversible changes, then died, leaves behind.</summary>
+  private static StartupAssessment _rollbackOwed() =>
+    new(StartupVerdict.Migrate, ROLLBACK_REASON) {
+      Rollback = new RollbackPlan(
+        [new Whizbang.Core.Versioning.AppliedSchemaChange("386_X.sql", Whizbang.Core.Versioning.SchemaChangeKind.Platform, "2.0.0", null) {
+          Reversal = Whizbang.Core.Versioning.SchemaChangeReversal.Reversible,
+        }],
+        AllowLossy: false),
+    };
+
   /// <summary>The posted request, which the migrator withdraws when the handshake ends.</summary>
   private sealed class StandbyCoordinator(StandbyRequest? request) : IWorkCoordinator {
     private readonly TaskCompletionSource _secondRead =
@@ -640,4 +662,83 @@ public class StandbyWatcherTests {
       .Because("a cancellation arriving mid-tick is a shutdown, not a tick failure");
   }
 
+  // ============================================================
+  // #2122: a verdict that owes a rollback never resumes in place
+  // ============================================================
+
+  /// <summary>
+  /// The rollback runs in schema initialization, on the elected migrator, and a revival does not re-run it (the schema
+  /// gate is sticky-open). An instance whose verdict owes one exits through the one exit path, as an intended exit, so
+  /// its restart runs startup and rolls the schema back before anything serves over it.
+  /// </summary>
+  private static async Task _assertExitsForTheRollbackAsync(Harness h) {
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(1)
+      .Because("serving on would run this version over the newer version's schema with nothing rolled back");
+    await Assert.That(h.Exit.Requests[0].Cause).IsEqualTo(ExitCause.UpgradeStandDown)
+      .Because("an intended exit (code 0): the orchestrator restarts it, and the restart's migrator rolls the schema back");
+    await Assert.That(h.Exit.Requests[0].Reason).Contains(ROLLBACK_REASON);
+    await Assert.That(h.Lifecycle.Advanced).DoesNotContain(LifecyclePhase.Resuming);
+    await Assert.That(h.Lifecycle.Advanced).DoesNotContain(LifecyclePhase.Running);
+    await Assert.That(h.RunControl.Permit.IsRunning).IsFalse();
+  }
+
+  [Test]
+  public async Task AWithdrawnRequest_WithARollbackOwed_ExitsInsteadOfRevivingAsync() {
+    var assessor = new SequenceAssessor(_rollbackOwed());
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0", assessor: assessor);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    h.Coordinator!.Request = null;
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await _assertExitsForTheRollbackAsync(h);
+  }
+
+  [Test]
+  public async Task AMigratorThatDied_WithARollbackOwed_ExitsInsteadOfRevivingAsync() {
+    var assessor = new SequenceAssessor(_rollbackOwed());
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0", assessor: assessor);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    h.Coordinator!.Request = _request(version: "2.0.0", live: false);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await _assertExitsForTheRollbackAsync(h);
+  }
+
+  [Test]
+  public async Task StoodDownAsObsolete_ThenAVerdictThatOwesARollback_ExitsInsteadOfResumingAsync() {
+    var assessor = new SequenceAssessor(new StartupAssessment(StartupVerdict.StandDown, "a newer version is online"), _rollbackOwed());
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await _assertExitsForTheRollbackAsync(h);
+  }
+
+  [Test]
+  public async Task AServingInstance_WhoseVerdictComesToOweARollback_ExitsAsync() {
+    // A newer version that migrated reversible changes and died before it served never stood this instance down; the
+    // verdict now owes a rollback, and this instance must not go on serving over that schema either.
+    var assessor = new SequenceAssessor(new StartupAssessment(StartupVerdict.Current, "current"), _rollbackOwed());
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await h.RunControl.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(1);
+    await Assert.That(h.Exit.Requests[0].Cause).IsEqualTo(ExitCause.UpgradeStandDown);
+    await Assert.That(h.Exit.Requests[0].Reason).Contains(ROLLBACK_REASON);
+  }
 }
