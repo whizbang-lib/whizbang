@@ -91,8 +91,8 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     await Assert.That(dapper.RootElement.GetProperty("pri").GetInt32()).IsEqualTo(7);
     var slimHop = dapper.RootElement.GetProperty("hops").EnumerateArray().Single();
     await Assert.That(slimHop.TryGetProperty("si", out _)).IsFalse().Because("the Dapper form's hop list, hops, is reduced too");
-    var stagedPlain = await _stagedAsync(conn, plain) ?? throw new InvalidOperationException("the plain form was not staged");
-    using var staged = JsonDocument.Parse(stagedPlain.Metadata);
+    var (_, _, stagedPlainMetadata) = await _stagedAsync(conn, plain) ?? throw new InvalidOperationException("the plain form was not staged");
+    using var staged = JsonDocument.Parse(stagedPlainMetadata);
     await Assert.That(staged.RootElement.GetProperty("dc").GetProperty("m").GetInt32()).IsEqualTo(1)
       .Because("the staged form is the metadata exactly as it was written");
   }
@@ -240,10 +240,10 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
 
     var stagedRow = await _stagedAsync(conn, id);
     await Assert.That(stagedRow.HasValue).IsTrue().Because("the Linked form stages the full form");
-    var staged = stagedRow ?? throw new InvalidOperationException("asserted present above");
-    await Assert.That(staged.RouteId).IsEqualTo(routeId);
-    await Assert.That(staged.EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
-    await Assert.That(await _jsonEqualAsync(conn, staged.Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
+    var (stagedRouteId, stagedEventType, stagedMetadata) = stagedRow ?? throw new InvalidOperationException("asserted present above");
+    await Assert.That(stagedRouteId).IsEqualTo(routeId);
+    await Assert.That(stagedEventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
+    await Assert.That(await _jsonEqualAsync(conn, stagedMetadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
       .Because("the staged form keeps every hop as written");
   }
 
