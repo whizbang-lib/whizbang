@@ -50,7 +50,7 @@ Describe 'Get-DotNetChannel' {
     $root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
     $version = (Get-Content -Raw (Join-Path $root 'global.json') | ConvertFrom-Json).sdk.version
     (Get-DotNetChannel -GlobalJsonPath (Join-Path $root 'global.json') -FallbackVersion '10.0.x').Channel |
-      Should -Be ($version.Substring(0, $version.Length - 2) + 'xx')
+      Should -Be ($version.Contains('-') ? $version : ($version.Substring(0, $version.Length - 2) + 'xx'))
   }
 }
 
@@ -144,5 +144,13 @@ Describe 'The default download, install and version commands' {
     $bad = Join-Path $dir 'bad.ps1'
     Set-Content -LiteralPath $bad -Value 'exit 3'
     { & (Get-DefaultGetVersion) $bad } | Should -Throw '*exited 3*'
+  }
+}
+
+Describe 'Get-DotNetChannel with a prerelease SDK (#2135)' {
+  It 'is the exact version, since a prerelease SDK has no feature-band channel' {
+    $json = Join-Path $TestDrive 'prerelease.json'
+    '{"sdk":{"version":"11.0.100-rc.3.26522.148","allowPrerelease":true}}' | Set-Content -Path $json
+    (Get-DotNetChannel -GlobalJsonPath $json -FallbackVersion '10.0.x').Channel | Should -Be '11.0.100-rc.3.26522.148'
   }
 }

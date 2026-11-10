@@ -309,7 +309,8 @@ Describe 'The release cut gathers the changelog' {
     $StartRelease | Should -Match '(?s)Update Version in Directory\.Build\.props.*Merge-ChangelogFragments\.ps1 -Version "\$VERSION".*git add -A -- Directory\.Build\.props CHANGELOG\.md changelog\.d\s*\n\s*git commit -m "chore\(release\): bump version'
   }
 
-  It 'the release cut reuses the develop tests when only the version file and the changelog differ' {
-    $Ci | Should -Match 'select\(\. != "Directory\.Build\.props" and \. != "CHANGELOG\.md" and \(startswith\("changelog\.d/"\) \| not\)\)'
+  It 'the release cut never reuses the develop tests: a release builds net10.0 and net11.0, develop net11.0 only (#2135)' {
+    $Ci | Should -Not -Match 'compare/develop\.\.\.'
+    $Ci | Should -Match "github\.ref == 'refs/heads/develop' && vars\.PUSH_RUN_FULL_MATRIX != 'true'"
   }
 }

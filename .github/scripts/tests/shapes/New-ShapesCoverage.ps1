@@ -59,7 +59,7 @@ $log = & dotnet build (Join-Path $shapes 'shapes.slnx') --configuration Release 
 if ($LASTEXITCODE -ne 0) { throw "Building the coverage shapes failed (exit $LASTEXITCODE):`n$($log -join "`n")" }
 
 foreach ($runner in @('CalcRunner', 'ShapesRunner')) {
-  $dll = Join-Path $build "bin/$runner/Release/net10.0/$runner.dll"
+  $dll = Join-Path $build "bin/$runner/Release/net11.0/$runner.dll"
   $binaries = @()
   foreach ($process in @('A', 'B')) {
     $results = Join-Path $OutDir "$runner/$process"

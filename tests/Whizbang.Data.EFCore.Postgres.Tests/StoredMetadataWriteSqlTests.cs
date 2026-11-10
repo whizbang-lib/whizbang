@@ -91,7 +91,8 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     await Assert.That(dapper.RootElement.GetProperty("pri").GetInt32()).IsEqualTo(7);
     var slimHop = dapper.RootElement.GetProperty("hops").EnumerateArray().Single();
     await Assert.That(slimHop.TryGetProperty("si", out _)).IsFalse().Because("the Dapper form's hop list, hops, is reduced too");
-    using var staged = JsonDocument.Parse((await _stagedAsync(conn, plain)).Value.Metadata);
+    var stagedPlain = await _stagedAsync(conn, plain) ?? throw new InvalidOperationException("the plain form was not staged");
+    using var staged = JsonDocument.Parse(stagedPlain.Metadata);
     await Assert.That(staged.RootElement.GetProperty("dc").GetProperty("m").GetInt32()).IsEqualTo(1)
       .Because("the staged form is the metadata exactly as it was written");
   }
@@ -237,11 +238,12 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     await Assert.That(slim.Hops.Single().TraceParent).IsEqualTo(hops[0].TraceParent).Because("perspective spans keep the event's trace");
     await Assert.That(slim.Hops.Single().CorrelationId).IsEqualTo(hops[0].CorrelationId);
 
-    var staged = await _stagedAsync(conn, id);
-    await Assert.That(staged.HasValue).IsTrue().Because("the Linked form stages the full form");
-    await Assert.That(staged.Value.RouteId).IsEqualTo(routeId);
-    await Assert.That(staged.Value.EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
-    await Assert.That(await _jsonEqualAsync(conn, staged.Value.Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
+    var stagedRow = await _stagedAsync(conn, id);
+    await Assert.That(stagedRow.HasValue).IsTrue().Because("the Linked form stages the full form");
+    var staged = stagedRow ?? throw new InvalidOperationException("asserted present above");
+    await Assert.That(staged.RouteId).IsEqualTo(routeId);
+    await Assert.That(staged.EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
+    await Assert.That(await _jsonEqualAsync(conn, staged.Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
       .Because("the staged form keeps every hop as written");
   }
 

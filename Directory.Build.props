@@ -1,6 +1,22 @@
 <Project>
+  <!-- Target frameworks (#2135): develop on .NET 11, release for .NET 10 and .NET 11.
+       Day to day (local builds, PRs into develop, develop itself) every project targets net11.0 only.
+       A release build targets both. It is detected from the branch CI runs on, so no workflow has to
+       remember to ask for it: a push to main or release/*, a v* tag, or a pull request into main or
+       release/*. Set WhizbangReleaseBuild=true (or false) to override, e.g. to reproduce a release
+       build locally. Projects never name a framework themselves; source generators and analyzers,
+       which Roslyn requires to be netstandard2.0, override TargetFrameworks in their own .csproj.
+       Restore always covers both frameworks, so the committed packages.lock.json files are the same
+       whichever build restores them, and CI's locked-mode restore passes on every branch. -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <WhizbangReleaseBuild Condition="'$(WhizbangReleaseBuild)' == '' and ('$(GITHUB_REF)' == 'refs/heads/main' or $([System.String]::Copy('$(GITHUB_REF)').StartsWith('refs/heads/release/')) or $([System.String]::Copy('$(GITHUB_REF)').StartsWith('refs/tags/v')) or '$(GITHUB_BASE_REF)' == 'main' or $([System.String]::Copy('$(GITHUB_BASE_REF)').StartsWith('release/')))">true</WhizbangReleaseBuild>
+    <WhizbangDevelopmentTargetFramework>net11.0</WhizbangDevelopmentTargetFramework>
+    <WhizbangReleaseTargetFrameworks>net10.0;net11.0</WhizbangReleaseTargetFrameworks>
+    <TargetFrameworks Condition="'$(WhizbangReleaseBuild)' == 'true' or '$(MSBuildIsRestoring)' == 'true'">$(WhizbangReleaseTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">$(WhizbangDevelopmentTargetFramework)</TargetFrameworks>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -26,8 +42,8 @@
 
     <!-- Code analysis (CA rules), recommended set, pinned to the .NET 10 rule set rather than "latest".
          global.json rolls forward to the newest installed SDK, and "latest" would turn on each newer SDK's
-         rules locally while CI builds on SDK 10 (#1678). Move it when CI moves; SDK 11's CA2026 findings
-         are tracked in #1679. -->
+         rules on whichever machine has it (#1678). The build now runs on SDK 11 (#2135), but the rule set
+         stays pinned until the move to the 11.0 rule set is made deliberately, with its findings fixed. -->
     <AnalysisLevel>10.0-recommended</AnalysisLevel>
 
     <!-- Treat code analysis warnings as errors (separate from compiler warnings) -->
@@ -130,6 +146,14 @@
     <!-- IL2046: RequiresUnreferencedCode mismatch in implementations -->
     <!-- IL2075: DynamicallyAccessedMembers mismatch -->
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- CA2263 (prefer the generic overload) is off while net10.0 is a release target (#2135). .NET 11 added
+       JsonSerializerOptions.GetTypeInfo<T>(), so the rule flags every GetTypeInfo(typeof(T)) on the net11.0 build,
+       but .NET 10 has no such overload and the same source must compile for both. Turn it back on, and move those
+       calls to GetTypeInfo<T>(), when net10.0 is no longer targeted. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA2263</NoWarn>
   </PropertyGroup>
 
   <!-- XML documentation warnings suppression -->

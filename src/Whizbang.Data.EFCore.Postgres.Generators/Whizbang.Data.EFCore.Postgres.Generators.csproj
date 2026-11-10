@@ -7,6 +7,8 @@
     <WhizbangPackageTier>Application</WhizbangPackageTier>
     <WhizbangPackageArea>Data store</WhizbangPackageArea>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <!-- Clears the net10.0/net11.0 list Directory.Build.props sets (#2135): Roslyn loads netstandard2.0 only. -->
+    <TargetFrameworks></TargetFrameworks>
     <RootNamespace>Whizbang.Data.EFCore.Postgres.Generators</RootNamespace>
     <LangVersion>latest</LangVersion>
 

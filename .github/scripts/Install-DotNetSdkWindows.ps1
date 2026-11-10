@@ -57,6 +57,10 @@ function Get-DotNetChannel {
       Write-Host "global.json could not be read ($($_.Exception.Message)); using the input channel."
     }
   }
+  # A prerelease SDK (11.0.100-rc.3.x) has no feature-band channel of its own: install that exact version (#2135).
+  if ($version.Contains('-')) {
+    return [pscustomobject]@{ Channel = $version; Source = "exact version $version (prerelease, from global.json)" }
+  }
   if ($version -match '^(.*)\d\d$') {
     return [pscustomobject]@{ Channel = "$($Matches[1])xx"; Source = "feature band $($Matches[1])xx (from global.json version $version)" }
   }
@@ -69,7 +73,12 @@ function Get-DefaultDownload {
 }
 
 function Get-DefaultInstall {
-  return { param($Script, $Channel, $InstallDir) & $Script -Channel $Channel -InstallDir $InstallDir }
+  return {
+    param($Script, $Channel, $InstallDir)
+    # An exact (prerelease) version installs with -Version; a feature band or major.minor with -Channel.
+    if ($Channel.Contains('-')) { & $Script -Version $Channel -InstallDir $InstallDir }
+    else { & $Script -Channel $Channel -InstallDir $InstallDir }
+  }
 }
 
 function Get-DefaultGetVersion {

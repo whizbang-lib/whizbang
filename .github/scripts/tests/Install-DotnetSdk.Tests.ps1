@@ -91,3 +91,39 @@ Describe 'Invoke-SdkInstall' -Skip:$IsWindows {
     $r.Error | Should -BeLike '*dotnet --version*exit 3*'
   }
 }
+
+Describe 'Get-SdkChannel with a prerelease SDK (#2135)' {
+  It 'installs the exact version when global.json names a prerelease SDK, which has no feature-band channel' {
+    $json = Join-Path $TestDrive 'prerelease.json'
+    '{"sdk":{"version":"11.0.100-rc.3.26522.148","allowPrerelease":true}}' | Set-Content -Path $json
+    Get-SdkChannel -GlobalJsonPath $json -FallbackChannel '10.0.x' | Should -Be '11.0.100-rc.3.26522.148'
+  }
+}
+
+Describe 'Get-ExtraRuntimeChannels (#2135)' {
+  It 'asks for the .NET 10 runtime when a release build targets net10.0 and net11.0 on SDK 11' {
+    Get-ExtraRuntimeChannels -TargetFrameworks @('net10.0', 'net11.0') -SdkVersion '11.0.100-rc.3.26522.148' | Should -Be @('10.0')
+  }
+
+  It 'asks for nothing when the build targets only the SDK''s own framework' {
+    @(Get-ExtraRuntimeChannels -TargetFrameworks @('net11.0') -SdkVersion '11.0.100').Count | Should -Be 0
+  }
+
+  It 'ignores netstandard and empty entries' {
+    @(Get-ExtraRuntimeChannels -TargetFrameworks @('netstandard2.0', '') -SdkVersion '11.0.100').Count | Should -Be 0
+  }
+}
+
+Describe 'Invoke-SdkInstall with an exact version (#2135)' -Skip:$IsWindows {
+  It 'passes --version, not --channel, for a prerelease SDK version' {
+    $log = Join-Path $TestDrive 'args.txt'
+    $path = Join-Path $TestDrive 'record-installer.sh'
+    $lines = @('#!/usr/bin/env bash', "echo `"`$@`" > '$log'",
+      'while [ $# -gt 0 ]; do case "$1" in --install-dir) dir="$2"; shift 2;; *) shift;; esac; done',
+      'mkdir -p "$dir"', "printf '#!/usr/bin/env bash\necho 11.0.100-rc.3\n' > `"`$dir/dotnet`"", 'chmod +x "$dir/dotnet"', 'exit 0')
+    [IO.File]::WriteAllText($path, ($lines -join "`n") + "`n")
+    $r = Invoke-SdkInstall -InstallerPath $path -Channel '11.0.100-rc.3.26522.148' -InstallDir (Join-Path $TestDrive 'exact')
+    $r.Ok | Should -BeTrue
+    (Get-Content $log -Raw) | Should -BeLike '--version 11.0.100-rc.3.26522.148 --install-dir*'
+  }
+}

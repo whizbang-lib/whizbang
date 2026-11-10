@@ -93,7 +93,11 @@ public static class OffloadServiceCollectionExtensions {
     ArgumentException.ThrowIfNullOrWhiteSpace(cipherName);
     ArgumentNullException.ThrowIfNull(keyWrapper);
 
+    // The service key is object? on .NET 10 and object on .NET 11, so the null-forgiving operator is required on the
+    // net10.0 build and redundant on net11.0 (#2135). Remove the suppression with net10.0.
+#pragma warning disable S8969
     services.AddKeyedSingleton<IMessageBodyCipher>(cipherName, (sp, key) => new AesGcmEnvelopeCipher((string)key!, keyWrapper(sp)));
+#pragma warning restore S8969
     return services;
   }
 

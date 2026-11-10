@@ -137,7 +137,7 @@ jobs:
       # collector (Run-Tests.ps1 -ModuleCoverage), which records branches as well as lines.
       # The statically instrumented assemblies this job used to overlay recorded lines only, so
       # every report claimed full branch coverage with no conditions behind it. Each module
-      # writes <guid>.cobertura.xml under its own bin/Release/net10.0/TestResults, so parallel
+      # writes <guid>.cobertura.xml under its own bin/Release/<framework>/TestResults, so parallel
       # modules and shards never collide when the quality job flattens the artifacts.
       # The direct child of TestResults is the report; the copy TRX attaches below it is not
       # matched, so nothing is counted twice.

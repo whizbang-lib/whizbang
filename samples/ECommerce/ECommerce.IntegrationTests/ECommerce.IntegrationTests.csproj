@@ -5,7 +5,6 @@
          (for example the osx-arm64 dashboard and orchestration packages), so a lock file written
          on one OS fails locked-mode restore on another. -->
     <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
-    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>

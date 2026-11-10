@@ -20,7 +20,7 @@
 
 .PARAMETER ProjectFilter
     Filter to specific test projects using native .NET 10 --test-modules globbing (e.g., "Core", "EFCore.Postgres")
-    Pattern: **/bin/**/Debug/net10.0/*{Filter}*.dll
+    Pattern: **/bin/**/Debug/<framework>/*{Filter}*.dll
 
 .PARAMETER TestFilter
     Filter to specific tests by name pattern using --treenode-filter (e.g., "ProcessWorkBatchAsync")
@@ -154,7 +154,7 @@
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ModuleCoverage
     CI form: the normal dotnet test run, with every test module writing its own line and branch
-    coverage (bin/Release/net10.0/TestResults/<guid>.cobertura.xml); no report is generated
+    coverage (bin/Release/<framework>/TestResults/<guid>.cobertura.xml); no report is generated
 
 .EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
@@ -222,7 +222,7 @@
     - Simplified parameter interface
 
     Native Filtering (.NET 10):
-    - ProjectFilter uses `--test-modules` with globbing patterns (**/bin/**/Debug/net10.0/*{Filter}*.dll)
+    - ProjectFilter uses `--test-modules` with globbing patterns (**/bin/**/Debug/<framework>/*{Filter}*.dll)
     - TestFilter uses `--treenode-filter` with wildcard patterns (/*/*/*/*{Filter}*)
     - Leverages Microsoft.Testing.Platform filtering for maximum performance
     - Maintains full parallelism across filtered tests
@@ -483,6 +483,33 @@ if ($CleanupOnly) {
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
+
+# The frameworks this build targets (#2135): net11.0 day to day, net10.0 and net11.0 on a release branch.
+# Directory.Build.props decides (the same branch detection the build uses), so the runner never names a
+# framework: every test module built for one of these runs, and output left in bin/ by an older
+# framework is never mistaken for this build's.
+$script:TestFrameworks = @(((& dotnet msbuild (Join-Path $repoRoot 'Directory.Build.props') -getProperty:TargetFrameworks 2>$null) | Out-String).Trim() -split ';' |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($script:TestFrameworks.Count -eq 0) {
+    Write-Error "Could not read TargetFrameworks from Directory.Build.props (dotnet msbuild -getProperty)."
+    exit 1
+}
+# Matches bin/<config>/<framework> for any framework this build targets
+$script:FrameworkPattern = '(' + (($script:TestFrameworks | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
+
+# The frameworks a test project was built for, out of $script:TestFrameworks. Not every project builds them all:
+# the samples have their own Directory.Build.props and target net11.0 only, also in a release build. Falls back to
+# the full list when nothing is built yet, so the unbuilt check and the build-first path still see the project.
+function Get-BuiltTestFrameworks {
+    param([string]$ProjectPath, [string]$Config)
+    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
+    $projectDirectory = [System.IO.Path]::GetDirectoryName($ProjectPath)
+    $built = @($script:TestFrameworks | Where-Object {
+        Test-Path ([System.IO.Path]::Combine($projectDirectory, "bin", $Config, $_, "$projectName.dll"))
+    })
+    if ($built.Count -eq 0) { return $script:TestFrameworks }
+    return $built
+}
 
 # Clean up any leftover test containers from previous runs
 # This ensures tests start with a clean slate even if previous runs were interrupted
@@ -1028,7 +1055,7 @@ try {
     # module, and each one collects with MTP's dynamic collector, which records conditions as well
     # as lines; the statically instrumented assemblies CI used before recorded lines only, so every
     # report claimed branch-rate 1 with nothing behind it. Each module writes <guid>.cobertura.xml
-    # to its own bin/<config>/net10.0/TestResults, which is the path the CI upload globs. The
+    # to its own bin/<config>/<framework>/TestResults, which is the path the CI upload globs. The
     # collector instruments in memory, inside the test process: nothing on disk is rewritten.
     # Every test project must reference Microsoft.Testing.Extensions.CodeCoverage, or its module
     # rejects --coverage as an unknown option.
@@ -1145,19 +1172,19 @@ try {
         }
 
         function Invoke-TestWithCoverage {
-            param([string]$ProjectPath, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
+            param([string]$ProjectPath, [string]$Framework, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
 
             $projName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
             $projDir = [System.IO.Path]::GetDirectoryName($ProjectPath)
 
             # On Linux/macOS, set execute permission
             if ($IsLinux -or $IsMacOS) {
-                $testExe = Join-Path $projDir "bin" $Config "net10.0" $projName
+                $testExe = Join-Path $projDir "bin" $Config $Framework $projName
                 if (Test-Path $testExe) { chmod +x $testExe 2>$null }
             }
 
             $coverageSettingsPath = Join-Path $repoRoot "codecoverage.config"
-            $testArgs = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+            $testArgs = @("run", "--project", $ProjectPath, "--framework", $Framework, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
             if ($Filter) { $testArgs += "--treenode-filter"; $testArgs += "/*/*/*/*$Filter*" }
             if ($FailFastEnabled) { $testArgs += "--fail-fast" }
             if ($ReportTrx) { $testArgs += "--report-trx" }
@@ -1175,7 +1202,7 @@ try {
             # Parse test counts from full output before truncating
             $counts = Get-TestCountsFromOutput -FullOutput $output
             return [PSCustomObject]@{
-                ProjectName = $projName
+                ProjectName = if ($script:TestFrameworks.Count -gt 1) { "$projName ($Framework)" } else { $projName }
                 ExitCode = $proc.ExitCode
                 Output = (_selectFailureSignal ($output -split "`n")) -join "`n"
                 TestsPassed = $counts.Passed
@@ -1256,9 +1283,15 @@ try {
             })
 
             try {
-                $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
-                    $projectPath = $_
+                $unitTestRuns = @(foreach ($unitProject in $unitTestProjects) {
+                    foreach ($framework in (Get-BuiltTestFrameworks -ProjectPath $unitProject -Config $Configuration)) { [PSCustomObject]@{ Path = $unitProject; Framework = $framework } }
+                })
+                $multipleFrameworks = $script:TestFrameworks.Count -gt 1
+                $unitTestRuns | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                    $projectPath = $_.Path
+                    $framework = $_.Framework
                     $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                    $runName = if ($using:multipleFrameworks) { "$projectName ($framework)" } else { $projectName }
                     $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
                     $config = $using:Configuration
                     $testFilter = $using:TestFilter
@@ -1268,11 +1301,11 @@ try {
                     $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
 
                     if ($IsLinux -or $IsMacOS) {
-                        $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                        $testExe = Join-Path $projectDir "bin" $config $framework $projectName
                         if (Test-Path $testExe) { chmod +x $testExe 2>$null }
                     }
 
-                    $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+                    $projectArgs = @("run", "--project", $projectPath, "--framework", $framework, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
                     if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
                     if ($failFast) { $projectArgs += "--fail-fast" }
                     if ($reportTrx) { $projectArgs += "--report-trx" }
@@ -1325,7 +1358,7 @@ try {
                     }
 
                     $resultsBag.Add([PSCustomObject]@{
-                        ProjectName = $projectName
+                        ProjectName = $runName
                         ExitCode = $LASTEXITCODE
                         Output = $failureSignal -join "`n"
                         TestsPassed = $tPassed
@@ -1344,17 +1377,19 @@ try {
         if ($integrationTestProjects.Count -gt 0 -and -not $failFastTriggered) {
             Write-Host "Running $($integrationTestProjects.Count) integration test projects sequentially..." -ForegroundColor Cyan
 
-            foreach ($projectPath in $integrationTestProjects) {
+            :integrationRuns foreach ($projectPath in $integrationTestProjects) {
                 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                Write-Host "  Testing: $projectName" -ForegroundColor Gray
+                foreach ($framework in (Get-BuiltTestFrameworks -ProjectPath $projectPath -Config $Configuration)) {
+                    Write-Host "  Testing: $projectName ($framework)" -ForegroundColor Gray
 
-                $result = Invoke-TestWithCoverage -ProjectPath $projectPath -Config $Configuration -Filter $TestFilter -FailFastEnabled $FailFast
-                $results.Add($result)
+                    $result = Invoke-TestWithCoverage -ProjectPath $projectPath -Framework $framework -Config $Configuration -Filter $TestFilter -FailFastEnabled $FailFast
+                    $results.Add($result)
 
-                if ($result.ExitCode -ne 0 -and $FailFast) {
-                    $failFastTriggered = $true
-                    Write-Host "  Stopping due to -FailFast" -ForegroundColor Red
-                    break
+                    if ($result.ExitCode -ne 0 -and $FailFast) {
+                        $failFastTriggered = $true
+                        Write-Host "  Stopping due to -FailFast" -ForegroundColor Red
+                        break integrationRuns
+                    }
                 }
             }
         }
@@ -1479,7 +1514,7 @@ try {
             # Filtering by write time against the run's own start keeps this non-destructive --
             # nothing is deleted, they are simply not counted as if they were current.
             $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
                                $_.LastWriteTimeUtc -ge $script:runStartTime }
 
             # Drop the cobertura of any project that failed or was killed.
@@ -1610,7 +1645,7 @@ try {
         param([System.IO.FileInfo]$DllFile)
 
         $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
-        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)$", ""
         $csprojPath = Join-Path $projectDir "$dllName.csproj"
 
         if (Test-Path $csprojPath) {
@@ -1679,9 +1714,11 @@ try {
         $unbuilt = @(
             $declaredProjects | Where-Object {
                 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-                $expectedDll = [System.IO.Path]::Combine(
-                    $_.DirectoryName, "bin", $Configuration, "net10.0", "$projectName.dll")
-                -not (Test-Path $expectedDll)
+                $projectDirectory = $_.DirectoryName
+                # Unbuilt means no framework's output at all: a sample builds net11.0 only, also in a release build.
+                @($script:TestFrameworks | Where-Object {
+                    Test-Path ([System.IO.Path]::Combine($projectDirectory, "bin", $Configuration, $_, "$projectName.dll"))
+                }).Count -eq 0
             }
         )
 
@@ -1728,7 +1765,7 @@ try {
     function Test-IsPrimaryTestDll {
         param([System.IO.FileInfo]$DllFile)
         $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
-        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)$", ""
         $projectName = [System.IO.Path]::GetFileName($projectDir)
         return $dllName -eq $projectName
     }
@@ -1741,7 +1778,7 @@ try {
         # Find all test DLLs and filter by tag
         $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]" } |
             Where-Object { $_.Name -notmatch $excludePattern } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1775,7 +1812,7 @@ try {
         # every pattern here and never ran (#1196). Every match is still checked against its project's
         # declared test type, so the wider pattern admits no assembly that is not a test project.
         $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]" } |
             Where-Object { $_.Name -notmatch "AppHost" } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1797,7 +1834,7 @@ try {
         Ensure-BuildExists
         $selectedDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { Test-IsSelectedTestType $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
@@ -1813,7 +1850,7 @@ try {
         } else {
             Write-Error ("No test projects selected (WhizbangTestType: $typeList). Discovery reads " +
                 "<WhizbangTestType> from the .csproj behind each BUILT DLL, so a project with no output in " +
-                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
+                "bin/$Configuration/<framework> is invisible even when the property is correct. " +
                 "Check for build failures first, then the property.")
             exit 1
         }
@@ -2802,7 +2839,7 @@ try {
         # Same staleness guard as the primary call site above: only count cobertura files this
         # run produced, or the report merges every run still sitting in TestResults.
         $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
                            $_.LastWriteTimeUtc -ge $script:runStartTime }
 
         if ($coberturaFiles.Count -gt 0) {

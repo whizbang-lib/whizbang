@@ -17,11 +17,10 @@
   (`.github/actions/require-pr-gate`).
 - **Every published package is the tested build, or verified equivalent to it.** Nothing is rebuilt to
   publish: stable promotes the release branch's own packages, and a beta or rc repacks the release
-  branch's binaries at the prerelease version (byte-identical DLLs). A clean release cut reuses the
-  tests of the develop commit it came from, so its packages are **verified equivalent** to that
-  tested build (same source, same SDK, same assembly set: the standard every alpha ships under);
-  once a stabilization fix lands on the branch, it runs its own full matrix and they are the
-  literally tested bytes.
+  branch's binaries at the prerelease version (byte-identical DLLs). A release branch always runs its
+  own full matrix, so its packages are the literally tested bytes: develop builds and tests `net11.0`
+  only, while a release branch builds, tests and packs `net10.0` and `net11.0` (see
+  [Target frameworks](#target-frameworks)), so develop's run never tested what a release ships.
 - **One number, everywhere.** The version that is *published* to nuget.org equals what is *stamped*
   into the `.nupkg` and *tagged* in git (`vX.Y.Z`). If they differ, it's a bug. The release PR's
   preview equals it too unless betas or rcs were published from the branch: those roll the stable up
@@ -56,7 +55,7 @@ the enforcement points named in the last column refuse it.
 | # | I want to… | Do this | What runs | Enforced by |
 |---|---|---|---|---|
 | F1 | Ship a change | PR from `feat/*`, `fix/*`, `test/*`, `ci/*`, … into `develop`; merge through the queue | CI (1 pre-merge, 2 merge queue, 3 post-merge); develop publishes the changed packages as **`0.Y.0-alpha.N`** | gitflow check; `develop` ruleset |
-| F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Rolls up the cut commit's alpha number into `X.Y.Z` ([Version rollup](#version-rollup)); gathers the `changelog.d/` fragments into `CHANGELOG.md` ([The changelog](#the-changelog)); creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate reuses the tested develop commit's results when only the version file and the changelog differ (build, pack, verify: no suites) | one release in flight; branch must not exist |
+| F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Rolls up the cut commit's alpha number into `X.Y.Z` ([Version rollup](#version-rollup)); gathers the `changelog.d/` fragments into `CHANGELOG.md` ([The changelog](#the-changelog)); creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate runs the full matrix on both target frameworks (it never reuses develop's results, which cover `net11.0` only) | one release in flight; branch must not exist |
 | F3 | Publish a **beta** or **rc** | Actions → **Release Prerelease**, "Use workflow from" = the release branch, pick `beta` or `rc` | Repacks the branch head's tested build as **`X.Y.Z-beta.N`** / **`-rc.N`**, publishes, tags it on the branch. Nothing merges | release branch only; the open release PR's head is this commit and its coverage/Sonar gate passed on it; green CI; no beta after rc; not after stable |
 | F4 | Fix something in an open release | PR from `fix/*` (or `bugfix/*`, `hotfix/*`) into `release/vX.Y.Z` | The branch re-tests; publish the next beta or rc when ready (F3); the fix reaches develop after release (F5) | gitflow check |
 | F5 | Ship the **stable** release | Merge the release PR (merge commit) and approve `nuget-publish` | Promotes the release branch's tested packages as **`X.Y.Z`** (or, when betas or rcs rolled the number up, repacks the same tested build at the rolled-up version), tags `main`, syncs `main` back to `develop` by PR; CI 5 released reuses the release branch's results | release PR must come from `release/vX.Y.Z` with its own stable number; tested tree must equal the tagged tree |
@@ -120,7 +119,7 @@ job fails it on every path. The rules are `.github/scripts/Test-CiResult.ps1`, t
 |---|---|---|
 | yielded | a release PR, or the main push after one (`release-pr`) | the yielded-to run's own `Gate · CI result` ends green (the gate waits for it, up to 90 minutes), and Quality is green here |
 | fast-forward | a queue run over a tree its PR run covered (`ff-validated`) | `ff-validated` succeeded (it already required the PR run green, Quality included) |
-| reused | a develop push or release cut (`queue-validated`) | `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` green, plus `Build · Compile` unless the change detector found no code (a docs-only merge builds nothing) |
+| reused | a develop push (`queue-validated`) | `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` green, plus `Build · Compile` unless the change detector found no code (a docs-only merge builds nothing) |
 | docs-only | a push or PR whose change detector found only inert paths | `Plan · Detect changes` succeeded and said so |
 | pr-fast | a pull request into `develop` (#2070) | `Build · Compile`, `Build · Analyzers`, `Test · Unit` and `Test · Component` green; the integration suites, Quality and pack run in the merge queue and may be skipped here |
 
@@ -560,23 +559,20 @@ never satisfies "fully green including Quality" and the queue always runs the fu
 is where each change is tested, once. The fast-forward skip still applies when a pull request ran the
 full matrix itself (`PR_RUN_FULL_MATRIX=true`).
 
-### queue-validated — skip the redundant *push* and *release cut* matrices
+### queue-validated — skip the redundant *develop push* matrix
 
-Two pushes carry a tree another run already tested:
+A develop push carries a tree another run already tested: the merge queue fast-forwards develop to
+the **exact SHA** it just ran, so the post-merge push used to re-test identical bytes for ~35-40
+minutes before the alpha could publish.
 
-- **A develop push.** The merge queue fast-forwards develop to the **exact SHA** it just ran, so the
-  post-merge push used to re-test identical bytes for ~35-40 minutes before the alpha could publish.
-- **A release cut.** `release/vX.Y.Z` is the develop commit it was cut from plus changes to
-  `Directory.Build.props` only (main's previous version, then the new one), a file the build does not
-  read: the version is stamped from the branch name. The cut used to re-run the whole matrix on code
-  develop had already tested, delaying the release PR by ~40 minutes.
+A **release cut** used to reuse the tested develop commit's results too. It no longer does (#2135):
+develop builds and tests `net11.0` only, a release branch builds, tests and packs `net10.0` and
+`net11.0`, so the develop run never tested or built what the release ships. Every release-branch push
+runs the full matrix on both frameworks.
 
-`ci.yml` short-circuits both while keeping the publish gate provable:
+`ci.yml` short-circuits the develop push while keeping the publish gate provable:
 
-- **queue-validated** decides. On develop it targets the pushed SHA; on a release branch it asks the
-  compare API for the merge base with develop and every differing file, and targets that merge base
-  only when `Directory.Build.props` is the **only** difference. A stabilization fix on the branch, a
-  hotfix branch cut from a tag, or anything else runs the full matrix.
+- **queue-validated** decides, on develop pushes only, targeting the pushed SHA.
 - **find-tested-run** (`.github/actions/find-tested-run`, the one copy of this lookup) finds the
   evidence for the target: the successful `merge_group` run, and the run holding its coverage and its
   determinism manifest (the queue run, or on a fast-forward the PR run, after proving the trees are
@@ -598,16 +594,14 @@ Two pushes carry a tree another run already tested:
 - **Compile uploads no per-suite build slices** on this path: no suite runs, so nothing would read them.
 - **reupload-reports** republishes the tested run's coverage and TRX into the push run, both to
   Codecov and as its own `coverage-republished` artifact, so the Codecov baseline, Test Analytics,
-  the docs test status and, on a release cut, the release PR's and the main push's Quality (which
-  read coverage from this run) keep working unchanged. Quality recognizes a run that republished
+  and the docs test status keep working unchanged. Quality recognizes a run that republished
   instead of running suites.
 
 `prerelease-publish` accepts either gate: every suite green **in this run** (the old invariant,
 still the path whenever queue validation is absent — a standalone push, an expired queue run,
 the escape hatch), or **queue-validated + verify-rebuild green**.
 
-**Escape hatches:** `RELEASE_CUT_FULL_MATRIX=true` forces the full matrix on release-branch pushes.
-On develop, set the repo variable `PUSH_RUN_FULL_MATRIX=true` and re-run **all jobs** on
+**Escape hatch:** on develop, set the repo variable `PUSH_RUN_FULL_MATRIX=true` and re-run **all jobs** on
 the push run to force the full matrix. That is the remedy when verify-rebuild refuses a
 toolchain drift (e.g. an SDK patch released in the minutes between the queue run and the push
 run) — the publish stays blocked until either the drifted rebuild is validated by real suites or
@@ -857,7 +851,6 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Start Release failed at `Gather the changelog fragments`: "changelog.d/N.md: ..." | a fragment (or a heading left under `[Unreleased]`) the gather cannot render; nothing was pushed | Fix the named file by a PR into develop (`changelog.d/README.md` lists the format), check with `pwsh .github/scripts/Merge-ChangelogFragments.ps1 -Version X.Y.Z -DryRun`, then cut again |
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run's Compile, a different assembly set, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
-| Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, a different assembly set, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
 | `Merge back · Main to develop` (or `Merge back · Hotfix to develop`) fails at `Mint the release app token`: "The 'client-id' ... input must be set to a non-empty string" | the job cannot read the `release-app` environment's secrets. Until #1796 the merge-back ran inside a reusable workflow whose callers passed no secrets, and GitHub delivers an environment secret to a reusable workflow's job only when the caller passes it, so it read an empty string on every stable release from 2026-10-19 (the `workflow_call.secrets` declaration of #1477 did not change that). Since #1796 the job mints the token itself, so this now means the environment secrets are missing or the job lost its `environment: release-app` | The packages are already published. Check whether anything needed syncing: `git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props'` (for an older-line hotfix, `origin/develop...<the hotfix commit>`). Empty means nothing was lost. Otherwise fix the cause by PR. Re-running the failed job re-runs the workflow file of the original commit, so a run from before the fix fails again, as does an older-line hotfix branch cut before it (it runs its own copy of `ci.yml`): open the sync PR by hand instead, from a branch of the source with develop's `Directory.Build.props` restored, published through `Publish-SignedCommit.ps1` (see [Sync Main → Develop](#sync-main--develop)) |
 | `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z`. That tag is not signed by the workflow, so it fails SECURITY.md's verification: say so in the release notes |
@@ -991,3 +984,23 @@ success. CI always starts clean.
 - **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
   returns 404 "Branch not protected"; the required checks are at
   `gh api repos/<owner>/<repo>/rules/branches/main`.
+
+## Target frameworks
+
+W! is developed on .NET 11 and released for .NET 10 and .NET 11 (#2134, #2135). One place decides,
+`Directory.Build.props`, from the branch CI runs on:
+
+| Build | Frameworks | When |
+|---|---|---|
+| Development | `net11.0` | local builds, pull requests into develop, the merge queue, develop pushes and alphas |
+| Release | `net10.0;net11.0` | pushes to `release/*` and `main`, `v*` tags, pull requests into `release/*` or `main` |
+
+`-p:WhizbangReleaseBuild=true` (or `false`) overrides the detection, e.g. to reproduce a release
+build locally. Restore always covers both frameworks, so the committed `packages.lock.json` files are
+the same on every branch and locked-mode restore passes everywhere. `scripts/Run-Tests.ps1` runs every
+test module built for a targeted framework, so a release run tests both; `setup-dotnet-retry` installs
+the .NET 10 runtime beside the SDK whenever the build targets `net10.0`. A pull request into develop
+also compiles `net10.0` (`Build · Compile net10.0`, no tests), so a .NET 11-only API is caught there
+rather than on release day. Projects never name a framework; source generators and analyzers stay
+`netstandard2.0` as Roslyn requires.
+

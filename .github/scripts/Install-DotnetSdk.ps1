@@ -59,6 +59,8 @@ function Get-SdkChannel {
     $sdk = $json.PSObject.Properties['sdk']
     if ($sdk -and $sdk.Value.PSObject.Properties['version'] -and $sdk.Value.version) {
       $version = [string]$sdk.Value.version
+      # A prerelease SDK (11.0.100-rc.3.x) has no feature-band channel of its own: install that exact version.
+      if ($version.Contains('-')) { return $version }
       return $version.Substring(0, $version.Length - 2) + 'xx'
     }
   }
@@ -74,7 +76,9 @@ function Invoke-SdkInstall {
       [Parameter(Mandatory)][string]$InstallDir
   )
   # The installer prints its progress to stdout. Send it to the console, not into this function's return value.
-  & bash $InstallerPath --channel $Channel --install-dir $InstallDir | Out-Host
+  # An exact (prerelease) version installs with --version; a feature band or major.minor with --channel.
+  $selector = if ($Channel.Contains('-')) { '--version' } else { '--channel' }
+  & bash $InstallerPath $selector $Channel --install-dir $InstallDir | Out-Host
   if ($LASTEXITCODE -ne 0) {
     return [pscustomobject]@{
       Ok = $false; Version = $null
@@ -98,6 +102,35 @@ function Invoke-SdkInstall {
   return [pscustomobject]@{ Ok = $true; Version = $version; Error = $null }
 }
 
+# The runtimes the build's other target frameworks need to run their tests (#2135). A release build targets
+# net10.0 and net11.0 while the SDK is 11, so its net10.0 test modules need the .NET 10 runtime beside it.
+# Directory.Build.props decides the frameworks (its branch detection reads the same GITHUB_REF), so this never
+# repeats that decision. Returns major.minor channels, e.g. '10.0', for every framework older than the SDK.
+function Get-ExtraRuntimeChannels {
+  param(
+      [AllowEmptyCollection()][string[]]$TargetFrameworks,
+      [Parameter(Mandatory)][string]$SdkVersion
+  )
+  $sdkMajor = [int]($SdkVersion.Split('.')[0])
+  @($TargetFrameworks | ForEach-Object {
+      if ($_ -match '^net(\d+)\.(\d+)$' -and [int]$Matches[1] -lt $sdkMajor) { "$($Matches[1]).$($Matches[2])" }
+    } | Select-Object -Unique)
+}
+
+function Invoke-RuntimeInstall {
+  param(
+      [Parameter(Mandatory)][string]$InstallerPath,
+      [Parameter(Mandatory)][string]$Channel,
+      [Parameter(Mandatory)][string]$InstallDir
+  )
+  # The ASP.NET Core runtime archive carries Microsoft.NETCore.App as well, which is what the test hosts need.
+  & bash $InstallerPath --runtime aspnetcore --channel $Channel --install-dir $InstallDir | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    return "Installing the .NET $Channel runtime failed (dotnet-install.sh exit $LASTEXITCODE); see the download errors above."
+  }
+  return $null
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $channel = Get-SdkChannel -GlobalJsonPath $GlobalJsonPath -FallbackChannel $FallbackChannel
@@ -116,6 +149,21 @@ $result = Invoke-SdkInstall -InstallerPath $installer -Channel $channel -Install
 if (-not $result.Ok) {
   Write-Output "::error title=.NET SDK install::$($result.Error)"
   exit 1
+}
+
+$props = if (Test-Path -LiteralPath $GlobalJsonPath) {
+  Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $GlobalJsonPath).Path) 'Directory.Build.props'
+} else { '' }
+if ($props -and (Test-Path -LiteralPath $props)) {
+  $frameworks = ((& (Join-Path $InstallDir 'dotnet') msbuild $props -getProperty:TargetFrameworks 2>$null) | Out-String).Trim() -split ';'
+  foreach ($runtimeChannel in (Get-ExtraRuntimeChannels -TargetFrameworks $frameworks -SdkVersion $result.Version)) {
+    Write-Output "This build also targets .NET $runtimeChannel; installing its runtime into $InstallDir"
+    $runtimeError = Invoke-RuntimeInstall -InstallerPath $installer -Channel $runtimeChannel -InstallDir $InstallDir
+    if ($runtimeError) {
+      Write-Output "::error title=.NET runtime install::$runtimeError"
+      exit 1
+    }
+  }
 }
 
 if ($env:GITHUB_PATH) { $InstallDir | Add-Content -Path $env:GITHUB_PATH }
