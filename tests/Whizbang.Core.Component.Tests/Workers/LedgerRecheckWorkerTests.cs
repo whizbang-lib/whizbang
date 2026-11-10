@@ -61,6 +61,35 @@ public class LedgerRecheckWorkerTests {
       .IsFalse().Because("a re-check is a compare, never a repair request");
   }
 
+  // #2208: a row with no stamped window was compared over the whole history, so it is answered again over the whole
+  // history: an unwindowed answer from the origin's recompute, every stream of the type, compared to this service's own
+  // whole-history fold. A window would prove only itself, and the origin caps a window opened from the start.
+  [Test]
+  public async Task RecheckTick_ARowWithNoWindow_IsAskedForAWholeHistoryRecomputeAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, metrics) = _build(new StreamIntegrityOptions(), origin);
+    coordinator.Stale.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, null, null),
+      new IntegrityRepairDrainItem(origin, "tenant-b", "Contracts.TypeA", TrackedGuid.New().Value, null, null),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
+    ]);
+
+    await worker.RecheckTickAsync(_fixedNow, CancellationToken.None);
+
+    var requests = transport.Published.ConvertAll(p => _deserializeManifestRequest(p.Envelope));
+    await Assert.That(requests.Count).IsEqualTo(2)
+      .Because("the rows with no window share one whole-history ask; the windowed row keeps its own");
+    var whole = requests.Single(r => !r.Windowed);
+    await Assert.That(whole.UseRecompute).IsTrue()
+      .Because("the whole history is answered from the origin's recompute, never its maintained table");
+    await Assert.That(whole.Recheck).IsTrue().Because("a re-check is a compare, never a repair request");
+    await Assert.That(whole.Level).IsEqualTo(ManifestLevel.Streams);
+    await Assert.That(whole.EventTypes).IsEquivalentTo(["Contracts.TypeA"]);
+    await Assert.That(whole.MaxDigests).IsNull().Because("an unwindowed answer is not paged");
+    await Assert.That(requests.Single(r => r.Windowed).UseRecompute).IsFalse();
+    await Assert.That(metrics.Rechecked).IsEqualTo(3L);
+  }
+
   [Test]
   public async Task RecheckTick_ClaimsTheStalestRows_BoundedPerTick_OlderThanTheThresholdAsync() {
     var origin = TrackedGuid.New().Value;

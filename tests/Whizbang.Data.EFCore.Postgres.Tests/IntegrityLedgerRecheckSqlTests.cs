@@ -13,10 +13,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// #2115: the idle ledger re-check's claim, against the real ledger. It takes the rows whose last report is older than
 /// the threshold, oldest report first and bounded; a row it claimed is not claimed again until that claim is older
-/// than the threshold too; it skips rows it could not ask about (another origin, no stamped window, the type lane);
-/// and it spends nothing: no repair attempt, no pending answer.
+/// than the threshold too; it skips rows it could not ask about (another origin, the type lane); and it spends nothing:
+/// no repair attempt, no pending answer. A row with no stamped window is claimed too, and comes back without one, so
+/// the re-check asks for its whole history (#2208).
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/348_IdleLedgerRecheck.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/375_LedgerRowsWithoutAWindowAreRechecked.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
 [Category("Integration")]
@@ -74,7 +76,6 @@ public class IntegrityLedgerRecheckSqlTests : EFCoreTestBase {
     var other = TrackedGuid.New().Value;
     var askable = await _staleRowAsync(coordinator, origin, reportedAt: _t0);
     _ = await _staleRowAsync(coordinator, other, reportedAt: _t0);                     // an origin that cannot be asked
-    _ = await _staleRowAsync(coordinator, origin, reportedAt: _t0, stampWindow: false); // no window to ask over
     _ = await _staleRowAsync(coordinator, origin, reportedAt: _t0, stream: Guid.Empty); // the type lane
     var now = _t0.AddDays(1);
 
@@ -94,6 +95,23 @@ public class IntegrityLedgerRecheckSqlTests : EFCoreTestBase {
     await Assert.That(reader.GetInt32(0)).IsEqualTo(0).Because("a re-check is a compare: it spends no repair attempt");
     await Assert.That(reader.GetBoolean(1)).IsTrue().Because("and asks for no repair, so no answer is pending");
     await Assert.That(reader.GetFieldValue<DateTimeOffset>(2)).IsEqualTo(now);
+  }
+
+  // #2208: a row compared over the whole history (no stamped window) is re-checked too, and comes back without a window,
+  // so the re-check asks for the whole history. Before, it was never claimed, and the drain kept repairing it.
+  [Test]
+  public async Task Claim_ARowWithNoWindow_IsClaimed_AndComesBackWithoutOneAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var whole = await _staleRowAsync(coordinator, origin, reportedAt: _t0, stampWindow: false);
+    var now = _t0.AddDays(1);
+
+    var claimed = await _claimAsync(coordinator, origin, now, 10);
+
+    var item = claimed.Single();
+    await Assert.That(item.StreamId).IsEqualTo(whole);
+    await Assert.That(item.WindowFrom).IsNull().Because("no window was stamped, so the whole history is re-checked");
+    await Assert.That(item.WindowUntil).IsNull();
   }
 
   [Test]

@@ -449,6 +449,14 @@ public sealed class StreamIntegrityMetrics {
       () => _ledger.AnsweredBuckets,
       description: "Buckets a redelivery answered that wait for the next comparison to decide healed or still divergent");
     _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unhealed_deficit_events",
+      () => _ledger.UnhealedDeficitEvents,
+      description: "Missing events, summed, in the buckets repair can still act on (neither unhealable nor exhausted); the data left to heal");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unhealable_buckets",
+      () => _ledger.UnhealableBuckets,
+      description: "Ledger rows marked unhealable, which repair cannot change; splits unhealed_buckets into repairable and unhealable");
+    _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.deliveries_pending",
       () => _ledger.IntegrityDeliveriesPending,
       description: "Integrity deliveries waiting for the maintainer's drain; one value per service");
@@ -532,6 +540,17 @@ public sealed record LedgerGaugeSnapshot {
   /// <summary>Seconds the oldest waiting integrity delivery has waited (0 when none, #2035).</summary>
   /// <docs>resilience/stream-integrity#integrity-gauges</docs>
   public double OldestIntegrityDeliveryAgeSeconds { get; init; }
+
+  /// <summary>The deficit events, summed, of the deficit buckets repair can still act on: not unhealable and not
+  /// exhausted (#2203). The data left to heal; 0 when none, and a bucket whose deficit is unknown adds nothing.</summary>
+  /// <docs>resilience/stream-integrity#integrity-gauges</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerHealRemainingGaugesSqlTests.cs:Summary_SumsTheDeficitOfRepairableBuckets_AndCountsTheUnhealableOnesAsync</tests>
+  public long UnhealedDeficitEvents { get; init; }
+
+  /// <summary>Ledger rows marked unhealable, exhausted or not (#2203).</summary>
+  /// <docs>resilience/stream-integrity#integrity-gauges</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerHealRemainingGaugesSqlTests.cs:Summary_SumsTheDeficitOfRepairableBuckets_AndCountsTheUnhealableOnesAsync</tests>
+  public long UnhealableBuckets { get; init; }
 
   /// <summary>Per-origin verified watermarks (one gauge series each). Empty until the collector
   /// reads the seals — a tiny table it visits in the same breath as the ledger summary.</summary>
