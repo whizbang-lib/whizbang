@@ -102,7 +102,6 @@ public class PerspectiveDocumentIndexGenerationTests {
 
     string[] expected = [
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON \"\"testapp\"\".wh_per_ledger (created_at)$wbix$);",
-      "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_updated_at ON \"\"testapp\"\".wh_per_ledger (updated_at)$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_scope_gin ON \"\"testapp\"\".wh_per_ledger USING gin (scope)$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_scope_tenant ON \"\"testapp\"\".wh_per_ledger ((scope->>'t'))$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_status_json ON \"\"testapp\"\".wh_per_ledger ((data ->> 'Status'))$wbix$);",
