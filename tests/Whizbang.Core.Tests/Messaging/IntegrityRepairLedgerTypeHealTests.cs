@@ -60,6 +60,28 @@ public class IntegrityRepairLedgerTypeHealTests {
       .Because("a ledger that cannot enumerate a type's streams forgets the type lane the key names, and nothing it cannot find");
   }
 
+  [Test]
+  public async Task DivergenceKey_TypeLane_KeepsTheBucketAtTheTypeLevelAsync() {
+    var origin = TrackedGuid.New().Value;
+    var stream = new IntegrityRepairLedger.DivergenceKey(origin, "tenant-a", "Contracts.TypeX", TrackedGuid.New().Value);
+
+    await Assert.That(stream.ToTypeLane())
+      .IsEqualTo(new IntegrityRepairLedger.DivergenceKey(origin, "tenant-a", "Contracts.TypeX", Guid.Empty));
+  }
+
+  [Test]
+  public async Task DivergenceKeys_CompareStructurally_WithoutRecursingAsync() {
+    // A key that exposed its type lane as a property of its own type made every structural walk of it endless: an
+    // equivalence assertion over a list of keys overflowed the stack and took the whole test process down with it.
+    var origin = TrackedGuid.New().Value;
+    IntegrityRepairLedger.DivergenceKey[] keys = [
+      new(origin, null, "Contracts.TypeX", TrackedGuid.New().Value),
+      new(origin, "tenant-a", "Contracts.TypeY", Guid.Empty),
+    ];
+
+    await Assert.That(keys.Reverse().ToArray()).IsEquivalentTo(keys);
+  }
+
   /// <summary>A ledger that implements the required members only, delegating to the in-memory one, so every optional
   /// batch member keeps its interface default.</summary>
   private sealed class DefaultsOnly(IntegrityRepairLedger inner) : IIntegrityRepairLedger {

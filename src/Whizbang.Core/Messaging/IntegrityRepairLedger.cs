@@ -36,9 +36,13 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
   /// window-level entries use <see cref="Guid.Empty"/>.</summary>
   public readonly record struct DivergenceKey(Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId) {
     /// <summary>The same (origin, tenant, type) bucket at the type level: its stream id is <see cref="Guid.Empty"/>.</summary>
+    /// <remarks>A method, not a property: a property of the key's own type makes every structural walk of a key (an
+    /// equivalence assertion, a serializer, a deep comparer) recurse without end.</remarks>
+    /// <returns>The type-level key of this key's (origin, tenant, type).</returns>
     /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs</tests>
-    public DivergenceKey TypeLane => new(OriginServiceId, TenantScope, EventType, Guid.Empty);
+    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKey_TypeLane_KeepsTheBucketAtTheTypeLevelAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKeys_CompareStructurally_WithoutRecursingAsync</tests>
+    public DivergenceKey ToTypeLane() => new(OriginServiceId, TenantScope, EventType, Guid.Empty);
   }
 
   private sealed class Entry {

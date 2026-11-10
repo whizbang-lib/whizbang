@@ -206,7 +206,7 @@ public sealed class CoordinatorIntegrityRepairLedger(
     } catch (Exception ex) {
       _degraded("mark-types-healed", fallback: false, ex);
     }
-    return await MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k.TypeLane)], cancellationToken)
+    return await MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k.ToTypeLane())], cancellationToken)
       .ConfigureAwait(false);
   }
 
