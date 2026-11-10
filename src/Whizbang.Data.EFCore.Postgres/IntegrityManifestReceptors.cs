@@ -1147,7 +1147,7 @@ public sealed partial class IntegrityManifestReceptor(
     foreach (var t in drillDown) {
       _lastDrilled[(message.OriginServiceId, t)] = drilledAt;
     }
-    // Directed or not at all — the same rule as the repair request (see
+    // Directed or not at all: the same rule as the repair request (see
     // _sendRepairRequestAsync): without the origin's carried address the drill-down waits for a
     // checkpoint instead of broadcasting off the requester's own topic.
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
