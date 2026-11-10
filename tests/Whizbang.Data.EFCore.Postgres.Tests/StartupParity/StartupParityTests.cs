@@ -300,6 +300,27 @@ public class StartupParityTests {
       .IsEqualTo(1);
   }
 
+  // ── #1959: both drivers handle the rebuild command ──────────────────────────────────────────────────────────
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  public async Task EachDriver_HandlesTheRebuildCommand_AndRunsItsBackgroundRebuildsAsync(string driverName) {
+    IServiceCollection? composed = null;
+    _ = _compose(StartupDriver.For(driverName), configure: s => composed = s);
+
+    // The registrar runtime-registers the rebuild command's receptor; the worker runs the blue-green rebuilds it queues.
+    // The Dapper driver registered neither, so a Dapper host could rebuild only by calling the rebuilder itself.
+    await Assert.That(_hostedCount<RebuildCommandReceptorRegistrar>(composed!)).IsEqualTo(1)
+      .Because("RebuildPerspectiveCommand is handled the same way on both drivers");
+    await Assert.That(_hostedCount<RebuildBackgroundWorker>(composed!)).IsEqualTo(1);
+    await Assert.That(composed!.Count(d => d.ServiceType == typeof(RebuildBackgroundQueue))).IsEqualTo(1);
+  }
+
+  private static int _hostedCount<T>(IServiceCollection services) where T : Microsoft.Extensions.Hosting.IHostedService =>
+    services.Count(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)
+      && (d.ImplementationType == typeof(T) || d.ImplementationFactory is Func<IServiceProvider, T>));
+
   // ── #1992: the Assess verdict binds startup, on both drivers ─────────────────────────────────────────────────
 
   [Test]

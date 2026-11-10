@@ -488,6 +488,77 @@ public class ClaimWorkerAcquisitionBoundsTests {
 
   // ---- harness -------------------------------------------------------------------------------------
 
+  // ---- #1853: no new inbox rows while the working set is at its byte budget ---------------------
+
+  [Test]
+  public async Task WorkingSetFull_ClaimsLeaseNoNewInboxRows_UntilItDrainsAsync() {
+    const int CLAIMS_WHILE_FULL = 4;
+    var writer = new InboxChannelWriter();
+    var held = _inboxWork();
+    await writer.WriteAsync(held);
+    // What the drain does when the budget turns rows away: no row fits until the working set is empty.
+    writer.DeferInboxAcquisitionUntilHeldAtMost(0);
+    var coord = new ScriptedCoordinator(_ => _emptyBatch()) {
+      // The held row leaves inside the last claim made while full, so that claim was sized full and the next one cannot be.
+      OnClaim = call => {
+        if (call == CLAIMS_WHILE_FULL) {
+          writer.RemoveInFlight(held.MessageId);
+        }
+      },
+    };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      AdaptiveOutstandingBudget = false,
+    }, inboxChannel: writer);
+
+    await coord.WaitForCallsAsync(CLAIMS_WHILE_FULL + 1, TimeSpan.FromSeconds(5));
+    var requests = coord.Snapshot();
+
+    // Each of these claims used to lease new rows that the drain fetched, turned away and released: a full working set
+    // cost a claim, a fetch and a release on every poll, while the service was already under memory pressure.
+    var whileFull = requests.Take(CLAIMS_WHILE_FULL).ToList();
+    await Assert.That(whileFull.Count(r => r.AcquireInbox)).IsEqualTo(0)
+      .Because("no claim leases inbox rows the drain would only hand back");
+    await Assert.That(whileFull.Count(r => r.AllowSteal)).IsEqualTo(0);
+
+    var resumed = requests[CLAIMS_WHILE_FULL];
+    await Assert.That(resumed.AcquireInbox).IsTrue()
+      .Because("acquisition resumes once the working set has drained to where a turned-away row fits");
+    await Assert.That(resumed.AllowSteal).IsFalse()
+      .Because("claims that did not look for inbox work prove nothing about this instance's own residue, so they do not "
+             + "count towards the licence to steal");
+  }
+
+  [Test]
+  public async Task WorkingSetWithRoom_ClaimsLeaseInboxRowsAsBeforeAsync() {
+    var coord = new ScriptedCoordinator(_ => _emptyBatch());
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      AdaptiveOutstandingBudget = false,
+    });
+
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.Requests[0].AcquireInbox).IsTrue();
+  }
+
+  private static InboxWork _inboxWork() {
+    var id = TrackedGuid.New().Value;
+    return new InboxWork {
+      MessageId = id,
+      Envelope = new MessageEnvelope<System.Text.Json.JsonElement> {
+        MessageId = MessageId.From(id),
+        Payload = System.Text.Json.JsonElement.Parse("""{"a":12345}"""),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Inbox },
+      },
+      MessageType = "Contracts.Orders.OrderPlaced, Contracts",
+      StreamId = TrackedGuid.New().Value,
+    };
+  }
+
   private static WorkBatch _emptyBatch() => new() { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
 
   private static WorkBatch _batchOfInboxRows(int rows) {
@@ -512,7 +583,8 @@ public class ClaimWorkerAcquisitionBoundsTests {
       WorkCompletionMeter? completionMeter = null,
       IPerspectiveDrainChannel? perspectiveDrainChannel = null,
       IInboxDrainChannel? inboxDrainChannel = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      IInboxChannelWriter? inboxChannel = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -524,7 +596,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
       options: Options.Create(options),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
-      inboxChannel: new InboxChannelWriter(),
+      inboxChannel: inboxChannel ?? new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: perspectiveDrainChannel ?? new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
@@ -646,6 +718,11 @@ public class ClaimWorkerAcquisitionBoundsTests {
     }
 
     public Task WaitForReleaseAsync(TimeSpan timeout) => _released.Task.WaitAsync(timeout);
+
+    /// <summary>The requests so far, copied under the lock the claims are recorded under.</summary>
+    public List<ClaimWorkRequest> Snapshot() {
+      lock (_lock) { return [.. Requests]; }
+    }
 
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;

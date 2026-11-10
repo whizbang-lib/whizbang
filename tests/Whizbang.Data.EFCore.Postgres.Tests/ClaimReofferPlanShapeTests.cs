@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class ClaimReofferPlanShapeTests : EFCoreTestBase {
   private const string CLAIM_WORK_SIGNATURE =
     "claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, INTEGER, BOOLEAN, INTEGER, BOOLEAN, "
-    + "INTERVAL, INTEGER, INTERVAL, INTEGER, INTEGER, BIGINT, BIGINT, BOOLEAN, TEXT)";
+    + "INTERVAL, INTEGER, INTERVAL, INTEGER, INTEGER, BIGINT, BIGINT, BOOLEAN, TEXT, BOOLEAN)";
   private const string HELD_LANES_INDEX = "idx_inbox_state_held_lanes";
 
   [Test]

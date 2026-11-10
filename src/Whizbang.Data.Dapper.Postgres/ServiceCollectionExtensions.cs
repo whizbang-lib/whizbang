@@ -101,6 +101,7 @@ public static class ServiceCollectionExtensions {
   /// <param name="configureOptions">Configures the driver's options.</param>
   /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperScheduledPrefixTruncateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperManagedObjectsTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
   public static IServiceCollection AddWhizbangPostgres(
@@ -247,6 +248,11 @@ public static class ServiceCollectionExtensions {
     // drives IStreamPrefixTruncator.TruncateAsync. It had no receptor on this driver, so the schedule truncated nothing.
     services.AddScheduledPrefixTruncate();
 
+    // TURNKEY: the rebuild command, as the EF Core driver registers it (#1959): RebuildPerspectiveCommand reaches a
+    // receptor that rebuilds the requested perspectives, and a whole-perspective blue-green rebuild runs on the
+    // background rebuild worker. It had no handler on this driver, so the command rebuilt nothing.
+    services.AddRebuildCommandHandling();
+
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
     // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
@@ -277,6 +283,7 @@ public static class ServiceCollectionExtensions {
   /// <param name="configureOptions">Optional configuration callback for PostgreSQL options (retry settings, etc.).</param>
   /// <returns>The service collection for chaining.</returns>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperScheduledPrefixTruncateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGateWiringTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGatePrecedenceTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
@@ -411,6 +418,11 @@ public static class ServiceCollectionExtensions {
     // TURNKEY: the scheduled prefix truncate, as the EF Core driver registers it (#2043): a fired schedule occurrence
     // drives IStreamPrefixTruncator.TruncateAsync. It had no receptor on this driver, so the schedule truncated nothing.
     services.AddScheduledPrefixTruncate();
+
+    // TURNKEY: the rebuild command, as the EF Core driver registers it (#1959): RebuildPerspectiveCommand reaches a
+    // receptor that rebuilds the requested perspectives, and a whole-perspective blue-green rebuild runs on the
+    // background rebuild worker. It had no handler on this driver, so the command rebuilt nothing.
+    services.AddRebuildCommandHandling();
 
     // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
