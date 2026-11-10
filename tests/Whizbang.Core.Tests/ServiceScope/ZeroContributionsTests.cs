@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -45,8 +44,7 @@ public class ZeroContributionsTests {
 
   private static ServiceCollection _withRemoved<TImplementation>(Action<IServiceCollection> contribute, ServiceLifetime lifetime)
       where TImplementation : class {
-    var services = new ServiceCollection();
-    services.Add(new ServiceDescriptor(typeof(TImplementation), typeof(TImplementation), lifetime));
+    ServiceCollection services = [new ServiceDescriptor(typeof(TImplementation), typeof(TImplementation), lifetime)];
     contribute(services);
     services.Remove(services.Single(d => d.ServiceType == typeof(TImplementation)));
     return services;
