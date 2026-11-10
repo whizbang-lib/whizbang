@@ -10,7 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Perspectives;
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// Handles <see cref="RebuildPerspectiveCommand"/> by invoking <see cref="IPerspectiveRebuilder"/>

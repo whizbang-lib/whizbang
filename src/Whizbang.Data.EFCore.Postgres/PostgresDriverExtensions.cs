@@ -228,11 +228,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
-        // so a built-in receptor shipped from this assembly needs runtime registration.
-        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
-        // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
-        selector.Services.TryAddSingleton<RebuildBackgroundQueue>();
-        selector.Services.AddHostedService<RebuildBackgroundWorker>();
+        // so a built-in receptor needs runtime registration. #1353: a whole-perspective blue-green rebuild runs on the
+        // background rebuild worker, off the inbox handler's budget. Shared with the Dapper driver.
+        selector.Services.AddRebuildCommandHandling();
 
         // TURNKEY: scheduled prefix truncate (#1760): runtime-register ScheduledPrefixTruncateReceptor so a fired
         // schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above. Shared with the

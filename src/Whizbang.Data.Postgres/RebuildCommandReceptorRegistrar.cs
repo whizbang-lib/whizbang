@@ -2,19 +2,20 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// Hosted service that registers <see cref="RebuildPerspectiveCommandReceptor"/> with
 /// <see cref="IReceptorRegistry"/> at application startup. The command is a system-level
 /// command defined in <c>Whizbang.Core</c>; source-generated receptor discovery only sees
-/// the consumer's own syntax, so a built-in receptor shipped from this driver assembly
+/// the consumer's own syntax, so a built-in receptor shipped from this shared Postgres assembly
 /// needs runtime registration to participate in the dispatch pipeline.
 /// </summary>
 /// <remarks>
@@ -60,4 +61,35 @@ internal sealed class RebuildCommandReceptorRegistrar(
   }
 
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
+/// <summary>
+/// The rebuild command's turnkey registration, shared by the Postgres data layers: the registrar that runtime-registers
+/// <see cref="RebuildPerspectiveCommandReceptor"/>, and the background queue and worker a whole-perspective blue-green
+/// rebuild is handed to (#1353).
+/// </summary>
+/// <docs>fundamentals/perspectives/rebuild</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupHostedServiceAuditTests.cs</tests>
+internal static class RebuildCommandRegistration {
+  /// <summary>
+  /// Registers the rebuild command's handler and its background rebuild worker. Idempotent: a second call adds nothing.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The service collection.</returns>
+  internal static IServiceCollection AddRebuildCommandHandling(this IServiceCollection services) {
+    // Factories, not types: naming the constructors keeps activation free of reflection.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, RebuildCommandReceptorRegistrar>(sp =>
+      new RebuildCommandReceptorRegistrar(
+        sp,
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<RebuildPerspectiveCommandReceptor>>())));
+    // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
+    services.TryAddSingleton(_ => new RebuildBackgroundQueue());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, RebuildBackgroundWorker>(sp =>
+      new RebuildBackgroundWorker(
+        sp.GetRequiredService<RebuildBackgroundQueue>(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<RebuildBackgroundWorker>>())));
+    return services;
+  }
 }
