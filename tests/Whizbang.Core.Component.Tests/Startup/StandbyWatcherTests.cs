@@ -732,7 +732,6 @@ public class StandbyWatcherTests {
     using var h = _harness(request: null, assessor: assessor,
       options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
-    await h.RunControl.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
     h.Lifecycle.Advanced.Clear();
 
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
