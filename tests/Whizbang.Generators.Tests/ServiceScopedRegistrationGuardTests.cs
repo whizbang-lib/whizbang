@@ -142,9 +142,9 @@ public class ServiceScopedRegistrationGuardTests {
     }
     var first = arguments.Arguments.Count > 1 ? arguments.Arguments[0].Expression : null;
     // The EF Core model registration names its assembly by its own generated type's assembly, which is the same name.
-    var namesItsAssembly = first is LiteralExpressionSyntax literal
+    var namesItsAssembly = (first is LiteralExpressionSyntax literal
         && literal.IsKind(SyntaxKind.StringLiteralExpression)
-        && literal.Token.ValueText == ASSEMBLY
+        && literal.Token.ValueText == ASSEMBLY)
       || first?.ToString() == "typeof(GeneratedModelRegistration).Assembly.GetName().Name!";
     return (callee, _scopedSinks.Contains(callee) && namesItsAssembly);
   }

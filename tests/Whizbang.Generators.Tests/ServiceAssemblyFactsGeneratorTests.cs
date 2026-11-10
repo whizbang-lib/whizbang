@@ -89,7 +89,7 @@ public class ServiceAssemblyFactsGeneratorTests {
   public async Task ACompilationThatDoesNotReferenceWhizbangCore_RecordsNothingAsync() {
     var compilation = CSharpCompilation.Create(
       "Unrelated", [CSharpSyntaxTree.ParseText(PLAIN_SOURCE)],
-      [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+      [SharedMetadataReferences.FromFile(typeof(object).Assembly.Location)],
       new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
     var result = _run(compilation);
@@ -108,7 +108,7 @@ public class ServiceAssemblyFactsGeneratorTests {
   public async Task TheEmittedFacts_Compile_AgainstWhizbangCoreAsync() {
     var compilation = _compilation(PLAIN_SOURCE, "Orders", OutputKind.DynamicallyLinkedLibrary);
     var driver = CSharpGeneratorDriver.Create(new ServiceAssemblyFactsGenerator());
-    driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+    _ = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
 
     var errors = output.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
 
@@ -120,7 +120,7 @@ public class ServiceAssemblyFactsGeneratorTests {
     await Assert.That(ServiceAssemblyFactsGenerator.Literal("a\"b\\c")).IsEqualTo("\"a\\\"b\\\\c\"");
   }
 
-  private static MetadataReference _emitReference(string assemblyName, string source) {
+  private static PortableExecutableReference _emitReference(string assemblyName, string source) {
     var compilation = GeneratorTestHelper.CreateCompilation(source, assemblyName);
     using var stream = new MemoryStream();
     var emitted = compilation.Emit(stream);
