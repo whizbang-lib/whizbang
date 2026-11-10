@@ -36,7 +36,7 @@ namespace Whizbang.Data.Postgres;
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationReversalDeclarationGuardTests.cs</tests>
 public sealed partial record MigrationReversal(SchemaChangeReversal Kind, string? DownSql) {
   /// <summary>The last migration number that predates the declaration: it and every one before it count as irreversible.</summary>
-  public const int UNDECLARED_THROUGH = 375;
+  public const int UNDECLARED_THROUGH = 384;
 
   /// <summary>The resource folder a library assembly embeds its reverse scripts under.</summary>
   public const string RESOURCE_FOLDER = "MigrationReversals";
@@ -143,7 +143,7 @@ public sealed partial record MigrationReversal(SchemaChangeReversal Kind, string
   /// <summary>
   /// Records how the change the ledger names <paramref name="fileName"/> is reversed, in the transaction that applied it.
   /// Nothing for a null reversal (a migration that predates the declaration), and nothing on a ledger older than the
-  /// record (377).
+  /// record (386).
   /// </summary>
   /// <param name="connection">The connection applying the change, in its transaction.</param>
   /// <param name="ledger">The ledger, as the caller names it (qualified or not).</param>

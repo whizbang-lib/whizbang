@@ -435,7 +435,7 @@ public static class DeclaredKeySpellingPass {
       record.Parameters.AddWithValue(settled);
       await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       if (rowsChanged > 0 && StoredFormApplier.Current is { } applier) {
-        // #2131: keys moved are a conversion, and the journal records who applied it (nothing on a journal older than 376).
+        // #2131: keys moved are a conversion, and the journal records who applied it (nothing on a journal older than 385).
         await using var columns = _command(
           "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'applied_library_version' AND NOT attisdropped)");
         columns.Parameters.AddWithValue(_journal);

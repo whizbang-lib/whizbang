@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 377_TheLedgerRecordsHowToReverseEachChange.sql
+-- Migration: 386_TheLedgerRecordsHowToReverseEachChange.sql
 -- Date: 2026-11-09
 -- Description: The migration ledger records how each change it applied is reversed (#2122).
 --
@@ -24,7 +24,7 @@
 --              Rolling deploy: an older release writes the ledger as before and never these columns, so what it applies
 --              records nothing and counts as irreversible; its own Assess does not read them.
 --
---              Number 377: above every number on develop (through 372) and in open pull requests (through 375).
+--              Number 386: above every number on develop (through 381) and in open pull requests (through 384).
 --
 -- Reversal: irreversible (it ships with the release that first runs reversals, so no rollback ever crosses it)
 -- Dependencies: 000 (wh_schema_migrations), 359 (applied_version_id and its trigger)
@@ -48,10 +48,10 @@ BEGIN
       ADD COLUMN IF NOT EXISTS down_sql TEXT NULL;
 
     COMMENT ON COLUMN __SCHEMA__.wh_schema_migrations.reversal IS
-      '377 (#2122): how the change is reversed: reversible, lossy (discards data the newer version wrote) or '
+      '386 (#2122): how the change is reversed: reversible, lossy (discards data the newer version wrote) or '
       'irreversible. NULL counts as irreversible.';
     COMMENT ON COLUMN __SCHEMA__.wh_schema_migrations.down_sql IS
-      '377 (#2122): the script that reverses the change, schema substituted; empty when nothing needs to run; NULL when '
+      '386 (#2122): the script that reverses the change, schema substituted; empty when nothing needs to run; NULL when '
       'the change cannot be reversed.';
   END IF;
 END $$;
@@ -71,7 +71,7 @@ BEGIN
     NEW.applied_version_id := CASE WHEN NEW.status <> -1 THEN NEW.version_id END;
   ELSIF NEW.status <> -1 AND NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN
     NEW.applied_version_id := NEW.version_id;
-    -- 377: applied again. The reverse of what it replaced does not reverse this; the writer records the new one.
+    -- 386: applied again. The reverse of what it replaced does not reverse this; the writer records the new one.
     IF NEW.reversal IS NOT DISTINCT FROM OLD.reversal AND NEW.down_sql IS NOT DISTINCT FROM OLD.down_sql THEN
       NEW.reversal := NULL;
       NEW.down_sql := NULL;
@@ -86,6 +86,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_schema_migration_applied_by() IS
-  '359 (#2022), 377 (#2122): trigger function keeping wh_schema_migrations.applied_version_id: the row''s version on an '
+  '359 (#2022), 386 (#2122): trigger function keeping wh_schema_migrations.applied_version_id: the row''s version on an '
   'insert or a content-hash change, unchanged on any other write (a row last applied before 359 carrying its version_id), '
   'never moved by a failure (status -1); a content-hash change that does not set reversal and down_sql itself clears them.';

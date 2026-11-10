@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 376_StoredFormConversionsRecordWhoAppliedThem.sql
+-- Migration: 385_StoredFormConversionsRecordWhoAppliedThem.sql
 -- Date: 2026-11-09
 -- Description: A stored-form conversion records which library and application version applied it (#2131).
 --
@@ -28,7 +28,7 @@
 --              Rolling deploy: an older release writes the journals as before and never these columns, so the
 --              conversions it applies record nobody; its own Assess does not read them.
 --
---              Number 376: above every number on develop (through 372) and in open pull requests (through 375).
+--              Number 385: above every number on develop (through 381) and in open pull requests (through 384).
 --
 -- Reversal: irreversible (it ships with the release that first runs reversals, so no rollback ever crosses it)
 -- Dependencies: 153 (wh_perspective_forms), 176 (wh_stored_form_migrations)
@@ -53,10 +53,10 @@ BEGIN
       ADD COLUMN IF NOT EXISTS applied_application_version TEXT;
 
     COMMENT ON COLUMN __SCHEMA__.wh_stored_form_migrations.applied_library_version IS
-      '376 (#2131): the library version of the pass that last converted rows (or ran a custom migration); kept through a '
+      '385 (#2131): the library version of the pass that last converted rows (or ran a custom migration); kept through a '
       'pass that converted nothing. NULL when nobody known applied it.';
     COMMENT ON COLUMN __SCHEMA__.wh_stored_form_migrations.applied_application_version IS
-      '376 (#2131): the application version, as recorded, of the pass that last converted rows; NULL when nobody known.';
+      '385 (#2131): the application version, as recorded, of the pass that last converted rows; NULL when nobody known.';
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_attribute
@@ -68,10 +68,10 @@ BEGIN
       ADD COLUMN IF NOT EXISTS applied_application_version TEXT;
 
     COMMENT ON COLUMN __SCHEMA__.wh_perspective_forms.applied_library_version IS
-      '376 (#2131): the library version of the temporal rewrite that last converted a row of the table; kept through a '
+      '385 (#2131): the library version of the temporal rewrite that last converted a row of the table; kept through a '
       'pass that converted nothing. NULL when nobody known applied it.';
     COMMENT ON COLUMN __SCHEMA__.wh_perspective_forms.applied_application_version IS
-      '376 (#2131): the application version, as recorded, of the rewrite that last converted a row; NULL when nobody known.';
+      '385 (#2131): the application version, as recorded, of the rewrite that last converted a row; NULL when nobody known.';
   END IF;
 END $$;
 

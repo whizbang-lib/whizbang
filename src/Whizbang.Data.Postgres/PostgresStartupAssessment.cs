@@ -248,7 +248,7 @@ internal static class PostgresStartupAssessment {
     var (kind, notStep) = probe.Owner
       ? ("m.owner IN ('perspective', 'association')", "m.owner <> 'step'")
       : ("(m.file_name LIKE 'perspective:%' OR m.file_name LIKE 'app:%')", "m.file_name NOT LIKE 'step:%'");
-    // #2122: how each change is reversed (377); nothing recorded is irreversible.
+    // #2122: how each change is reversed (386); nothing recorded is irreversible.
     var reversal = probe.Reversals ? "m.reversal" : "NULL::text";
     var script = probe.Reversals && withScripts ? "m.down_sql" : "NULL::text";
     await using var command = connection.CreateCommand();
@@ -279,7 +279,7 @@ internal static class PostgresStartupAssessment {
 
   /// <summary>
   /// The stored-form conversions as changes (#2131): each conversion a known version applied, from the journal that records
-  /// it (376). An application schema change, since the library converts what the application's model declares. Nothing
+  /// it (385). An application schema change, since the library converts what the application's model declares. Nothing
   /// on a journal older than the record, and a conversion nobody known applied is not read.
   /// </summary>
   private static string _conversions(string prefix, Probe probe) {

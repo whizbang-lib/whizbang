@@ -11,7 +11,7 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// The rollback gate counts a conversion a newer version applied like any other change applied since an older one, so
 /// every conversion that converts rows records who did: the stored-form migrations and the declared-key pass in
-/// <c>wh_stored_form_migrations</c>, the canonical temporal rewrite in <c>wh_perspective_forms</c> (migration 376). A pass
+/// <c>wh_stored_form_migrations</c>, the canonical temporal rewrite in <c>wh_perspective_forms</c> (migration 385). A pass
 /// that converts nothing keeps what is recorded.
 /// </para>
 /// <para>
@@ -56,7 +56,7 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
   /// <summary>
   /// The PL/pgSQL statement a conversion runs when it applied something: records the applier the rewrite phase
   /// carried on <paramref name="journal"/>'s row where <paramref name="keyColumn"/> is <paramref name="keyLiteral"/>.
-  /// Nothing on a journal older than 376.
+  /// Nothing on a journal older than 385.
   /// </summary>
   /// <param name="journal">The journal, schema-qualified.</param>
   /// <param name="keyColumn">Its key column.</param>
