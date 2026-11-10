@@ -32,19 +32,19 @@ public readonly record struct InProcessTrackerSweepResult(int LifecycleEntriesEn
 /// </para>
 /// <para>
 /// Every host runs it: <c>AddWhizbangWorkers</c> registers it, and it does no database work, so it starts with the
-/// host. It reads the injected <see cref="TimeProvider"/>, and a tracker that is not registered is skipped.
+/// host, which registers both trackers' defaults with <c>TryAdd</c>. It reads the injected <see cref="TimeProvider"/>.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#stale-tracking-cleanup</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InProcessTrackerSweepWorkerTests.cs</tests>
 /// <param name="logger">Logs a sweep that ended entries and one that failed.</param>
-/// <param name="lifecycleCoordinator">The lifecycle coordinator to sweep; skipped when none is registered.</param>
-/// <param name="syncEventTracker">The perspective sync tracker to sweep; skipped when none is registered.</param>
+/// <param name="lifecycleCoordinator">The lifecycle coordinator to sweep.</param>
+/// <param name="syncEventTracker">The perspective sync tracker to sweep.</param>
 /// <param name="timeProvider">The clock the sweep ticks on; the system clock when omitted.</param>
 public sealed partial class InProcessTrackerSweepWorker(
     ILogger<InProcessTrackerSweepWorker> logger,
-    ILifecycleCoordinator? lifecycleCoordinator = null,
-    ISyncEventTracker? syncEventTracker = null,
+    ILifecycleCoordinator lifecycleCoordinator,
+    ISyncEventTracker syncEventTracker,
     TimeProvider? timeProvider = null) : BackgroundService {
   /// <summary>How often the sweep runs.</summary>
   public static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(1);
@@ -58,8 +58,8 @@ public sealed partial class InProcessTrackerSweepWorker(
   /// </summary>
   public static readonly TimeSpan SyncEntryMaxAge = TimeSpan.FromMinutes(5);
 
-  private readonly ILifecycleCoordinator? _lifecycleCoordinator = lifecycleCoordinator;
-  private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
+  private readonly ILifecycleCoordinator _lifecycleCoordinator = ArgumentGuard.NotNull(lifecycleCoordinator);
+  private readonly ISyncEventTracker _syncEventTracker = ArgumentGuard.NotNull(syncEventTracker);
   private readonly ILogger<InProcessTrackerSweepWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -91,19 +91,15 @@ public sealed partial class InProcessTrackerSweepWorker(
   internal InProcessTrackerSweepResult SweepOnce() {
     var lifecycleEnded = 0;
     var syncRemoved = 0;
-    if (_lifecycleCoordinator is not null) {
-      try {
-        lifecycleEnded = _lifecycleCoordinator.CleanupStaleTracking(LifecycleInactivityThreshold);
-      } catch (Exception ex) {
-        LogSweepFailed(_logger, ex, "lifecycle tracking");
-      }
+    try {
+      lifecycleEnded = _lifecycleCoordinator.CleanupStaleTracking(LifecycleInactivityThreshold);
+    } catch (Exception ex) {
+      LogSweepFailed(_logger, ex, "lifecycle tracking");
     }
-    if (_syncEventTracker is not null) {
-      try {
-        syncRemoved = _syncEventTracker.CleanupStaleEntries(SyncEntryMaxAge);
-      } catch (Exception ex) {
-        LogSweepFailed(_logger, ex, "perspective sync tracking");
-      }
+    try {
+      syncRemoved = _syncEventTracker.CleanupStaleEntries(SyncEntryMaxAge);
+    } catch (Exception ex) {
+      LogSweepFailed(_logger, ex, "perspective sync tracking");
     }
     if (lifecycleEnded + syncRemoved > 0) {
       LogSwept(_logger, lifecycleEnded, syncRemoved);

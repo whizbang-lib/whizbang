@@ -46,7 +46,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   // The process-wide deferred outbox channel this strategy drains at the start of every flush (#2228).
-  private readonly IDeferredOutboxChannel? _deferredChannel;
+  private readonly IDeferredOutboxChannel _deferredChannel;
   // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
   // stages this strategy's flushes start are tracked there (#1721).
   private readonly DetachedLifecycleWork _detachedWork;
@@ -91,9 +91,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IWorkChannelWriter workChannelWriter,
     IInboxChannelWriter inboxChannelWriter,
     DetachedLifecycleWork detachedWork,
+    IDeferredOutboxChannel deferredChannel,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null,
-    IDeferredOutboxChannel? deferredChannel = null) {
+    LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
     _coordinator = coordinator;
     ArgumentNullException.ThrowIfNull(instanceProvider);
@@ -110,6 +110,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    ArgumentNullException.ThrowIfNull(deferredChannel);
     _deferredChannel = deferredChannel;
 
     // Start the timer for periodic flushing

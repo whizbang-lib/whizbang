@@ -80,8 +80,9 @@ public sealed class InProcessTrackerSweepWorkerTests {
   }
 
   [Test]
-  public async Task SweepOnce_WithNeitherTrackerRegistered_SweepsNothingAsync() {
-    var worker = new InProcessTrackerSweepWorker(NullLogger<InProcessTrackerSweepWorker>.Instance);
+  public async Task SweepOnce_OnTheSystemClock_WithNothingStale_EndsNothingAsync() {
+    var worker = new InProcessTrackerSweepWorker(NullLogger<InProcessTrackerSweepWorker>.Instance,
+      new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance), new SyncEventTracker());
 
     var result = worker.SweepOnce();
 
@@ -106,13 +107,17 @@ public sealed class InProcessTrackerSweepWorkerTests {
   }
 
   [Test]
-  public async Task Registration_HostsTheSweepInEveryWhizbangHostAsync() {
+  public async Task Registration_HostsTheSweepInEveryWhizbangHost_WithBothTrackersSuppliedAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangWorkers();
 
     await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService)
                                           && d.ImplementationType == typeof(InProcessTrackerSweepWorker))).IsEqualTo(1)
       .Because("the sweep is the safety net for entries whose one removal path was not taken, so every host runs it");
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ILifecycleCoordinator))).IsTrue()
+      .Because("the sweep requires the lifecycle coordinator, so the registration supplies its default");
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ISyncEventTracker))).IsTrue()
+      .Because("the sweep requires the sync tracker, so the registration supplies its default");
   }
 
   [Test]

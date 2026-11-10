@@ -141,9 +141,9 @@ public static class WorkCoordinatorStrategyFactory {
       workChannelWriter: channelWriter,
       inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>()
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
   }
 
@@ -163,9 +163,9 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>()
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
   }
 }
