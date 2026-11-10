@@ -45,6 +45,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IInboxChannelWriter _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The process-wide deferred outbox channel this strategy drains at the start of every flush (#2228).
+  private readonly IDeferredOutboxChannel? _deferredChannel;
   // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
   // stages this strategy's flushes start are tracked there (#1721).
   private readonly DetachedLifecycleWork _detachedWork;
@@ -90,7 +92,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IInboxChannelWriter inboxChannelWriter,
     DetachedLifecycleWork detachedWork,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null) {
+    LifecycleMetrics? lifecycleMetrics = null,
+    IDeferredOutboxChannel? deferredChannel = null) {
 #pragma warning restore S107
     _coordinator = coordinator;
     ArgumentNullException.ThrowIfNull(instanceProvider);
@@ -107,6 +110,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    _deferredChannel = deferredChannel;
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
@@ -315,6 +319,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   private bool _trySnapshotAndClearQueues(out QueueSnapshot snapshot) {
     lock (_lock) {
+      // #2228: what was queued on the deferred channel is written by this flush, before the empty check.
+      var drained = DeferredOutboxDrain.PrependTo(_deferredChannel, _queuedOutboxMessages);
+      if (drained > 0) {
+        LogDeferredChannelDrained(_logger, drained);
+      }
       if (_queuedOutboxMessages.Count == 0 &&
           _queuedInboxMessages.Count == 0 &&
           _queuedOutboxCompletions.Count == 0 &&
@@ -577,4 +586,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     Message = "Interval work coordinator strategy disposed"
   )]
   static partial void LogStrategyDisposed(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 17,
+    Level = LogLevel.Debug,
+    Message = "Interval strategy: Drained {Count} deferred messages from channel into this flush"
+  )]
+  static partial void LogDeferredChannelDrained(ILogger logger, int count);
 }

@@ -72,7 +72,7 @@ public sealed class DeferredChannelDrainEveryStrategyTests {
       var deferred = _outboxMessage();
       await channel.QueueAsync(deferred);
       var direct = _outboxMessage();
-      strategy.QueueOutboxMessage(direct);
+      await strategy.QueueOutboxMessageAsync(direct);
 
       await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
