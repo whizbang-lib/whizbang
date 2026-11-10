@@ -69,6 +69,25 @@ public partial class MigrationReversalDeclarationGuardTests {
   }
 
   [Test]
+  public async Task EveryReverseScript_IsEmbeddedAsTheReverseOfItsMigrationAsync() {
+    var downs = _files("*.down.sql").ToList();
+    var wrong = new List<string>();
+    foreach (var down in downs) {
+      var forward = down[..^".down.sql".Length] + ".sql";
+      var reversal = MigrationReversal.ForLibraryMigration(
+        forward, await File.ReadAllTextAsync(Path.Combine(_migrationsDirectory(), forward)), static sql => sql,
+        typeof(PostgresMigrationProvider).Assembly);
+      if (reversal?.DownSql != await File.ReadAllTextAsync(Path.Combine(_migrationsDirectory(), down))) {
+        wrong.Add(down);
+      }
+    }
+
+    await Assert.That(downs).IsNotEmpty().Because("a guard over no reverse scripts proves nothing");
+    await Assert.That(wrong).IsEmpty()
+      .Because("the library embeds each reverse script where the runner reads its migration's reverse from, unchanged");
+  }
+
+  [Test]
   public async Task AReverseScript_IsNeverAppliedAsAForwardMigrationAsync() {
     var forward = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, "public").GetMigrations();
 
