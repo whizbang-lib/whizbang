@@ -13,7 +13,7 @@ namespace Whizbang.Core;
 /// <param name="scope">The host's scope.</param>
 /// <param name="logger">Where the report goes.</param>
 /// <docs>extending/extensibility/replaceable-services#service-scope</docs>
-/// <tests>tests/Whizbang.Core.Tests/ServiceScope/ServiceAssemblyScopeStartupReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/ServiceScope/ServiceAssemblyScopeStartupReporterTests.cs</tests>
 internal sealed partial class ServiceAssemblyScopeStartupReporter(
     ServiceAssemblyScope scope, ILogger<ServiceAssemblyScopeStartupReporter> logger) : IHostedService {
   /// <inheritdoc />
