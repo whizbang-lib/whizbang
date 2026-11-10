@@ -649,6 +649,33 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityMarkTypesHealedWithAgesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkTypesHealedWithAgesAsync(Guid.Empty, []);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityTakeDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityTakeDrillCursorAsync(Guid.Empty, 0);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegritySaveDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var save = coordinator.IntegritySaveDrillCursorAsync(Guid.Empty, 0, Guid.Empty, DateTimeOffset.MinValue);
+
+    await Assert.That(save.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
   public async Task GetIntegrityLedgerSummaryAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

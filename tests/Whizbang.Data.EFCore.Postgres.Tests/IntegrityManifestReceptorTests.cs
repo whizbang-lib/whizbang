@@ -3152,6 +3152,18 @@ public partial class IntegrityManifestReceptorTests {
       return [.. ReceivedDigests.Where(d => streamIds.Contains(d.StreamId))];
     }
 
+    /// <summary>#2211: the drill cursors kept per (origin, window start).</summary>
+    public Dictionary<(Guid Origin, long Since), Guid> DrillCursors { get; } = [];
+
+    public Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) =>
+      Task.FromResult(DrillCursors.Remove((originServiceId, windowSince), out var cursor) ? cursor : (Guid?)null);
+
+    public Task IntegritySaveDrillCursorAsync(
+        Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      DrillCursors[(originServiceId, windowSince)] = resumeAfterStreamId;
+      return Task.CompletedTask;
+    }
+
     /// <summary>#2103: what the comparison recorded as each deficit's one missing event.</summary>
     public List<(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, IReadOnlyList<Guid?> Ids)> MissingRecorded { get; } = [];
 

@@ -195,6 +195,56 @@ public class StartupParityTests {
       .Because("the periodic re-run finds the previous release gone and drops what nothing declares");
   }
 
+  /// <summary>Marks the driver's table as one that declares row retention, as the retention sync does.</summary>
+  private Task _enrollAsync(StartupDriver driver) =>
+    _execAsync($"""
+      INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name, row_retention_enrolled)
+      VALUES ('Parity.RetentionProbe', '{driver.Table}', '{"{}"}'::jsonb, 'parity-hash', 'parity-retention', TRUE)
+      """);
+
+  private Task<long> _updatedAtIndexCountAsync(StartupDriver driver) =>
+    _scalarAsync<long>(
+      "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND tablename = $1 AND indexdef LIKE '%USING btree (updated_at)'",
+      driver.Table);
+
+  /// <summary>
+  /// #2087: a table that neither declares retention nor declares the index loses the <c>updated_at</c> index an
+  /// earlier release built, on both drivers, so its updates can be HOT.
+  /// </summary>
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  public async Task TheUpdatedAtIndex_IsRetiredFromATableWithoutRetentionAsync(string driverName) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _execAsync($"CREATE INDEX IF NOT EXISTS {driver.UpdatedAtIndex} ON {driver.Table} (updated_at)");
+
+    await _startAsync(driver);
+    await _startAsync(driver);
+
+    await Assert.That(await _existsAsync(driver.UpdatedAtIndex)).IsFalse()
+      .Because("nothing asks for it: no retention and no [PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]");
+    await Assert.That(await _updatedAtIndexCountAsync(driver)).IsEqualTo(0L);
+  }
+
+  /// <summary>#2087: a table that declares retention gets the index on both drivers, once, and keeps it.</summary>
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  public async Task TheUpdatedAtIndex_IsBuiltAndKeptForATableThatDeclaresRetentionAsync(string driverName) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _enrollAsync(driver);
+
+    await _startAsync(driver);
+    await Assert.That(await _existsAsync(driver.UpdatedAtIndex)).IsTrue()
+      .Because("the reapers range-scan updated_at on an enrolled table");
+
+    await _startAsync(driver);
+    await _startAsync(driver);
+    await Assert.That(await _updatedAtIndexCountAsync(driver)).IsEqualTo(1L).Because("later starts neither drop nor duplicate it");
+  }
+
   [Test]
   [Arguments("efcore")]
   [Arguments("dapper")]
