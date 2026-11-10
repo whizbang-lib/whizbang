@@ -64,12 +64,14 @@ internal sealed class RebuildCommandReceptorRegistrar(
 }
 
 /// <summary>
-/// The rebuild command's turnkey registration, shared by the Postgres data layers: the registrar that runtime-registers
+/// The rebuild command's turnkey registration, shared by the Postgres data layers so the command is handled the same way
+/// whichever one a host runs (#1959): the registrar that runtime-registers
 /// <see cref="RebuildPerspectiveCommandReceptor"/>, and the background queue and worker a whole-perspective blue-green
 /// rebuild is handed to (#1353).
 /// </summary>
-/// <docs>fundamentals/perspectives/rebuild</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupHostedServiceAuditTests.cs</tests>
+/// <docs>fundamentals/perspectives/rebuild#on-every-data-layer</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:EachDriver_HandlesTheRebuildCommand_AndRunsItsBackgroundRebuildsAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs:AddWhizbangPostgres_RegistersTheRebuildCommandHandling_ThroughBothOverloadsAsync</tests>
 internal static class RebuildCommandRegistration {
   /// <summary>
   /// Registers the rebuild command's handler and its background rebuild worker. Idempotent: a second call adds nothing.

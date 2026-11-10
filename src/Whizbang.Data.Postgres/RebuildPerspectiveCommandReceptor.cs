@@ -16,7 +16,10 @@ namespace Whizbang.Data.Postgres;
 /// Handles <see cref="RebuildPerspectiveCommand"/> by invoking <see cref="IPerspectiveRebuilder"/>
 /// for each requested perspective. Without this receptor the command is defined but has no effect —
 /// the rebuilder is never called, projections are not rebuilt, and <c>wh_perspective_cursors</c>
-/// never updates. This is the missing turnkey piece between the system command and the rebuilder.
+/// never updates. This is the missing turnkey piece between the system command and the rebuilder. Lives in the shared
+/// Postgres assembly, not <c>Whizbang.Core</c> (a receptor there would make the receptor-discovery generator emit
+/// dispatcher registrations that collide with every consumer's), and both data layers register it (#1959): it lived in
+/// the EF Core driver, so a Dapper host that sent the command rebuilt nothing.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -41,6 +44,7 @@ namespace Whizbang.Data.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_WithNamedPerspective_UpdatesCursorAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_WithIncludeStreamIds_UpdatesOnlyTargetedCursorsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_WithNullPerspectiveNames_FansOutToAllRegisteredAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs:ABlueGreenRebuildCommand_OnADapperHost_IsHandedToTheBackgroundWorkerAsync</tests>
 public sealed partial class RebuildPerspectiveCommandReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<RebuildPerspectiveCommandReceptor> logger) : IReceptor<RebuildPerspectiveCommand> {
