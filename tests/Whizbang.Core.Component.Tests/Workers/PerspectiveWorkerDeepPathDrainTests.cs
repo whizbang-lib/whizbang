@@ -988,11 +988,16 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       IPerspectiveDrainChannel? drainChannel = null,
       CompositeMetrics? compositeMetrics = null,
       bool withoutRegistry = false,
-      bool withoutEventStore = false) {
+      bool withoutEventStore = false,
+      IConsumerRegistry? consumerRegistry = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    if (consumerRegistry is not null) {
+      // Registered before the defaults, whose consumer registry is a TryAdd.
+      services.AddSingleton(consumerRegistry);
+    }
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     // withoutRegistry is a host with no perspectives: the generator emits no registry, so none is registered and
