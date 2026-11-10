@@ -65,7 +65,7 @@ public class RestockInventoryWorkflowTests {
     };
     // InitialStock > 0 fires 3 perspective events on inventory
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -76,7 +76,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 50
     };
     var restockTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
 
     // SQL diagnostic: Check event flow after command dispatch
@@ -117,7 +117,7 @@ public class RestockInventoryWorkflowTests {
     };
     // InitialStock > 0 fires 3 perspective events on inventory
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 
@@ -134,7 +134,7 @@ public class RestockInventoryWorkflowTests {
 
     foreach (var restockCommand in restockCommands) {
       var restockTask = fixture.WaitForPerspectiveProcessingAsync(
-        expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+        expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
       await fixture.Dispatcher.SendAsync(restockCommand);
       await restockTask;
     }
@@ -169,7 +169,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 0
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -180,7 +180,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 100
     };
     var restockTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
 
     // SQL diagnostic: Check event flow after command dispatch
@@ -219,7 +219,7 @@ public class RestockInventoryWorkflowTests {
     };
     // InitialStock > 0 fires 3 perspective events on inventory
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -230,7 +230,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 0
     };
     var restockTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockTask;
 
@@ -265,7 +265,7 @@ public class RestockInventoryWorkflowTests {
     };
     // InitialStock > 0 fires 3 perspective events on inventory
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -276,7 +276,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 10000
     };
     var restockTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockTask;
 
