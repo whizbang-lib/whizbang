@@ -261,6 +261,37 @@ public class ServiceScopedRegistrationTests {
   }
 
   [Test]
+  public async Task ACallbackThatReplacesOrRemovesAnEarlierRegistration_HasItsEffectKept_WithEverythingItAddedAsync() {
+    // A callback may Replace or RemoveAll a registration made before the replay (a framework default it supersedes).
+    // The replay must keep that effect and every descriptor the callback added, first one included, under every
+    // rescope; an index-based "what came after" lost the first added descriptor and resurrected the replaced one.
+    using var process = _process();
+    ServiceRegistrationCallbacks.RegisterDispatcher("Orders", s => {
+      s.AddSingleton(new Registered("Orders", "First"));
+      s.Replace(ServiceDescriptor.Singleton<IShared, OrdersShared>());
+      s.AddSingleton(new Registered("Orders", "Second"));
+    });
+    ServiceRegistrationCallbacks.RegisterDispatcher("Billing", s => s.RemoveAll<Registered>());
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IShared, BillingShared>();
+    services.AddSingleton(new Registered("Host", "Before"));
+    ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
+    var unscoped = _registered(services);
+    var unscopedShared = services.Count(d => d.ServiceType == typeof(IShared));
+
+    services.AddWhizbangServiceAnchor("Orders");
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(unscoped).IsEmpty().Because("the other service's RemoveAll runs last while the host is unscoped");
+    await Assert.That(unscopedShared).IsEqualTo(1);
+    await Assert.That(_registered(services)).IsEquivalentTo(["Host:Before", "Orders:First", "Orders:Second"])
+      .Because("excluding the other service undoes its RemoveAll, and the host's own callback keeps everything it added");
+    await Assert.That(services.Count(d => d.ServiceType == typeof(IShared))).IsEqualTo(1);
+    await Assert.That(provider.GetRequiredService<IShared>()).IsTypeOf<OrdersShared>();
+  }
+
+  [Test]
   public async Task AKeyedAnchorDescriptor_IsNotAnAnchorAsync() {
     var services = new ServiceCollection();
     services.AddKeyedSingleton("elsewhere", new WhizbangServiceAnchor("Orders"));

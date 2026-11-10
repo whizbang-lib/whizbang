@@ -348,8 +348,17 @@ public static class ServiceRegistrationCallbacks {
     foreach (var (_, run) in steps) {
       run(scratch);
     }
-    ServiceDescriptor[] fresh = [.. scratch.Skip(replay.Before.Length)];
+    // What the replay did is told by descriptor identity, never by position: a callback may Replace or RemoveAll a
+    // registration made before it, which moves everything after it.
+    var before = new HashSet<ServiceDescriptor>(replay.Before, ReferenceEqualityComparer.Instance);
+    var remaining = new HashSet<ServiceDescriptor>(scratch, ReferenceEqualityComparer.Instance);
+    ServiceDescriptor[] fresh = [.. scratch.Where(descriptor => !before.Contains(descriptor))];
+    ServiceDescriptor[] removed = [.. replay.Before.Where(descriptor => !remaining.Contains(descriptor))];
     foreach (var descriptor in replay.Added) {
+      services.Remove(descriptor);
+    }
+    _restoreRemoved(services, replay, removed);
+    foreach (var descriptor in removed) {
       services.Remove(descriptor);
     }
     var at = services.IndexOf(replay.Marker) + 1;
@@ -357,7 +366,24 @@ public static class ServiceRegistrationCallbacks {
       services.Insert(at + i, fresh[i]);
     }
     replay.Added = fresh;
+    replay.Removed = removed;
     replay.Steps = steps;
+  }
+
+  /// <summary>
+  /// Puts back every registration made before the replay that the previous replay removed and this one keeps, at its
+  /// place among the registrations made before the replay.
+  /// </summary>
+  private static void _restoreRemoved(IServiceCollection services, ServiceRegistrationReplay replay, ServiceDescriptor[] removed) {
+    var stillRemoved = new HashSet<ServiceDescriptor>(removed, ReferenceEqualityComparer.Instance);
+    var restore = new HashSet<ServiceDescriptor>(replay.Removed.Where(d => !stillRemoved.Contains(d)), ReferenceEqualityComparer.Instance);
+    for (var i = replay.Before.Length - 1; i >= 0; i--) {
+      if (!restore.Contains(replay.Before[i])) {
+        continue;
+      }
+      var next = replay.Before.Skip(i + 1).FirstOrDefault(services.Contains);
+      services.Insert(next is null ? services.IndexOf(replay.Marker) : services.IndexOf(next), replay.Before[i]);
+    }
   }
 
   /// <summary>Every included callback, in the order the slots have always been replayed.</summary>
@@ -402,6 +428,7 @@ public static class ServiceRegistrationCallbacks {
     public ServiceRegistrationOptions Options { get; }
     public ServiceDescriptor Marker { get; }
     public ServiceDescriptor[] Added { get; set; } = [];
+    public ServiceDescriptor[] Removed { get; set; } = [];
     public List<(Delegate Key, Action<IServiceCollection> Run)>? Steps { get; set; }
   }
 
