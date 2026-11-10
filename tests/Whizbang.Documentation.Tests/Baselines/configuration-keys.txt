@@ -279,6 +279,7 @@ Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
 Whizbang:Startup:OverrideIncompatibility
+Whizbang:Startup:RegistrationCollisions
 Whizbang:StartupStatusGraph:IncludeReasons
 Whizbang:StreamIntegrity:AuditEnabled
 Whizbang:StreamIntegrity:AuditIntervalMinutes

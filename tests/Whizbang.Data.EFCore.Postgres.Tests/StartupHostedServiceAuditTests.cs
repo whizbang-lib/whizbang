@@ -112,6 +112,8 @@ public sealed class StartupHostedServiceAuditTests {
   private static readonly HashSet<string> _noDatabaseWorkAtStart = new(StringComparer.Ordinal) {
     // Configuration and registration checks, and log lines.
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
+    // Reports items two assemblies both register, from what the registrations already hold (#2201).
+    "RegistrationCollisionStartupValidator",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer",

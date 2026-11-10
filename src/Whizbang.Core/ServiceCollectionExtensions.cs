@@ -162,6 +162,11 @@ public static class ServiceCollectionExtensions {
         sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UnknownConfigurationKeyStartupValidator>>(),
         sp.GetService<IConfiguration>())));
 
+    // #2201: items two assemblies both register (a perspective, a receptor, a model) are reported at host start,
+    // naming the item and both assemblies; Whizbang:Startup:RegistrationCollisions = Fail stops the start instead.
+    // Every per-assembly registration adds the check too; registering it here gives every host its setting.
+    services.AddRegistrationCollisionCheck();
+
     // Inert-concurrency report: ParallelizeStreams defaults to false on BOTH WorkCoordinatorOptions
     // and OrderedStreamProcessorOptions, while the width options default to 16 and 8 — so the
     // shipped default advertises concurrency the runtime will not use, and every deployment

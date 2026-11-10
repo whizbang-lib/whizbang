@@ -44,6 +44,11 @@ public sealed class DeadLetterCanaryCampaignTests {
     // Blocks the purge call indefinitely (respecting ct) so a test can cancel the worker while
     // the startup held-cohort campaign is genuinely in flight, rather than racing a sleep.
     public bool BlockPurgeUntilCanceled { get; set; }
+    // Raised when the purge is ENTERED, before it starts waiting: it proves the campaign reached the
+    // purge, not that the worker is suspended on it. A test that cancels on this signal from another
+    // thread can cancel before the wait begins, so the purge, the campaign and the worker's await on
+    // it all complete synchronously. A test that needs the worker suspended drives ExecuteAsync on
+    // its own thread (ExecutableWorker.ExecuteDirectlyAsync) and cancels after it returns.
     public TaskCompletionSource PurgeStartedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<HeldCohort> Cohorts { get; set; } = [];
     public List<(string Fp, string Gen, int Size)> BeginCalls { get; } = [];
@@ -60,7 +65,6 @@ public sealed class DeadLetterCanaryCampaignTests {
     private int _releaseCount;
     public Task EvaluateSignal(int ordinal) => _sig(_evalSignals, ordinal);
     public Task FetchSignal(int ordinal) => _sig(_fetchSignals, ordinal);
-    public int FetchCount => Volatile.Read(ref _fetchCount);
     public Task ReleaseSignal(int ordinal) => _sig(_releaseSignals, ordinal);
     private static Task _sig(ConcurrentDictionary<int, TaskCompletionSource> d, int o) =>
       d.GetOrAdd(o, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
@@ -407,7 +411,26 @@ public sealed class DeadLetterCanaryCampaignTests {
   // parallel suite host must not be able to starve past it.
   private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(90);
 
-  private static (DeadLetterRecoveryWorker Worker, CampaignFake Svc, FakeLogCollector Logs, Bell Bell) _build(
+  /// <summary>
+  /// The worker with its <c>ExecuteAsync</c> callable directly. <c>StartAsync</c> runs the body on a pool thread
+  /// (.NET 10), so the test cannot know where the body is when it acts. Called directly, the body runs on the
+  /// test's own thread until its first real suspension and only then returns its task: a pending task proves the
+  /// body is suspended at an await, with nothing racing it.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The logger is handed to the base worker, whose constructor takes ILogger<DeadLetterRecoveryWorker>; the subclass only exposes ExecuteAsync and logs nothing itself.")]
+  private sealed class ExecutableWorker(
+      IServiceScopeFactory scopeFactory,
+      IOptions<DeadLetterRecoveryOptions> options,
+      IOptions<StreamIntegrityOptions> integrityOptions,
+      IGenerationProvider generationProvider,
+      ILogger<DeadLetterRecoveryWorker> logger,
+      IWorkNotificationListener notificationListener)
+      : DeadLetterRecoveryWorker(scopeFactory, options, integrityOptions, generationProvider, logger,
+          notificationListener: notificationListener) {
+    public Task ExecuteDirectlyAsync(CancellationToken stoppingToken) => ExecuteAsync(stoppingToken);
+  }
+
+  private static (ExecutableWorker Worker, CampaignFake Svc, FakeLogCollector Logs, Bell Bell) _build(
       DeadLetterRecoveryOptions options, CampaignFake? svc = null) {
     svc ??= new CampaignFake();
     var bell = new Bell();
@@ -417,13 +440,13 @@ public sealed class DeadLetterCanaryCampaignTests {
     services.AddSingleton<IDeadLetterRecoveryPolicy>(
       new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     var provider = services.BuildServiceProvider();
-    var worker = new DeadLetterRecoveryWorker(
+    var worker = new ExecutableWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options),
       Options.Create(new StreamIntegrityOptions()),
       new Gen(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
-      notificationListener: bell);
+      bell);
     return (worker, svc, provider.GetFakeLogCollector(), bell);
   }
 
@@ -755,75 +778,49 @@ public sealed class DeadLetterCanaryCampaignTests {
   }
 
   /// <summary>
-  /// Covers the cancellation arm around the startup held-cohort campaign, and the resume of its
-  /// await: the worker shuts down while the campaign is still purging. A shutdown mid-campaign is
-  /// an ordinary lifecycle event, not a failure, so it must exit through the cancellation catch
-  /// quietly, never fall through to the generic-Exception arm that logs a scan-cycle failure.
-  /// <para>The worker body runs on the test thread (<see cref="DirectRunWorker"/>), not through
-  /// <c>StartAsync</c>, which in .NET 10 hands it to the thread pool. That makes the interleaving
-  /// fixed by construction: the call returns only once the campaign await has genuinely suspended
-  /// on the blocked purge, and only then is the token canceled. Through <c>StartAsync</c> the test
-  /// thread could cancel between the purge signalling it had started and the purge reaching its
-  /// wait; the purge then completed canceled synchronously, the campaign await never suspended,
-  /// and its resume path (a coverage outcome of the <c>campaignMode</c> decision that no other
-  /// test reaches, because every other fake completes synchronously) went untaken on a loaded
-  /// CI host while the test still passed.</para>
+  /// Covers lines 199-200 (OperationCanceledException arm): the worker shuts down while the
+  /// startup held-cohort campaign is still purging. A shutdown mid-campaign is an ordinary
+  /// lifecycle event, not a failure — it must exit through the cancellation catch quietly,
+  /// never fall through to the generic-Exception arm that logs a scan-cycle failure.
   /// </summary>
+  /// <remarks>
+  /// The worker must be SUSPENDED on the campaign when the shutdown arrives, so the cancellation resumes it
+  /// there. This test used to start the worker on a pool thread and cancel on the purge's entry signal from
+  /// the test thread; that signal is raised before the purge starts waiting, so the cancellation could land
+  /// first, and then the purge, the campaign and the worker's await on it all completed synchronously. The
+  /// test passed either way, but the resume after the campaign await (a compiler branch the coverage tools
+  /// report on the <c>if (campaignMode != Off)</c> line) ran only when the race went one way, and the
+  /// library-wide coverage gate failed when it did not. Driving ExecuteAsync on this thread removes the
+  /// race: the call returns only at the body's first suspension, which here is the campaign's purge.
+  /// </remarks>
   [Test]
   public async Task Canary_CanceledDuringStartupCampaign_ExitsWithoutLoggingAnErrorAsync() {
     var svc = new CampaignFake { BlockPurgeUntilCanceled = true, Cohorts = [new("fp-aaa", 100, 1)] };
-    var (worker, logs) = _buildDirect(_opts(RetryHeldOnStartupMode.Canary), svc);
+    var (worker, _, logs, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
     using var cts = new CancellationTokenSource();
 
-    var run = worker.RunBodyAsync(cts.Token);
+    var run = worker.ExecuteDirectlyAsync(cts.Token);
 
     await Assert.That(svc.PurgeStartedSignal.Task.IsCompleted).IsTrue()
-      .Because("the body runs synchronously on this thread up to its first real suspension, "
-             + "which is the blocked purge inside the startup campaign");
+      .Because("precondition: the body ran on this thread as far as the campaign's purge");
     await Assert.That(run.IsCompleted).IsFalse()
-      .Because("the campaign await has suspended, so the cancellation below resumes it rather "
-             + "than meeting an already-canceled purge");
+      .Because("precondition: the body is suspended awaiting the campaign, so the shutdown resumes it there");
 
     await cts.CancelAsync();
     await run.WaitAsync(_timeout);
 
+    await Assert.That(run.IsCompletedSuccessfully).IsTrue()
+      .Because("the cancellation arm returns from the worker; it neither faults nor rethrows");
+
     await Assert.That(svc.CallOrder.Contains("list")).IsFalse()
       .Because("the cancellation happened mid-purge, before the cohort list was ever fetched — "
              + "the campaign never resumed after the shutdown signal");
-    await Assert.That(svc.FetchCount).IsEqualTo(0)
-      .Because("the cancellation arm returns from the worker body: no scan loop runs after a "
-             + "shutdown mid-campaign");
     var loggedFailure = logs.GetSnapshot().Any(r => r.Level == LogLevel.Warning
       && r.Message.Contains("scan cycle failed", StringComparison.OrdinalIgnoreCase));
     await Assert.That(loggedFailure).IsFalse()
       .Because("a shutdown mid-campaign is ordinary lifecycle, not a failure — it must take the "
              + "cancellation arm quietly, never the generic-Exception arm that logs a scan-cycle "
              + "failure");
-  }
-
-  /// <summary>
-  /// Runs the worker body directly on the caller's thread, so a test controls exactly where it
-  /// is suspended when the token is canceled (see the test above for why that matters).
-  /// </summary>
-  private sealed class DirectRunWorker(
-      IServiceScopeFactory scopeFactory, DeadLetterRecoveryOptions options, ILogger<DeadLetterRecoveryWorker> logger)
-    : DeadLetterRecoveryWorker(scopeFactory, Options.Create(options), Options.Create(new StreamIntegrityOptions()),
-        new Gen(), logger, new NoOpWorkNotificationListener()) {
-    public Task RunBodyAsync(CancellationToken ct) => ExecuteAsync(ct);
-  }
-
-  private static (DirectRunWorker Worker, FakeLogCollector Logs) _buildDirect(
-      DeadLetterRecoveryOptions options, CampaignFake svc) {
-    var services = new ServiceCollection();
-    services.AddFakeLogging();
-    services.AddSingleton<IDeadLetterRecoveryService>(svc);
-    services.AddSingleton<IDeadLetterRecoveryPolicy>(
-      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
-    var provider = services.BuildServiceProvider();
-    var worker = new DirectRunWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(), options,
-      provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
-    return (worker, provider.GetFakeLogCollector());
   }
 
   /// <summary>
