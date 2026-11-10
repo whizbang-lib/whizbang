@@ -32,6 +32,7 @@
     <Project Path="samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests/ECommerce.AzureServiceBus.Integration.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests.AppHost/ECommerce.AzureServiceBus.Integration.Tests.AppHost.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities/ECommerce.Integration.TestUtilities.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities.Tests/ECommerce.Integration.TestUtilities.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.Lifecycle.Integration.Tests/ECommerce.Lifecycle.Integration.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.InventoryWorker.Tests/ECommerce.InventoryWorker.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.NotificationWorker.Tests/ECommerce.NotificationWorker.Tests.csproj" />

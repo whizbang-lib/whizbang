@@ -655,6 +655,46 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task DrainMode_ProcessedHook_NamesOnlyTheEventsTheBatchAppliedAsync(CancellationToken cancellationToken) {
+    // #2237: the hook carries the ids of the events it reports, so a listener counts distinct applies instead of summing
+    // batch sizes. A cooled event is not applied by this batch and is not named.
+    var streamId = Guid.CreateVersion7();
+    var cooledEventId = Guid.CreateVersion7();
+    var freshEventId = Guid.CreateVersion7();
+    var cooledWorkId = Guid.CreateVersion7();
+    var cooldownCache = new RecentlyProcessedEventCache(new SystemTimeProvider());
+    cooldownCache.MarkProcessed(cooledWorkId);
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, cooledEventId, cooledWorkId),
+      _raw(streamId, freshEventId, Guid.CreateVersion7())
+    ]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([
+      _envelope(cooledEventId, new DrainDeepEvent("cooled")),
+      _envelope(freshEventId, new DrainDeepEvent("fresh"))
+    ]);
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(new DrainRunner()), configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: cooldownCache);
+    var processed = new TaskCompletionSource<PerspectiveEventProcessedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnPerspectiveEventProcessed += e => processed.TrySetResult(e);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    var reported = await processed.Task.WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(reported.StreamId).IsEqualTo(streamId);
+    await Assert.That(reported.EventIds).IsEquivalentTo([freshEventId]);
+    await Assert.That(reported.EventCount).IsEqualTo(reported.EventIds.Count)
+      .Because("the count and the ids describe the same events");
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task DrainMode_ACommittedApply_MarksItsEventsAppliedAsync(CancellationToken cancellationToken) {
     // #959: a waiter for an event that arrived from another service wakes on this mark, so it is made
     // for a committed apply and names the events the runner applied.
