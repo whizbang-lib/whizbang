@@ -107,6 +107,15 @@ public sealed class PerspectiveProcessingWaiterTests {
   }
 
   [Test]
+  public async Task APerspectiveTypeWithNoClrName_IsRefusedAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(() => PerspectiveProcessingWaiter.WaitForAppliedAsync(
+        [new FakeSource()], [Guid.CreateVersion7()], [new(genericParameter, EventsPerStream: 1)], CancellationToken.None))
+      .Throws<ArgumentException>();
+  }
+
+  [Test]
   public async Task ASourceForNoWorker_IsNoSourceAsync() {
     await Assert.That(PerspectiveWorkerEventSource.Of(null)).IsNull();
   }
