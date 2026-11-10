@@ -116,8 +116,9 @@ public class DapperSupersedingKeyTests : PostgresTestBase {
     await using var scope = provider.CreateAsyncScope();
 
     var steps = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<SupersedingHistoryReconcileStep>().ToList();
-    await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
+    // History is numbered by the commit-order stamper; the walk reads the type's events in that order.
     _ = await conn.ExecuteAsync("SELECT stamp_pending_commit_sequences(1000)");
+    await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
     var reaped = await conn.ExecuteScalarAsync<long>("SELECT rows_affected FROM wh_reap_superseded_events(5000)");
 
     var kept = (await conn.QueryAsync<int>("SELECT version FROM wh_event_store WHERE stream_id = @stream ORDER BY version", new { stream })).ToList();
@@ -152,8 +153,9 @@ public class DapperSupersedingKeyTests : PostgresTestBase {
     await using var scope = provider.CreateAsyncScope();
 
     var steps = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<SupersedingHistoryReconcileStep>().ToList();
-    await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
+    // History is numbered by the commit-order stamper; the walk reads the type's events in that order.
     _ = await conn.ExecuteAsync("SELECT stamp_pending_commit_sequences(1000)");
+    await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
     var reaped = await conn.ExecuteScalarAsync<long>("SELECT rows_affected FROM wh_reap_superseded_events(5000)");
 
     var rows = (await conn.QueryAsync<(int Version, int Flags, string? Key)>(

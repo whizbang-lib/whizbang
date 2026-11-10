@@ -1892,7 +1892,16 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("  public static void Initialize() {");
     sb.AppendLine("    // Register callback with the library's registry");
-    sb.AppendLine("    ModelRegistrationRegistry.RegisterModels((services, dbContextType, upsertStrategy) => {");
+    // #2201: keyed by this assembly, with the models it registers for each DbContext, so every assembly's models are
+    // registered, a re-registration from this one replaces only its own entry, and a model two assemblies share is
+    // reported at startup
+    sb.AppendLine("    ModelRegistrationRegistry.RegisterModels(typeof(GeneratedModelRegistration).Assembly.GetName().Name!, [");
+    foreach (var (dbContext, models) in dbContextGroups) {
+      foreach (var model in models) {
+        sb.AppendLine($"      (typeof({dbContext.FullyQualifiedName}), typeof({model.ModelTypeName})),");
+      }
+    }
+    sb.AppendLine("    ], (services, dbContextType, upsertStrategy) => {");
     sb.AppendLine();
   }
 
