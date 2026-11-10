@@ -2530,7 +2530,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<{dbContext.FullyQualifiedName}>(async (sp, ct) => {{");
     sb.AppendLine("      using var scope = sp.CreateScope();");
     sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
-    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct);");
+    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider);");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
   }
@@ -2645,7 +2645,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string registerAssociationsCode;
       string associationsHashExpr;
       if (matchingPerspectives.Count > 0) {
-        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken);";
+        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken, _collectiveEventTypes.Value);";
         // Reference the AssociationsHash constant emitted by EFCorePerspectiveAssociationGenerator
         // in this same assembly. Using the generated const avoids recomputing the hash here.
         associationsHashExpr = $"global::{assemblyName}.Generated.EFCorePerspectiveAssociationExtensions.AssociationsHash";

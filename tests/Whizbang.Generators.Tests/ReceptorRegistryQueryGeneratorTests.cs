@@ -556,6 +556,132 @@ public class Empty {}
     await Assert.That(generated).Contains("AssemblyRegistry<ReceptorRegistryContribution>.Register");
   }
 
+  // ===== Handled collective event types (#2145) =====
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CollectiveApplyForHandler_ListsItsEventAsAHandledCollectiveType_AndNotAMerelyDeclaredOneAsync() {
+    // #2145: the store routes every collective event to the __collective__ sink, so the startup association writer and
+    // the drain need the precise answer "which collective event types does a handler here apply". A collective event
+    // this assembly declares but no [CollectiveApplyFor] method applies is consumed (it is kept at the receive
+    // boundary) but not handled, so it is not in the list.
+    const string source = """
+      using Whizbang.Core.Messaging;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp;
+
+      public sealed class JobModel { public string Status { get; set; } = ""; }
+
+      public sealed record ArchiveJobs(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds)
+        : ICollectiveEvent;
+
+      public sealed record DeclaredOnly(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds)
+        : ICollectiveEvent;
+
+      public sealed class JobPerspective {
+        [CollectiveApplyFor]
+        public ICollectiveSpec<JobModel> Apply(ArchiveJobs e) => null!;
+
+        [CollectiveApplyFor]
+        public ICollectiveSpec<JobModel> ApplyAgain(ArchiveJobs e) => null!;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var handled = _extractRegion(generated!, "HandledCollectiveEventTypes");
+    await Assert.That(handled).Contains("\"MyApp.ArchiveJobs, TestAssembly\"")
+      .Because("the event a [CollectiveApplyFor] method applies is listed in the wire form the event store holds");
+    await Assert.That(handled.Split("MyApp.ArchiveJobs").Length - 1).IsEqualTo(1)
+      .Because("two handlers of one type list it once");
+    await Assert.That(handled).DoesNotContain("DeclaredOnly")
+      .Because("a collective event no handler here applies is consumed, not handled");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AttributedMethodThatIsNotACollectiveHandler_ListsNothingAsync() {
+    // An attributed method whose shape the collective generator rejects (WHIZ116) binds nothing, so it handles nothing;
+    // an ordinary attributed method is not a handler at all.
+    const string source = """
+      using Whizbang.Core.Messaging;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp;
+
+      public sealed record ArchiveJobs(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds)
+        : ICollectiveEvent;
+
+      public sealed class NotAHandler {
+        [CollectiveApplyFor]
+        public string Apply(ArchiveJobs e) => "";
+
+        [System.Obsolete]
+        public void Other() { }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains("HandledCollectiveEventTypes")
+      .Because("the list is always emitted, so an empty one says 'nothing here' rather than 'an older generator'");
+    await Assert.That(_extractRegion(generated!, "HandledCollectiveEventTypes")).DoesNotContain("ArchiveJobs");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AttributedMethodRoslynDeclaresNoSymbolFor_ListsNothing_AndDoesNotThrowAsync() {
+    // A method written directly in a namespace (CS0116) is a method declaration with no declared symbol, the bind
+    // guard's one exit that a well-formed file never takes.
+    const string source = """
+      using Whizbang.Core.Messaging;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp
+      {
+        [CollectiveApplyFor]
+        ICollectiveSpec<object> Apply(object e) => null!;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(_extractRegion(generated!, "HandledCollectiveEventTypes")).DoesNotContain("object");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_HandledCollectiveEventTypesEmission_CompilesCleanlyAsync() {
+    const string source = """
+      using Whizbang.Core.Messaging;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp;
+
+      public sealed class JobModel { public string Status { get; set; } = ""; }
+
+      public sealed record ArchiveJobs(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds)
+        : ICollectiveEvent;
+
+      public sealed class JobPerspective {
+        [CollectiveApplyFor]
+        public ICollectiveSpec<JobModel> Apply(ArchiveJobs e) => null!;
+      }
+      """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty();
+  }
+
   // ===== Helpers =====
 
   /// <summary>

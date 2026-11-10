@@ -2114,7 +2114,9 @@ public partial class PerspectiveWorker(
     var eventTypes = _eventTypeProvider.GetEventTypes();
     var rowErrors = new Dictionary<Guid, Exception>();
     var typedEvents = _deserializeDrainRows(eventStore, rowsToParse, eventTypes, rowErrors);
-    await _failUnreadableDrainRowsAsync(rowsToParse, typedEvents, eventTypes, rowErrors, cancellationToken).ConfigureAwait(false);
+    await _failUnreadableDrainRowsAsync(
+      rowsToParse, typedEvents, eventTypes, rowErrors,
+      ConsumedMessageTypes.HandledCollectiveEventTypes(scope.ServiceProvider), cancellationToken).ConfigureAwait(false);
 
     if (_perspectivesPerEventType is null) {
       // No perspective here: concluding the rows nothing applies was all there was to do.
@@ -2175,6 +2177,10 @@ public partial class PerspectiveWorker(
   /// sink, whether or not a handler here applies it, so an unknown type on that row means no handler on this service
   /// applies it. Left alone, such a row was claimed and re-offered on every poll and crowded the rest of the backlog
   /// out of the claim; it is completed without applying instead (<see cref="_completeUnhandledCollectiveRows"/>).
+  /// Whether a handler here applies the type is the consumer registry's answer (#2145,
+  /// <see cref="IConsumerRegistry.GetHandledCollectiveEventTypes"/>), the one the startup associations step gates the
+  /// store on, so the two cannot disagree. A type the registry lists that this instance cannot resolve is left alone like
+  /// any unknown type; a registry that cannot say leaves #2142's test: a type this service does not know.
   /// Before, an unreadable row recorded nothing: its lease lapsed, it was claimed again and failed to read again,
   /// forever, and a read that threw held back every other row fetched with it.
   /// </remarks>
@@ -2182,9 +2188,13 @@ public partial class PerspectiveWorker(
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_StoreSkipsARowItCannotRead_FailsThatRowAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_RowOfATypeThisServiceDoesNotKnow_IsNotFailedAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.UnreadableRows.cs:DrainMode_CollectiveRowsNoHandlerHereApplies_AreCompletedWithoutApplying_WarnedOncePerTypeAndCountedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.CollectiveGate.cs:DrainMode_CollectiveRowOfAKnownTypeTheRegistrySaysNoHandlerApplies_IsCompleted_NotFailedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.CollectiveGate.cs:DrainMode_CollectiveRowOfAHandledType_ThatCannotBeRead_IsFailedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.CollectiveGate.cs:DrainMode_CollectiveRowOfAHandledTypeThisInstanceCannotResolve_IsLeftAloneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.CollectiveGate.cs:DrainMode_RegistryThatCannotAnswer_CompletesACollectiveRowOfATypeThisServiceDoesNotKnowAsync</tests>
   private async Task _failUnreadableDrainRowsAsync(
       List<StreamEventData> rows, List<MessageEnvelope<IEvent>> typedEvents, IReadOnlyList<Type> eventTypes,
-      Dictionary<Guid, Exception> rowErrors, CancellationToken ct) {
+      Dictionary<Guid, Exception> rowErrors, IReadOnlyList<string>? handledCollectiveTypes, CancellationToken ct) {
     var read = new HashSet<Guid>(typedEvents.Count);
     foreach (var envelope in typedEvents) {
       read.Add(envelope.MessageId.Value);
@@ -2196,15 +2206,19 @@ public partial class PerspectiveWorker(
     var failed = 0;
     StreamEventData? first = null;
     List<StreamEventData>? unhandled = null;
+    HashSet<string>? handledCollective = null;
     foreach (var row in rows) {
       if (read.Contains(row.EventId)) {
         continue;
       }
       typeMap ??= EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-      if (!EventTypeMatchingHelper.TryResolveType(typeMap, row.EventType, out _)) {
-        if (string.Equals(row.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal)) {
-          (unhandled ??= []).Add(row);
-        }
+      var resolvable = EventTypeMatchingHelper.TryResolveType(typeMap, row.EventType, out _);
+      if (string.Equals(row.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal)
+          && !_collectiveHandledHere(row.EventType, resolvable, handledCollectiveTypes, ref handledCollective)) {
+        (unhandled ??= []).Add(row);
+        continue;
+      }
+      if (!resolvable) {
         continue;
       }
       first ??= row;
@@ -2220,6 +2234,19 @@ public partial class PerspectiveWorker(
     if (unhandled is not null) {
       _completeUnhandledCollectiveRows(unhandled);
     }
+  }
+
+  /// <summary>
+  /// Whether a handler on this service applies the collective event type of a sink row the drain could not read: the
+  /// consumer registry's answer when it has one (#2145), otherwise whether this service knows the type at all (#2142).
+  /// </summary>
+  private static bool _collectiveHandledHere(
+      string eventType, bool resolvable, IReadOnlyList<string>? handledTypes, ref HashSet<string>? handledSet) {
+    if (handledTypes is null) {
+      return resolvable;
+    }
+    handledSet ??= [.. handledTypes.Select(EventTypeMatchingHelper.NormalizeTypeName)];
+    return handledSet.Contains(EventTypeMatchingHelper.NormalizeTypeName(eventType));
   }
 
   /// <summary>
