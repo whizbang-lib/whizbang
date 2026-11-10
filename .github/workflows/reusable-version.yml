@@ -133,6 +133,11 @@ jobs:
             echo "No release-line context — GitVersion computes the version."
           fi
 
+      # The GitVersion tool installs with `dotnet tool`, which honors global.json's SDK (.NET 11, #2135).
+      - name: Setup .NET
+        if: steps.release_override.outputs.override != 'true'
+        uses: ./.github/actions/setup-dotnet-retry
+
       - name: Install GitVersion
         if: steps.release_override.outputs.override != 'true'
         uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0

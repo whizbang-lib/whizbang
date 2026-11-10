@@ -559,7 +559,7 @@ never satisfies "fully green including Quality" and the queue always runs the fu
 is where each change is tested, once. The fast-forward skip still applies when a pull request ran the
 full matrix itself (`PR_RUN_FULL_MATRIX=true`).
 
-### queue-validated — skip the redundant *develop push* matrix
+### queue-validated: skip the redundant *develop push* matrix
 
 A develop push carries a tree another run already tested: the merge queue fast-forwards develop to
 the **exact SHA** it just ran, so the post-merge push used to re-test identical bytes for ~35-40

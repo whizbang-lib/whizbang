@@ -61,6 +61,11 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
+      # The GitVersion tool installs with `dotnet tool`, which honors global.json's SDK (.NET 11, #2135).
+      - name: Setup .NET
+        if: inputs.release_type != 'manual'
+        uses: ./.github/actions/setup-dotnet-retry
+
       - name: Install GitVersion
         if: inputs.release_type != 'manual'
         uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
