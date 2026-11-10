@@ -22,7 +22,7 @@ public sealed class QueuedWritesLandedSignalTests {
   /// <summary>A flusher whose readings and idle waits the test scripts.</summary>
   private sealed class ScriptedFlusher : IQueuedWriteFlusher {
     private readonly Queue<QueuedWriteActivity> _readings = new();
-    private QueuedWriteActivity _last;
+    private readonly QueuedWriteActivity _last;
     private readonly Queue<Task> _waits = new();
 
     public ScriptedFlusher(params QueuedWriteActivity[] readings) {
@@ -43,7 +43,13 @@ public sealed class QueuedWritesLandedSignalTests {
 
     public bool IsIdle => _last.Pending == 0;
 
-    public event WorkProcessingIdleHandler? OnWorkProcessingIdle { add { } remove { } }
+    // The signal waits on WaitForIdleAsync, never on the event; the count only shows nothing subscribed.
+    public int IdleSubscriptions { get; private set; }
+
+    public event WorkProcessingIdleHandler? OnWorkProcessingIdle {
+      add => IdleSubscriptions += value is null ? 0 : 1;
+      remove => IdleSubscriptions -= value is null ? 0 : 1;
+    }
 
     public Task WaitForIdleAsync(CancellationToken cancellationToken = default) {
       WaitCalls++;
@@ -138,6 +144,8 @@ public sealed class QueuedWritesLandedSignalTests {
       .Because("the failure flusher still has a write in progress");
     await Assert.That(outbox.LastWaitToken).IsEqualTo(cts.Token);
     await Assert.That(failures.LastWaitToken).IsEqualTo(cts.Token);
+    await Assert.That(outbox.IdleSubscriptions).IsEqualTo(0)
+      .Because("the wait is driven by the awaitables, so it leaves no handler behind on any flusher");
   }
 
   [Test]

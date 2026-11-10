@@ -34,9 +34,12 @@ public sealed class BatchFlusherIdleSignalTests {
 
     public Task Entered => _entered.Task;
 
+    public int ItemsSeen { get; private set; }
+
     public void Release() => _release.TrySetResult();
 
     public async Task FlushAsync(IReadOnlyList<int> items, CancellationToken ct) {
+      ItemsSeen += items.Count;
       _entered.TrySetResult();
       await _release.Task.WaitAsync(ct);
     }
@@ -59,7 +62,12 @@ public sealed class BatchFlusherIdleSignalTests {
     var held = new HeldFlush();
     await using var flusher = new BatchFlusher<int>(held.FlushAsync, _immediate, NullLogger.Instance);
     var idleRaised = 0;
-    flusher.OnWorkProcessingIdle += () => Interlocked.Increment(ref idleRaised);
+    // The event is its own signal: it is raised after the awaitable completes, so the test waits on the event too.
+    var raised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    flusher.OnWorkProcessingIdle += () => {
+      Interlocked.Increment(ref idleRaised);
+      raised.TrySetResult();
+    };
 
     await flusher.EnqueueAsync(1, cancellationToken);
     var wait = flusher.WaitForIdleAsync(cancellationToken);
@@ -74,6 +82,7 @@ public sealed class BatchFlusherIdleSignalTests {
 
     held.Release();
     await wait;
+    await raised.Task.WaitAsync(cancellationToken);
 
     await Assert.That(flusher.IsIdle).IsTrue();
     await Assert.That(flusher.Activity).IsEqualTo(new QueuedWriteActivity(Version: 1, Pending: 0));
@@ -143,10 +152,10 @@ public sealed class BatchFlusherIdleSignalTests {
     flusher.OnWorkProcessingIdle += () => Interlocked.Increment(ref idleRaised);
 
     var tried = flusher.Writer.TryWrite(1);
-    var enqueue = async () => await flusher.EnqueueAsync(2, cancellationToken);
+    async Task enqueueAsync() => await flusher.EnqueueAsync(2, cancellationToken);
 
     await Assert.That(tried).IsFalse();
-    await Assert.That(enqueue).Throws<ChannelClosedException>();
+    await Assert.That(enqueueAsync).Throws<ChannelClosedException>();
     await Assert.That(flusher.IsIdle).IsTrue()
       .Because("an item the channel refused was never queued, so nothing waits on it");
     await Assert.That(flusher.Activity.Pending).IsEqualTo(0);
@@ -170,6 +179,26 @@ public sealed class BatchFlusherIdleSignalTests {
     await Assert.That(async () => await blocked).Throws<OperationCanceledException>();
     await Assert.That(flusher.Pending).IsEqualTo(1)
       .Because("the item that never made it into the full channel is not pending; the one that did still is");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AWriteThatWaitedForRoomInAFullChannel_IsCountedOnceItIsQueuedAsync(CancellationToken cancellationToken) {
+    await using var flusher = new BatchFlusher<int>((_, _) => Task.CompletedTask,
+      new BatchFlusherOptions { ChannelCapacity = 1, CoalesceWindowMs = 0, MaxBatchSize = 10, ImmediateFlushThreshold = 1 },
+      NullLogger.Instance, timeProvider: null, started: false);
+    await flusher.EnqueueAsync(1, cancellationToken);
+    var waitingForRoom = flusher.EnqueueAsync(2, cancellationToken).AsTask();
+    var queuedBeforeStart = waitingForRoom.IsCompleted;
+
+    // Starting the loop reads the first item, which makes room for the second.
+    flusher.Start();
+    await waitingForRoom;
+    await flusher.WaitForIdleAsync(cancellationToken);
+
+    await Assert.That(queuedBeforeStart).IsFalse();
+    await Assert.That(flusher.Activity).IsEqualTo(new QueuedWriteActivity(Version: 2, Pending: 0))
+      .Because("the write that waited for room was counted once and landed like any other");
   }
 
   [Test]

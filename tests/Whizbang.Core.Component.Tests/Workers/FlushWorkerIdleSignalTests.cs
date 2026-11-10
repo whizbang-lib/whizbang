@@ -87,7 +87,12 @@ public sealed class FlushWorkerIdleSignalTests {
   private static async Task _assertReportsTheWriteUntilItLandsAsync(
       IQueuedWriteFlusher worker, HoldsEveryWrite coordinator, Func<ValueTask> offer, CancellationToken ct) {
     var idleRaised = 0;
-    void onIdle() => Interlocked.Increment(ref idleRaised);
+    // The event is its own signal: it is raised after the awaitable completes, so the test waits on the event too.
+    var raised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    void onIdle() {
+      Interlocked.Increment(ref idleRaised);
+      raised.TrySetResult();
+    }
     worker.OnWorkProcessingIdle += onIdle;
 
     await Assert.That(worker.IsIdle).IsTrue();
@@ -102,6 +107,7 @@ public sealed class FlushWorkerIdleSignalTests {
 
     coordinator.Release();
     await wait;
+    await raised.Task.WaitAsync(ct);
 
     await Assert.That(worker.IsIdle).IsTrue();
     await Assert.That(worker.Activity).IsEqualTo(new QueuedWriteActivity(Version: 1, Pending: 0));
