@@ -1,0 +1,90 @@
+# Set-based perspective writes (#2246)
+
+Status: **in progress**, started 2026-11-10. Phases 1 and 2 of #2246. Later, separate: write-behind (#2247),
+staging-table rebuilds (#2248).
+
+## Why
+
+A batch of perspective work is processed one (stream, perspective) pair at a time. Each pair runs in parallel with its own
+scope and DbContext and spends five to seven round trips on reads and writes. A fan-out that puts one event on each of
+thousands of streams therefore costs thousands of single-row statements, and a composite does not help: at the
+publishing service an owned composite is stored one inner event at a time.
+
+## What is already batched (keep it)
+
+- Checkpoints and work completion: `BatchedCompletionStrategy` buffers, and `PerspectiveCompletionFlushWorker` writes
+  them with one `complete_perspective` call per flush, after the row write. Phase 1 does not move them into the
+  row-write transaction. The runner already treats them as a later step, and moving them is not needed for the cost.
+- Cursor prefetch on the drain path (`GetPerspectiveCursorsBatchAsync`).
+
+## Today's per-pair path (origin/develop ded9dbaa3)
+
+Worker groups claimed work by (stream, perspective) and runs `Parallel.ForEachAsync` at the governor width
+(`PerspectiveWorker.cs` around 1395, 2029). The generated runner, per pair:
+
+1. `ReadForApplyAsync`, then `GetByStreamIdAsync` unless absent, then eviction and purge-marker probes when absent.
+2. Idempotency filter or rewind anchor (#1347), then fold (`ApplyEvent`, `IsFirstInLocalStream`).
+3. `GetCommitSequenceAsync`, then `TryUpsertAsync` or `TryUpsertWithPhysicalFieldsAsync`. This is a single-row
+   `INSERT ... ON CONFLICT ... WHERE <ordering guard>` or `UPDATE ... WHERE xmin = @expected AND <guard>`.
+4. `!rowChanged` leads to a rewind (#1608). A row conflict retries up to 5 times.
+5. `FlushAsync`, snapshot, PostPerspectiveDetached, and a completion returned to the worker (inline lifecycle and the
+   sync tracker run in the worker).
+
+## Design: split each pair into prepare and commit, and write the batch in between
+
+The runner gains two entry points next to `RunWithEventsAsync`, which stays as the per-pair path:
+
+- **Prepare**: load state from the batch's state source, then the idempotency filter and fold. It returns a
+  `PendingPerspectiveWrite` (stream, perspective, table, model, physical values, scope, metadata, expected version,
+  ordering guard values, and an operation of insert, update, upsert or purge), or a decision that the pair needs the
+  per-pair path (rewind anchor, bootstrap, purge marker present, conflict).
+- **Complete**: given the write's outcome, do what step 4 and 5 do today. That is snapshot, detached lifecycle and the
+  completion. A refused row goes to the existing rewind path, and a conflict reruns the pair through the per-pair path.
+
+The worker, per batch:
+
+1. **State source** (seam): one query per perspective table for all streams in the batch
+   (`SELECT ... WHERE id = ANY(@ids)`, returning model, metadata and xmin). Streams whose cursor is absent and whose
+   first claimed event is first in its local stream are known new, so they are not read. Purge markers and eviction
+   probes are answered in one query each.
+2. Prepare every pair in parallel (CPU only, no I/O).
+3. **Flush policy** (seam): default is every batch.
+4. **Write sink** (seam): group pending writes by table and operation, and write each group with one statement per
+   group. Inserts use `INSERT ... SELECT FROM jsonb_to_recordset(@rows) ON CONFLICT DO NOTHING RETURNING id`, updates
+   use `UPDATE ... FROM jsonb_to_recordset(@rows) WHERE id = r.id AND xmin = r.xmin AND <guard> RETURNING id`, and
+   purges use `DELETE ... WHERE id = ANY(@ids)`. Ids not returned are refused or conflicted, which is the same signal as
+   today's `rowChanged=false` and conflict. One transaction per table group. A statement that fails (constraint, bad
+   row) is split in halves until the failing pair is found, and that pair alone takes the per-pair path.
+5. Complete every pair, then the inline lifecycle and the sync tracker as today.
+
+Locks: the per-(stream, perspective) apply coordinator and affinity gate are taken for every pair in the batch before
+prepare and released after complete, in a fixed order (stream id, then perspective) so two batches cannot deadlock.
+
+## Selection and registration
+
+- `PerspectiveWriteMode.SetBased` is the default; `PerspectiveWriteMode.PerStream` keeps today's path. The service
+  default is set in options, and a per-perspective override is an attribute.
+- The three seams' defaults are registered by W! with `TryAdd` in the same place the worker is registered, and a test
+  resolves each from a plain registration.
+- `IApplyBatchStrategy` / `SlidingWindowApplyBatchStrategy` (no caller) is removed. The drain path's `DrainBatcher` is
+  the live coalescer, and the flush-policy seam replaces the idea.
+
+## Phase 2: conformance suite
+
+One integration suite on Postgres, parameterized by write mode, runs real generated runners through the worker:
+ordering guard and rewind, late events, idempotency, row version conflicts, model actions (purge), physical fields
+(split and inline), snapshots and rewind from snapshot, collectives on the same rows, lifecycle stages and sync,
+rebuild, and failure isolation (a throwing apply, a failing row). The existing integration classes listed in the issue
+are the starting inventory.
+
+## Steps (each RED then GREEN, committed separately)
+
+1. Docs-site page (proposal): perspective write modes, with the reasons above.
+2. Write sink in `Whizbang.Data.Postgres`: grouped statements and the per-row outcome, tested on Postgres
+   (insert, update with guard, xmin conflict, purge, physical fields, a failing row is isolated).
+3. State source: batched load and known-new detection.
+4. Runner template: prepare and complete, generated for every perspective, with generator tests.
+5. Worker: the set-based batch path behind the mode, with locks taken as a set.
+6. Registration and mode selection, and the resolution test.
+7. Conformance suite across both modes.
+8. Measure: a 100k-stream fan-out, round trips and rows per second, before and after.
