@@ -879,34 +879,53 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for a specific number of perspective completions using the
-  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events belonging to <paramref name="streamId"/>.
   /// </summary>
-  public async Task WaitForPerspectiveProcessingAsync(
+  /// <remarks>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: the shared fixture's
+  /// workers keep applying a previous test's in-flight events after that test ends, and an
+  /// unfiltered counter let those stale fires satisfy the wait before this test's events were
+  /// applied (the InventoryWorker_Perspectives_Materialize and UpdateProduct_PriceOnly flakes).
+  /// See <see cref="PerspectiveProcessingWaiter"/> for the counting semantics (sums EventCount).
+  /// </remarks>
+  /// <param name="expectedCompletions">Total event applications on <paramref name="streamId"/> to wait for.</param>
+  /// <param name="streamId">The stream whose events count (for product workflows, the ProductId).</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
+      Guid streamId,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) =>
+    WaitForPerspectiveProcessingAsync(expectedCompletions, [streamId], timeoutMilliseconds, hostFilter);
+
+  /// <summary>
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events whose stream is in <paramref name="streamIds"/>,
+  /// for tests that wait on events from several streams at once (seeding, batches).
+  /// </summary>
+  /// <remarks>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: see the single-stream
+  /// overload and <see cref="PerspectiveProcessingWaiter"/>.
+  /// </remarks>
+  /// <param name="expectedCompletions">Total event applications across all <paramref name="streamIds"/>.</param>
+  /// <param name="streamIds">The streams whose events count; must not be empty.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      IReadOnlyCollection<Guid> streamIds,
       int timeoutMilliseconds = 30000,
       string? hostFilter = null) {
-    var completionCount = 0;
-    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    void WireWorker(PerspectiveWorker? worker) {
-      if (worker is null) { return; }
-      void handler(PerspectiveEventProcessedEvent _) {
-        var current = Interlocked.Increment(ref completionCount);
-        if (current >= expectedCompletions) { tcs.TrySetResult(true); }
-      }
-
-      worker.OnPerspectiveEventProcessed += handler;
-    }
+    var workers = new List<PerspectiveWorker?>();
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = _inventoryHost!.Services.GetHostedWorker<PerspectiveWorker>();
-      WireWorker(inventoryWorker);
+      workers.Add(_inventoryHost!.Services.GetHostedWorker<PerspectiveWorker>());
     }
     if (hostFilter is null or "bff") {
-      var bffWorker = _bffHost!.Services.GetHostedWorker<PerspectiveWorker>();
-      WireWorker(bffWorker);
+      workers.Add(_bffHost!.Services.GetHostedWorker<PerspectiveWorker>());
     }
-    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    return PerspectiveProcessingWaiter.WaitAsync(workers, expectedCompletions, streamIds, timeoutMilliseconds);
   }
 
   /// <summary>

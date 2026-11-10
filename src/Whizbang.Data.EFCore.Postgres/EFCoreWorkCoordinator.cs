@@ -1030,8 +1030,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 348) returns only rows with a stamped
-  /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 375) returns a row with a stamped window
+  /// with both bounds, and a row with no window (compared over the whole history) with neither (#2208). A failure
+  /// propagates: the re-check worker logs it and retries next tick.</remarks>
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
       CancellationToken cancellationToken = default) {
@@ -1056,7 +1057,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       items.Add(new IntegrityRepairDrainItem(
-        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5)));
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3),
+        await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
+        await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)));
     }
     return items;
   }
@@ -1678,7 +1681,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant.
-      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs, answer_pending_buckets, answered_buckets, deliveries_pending, oldest_delivery_secs FROM {fn}(@max)";
+      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs, answer_pending_buckets, answered_buckets, deliveries_pending, oldest_delivery_secs, unhealed_deficit_events, unhealable_buckets FROM {fn}(@max)";
 #pragma warning restore S2077
       cmd.Parameters.AddWithValue("max", maxRepairAttempts);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1693,6 +1696,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         AnsweredBuckets = reader.GetInt64(4),
         IntegrityDeliveriesPending = reader.GetInt64(5),
         OldestIntegrityDeliveryAgeSeconds = reader.GetDouble(6),
+        UnhealedDeficitEvents = reader.GetInt64(7),
+        UnhealableBuckets = reader.GetInt64(8),
       };
       await reader.DisposeAsync().ConfigureAwait(false);
       // Per-origin verified watermarks for the sealed_through gauge — a handful of rows read in

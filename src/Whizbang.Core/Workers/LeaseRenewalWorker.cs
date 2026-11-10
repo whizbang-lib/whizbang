@@ -17,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// holds are extended. Coalesced flush. Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewalChannel {
+public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewalChannel, IQueuedWriteFlusher {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly LeaseRenewalWorkerOptions _options;
   private readonly ILogger<LeaseRenewalWorker> _logger;
@@ -52,7 +52,24 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
 
   /// <inheritdoc />
   public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default)
-    => _flusher.Writer.WriteAsync(new CategorizedLeaseRenewal(category, id), cancellationToken);
+    => _flusher.EnqueueAsync(new CategorizedLeaseRenewal(category, id), cancellationToken);
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerIdleSignalTests.cs:LeaseRenewalWorker_ReportsAQueuedRenewalUntilItLandsAsync</tests>
+  public QueuedWriteActivity Activity => _flusher.Activity;
+
+  /// <inheritdoc />
+  public bool IsIdle => _flusher.IsIdle;
+
+  /// <inheritdoc />
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle {
+    add => _flusher.OnWorkProcessingIdle += value;
+    remove => _flusher.OnWorkProcessingIdle -= value;
+  }
+
+  /// <inheritdoc />
+  public Task WaitForIdleAsync(CancellationToken cancellationToken = default) => _flusher.WaitForIdleAsync(cancellationToken);
 
   /// <inheritdoc />
   public override Task StartAsync(CancellationToken cancellationToken) {

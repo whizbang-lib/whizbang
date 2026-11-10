@@ -50,12 +50,18 @@ public class SeedProductsWorkflowTests {
       fixture.BffProductLens,
       fixture.GetLogger<SeedMutations>());
 
+    // Choose the seeded product ids up front so the wait counts only these products' streams
+    // (a prior class's in-flight events must not satisfy it).
+    var productIds = Enumerable.Range(0, SeedMutations.SEED_PRODUCT_COUNT)
+      .Select(_ => Whizbang.Core.ValueObjects.TrackedGuid.New().Value)
+      .ToList();
+
     // Wait for 36 inventory perspective applies: 12 products × 3 events each
     // (ProductCreated→ProductCatalog + ProductCreated→Inventory + InventoryRestocked→Inventory).
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 36, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: SeedMutations.SEED_PRODUCT_COUNT * 3, streamIds: productIds, timeoutMilliseconds: 90000, hostFilter: "inventory");
 
-    var seededCount = await seedMutations.SeedProductsAsync();
+    var seededCount = await seedMutations.SeedProductsAsync(productIds);
     Console.WriteLine($"[SeedProducts] SeedProductsAsync returned: {seededCount}");
     if (seededCount == 0) {
       return; // Already seeded

@@ -2141,9 +2141,9 @@ public interface IWorkCoordinator {
   /// <summary>
   /// #2115: claims up to <paramref name="limit"/> ledger rows to re-check, oldest report first: rows of
   /// <paramref name="originIds"/> (origins whose request topic is learned) last reported before
-  /// <paramref name="reportedBefore"/>, not looked at since then, and stamped with the window they were compared over. A
-  /// claim marks each row looked at (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a
-  /// re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
+  /// <paramref name="reportedBefore"/>, not looked at since then, each with the window it was compared over (both bounds
+  /// null for a row compared over the whole history, #2208), never the type lane. A claim marks each row looked at
+  /// (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
   /// rows. Nothing is attempted and no repair is asked: a claimed row is compared again, never repaired. Empty = nothing
   /// that old, or unsupported.
   /// </summary>
@@ -2507,7 +2507,9 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
-  /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
+  /// the age of the oldest; the answer states and the integrity delivery queue; and the deficit
+  /// events left to heal with the unhealable buckets (#2203). Defaults to "nothing to report" for
+  /// engines with no ledger.
   /// </summary>
   /// <param name="maxRepairAttempts">The repair budget, so the query can count who has spent it.</param>
   /// <param name="cancellationToken">Cancellation.</param>
@@ -3496,7 +3498,7 @@ public sealed record MaintenanceResult(string TaskName, long RowsAffected, doubl
 /// <docs>fundamentals/perspectives/rewind</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>
