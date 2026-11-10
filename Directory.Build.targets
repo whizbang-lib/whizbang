@@ -17,6 +17,15 @@
     <LangVersion>14.0</LangVersion>
   </PropertyGroup>
 
+  <!-- Runtime async (#2135): on .NET 11 the runtime suspends and resumes async methods itself, instead of the
+       compiler emitting a state machine per method. Fewer allocations, and live stack traces show the real call
+       chain. It is opt-in on .NET 11 (default-on is planned for .NET 12) and needs no EnablePreviewFeatures on
+       net11.0. Only the net11.0 build gets it: net10.0 has no runtime support, and the netstandard2.0
+       generators and analyzers run inside the compiler. A project opts out with UseRuntimeAsync=false. -->
+  <PropertyGroup Condition="'$(TargetFramework)' != '' and '$(UseRuntimeAsync)' != 'false' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
+    <Features>$(Features);runtime-async=on</Features>
+  </PropertyGroup>
+
   <!-- Custom task to add retry logic with exponential backoff for file locking issues -->
   <UsingTask TaskName="RetryFileOperation" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
