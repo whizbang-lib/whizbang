@@ -4,15 +4,15 @@
        locked-mode restore, that would make every SDK patch (and every machine on a different one)
        fail restore. Pin it so the lock files record one version everywhere; move it with the SDK. -->
   <ItemGroup>
-    <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" ILLinkPackVersion="10.0.12" />
+    <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" ILLinkPackVersion="11.0.0" />
   </ItemGroup>
 
-  <!-- C# language version pinned to the one the .NET 10 SDK calls "latest", as AnalysisLevel is (#1678).
-       global.json rolls forward to the newest installed SDK, where "latest" means the next language
-       version: code written to it does not compile on CI, which builds on SDK 10, and IDE0028 (a build
-       error since #1804) asks for that version's collection-expression arguments in place of
-       new(comparer), about a hundred findings that exist only on the newer SDK. Set here, after the
-       project files, because many of them set LangVersion to latest themselves. Move it when CI moves. -->
+  <!-- C# language version pinned to C# 14, as AnalysisLevel is pinned to 10.0 (#1678). The SDK is .NET 11 (#2135),
+       where "latest" means C# 15, but release builds also compile net10.0 from the same source: C# 15 features that
+       need .NET 11 runtime types (union types among them) would compile for net11.0 only. IDE0028 (a build error
+       since #1804) would also ask for C# 15 collection-expression arguments in place of new(comparer), about a
+       hundred findings. Set here, after the project files, because many of them set LangVersion to latest
+       themselves. Move it deliberately, with the IDE0028 findings, or when net10.0 is dropped. -->
   <PropertyGroup Condition="'$(LangVersion)' == 'latest'">
     <LangVersion>14.0</LangVersion>
   </PropertyGroup>
