@@ -269,6 +269,12 @@ public sealed partial class StartupPreflightHostTests {
       await migrator.Host.StopAsync(CancellationToken.None);
       migrator.Host.Dispose();
     }
+    // A database one pass built is current (#2194), and a current start registers by the shorter path; this start has
+    // schema work to do, so it registers at the end of the bootstrap closure, before it votes.
+    await _executeAsync("""
+      UPDATE wh_schema_migrations SET content_hash = 'an-earlier-text'
+      WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')
+      """);
 
     var recorder = new RowAtFirstRecord(_database.ConnectionString);
     var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<IStartupStageObserver>(recorder));

@@ -55,6 +55,7 @@ public class MigrationBootstrapRegionsTests {
     "362_TheHeartbeatStartsAtRegistration.sql", // the startup beat, which a starting instance sends from registration (#2126)
     "363_EveryExitIsRecorded.sql", // the exit record and the tombstone's columns: an instance evicted while starting exits too (#2126)
     "364_InstanceExitRetentionIsASetting.sql", // the exit record's retention as an operator setting, redefining 363's function (#2126)
+    "385_StoredFormConversionsRecordWhoAppliedThem.sql", // the journals' applier columns the same rewrite phase writes (#2131)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>

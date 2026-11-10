@@ -31,7 +31,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // perspective → event-type associations changes between builds — adding/removing an Apply
   // method doesn't change perspective table DDL, so without this the fast-path hash check
   // would skip the associations phase and wh_message_associations would go stale.
-  private static readonly string _associationsHash = __ASSOCIATIONS_HASH_EXPR__;
+  private static readonly string _perspectiveAssociationsHash = __ASSOCIATIONS_HASH_EXPR__;
+  // #2145: the collective event types a handler on this service applies, read from the consumer registry for the pass
+  // (or currency check) that is running; null when they cannot be known. The associations step writes them with the
+  // gate marker, and its hash covers them, so a start whose handler set changed runs the step again.
+  private static readonly System.Threading.AsyncLocal<System.Collections.Generic.IReadOnlyList<string>?> _collectiveEventTypes = new();
+  private static string _associationsHash =>
+    global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(_perspectiveAssociationsHash, _collectiveEventTypes.Value);
   private const string _associationsHashKey = "associations:__DBCONTEXT_CLASS__";
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
@@ -100,6 +106,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var incompatibilityOverride = assessment?.OverriddenReason;
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     _ledgerApplicationVersion.Value = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(serviceProvider);
+    // #2131: every stored-form conversion this start applies records the versions that applied it, so the rollback gate
+    // counts it like a migration. Set here, for the whole start, so no conversion has to be handed it.
+    using var storedFormApplier = Whizbang.Data.Postgres.StoredFormApplier.ScopeTo(new Whizbang.Data.Postgres.StoredFormApplier(
+      "__LIBRARY_VERSION__", _ledgerApplicationVersion.Value ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN));
+    _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
@@ -167,7 +178,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // phase that follows (the stored-form scans, the waits, the index rebuild, each migration step), so none of them
     // can lose the role by outlasting the lease. Released, keepalive first, when this method returns: a duty still
     // held by an instance that has finished, or failed, would leave every other instance waiting on it.
-    await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger);
+    // #2165: the keepalive renews only while the schema work reports progress, so a migrator that is alive but stuck lets
+    // its role lapse to another instance. Every committed step, phase announcement and counted batch this start reports
+    // reaches the duty through the route below, for as long as this method runs.
+    await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger,
+      Whizbang.Data.Postgres.MigratorDuty.StallLimitFor(
+        (serviceProvider?.GetService(typeof(Microsoft.Extensions.Options.IOptions<Whizbang.Core.Startup.RoleAssignmentOptions>))
+          as Microsoft.Extensions.Options.IOptions<Whizbang.Core.Startup.RoleAssignmentOptions>)?.Value,
+        _schemaCommandTimeoutSeconds));
+    using var migratorProgress = Whizbang.Data.Postgres.StartupProgress.ReportTo(migratorDuty.NoteProgress);
 
     if (schemaIsCurrent) {
       // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an
@@ -359,6 +378,28 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // learn what this instance can simply watch for. So it watches the schema lock the way a waiter watches the duty,
     // and does the work when the wait ends, whichever way it ended. The migrator first confirms it still holds the
     // role, and votes again rather than working without it.
+    // #2122: a rollback Assess decided on runs on the instance doing the schema work, before anything else it does, on a
+    // connection of its own (one transaction under the schema lock). With no way to open one it cannot run, and the pass
+    // must not run over the newer version's schema either.
+    if (assessment?.Rollback is not null && segmentConnectionFactory is null) {
+      throw new InvalidOperationException(
+        "Schema __SCHEMA__ is owed a rollback to this version, which runs on a connection of its own; pass an initialization "
+        + "connection string, or register an NpgsqlDataSource.");
+    }
+    async Task rollBackAsync(Func<Npgsql.NpgsqlConnection> rollbackConnectionFactory) {
+      if (assessment?.Rollback is not { } rollback) {
+        return;
+      }
+      var rollingInstance = (serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
+        as Whizbang.Core.Observability.IServiceInstanceProvider)?.InstanceId;
+      await Whizbang.Data.Postgres.SchemaRollback.ApplyAsync(
+        new Whizbang.Data.Postgres.SchemaRollbackRequest(
+          rollbackConnectionFactory, "__SCHEMA__", lockId,
+          new Whizbang.Core.Versioning.VersionSighting("__LIBRARY_VERSION__", _ledgerApplicationVersion.Value, rollingInstance),
+          rollback.AllowLossy, _schemaCommandTimeoutSeconds),
+        startupClock, logger, cancellationToken);
+    }
+
     if (segmentConnectionFactory is not null && !schemaIsCurrent) {
       await Whizbang.Data.Postgres.MigratorPreLockPhase.RunAsync(
         migratorDuty,
@@ -388,7 +429,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             "__SCHEMA__", logger, ct),
           // On the system clock, like the deferral's own polls: a host clock frozen by a test must not stall a vote.
           PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), TimeProvider.System, ct),
-          WorkAsync: _ => rewriteStoredFormsAsync(segmentConnectionFactory)),
+          WorkAsync: async _ => {
+            await rollBackAsync(segmentConnectionFactory);
+            await rewriteStoredFormsAsync(segmentConnectionFactory);
+          }),
         "__SCHEMA__", logger, cancellationToken);
     }
 
@@ -923,9 +967,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// </remarks>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <param name="serviceProvider">The host's services, for the collective event types its handlers apply (#2145),
+  /// which the associations hash covers; null reads them from the host the context was built from.</param>
   /// <returns><see langword="true"/> when the schema needs nothing from this binary.</returns>
   public static async Task<bool> IsWhizbangSchemaCurrentAsync(
-      this __DBCONTEXT_FQN__ dbContext, CancellationToken cancellationToken = default) {
+      this __DBCONTEXT_FQN__ dbContext, CancellationToken cancellationToken = default, IServiceProvider? serviceProvider = null) {
+    _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken);
     var connection = connectionScope.Connection;
@@ -1372,6 +1419,12 @@ END $$;
             ? (3, "Skipped (table already exists)")
             : (isUpdate ? 2 : 1, isUpdate ? $"Updated from hash {_hashPrefix(existingHash!)}..." : "First apply");
           await _upsertMigrationAsync(connection, perspectiveKey, hash, pass.VersionId, status, desc, order, "perspective", ct);
+          // #2122: a table this pass created is reversed by dropping it (lossy: its rows go with it); one it changed, or
+          // found already there, cannot be reversed, since this version does not know the shape before it.
+          await Whizbang.Data.Postgres.MigrationReversal.RecordAsync(connection, _ledgerName, perspectiveKey,
+            tableExisted || isUpdate
+              ? Whizbang.Data.Postgres.MigrationReversal.Irreversible
+              : Whizbang.Data.Postgres.MigrationReversal.DropTable(@"__QUOTED_SCHEMA__", name), ct);
           logger?.LogDebug("Perspective {Perspective}: {Status}", name, desc);
         },
         pass.Tracked ? (ex, ct) => _recordFailureAsync(connection, perspectiveKey, hash, pass.VersionId, order, "perspective", ex, ct) : null,
@@ -1651,9 +1704,24 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       ? $"Re-applied ({reason ?? "marked to run again"})"
       : isUpdate ? $"Updated from hash {_hashPrefix(existingHash!)}..." : "First apply";
     await _upsertMigrationAsync(connection, name, hash, pass.VersionId, isUpdate ? 2 : 1, desc, executionOrder, "whizbang", ct);
+    // #2122: how the migration is reversed, as it declares, beside its row and in its transaction, so an older version
+    // can roll it back from the record. Nothing for a migration that predates the declaration.
+    await Whizbang.Data.Postgres.MigrationReversal.RecordAsync(connection, _ledgerName, name,
+      Whizbang.Data.Postgres.MigrationReversal.ForLibraryMigration(
+        name, transformedSql, _transformReverseSql, typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly), ct);
     logger?.LogDebug("Migration {Migration}: {Status}", name, desc);
     return true;
   }
+
+  /// <summary>The ledger, as the reversal recorder names it (#2122).</summary>
+  private const string _ledgerName = @"__QUOTED_SCHEMA__.wh_schema_migrations";
+
+  /// <summary>The placeholder the library's reverse scripts carry, spelled so the generator leaves it alone.</summary>
+  private const string _reverseSchemaToken = "__" + "SCHEMA__";
+
+  /// <summary>A reverse script, transformed as this context's migrations are (#2122).</summary>
+  private static string _transformReverseSql(string sql) =>
+    _transformMigrationSql(sql.Replace(_reverseSchemaToken, "__MIGRATION_SCHEMA__"), "__SCHEMA__");
 
   private static string _hashPrefix(string hash) => hash.Length > 8 ? hash[..8] : hash;
 
@@ -2052,6 +2120,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           connection, _associationsHashKey, _associationsHash, pass.VersionId,
           status: 1, desc: "Associations registered",
           executionOrder: 9000, owner: "association", ct);
+      // #2122: the older version's own pass registers its associations again, so reversing them runs nothing.
+      await Whizbang.Data.Postgres.MigrationReversal.RecordAsync(
+        connection, _ledgerName, _associationsHashKey, Whizbang.Data.Postgres.MigrationReversal.RegisteredAgain, ct);
     }
   }
 
@@ -2126,11 +2197,20 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
-  private static string? _fingerprint;
+  // The fingerprint and the associations hash it was computed with: the hash covers the handled collective set, which
+  // can differ between passes in one process (#2145).
+  private static Tuple<string, string>? _fingerprint;
 
   /// <summary>A hash over everything this build applies, which tells a pass of this build from any other.</summary>
-  private static string _passFingerprint() =>
-    _fingerprint ??= Whizbang.Data.Postgres.SchemaPassLedger.Fingerprint(_fingerprintParts());
+  private static string _passFingerprint() {
+    var associations = _associationsHash;
+    if (_fingerprint is { } cached && cached.Item1 == associations) {
+      return cached.Item2;
+    }
+    var fingerprint = Whizbang.Data.Postgres.SchemaPassLedger.Fingerprint(_fingerprintParts());
+    _fingerprint = Tuple.Create(associations, fingerprint);
+    return fingerprint;
+  }
 
   private static System.Collections.Generic.IEnumerable<string> _fingerprintParts() {
     yield return "__LIBRARY_VERSION__";

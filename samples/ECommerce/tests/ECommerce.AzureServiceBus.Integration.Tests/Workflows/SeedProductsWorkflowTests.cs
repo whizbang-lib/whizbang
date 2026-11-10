@@ -56,10 +56,16 @@ public class SeedProductsWorkflowTests {
       .Select(_ => Whizbang.Core.ValueObjects.TrackedGuid.New().Value)
       .ToList();
 
-    // Wait for 36 inventory perspective applies: 12 products × 3 events each
-    // (ProductCreated→ProductCatalog + ProductCreated→Inventory + InventoryRestocked→Inventory).
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: SeedMutations.SEED_PRODUCT_COUNT * 3, streamIds: productIds, timeoutMilliseconds: 90000, hostFilter: "inventory");
+    // Wait until every seeded product is in both inventory perspectives: ProductCreated in the catalog, and
+    // ProductCreated plus InventoryRestocked in inventory levels. Distinct events per (perspective, stream), not a sum of
+    // 36 reported events, which reports that were not new applies could meet while a catalog apply was pending (#2237).
+    var perspectiveTask = fixture.WaitForPerspectiveAppliesAsync(
+      streamIds: productIds,
+      expectations: [
+        new(typeof(ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective), EventsPerStream: 1),
+        new(typeof(ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective), EventsPerStream: 2),
+      ],
+      timeoutMilliseconds: 90000, hostFilter: "inventory");
 
     var seededCount = await seedMutations.SeedProductsAsync(productIds);
     Console.WriteLine($"[SeedProducts] SeedProductsAsync returned: {seededCount}");
@@ -69,7 +75,7 @@ public class SeedProductsWorkflowTests {
 
     await perspectiveTask;
 
-    // Wait for workers idle to drain InventoryRestockedEvent perspectives (transport roundtrip)
+    // Let the rest of the pipeline settle (outbox and transport work) before the assertions read.
     await fixture.WaitForWorkersIdleAsync();
   }
 

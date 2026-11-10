@@ -268,19 +268,25 @@ public sealed partial class PgSharedNotifyConnection(
         _ = await notifyCmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
       }
 
-      // Drive WaitAsync so Npgsql delivers the notification to our handler. Timeout via
-      // a linked CTS gives the SelfTestTimeout-bounded wait.
+      // Drive WaitAsync so Npgsql delivers the notification to our handler, within SelfTestTimeout.
       //
       // WaitAsync returns as soon as ANY async message arrives — that includes the
       // notification we expect, but also backend chatter (NoticeResponse, ParameterStatus,
       // etc.) that fires between LISTEN and our NOTIFY. We must loop until either our
       // specific signal arrives (handler set the TCS) or the timeout fires.
-      using var timeoutCts = new CancellationTokenSource(_options.SelfTestTimeout, _timeProvider);
-      using var combined = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-      while (!signal.Task.IsCompletedSuccessfully && !combined.Token.IsCancellationRequested) {
-        try {
-          await conn.WaitAsync(combined.Token).ConfigureAwait(false);
-        } catch (OperationCanceledException) when (combined.Token.IsCancellationRequested) {
+      //
+      // #2138: each wait is bounded by what is left of SelfTestTimeout as a timeout Npgsql arms on the read, never by
+      // a token cancel. Npgsql can discard a cancel that lands as the wait enters its read (#2150, #2155), and a probe
+      // whose notification had not arrived then sat on the idle socket for good: the loop never reached its retry.
+      var deadline = _timeProvider.GetUtcNow() + _options.SelfTestTimeout;
+      while (!signal.Task.IsCompletedSuccessfully) {
+        var remaining = deadline - _timeProvider.GetUtcNow();
+        if (remaining <= TimeSpan.Zero) {
+          break;
+        }
+        // Whole milliseconds, rounded up: Npgsql reads a timeout of zero milliseconds as no timeout at all.
+        var timeout = TimeSpan.FromMilliseconds(Math.Ceiling(remaining.TotalMilliseconds));
+        if (!await ProbeWaitAsync(conn, timeout, ct).ConfigureAwait(false)) {
           break;
         }
       }
@@ -677,6 +683,20 @@ public sealed partial class PgSharedNotifyConnection(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NpgsqlWaitTimeoutTests.cs:WaitAsync_NotificationAfterATimeout_ArrivesOnTheSameConnectionAsync</tests>
   internal Func<NpgsqlConnection, TimeSpan, CancellationToken, Task<bool>> WaitForMessageAsync { get; set; } =
+    static (conn, timeout, cancellationToken) => conn.WaitAsync(timeout, cancellationToken);
+
+  /// <summary>
+  /// The self-test probe's wait for its own notification: Npgsql's <c>WaitAsync</c>, bounded by what is left of
+  /// <see cref="WhizbangNotificationOptions.SelfTestTimeout"/>. Returns true when a message arrived and false when the
+  /// timeout passed.
+  /// </summary>
+  /// <remarks>
+  /// Separate from <see cref="WaitForMessageAsync"/> so a test can script the dispatch loop's waits without also
+  /// holding the probe that has to succeed before the loop starts; replaceable so a test can hand the probe a wait
+  /// that never sees its cancellation, the race this timeout exists for (#2138).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyProbeWaitTests.cs</tests>
+  internal Func<NpgsqlConnection, TimeSpan, CancellationToken, Task<bool>> ProbeWaitAsync { get; set; } =
     static (conn, timeout, cancellationToken) => conn.WaitAsync(timeout, cancellationToken);
 
   /// <summary>

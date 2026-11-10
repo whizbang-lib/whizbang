@@ -85,7 +85,8 @@ public static class WorkCoordinatorStrategyFactory {
       SystemEventOptions = sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       AuditDecisionHook = sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
-      AuditEventTypes = sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>()
+      AuditEventTypes = sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      DeferredChannel = sp.GetRequiredService<IDeferredOutboxChannel>()
     };
     return new ScopedWorkCoordinatorStrategy(
       coordinator,
@@ -140,6 +141,7 @@ public static class WorkCoordinatorStrategyFactory {
       workChannelWriter: channelWriter,
       inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
@@ -161,6 +163,7 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );

@@ -32,8 +32,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard5")]
 public class RollbackGateTests : EFCoreTestBase {
-  private const string SINCE = "schema change(s) were applied by a newer version that this version did not make, and a migration "
-    + "cannot be reversed yet (down migrations: whizbang-lib/whizbang#2122)";
+  private const string SINCE = "schema change(s) were applied by a newer version that this version did not make, and 1 cannot be "
+    + "reversed";
 
   private EFCorePostgresStartupAssessor _assessor(string library, string? application, bool overrideIncompatibility = false) {
     var services = new ServiceCollection();
@@ -188,8 +188,8 @@ public class RollbackGateTests : EFCoreTestBase {
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).IsEqualTo(
       $"since this instance's version (library {library}, application 1.9.0), 1 {SINCE}: wh_per_rollback_probe (applied by "
-      + $"library {library}, application 2.0.0); standing down: never apply anything, hold the data plane, report "
-      + "not-ready-while-alive");
+      + $"library {library}, application 2.0.0); a rollback runs only when every change since this version can be "
+      + "reversed; standing down: never apply anything, hold the data plane, report not-ready-while-alive");
   }
 
   [Test]
@@ -344,5 +344,117 @@ public class RollbackGateTests : EFCoreTestBase {
       .Because("a schema older than 360 has no place for it, and the start goes on");
     await Assert.That(async () => await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(open, "public", instance, " ", ct))
       .Throws<ArgumentException>();
+  }
+
+  // ── #2122: a rollback runs when every change since can be reversed ──
+
+  private static readonly AppliedSchemaChange _reversible = _appliedSince with { Reversal = SchemaChangeReversal.Reversible };
+  private static readonly AppliedSchemaChange _lossy = _appliedSince with { Reversal = SchemaChangeReversal.Lossy };
+
+  [Test]
+  public async Task EveryChangeSinceReversible_MigratesWithARollbackOwed_NamingWhatItReversesAsync() {
+    var verdict = PostgresStartupAssessment.ComputeVerdict(_me, [_reversible], []);
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Migrate)
+      .Because("the elected migrator rolls the schema back to this version, then migrates as usual");
+    await Assert.That(verdict.Rollback).IsNotNull();
+    await Assert.That(verdict.Rollback!.Changes).IsEquivalentTo([_reversible]);
+    await Assert.That(verdict.Rollback.AllowLossy).IsFalse();
+    await Assert.That(verdict.Reason).Contains("every one can be reversed: rolling back perspective:wh_per_orders");
+  }
+
+  [Test]
+  public async Task ALossyChange_StandsDown_UnlessTheOperatorAllowsItAsync() {
+    var refused = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], []);
+    var allowed = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], [], allowLossyRollback: true);
+
+    await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(refused.Reason).Contains(UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY);
+    await Assert.That(refused.Rollback).IsNull();
+    await Assert.That(allowed.Verdict).IsEqualTo(StartupVerdict.Migrate);
+    await Assert.That(allowed.Rollback!.AllowLossy).IsTrue();
+  }
+
+  [Test]
+  public async Task AReversibleChange_StillStandsDown_WhileANewerVersionIsOnlineAsync() {
+    VersionSighting[] online = [new("1.0.0", "2.0.0", Guid.Parse("0199dddd-0000-0000-0000-000000000002"))];
+
+    var verdict = PostgresStartupAssessment.ComputeVerdict(_me, [_reversible], online);
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.StandDown).Because("the newer version online rule still wins");
+    await Assert.That(verdict.Rollback).IsNull();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task TheLedger_RecordsHowEachChangeIsReversed_AndAssessReadsItAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    var newer = await _versionAsync(library, "2.0.0", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner, reversal, down_sql)
+      VALUES ('wh_per_reversible_probe', 'h', @v, 1, 'perspective', 'reversible', 'SELECT 1')
+      """, ct, ("v", newer));
+
+    var assessment = await _assessor(library, "1.9.0").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Migrate).Because(assessment.Reason);
+    await Assert.That(assessment.Rollback!.Changes.Single().Name).IsEqualTo("wh_per_reversible_probe");
+    await Assert.That(assessment.Rollback.Changes.Single().Reversal).IsEqualTo(SchemaChangeReversal.Reversible);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task AReapplyThatRecordsNoReversal_ForgetsTheOneBeforeAsync(CancellationToken ct) {
+    var first = await _versionAsync("1.0.0", "1.0.0", ct);
+    var second = await _versionAsync("2.0.0", "1.0.0", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner, reversal, down_sql)
+      VALUES ('gate:reversal', 'a', @v, 1, 'whizbang', 'reversible', 'SELECT 1')
+      """, ct, ("v", first));
+    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, status = 3 WHERE file_name = 'gate:reversal'", ct, ("v", second));
+    await Assert.That(await _scalarAsync<object>("SELECT reversal FROM wh_schema_migrations WHERE file_name = 'gate:reversal'", ct))
+      .IsEqualTo("reversible").Because("a skip applies nothing, and the reversal recorded stands");
+
+    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, content_hash = 'b', status = 2 WHERE file_name = 'gate:reversal'", ct, ("v", second));
+
+    await Assert.That(await _scalarAsync<object>("SELECT coalesce(reversal, 'none') FROM wh_schema_migrations WHERE file_name = 'gate:reversal'", ct))
+      .IsEqualTo("none").Because("a re-apply by a writer that records no reversal must not inherit the earlier one");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task APerspectiveTableThePassBuilt_IsRecordedAsLossy_WithItsDrop_AndTheAssociationsAsReversibleAsync(CancellationToken ct) {
+    var perspective = await _scalarAsync<string>(
+      "SELECT reversal || '|' || down_sql FROM wh_schema_migrations WHERE owner = 'perspective' ORDER BY file_name LIMIT 1", ct);
+    var associations = await _scalarAsync<string>(
+      "SELECT reversal FROM wh_schema_migrations WHERE owner = 'association' LIMIT 1", ct);
+    var library = await _scalarAsync<object>(
+      "SELECT coalesce(reversal, 'not recorded') FROM wh_schema_migrations WHERE owner = 'whizbang' ORDER BY file_name LIMIT 1", ct);
+
+    await Assert.That(perspective).StartsWith("lossy|DROP TABLE IF EXISTS ")
+      .Because("undoing a table the newer version added discards the rows it projected into it");
+    await Assert.That(associations).IsEqualTo("reversible")
+      .Because("the older version's own pass registers its associations again");
+    await Assert.That(library).IsEqualTo("not recorded").Because("every migration before #2122 is irreversible");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OnALedgerOlderThanTheReversalRecord_EveryChangeSinceIsIrreversibleAsync(CancellationToken ct) {
+    // Before 386 the ledger cannot say how a change is reversed, so a change applied since this version stands it down
+    // exactly as before #2122.
+    var library = await _ledgerLibraryAsync(ct);
+    await _execAsync("ALTER TABLE wh_schema_migrations DROP COLUMN reversal, DROP COLUMN down_sql", ct);
+    var newer = await _versionAsync(library, "2.0.0", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner)
+      VALUES ('wh_per_before_the_record', 'h', @v, 1, 'perspective')
+      """, ct, ("v", newer));
+
+    var assessment = await _assessor(library, "1.9.0").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"1 {SINCE}: wh_per_before_the_record");
+    await Assert.That(assessment.Rollback).IsNull();
   }
 }

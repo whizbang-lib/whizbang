@@ -21,7 +21,9 @@ public enum ExitCause {
 
   /// <summary>
   /// The instance stood down for a newer version, and that version's migration committed beneath it: it exits as the
-  /// standby handshake promises, for the orchestrator to replace it. Exit code 0.
+  /// standby handshake promises, for the orchestrator to replace it. Also the exit of an instance whose verdict owes a
+  /// rollback of what a newer version applied (#2122): the rollback runs at startup, so it exits for its restart to run
+  /// it. Exit code 0.
   /// </summary>
   UpgradeStandDown = 2,
 

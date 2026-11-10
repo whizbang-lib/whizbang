@@ -2530,7 +2530,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<{dbContext.FullyQualifiedName}>(async (sp, ct) => {{");
     sb.AppendLine("      using var scope = sp.CreateScope();");
     sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
-    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct);");
+    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider);");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
   }
@@ -2645,7 +2645,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string registerAssociationsCode;
       string associationsHashExpr;
       if (matchingPerspectives.Count > 0) {
-        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken);";
+        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken, _collectiveEventTypes.Value);";
         // Reference the AssociationsHash constant emitted by EFCorePerspectiveAssociationGenerator
         // in this same assembly. Using the generated const avoids recomputing the hash here.
         associationsHashExpr = $"global::{assemblyName}.Generated.EFCorePerspectiveAssociationExtensions.AssociationsHash";
@@ -3129,10 +3129,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// <c>created_at</c> serves time-based queries. <c>updated_at</c> carries the sliding retention
-  /// predicate (<c>updated_at &lt; NOW() - interval</c>): written with the arithmetic on the NOW() side
-  /// it is sargable, and unindexed the reaper degrades to a sequential scan of every enrolled table on
-  /// every maintenance cycle.
+  /// <c>created_at</c> serves time-based queries, and is written once, so its index costs an update
+  /// nothing.
+  /// </para>
+  /// <para>
+  /// <c>updated_at</c> is not indexed here (#2087). Every update rewrites it, and a btree over it keeps
+  /// PostgreSQL from making the update HOT (measured on PostgreSQL 17 at fillfactor 80: no HOT updates
+  /// with the index, about 56 percent without it). Two things ask for it instead. A table that declares
+  /// row retention gets it from the managed-object reconcile, which reads enrollment from
+  /// <c>wh_perspective_registry</c> as the retention sweeps do (<c>PerspectiveRetentionIndexes</c>); a
+  /// model that queries <c>UpdatedAt</c> declares it with
+  /// <c>[PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]</c>, which derives the same name. On every
+  /// other table the index an earlier release built is no longer declared, so the reconcile retires it.
   /// </para>
   /// <para>
   /// The index over the model's document answers a whole-document match, which is what an equality
@@ -3154,11 +3162,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// when the table already has an index with its definition.
   /// </para>
   /// <para>
-  /// Nothing here ever drops an index. An index an earlier release built that this one no longer
-  /// declares stays until an operator removes it, since removing one a production query relies on
-  /// is worse than keeping one nobody reads. The one exception is a promoted field's document index,
-  /// which no query can read once the field is redirected to its column and which is replaced by an
-  /// index of the same kind on the column; see <see cref="_appendPromotedFieldIndexes"/>.
+  /// Nothing here drops an index. An index an earlier release built that this one no longer declares
+  /// is retired by the managed-object reconcile, under its rules (a start records it first, and a
+  /// running instance that still declares it holds it). The one drop the schema emits itself is a
+  /// promoted field's document index, which no query can read once the field is redirected to its
+  /// column and which is replaced by an index of the same kind on the column; see
+  /// <see cref="_appendPromotedFieldIndexes"/>.
   /// </para>
   /// </remarks>
   private static IEnumerable<string> _standardIndexStatements(
@@ -3166,7 +3175,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var table = $"{quotedSchema}.{perspective.TableName}";
 
     yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_created_at")} ON {table} (created_at);";
-    yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_updated_at")} ON {table} (updated_at);";
     if (perspective.DocumentMatching.BuildsDataIndex) {
       yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_data_gin")} ON {table} USING gin (data);";
     }

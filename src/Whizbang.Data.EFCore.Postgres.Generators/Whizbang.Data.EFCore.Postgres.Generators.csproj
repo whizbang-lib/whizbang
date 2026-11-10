@@ -75,7 +75,8 @@
     <EmbeddedResource Include="Templates\**\*.cs" />
     <!-- Embed SQL migration files as resources from shared Whizbang.Data.Postgres project -->
     <!-- Link attribute maintains the same resource path (Templates\Migrations\*.sql) for the generator -->
-    <EmbeddedResource Include="..\Whizbang.Data.Postgres\Migrations\*.sql" Link="Templates\Migrations\%(Filename)%(Extension)" />
+    <!-- #2122: a reverse script (NNN_Name.down.sql) is not a forward migration; the runtime reads it from Whizbang.Data.Postgres. -->
+    <EmbeddedResource Include="..\Whizbang.Data.Postgres\Migrations\*.sql" Exclude="..\Whizbang.Data.Postgres\Migrations\*.down.sql" Link="Templates\Migrations\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- Pack the MSBuild props for NuGet consumers (build/ for direct, buildTransitive/ for transitive) -->
