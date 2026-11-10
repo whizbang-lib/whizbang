@@ -106,24 +106,6 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     return canceled.Task;
   }
 
-  /// <summary>
-  /// Returns once a session is waiting on a lock to run the grant watch's read: the exact transition the overlapping-tick
-  /// test needs (the first check in flight), observed in the server's own activity view rather than assumed from a clock.
-  /// </summary>
-  private async Task _untilAWatchReadWaitsOnTheLockAsync(CancellationToken ct) {
-    await using var conn = new NpgsqlConnection(ConnectionString);
-    await conn.OpenAsync(ct);
-    await using var cmd = new NpgsqlCommand("""
-      SELECT EXISTS (
-        SELECT 1 FROM pg_stat_activity
-         WHERE datname = current_database() AND pid <> pg_backend_pid()
-           AND wait_event_type = 'Lock' AND query LIKE '%wh_role_is_held%')
-      """, conn);
-    while (await cmd.ExecuteScalarAsync(ct) is not true) {
-      await Task.Delay(10, ct);
-    }
-  }
-
   private static Task _lostAsync(IDutyGrant grant) {
     var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     _ = grant.LostToken.Register(() => lost.TrySetResult());
@@ -375,9 +357,9 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
 
     time.Advance(_defaults.RenewInterval * 2);
 
-    // Both ticks have fired by now (Advance runs the timer callbacks on this thread); wait until a check is genuinely
-    // blocked on the held lock, then let it through.
-    await _untilAWatchReadWaitsOnTheLockAsync(cancellationToken);
+    // Advance runs both timer callbacks on this thread before it returns. The first marked its check running before it
+    // first yielded, and that check cannot finish while the table is locked, so the second tick found it running and
+    // skipped. Only now is the first check let through.
     await holdTx.RollbackAsync(cancellationToken);
 
     await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsTrue();
