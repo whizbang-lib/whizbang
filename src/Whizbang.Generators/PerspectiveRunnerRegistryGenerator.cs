@@ -248,7 +248,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     _appendFileHeader(source, namespaceName);
     _appendRegistryClass(source, perspectives, collectiveEventTypes);
     _appendExtensionsClass(source, perspectives);
-    _appendModuleInitializerClass(source, perspectives.Length);
+    _appendModuleInitializerClass(source, perspectives.Length, assemblyName);
 
     context.AddSource("PerspectiveRunnerRegistry.g.cs", source.ToString());
 
@@ -445,7 +445,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Appends the PerspectiveRunnerInitializer module initializer class.
   /// </summary>
-  private static void _appendModuleInitializerClass(StringBuilder source, int perspectiveCount) {
+  private static void _appendModuleInitializerClass(StringBuilder source, int perspectiveCount, string assemblyName) {
     source.AppendLine("/// <summary>");
     source.AppendLine($"/// Auto-generated module initializer for registering {perspectiveCount} perspective runner(s).");
     source.AppendLine("/// Runs at module load time and registers with PerspectiveRunnerCallbackRegistry (AOT-compatible).");
@@ -462,7 +462,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("    // Register callback with the library's registry");
     source.AppendLine("    // When .WithDriver.Postgres (or similar) is called, this callback will be invoked");
     source.AppendLine("    // Wrap in lambda because AddPerspectiveRunners returns IServiceCollection (fluent API)");
-    source.AppendLine("    PerspectiveRunnerCallbackRegistry.RegisterCallback(services => {");
+    // #2243: named by this assembly, so a host runs only its own service's runner registrations
+    source.AppendLine($"    PerspectiveRunnerCallbackRegistry.RegisterCallback({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, services => {{");
     source.AppendLine("      _ = PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(services);");
     source.AppendLine("    });");
     source.AppendLine("  }");

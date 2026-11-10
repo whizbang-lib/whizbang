@@ -123,15 +123,17 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       .Combine(perspectives.Collect())
       .Combine(taggedTypes.Collect())
       .Combine(compositeTypes.Collect())
-      .Combine(collectiveTypes.Collect());
+      .Combine(collectiveTypes.Collect())
+      .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
-    context.RegisterSourceOutput(combined, static (ctx, data) => {
+    context.RegisterSourceOutput(combined, static (ctx, all) => {
+      var data = all.Left;
       var receptorEntries = data.Left.Left.Left.Left;
       var perspectiveEntries = data.Left.Left.Left.Right;
       var taggedEntries = data.Left.Left.Right;
       var compositeEntries = data.Left.Right;
       var collectiveEntries = data.Right;
-      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries);
+      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, all.Right);
     });
   }
 
@@ -303,7 +305,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
       ImmutableArray<ConsumedTypeEntry?> taggedTypes,
       ImmutableArray<ConsumedTypeEntry?> compositeTypes,
-      ImmutableArray<ConsumedTypeEntry?> collectiveTypes) {
+      ImmutableArray<ConsumedTypeEntry?> collectiveTypes,
+      string? assemblyName) {
 
     // The wire form of every consumed type, keyed by the display name the predicate sets hold (#2058).
     var consumed = new System.Collections.Generic.Dictionary<string, ConsumedTypeEntry>(System.StringComparer.Ordinal);
@@ -418,6 +421,10 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
     sb.AppendLine("    var contribution = new ReceptorRegistryContribution {");
+    // #2243: named by this assembly, so a host's query counts only its own service's receptors
+    if (assemblyName is not null) {
+      sb.AppendLine($"      AssemblyName = {ServiceAssemblyFactsGenerator.Literal(assemblyName)},");
+    }
     sb.AppendLine("      AnyConsumerTypes = new string[] {");
     foreach (var type in anyConsumerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
       sb.AppendLine($"        \"{type}\",");
