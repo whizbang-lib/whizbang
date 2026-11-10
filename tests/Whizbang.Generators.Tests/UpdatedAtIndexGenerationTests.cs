@@ -85,7 +85,7 @@ public class UpdatedAtIndexGenerationTests {
 
     await Assert.That(schema).DoesNotContain("idx_ledger_updated_at", StringComparison.Ordinal)
       .Because("a btree on a column every update rewrites keeps every update from being HOT (#2087)");
-    await Assert.That(schema).DoesNotContain("(updated_at)", StringComparison.Ordinal);
+    await Assert.That(schema).DoesNotContain($"{EF_TABLE} (updated_at)", StringComparison.Ordinal);
     await Assert.That(schema).Contains("idx_ledger_created_at", StringComparison.Ordinal)
       .Because("only the updated_at index changed; created_at is written once and does not block HOT");
   }
@@ -162,7 +162,7 @@ public class UpdatedAtIndexGenerationTests {
 
     await Assert.That(schema).DoesNotContain("_updated_at ON", StringComparison.Ordinal)
       .Because("driver parity: neither driver builds the index unasked (#2087)");
-    await Assert.That(schema).DoesNotContain("(updated_at)", StringComparison.Ordinal);
+    await Assert.That(schema).DoesNotContain("wh_per_ledger (updated_at)", StringComparison.Ordinal);
   }
 
   /// <summary>Declared on its own, the Dapper schema builds it under the name the EF Core driver gives it.</summary>
@@ -208,8 +208,13 @@ public class UpdatedAtIndexGenerationTests {
   /// <summary>The generator reads the names the attribute's callers write: the same constants on both sides.</summary>
   [Test]
   public async Task TheWellKnownNames_AreTheOnesTheGeneratorsResolveAsync() {
-    await Assert.That(SharedRowColumns.UPDATED_AT).IsEqualTo(Whizbang.Core.Perspectives.PerspectiveRowColumns.UpdatedAt);
-    await Assert.That(SharedRowColumns.CREATED_AT).IsEqualTo(Whizbang.Core.Perspectives.PerspectiveRowColumns.CreatedAt);
+    (string Generator, string Core)[] pairs = [
+      (SharedRowColumns.UPDATED_AT, Whizbang.Core.Perspectives.PerspectiveRowColumns.UpdatedAt),
+      (SharedRowColumns.CREATED_AT, Whizbang.Core.Perspectives.PerspectiveRowColumns.CreatedAt),
+    ];
+    foreach (var (generator, core) in pairs) {
+      await Assert.That(generator).IsEqualTo(core);
+    }
   }
 
   /// <summary>Each well-known name resolves to its column, under the column's own name, and nothing else does.</summary>
@@ -230,7 +235,7 @@ public class UpdatedAtIndexGenerationTests {
     var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
     await Assert.That(errors).IsEmpty();
 
-    var found = JsonIndexDiscovery.CompositesFrom(compilation.GetTypeByMetadataName("Probe.ProbeModel")!);
+    var found = JsonIndexDiscovery.CompositesFrom(compilation.GetTypeByMetadataName("Probe.ProbeModel"));
 
     await Assert.That(found).Count().IsEqualTo(1)
       .Because("a name that is neither a property nor a known row column resolves to nothing, as before");

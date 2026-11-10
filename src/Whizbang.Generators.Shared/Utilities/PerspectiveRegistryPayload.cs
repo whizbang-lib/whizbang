@@ -127,10 +127,10 @@ public static class PerspectiveRegistryPayload {
     var shortName = entry.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
     var schemaIndexes = new List<IndexSchema> {
       new(PostgresIdentifiers.WithinLimit($"idx_{shortName}_created_at"), ["created_at"], "btree", false),
-      new(PostgresIdentifiers.WithinLimit($"idx_{shortName}_updated_at"), ["updated_at"], "btree", false),
     };
     // The same decisions the DDL makes, so drift detection expects the indexes the table is meant to have
-    // rather than ones this release no longer builds.
+    // rather than ones this release no longer builds. No updated_at index: it is built for a table that
+    // declares retention or a model that declares it, not for every table (#2087).
     if (entry.BuildsDataIndex) {
       schemaIndexes.Add(new(PostgresIdentifiers.WithinLimit($"idx_{shortName}_data_gin"), ["data"], "gin", false));
     }

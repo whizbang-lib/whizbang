@@ -291,6 +291,7 @@ public class PerspectiveDocumentIndexGenerationTests {
       public record Touched : IEvent;
 
       [PerspectiveQueries(MatchOnAnyField = true)]
+      [PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]
       public record OrganizationalReportingStructurePositionAssignmentHistoryModel {
         [StreamId]
         public Guid Id { get; init; }

@@ -29,7 +29,12 @@ public class PerspectiveRowColumnsTests {
   /// <summary>Each name is the column it stands for, behind the marker.</summary>
   [Test]
   public async Task EachName_IsItsColumnAsync() {
-    await Assert.That(PerspectiveRowColumns.UpdatedAt).IsEqualTo("$updated_at");
-    await Assert.That(PerspectiveRowColumns.CreatedAt).IsEqualTo("$created_at");
+    (string Name, string Expected)[] names = [
+      (PerspectiveRowColumns.UpdatedAt, "$updated_at"),
+      (PerspectiveRowColumns.CreatedAt, "$created_at"),
+    ];
+    foreach (var (name, expected) in names) {
+      await Assert.That(name).IsEqualTo(expected);
+    }
   }
 }

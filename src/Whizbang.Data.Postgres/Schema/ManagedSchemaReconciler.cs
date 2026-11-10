@@ -89,8 +89,12 @@ public static class ManagedSchemaReconciler {
         return null;
       }
 
+      // The tables that declare row retention keep their updated_at index (#2087): built here when missing, before
+      // the tables are read, and declared, so the plan keeps it while it retires the same index everywhere else.
+      var retention = await PerspectiveRetentionIndexes.EnsureAsync(
+        connection, schema, settings.Mode is ReconcileMode.Apply or ReconcileMode.AddOnly, target.Logger, token);
       var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, token);
-      var effective = await _withEquivalentsAsync(connection, schema, declared, live, token);
+      var effective = await _withEquivalentsAsync(connection, schema, declared.With(retention), live, token);
       var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, target.LedgerTable, token);
       var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
         connection, schema, instanceId, effective, token);
