@@ -47,7 +47,7 @@ public class PgSharedNotifyProbeWaitTests : EFCoreTestBase {
     var arrived = await gate.RunProbeAsync(conn, ConnectionString, cancellationToken);
 
     await Assert.That(arrived).IsFalse();
-    await Assert.That(timeouts).IsEquivalentTo(new[] { _selfTestTimeout })
+    await Assert.That(timeouts).IsEquivalentTo([_selfTestTimeout])
       .Because("the probe's one wait carries the whole self-test window as its timeout, which a lost cancel cannot undo");
   }
 
@@ -71,7 +71,7 @@ public class PgSharedNotifyProbeWaitTests : EFCoreTestBase {
 
     await Assert.That(arrived).IsFalse();
     await Assert.That(timeouts).IsEquivalentTo(
-        new[] { TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(1) },
+        [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(1)],
         TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("each wait is bounded by what is left of the window, and none starts once it has passed");
   }

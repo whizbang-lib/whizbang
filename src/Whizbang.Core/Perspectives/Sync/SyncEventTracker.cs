@@ -38,19 +38,14 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
-public sealed class SyncEventTracker : ISyncEventTracker {
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
+/// <param name="timeProvider">The clock entries are aged by; the system clock when omitted.</param>
+public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncEventTracker {
   // Event id -> perspective name -> entry, so the same event is tracked once per perspective. Guarded by _gate.
   private readonly Dictionary<Guid, Dictionary<string, TrackedSyncEvent>> _trackedEvents = [];
   private readonly Lock _gate = new();
-  private readonly TimeProvider _timeProvider;
-
-  /// <summary>Initializes a new instance of the <see cref="SyncEventTracker"/> class.</summary>
-  /// <param name="timeProvider">The clock entries are aged by; the system clock when omitted.</param>
-  /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
-  public SyncEventTracker(TimeProvider? timeProvider = null) {
-    _timeProvider = timeProvider ?? TimeProvider.System;
-  }
+  // The clock entries are aged by; the system clock when omitted.
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <summary>The number of (event, perspective) entries tracked right now.</summary>
   internal int TrackedEntryCount {

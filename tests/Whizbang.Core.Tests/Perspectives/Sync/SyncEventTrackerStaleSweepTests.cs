@@ -91,7 +91,7 @@ public sealed class SyncEventTrackerStaleSweepTests {
 
     tracker.MarkProcessed([eventId]);
 
-    await Assert.That(tracker.GetAllTrackedEventIds()).IsEquivalentTo(new[] { otherId });
+    await Assert.That(tracker.GetAllTrackedEventIds()).IsEquivalentTo([otherId]);
     await Assert.That(tracker.TrackedEntryCount).IsEqualTo(1);
   }
 

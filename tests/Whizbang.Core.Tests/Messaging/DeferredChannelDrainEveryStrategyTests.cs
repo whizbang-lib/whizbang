@@ -77,7 +77,7 @@ public sealed class DeferredChannelDrainEveryStrategyTests {
       await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       await Assert.That(coordinator.Stored.Select(m => m.MessageId).ToArray())
-        .IsEquivalentTo(new[] { deferred.MessageId, direct.MessageId }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+        .IsEquivalentTo([deferred.MessageId, direct.MessageId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
         .Because("deferred messages were queued before this flush's own work, so they are written first");
       await Assert.That(channel.HasPending).IsFalse();
     } finally {
