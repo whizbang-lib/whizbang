@@ -189,7 +189,7 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
     await stopping.CancelAsync();
 
     await Assert.That(async () => await coordinator.IntegritySaveDrillCursorAsync(
-        Guid.CreateVersion7(), windowSince: 100, Guid.CreateVersion7(), DateTimeOffset.UtcNow, stopping.Token))
+        Guid.CreateVersion7(), windowSince: 100, Guid.CreateVersion7(), new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), stopping.Token))
       .Throws<OperationCanceledException>()
       .Because("a save that returns normally reads as kept, and a shutdown kept nothing");
   }
