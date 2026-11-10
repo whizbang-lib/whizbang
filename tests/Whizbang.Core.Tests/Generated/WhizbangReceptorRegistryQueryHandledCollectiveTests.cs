@@ -43,7 +43,7 @@ public class WhizbangReceptorRegistryQueryHandledCollectiveTests {
     var handled = WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes();
 
     await Assert.That(handled).IsNotNull();
-    await Assert.That(handled!).IsEquivalentTo(
+    await Assert.That(handled).IsEquivalentTo(
       ["Billing.Close, Billing", "Jobs.Archive, Jobs", "Shared.Purge, Shared"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("every assembly's handlers count, a type two assemblies handle is listed once, and the order is deterministic");
   }
@@ -53,7 +53,7 @@ public class WhizbangReceptorRegistryQueryHandledCollectiveTests {
     AssemblyRegistry<ReceptorRegistryContribution>.Register(_contribution("Jobs.Archive, Jobs"));
     AssemblyRegistry<ReceptorRegistryContribution>.Register(_contribution());
 
-    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes()!).IsEquivalentTo(["Jobs.Archive, Jobs"]);
+    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes()).IsEquivalentTo(["Jobs.Archive, Jobs"]);
   }
 
   [Test]
@@ -82,7 +82,7 @@ public class WhizbangReceptorRegistryQueryHandledCollectiveTests {
     _ = WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes();
     AssemblyRegistry<ReceptorRegistryContribution>.Register(_contribution("Billing.Close, Billing"));
 
-    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes()!)
+    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes())
       .IsEquivalentTo(["Billing.Close, Billing", "Jobs.Archive, Jobs"]);
   }
 
@@ -93,7 +93,7 @@ public class WhizbangReceptorRegistryQueryHandledCollectiveTests {
     IConsumerRegistry adapter = new WhizbangReceptorRegistryQueryAdapter(NullReceptorRegistry.Instance);
 #pragma warning restore CA1859
 
-    await Assert.That(adapter.GetHandledCollectiveEventTypes()!).IsEquivalentTo(["Jobs.Archive, Jobs"]);
+    await Assert.That(adapter.GetHandledCollectiveEventTypes()).IsEquivalentTo(["Jobs.Archive, Jobs"]);
   }
 
   [Test]
@@ -107,14 +107,14 @@ public class WhizbangReceptorRegistryQueryHandledCollectiveTests {
   public async Task ConsumedMessageTypes_HandledCollectiveEventTypes_ReadsTheRegisteredRegistryAsync() {
     var services = new ServiceCollection();
     services.AddSingleton<IConsumerRegistry>(new FixedCollectiveRegistry(["Jobs.Archive, Jobs"]));
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(ConsumedMessageTypes.HandledCollectiveEventTypes(provider)!).IsEquivalentTo(["Jobs.Archive, Jobs"]);
+    await Assert.That(ConsumedMessageTypes.HandledCollectiveEventTypes(provider)).IsEquivalentTo(["Jobs.Archive, Jobs"]);
   }
 
   [Test]
   public async Task ConsumedMessageTypes_HandledCollectiveEventTypes_WithNoRegistry_IsUnknownAsync() {
-    using var provider = new ServiceCollection().BuildServiceProvider();
+    await using var provider = new ServiceCollection().BuildServiceProvider();
 
     await Assert.That(ConsumedMessageTypes.HandledCollectiveEventTypes(provider)).IsNull();
     await Assert.That(ConsumedMessageTypes.HandledCollectiveEventTypes(null)).IsNull()

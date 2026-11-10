@@ -99,6 +99,22 @@ public static class WhizbangReceptorRegistryQuery {
       : null;
 
   /// <summary>
+  /// The collective event types a <c>[CollectiveApplyFor]</c> handler applies, across every loaded assembly's
+  /// contribution, in the wire form the event store holds: deduplicated and in ordinal order (#2145).
+  /// </summary>
+  /// <remarks>
+  /// <see langword="null"/> means unknown, never "none": no contribution is registered, or one an older generator
+  /// built carries no list, so an assembly may hold handlers nobody can see. A reader that gates work on this answer
+  /// gates nothing when it is unknown.
+  /// </remarks>
+  /// <returns>The handled collective event types, or <see langword="null"/> when they cannot be known.</returns>
+  /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:TwoAssemblies_HandledCollectiveEventTypes_AreTheUnion_DeduplicatedAndSortedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:AContributionThatPredatesTheList_MakesTheAnswerUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:NoContributionAtAll_IsUnknown_NotEmptyAsync</tests>
+  public static IReadOnlyList<string>? GetHandledCollectiveEventTypes() => _currentSnapshot().HandledCollective;
+
+  /// <summary>
   /// Normalizes a CLR type name to match the C# display format used by the source generator.
   /// The generator uses <c>SymbolDisplayFormat.FullyQualifiedFormat</c> which produces dots for
   /// nested types (e.g., <c>"Ns.Outer.Inner"</c>), but at runtime <c>Type.AssemblyQualifiedName</c>
@@ -139,6 +155,8 @@ public static class WhizbangReceptorRegistryQuery {
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
     var handledByName = new Dictionary<string, HandledMessageInfo>(System.StringComparer.Ordinal);
     var consumedByName = new Dictionary<string, ConsumedMessageInfo>(System.StringComparer.Ordinal);
+    var handledCollective = new SortedSet<string>(System.StringComparer.Ordinal);
+    var handledCollectiveKnown = contributionCount > 0;
     foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
       foreach (var t in contribution.AnyConsumerTypes) {
         any.Add(t);
@@ -163,12 +181,19 @@ public static class WhizbangReceptorRegistryQuery {
       foreach (var consumed in contribution.ConsumedMessages) {
         consumedByName.TryAdd(consumed.TypeName, consumed);
       }
+      if (contribution.HandledCollectiveEventTypes is { } collective) {
+        handledCollective.UnionWith(collective);
+      } else {
+        handledCollectiveKnown = false;
+      }
     }
     var handledList = new List<HandledMessageInfo>(handledByName.Values);
     handledList.Sort(static (a, b) => string.CompareOrdinal(a.MessageTypeName, b.MessageTypeName));
     var consumedList = new List<ConsumedMessageInfo>(consumedByName.Values);
     consumedList.Sort(static (a, b) => string.CompareOrdinal(a.TypeName, b.TypeName));
-    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName);
+    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName) {
+      HandledCollective = handledCollectiveKnown ? [.. handledCollective] : null,
+    };
   }
 
   /// <summary>
@@ -221,5 +246,6 @@ public static class WhizbangReceptorRegistryQuery {
     public IReadOnlyList<HandledMessageInfo> HandledMessages { get; } = handledMessages;
     public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; } = consumedMessages;
     public Dictionary<string, ConsumedMessageInfo> ConsumedByName { get; } = consumedByName;
+    public IReadOnlyList<string>? HandledCollective { get; init; }
   }
 }

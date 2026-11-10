@@ -31,7 +31,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // perspective → event-type associations changes between builds — adding/removing an Apply
   // method doesn't change perspective table DDL, so without this the fast-path hash check
   // would skip the associations phase and wh_message_associations would go stale.
-  private static readonly string _associationsHash = __ASSOCIATIONS_HASH_EXPR__;
+  private static readonly string _perspectiveAssociationsHash = __ASSOCIATIONS_HASH_EXPR__;
+  // #2145: the collective event types a handler on this service applies, read from the consumer registry for the pass
+  // (or currency check) that is running; null when they cannot be known. The associations step writes them with the
+  // gate marker, and its hash covers them, so a start whose handler set changed runs the step again.
+  private static readonly System.Threading.AsyncLocal<System.Collections.Generic.IReadOnlyList<string>?> _collectiveEventTypes = new();
+  private static string _associationsHash =>
+    global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(_perspectiveAssociationsHash, _collectiveEventTypes.Value);
   private const string _associationsHashKey = "associations:__DBCONTEXT_CLASS__";
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
@@ -100,6 +106,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var incompatibilityOverride = assessment?.OverriddenReason;
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     _ledgerApplicationVersion.Value = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(serviceProvider);
+    _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
@@ -923,9 +930,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// </remarks>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <param name="serviceProvider">The host's services, for the collective event types its handlers apply (#2145),
+  /// which the associations hash covers; null reads them from the host the context was built from.</param>
   /// <returns><see langword="true"/> when the schema needs nothing from this binary.</returns>
   public static async Task<bool> IsWhizbangSchemaCurrentAsync(
-      this __DBCONTEXT_FQN__ dbContext, CancellationToken cancellationToken = default) {
+      this __DBCONTEXT_FQN__ dbContext, CancellationToken cancellationToken = default, IServiceProvider? serviceProvider = null) {
+    _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken);
     var connection = connectionScope.Connection;
@@ -2126,11 +2136,20 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
-  private static string? _fingerprint;
+  // The fingerprint and the associations hash it was computed with: the hash covers the handled collective set, which
+  // can differ between passes in one process (#2145).
+  private static Tuple<string, string>? _fingerprint;
 
   /// <summary>A hash over everything this build applies, which tells a pass of this build from any other.</summary>
-  private static string _passFingerprint() =>
-    _fingerprint ??= Whizbang.Data.Postgres.SchemaPassLedger.Fingerprint(_fingerprintParts());
+  private static string _passFingerprint() {
+    var associations = _associationsHash;
+    if (_fingerprint is { } cached && cached.Item1 == associations) {
+      return cached.Item2;
+    }
+    var fingerprint = Whizbang.Data.Postgres.SchemaPassLedger.Fingerprint(_fingerprintParts());
+    _fingerprint = Tuple.Create(associations, fingerprint);
+    return fingerprint;
+  }
 
   private static System.Collections.Generic.IEnumerable<string> _fingerprintParts() {
     yield return "__LIBRARY_VERSION__";

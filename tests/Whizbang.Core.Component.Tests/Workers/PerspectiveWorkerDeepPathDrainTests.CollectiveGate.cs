@@ -25,23 +25,26 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     // it. A row the read skipped was failed toward the dead-letter bound, though nothing here would ever apply it.
     var streamId = Guid.CreateVersion7();
     var sinkWork = Guid.CreateVersion7();
+    var secondSinkWork = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator();
     coordinator.EnqueueStreamEvents([
-      _raw(streamId, Guid.CreateVersion7(), sinkWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)]);
+      _raw(streamId, Guid.CreateVersion7(), sinkWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME),
+      _raw(streamId, Guid.CreateVersion7(), secondSinkWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)]);
     var eventStore = new DrainEventStore();
     eventStore.EnqueueDeserialized([]);
 
     var (worker, harness, _) = _createWorker(
-      coordinator, eventStore, _registry(new DrainRunner()), consumerRegistry: new CollectiveConsumerRegistry([]));
+      coordinator, eventStore, _registry(new DrainRunner()),
+      consumerRegistry: new CollectiveConsumerRegistry(["Contracts.SomeOtherCollective, Contracts"]));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(25), sinkWork);
+    await harness.CompletionCapture.WaitForEventWorkIdsAsync(TimeSpan.FromSeconds(25), sinkWork, secondSinkWork);
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
-    await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([sinkWork]);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([sinkWork, secondSinkWork]);
     await Assert.That(harness.FailureCapture.Items).IsEmpty();
   }
 

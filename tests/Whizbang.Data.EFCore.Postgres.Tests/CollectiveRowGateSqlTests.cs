@@ -101,9 +101,17 @@ public class CollectiveRowGateSqlTests : EFCoreTestBase {
 
   // ---------- helpers ----------
 
+  /// <summary>
+  /// A connection to a schema with no association yet: the template's own perspective associations belong to a service
+  /// that writes no gate marker, which (correctly) keeps the gate off, so each case registers exactly the services it
+  /// is about.
+  /// </summary>
   private async Task<NpgsqlConnection> _openAsync() {
     var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
+    await using var clear = conn.CreateCommand();
+    clear.CommandText = "DELETE FROM wh_message_associations";
+    await clear.ExecuteNonQueryAsync();
     return conn;
   }
 
@@ -122,10 +130,10 @@ public class CollectiveRowGateSqlTests : EFCoreTestBase {
         (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
       VALUES (gen_random_uuid(), @type, @kind, @target, @service, @type, NOW(), NOW())
       """;
-    cmd.Parameters.AddWithValue("type", type);
-    cmd.Parameters.AddWithValue("kind", kind);
-    cmd.Parameters.AddWithValue("target", target);
-    cmd.Parameters.AddWithValue("service", service);
+    cmd.Parameters.AddWithValue(nameof(type), type);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
+    cmd.Parameters.AddWithValue(nameof(target), target);
+    cmd.Parameters.AddWithValue(nameof(service), service);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -141,7 +149,7 @@ public class CollectiveRowGateSqlTests : EFCoreTestBase {
           (@id, 'test-dest', @type, 'env', '{"p":{}}'::jsonb, '{}'::jsonb,
            1, 0, @inst, NOW() + INTERVAL '5 minutes', 0, @sid, true, 1, NOW())
         """;
-      insert.Parameters.AddWithValue("id", id);
+      insert.Parameters.AddWithValue(nameof(id), id);
       insert.Parameters.AddWithValue("type", eventType);
       insert.Parameters.AddWithValue("inst", instance);
       insert.Parameters.AddWithValue("sid", Guid.NewGuid());
@@ -169,10 +177,10 @@ public class CollectiveRowGateSqlTests : EFCoreTestBase {
       SELECT message_id, stream_id, received_at, priority, is_event, 1, 1, 0, @holder, NOW() + INTERVAL '5 minutes'
       FROM m
       """;
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("sid", Guid.NewGuid());
-    cmd.Parameters.AddWithValue("holder", holder);
+    cmd.Parameters.AddWithValue(nameof(holder), holder);
     await cmd.ExecuteNonQueryAsync();
     return id;
   }

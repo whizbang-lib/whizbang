@@ -636,6 +636,29 @@ public class Empty {}
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_AttributedMethodRoslynDeclaresNoSymbolFor_ListsNothing_AndDoesNotThrowAsync() {
+    // A method written directly in a namespace (CS0116) is a method declaration with no declared symbol, the bind
+    // guard's one exit that a well-formed file never takes.
+    const string source = """
+      using Whizbang.Core.Messaging;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp
+      {
+        [CollectiveApplyFor]
+        ICollectiveSpec<object> Apply(object e) => null!;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(_extractRegion(generated!, "HandledCollectiveEventTypes")).DoesNotContain("object");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_HandledCollectiveEventTypesEmission_CompilesCleanlyAsync() {
     const string source = """
       using Whizbang.Core.Messaging;

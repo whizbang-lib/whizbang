@@ -27,10 +27,10 @@ public class CollectiveRoutingAssociationsTests {
     await Assert.That(json).StartsWith(",").Because("the entries follow the perspective associations in one JSON array");
     using var doc = JsonDocument.Parse("[{}" + json + "]");
     var rows = doc.RootElement.EnumerateArray().Skip(1).Select(e => (
-      Type: e.GetProperty("MessageType").GetString(),
-      Kind: e.GetProperty("AssociationType").GetString(),
-      Target: e.GetProperty("TargetName").GetString(),
-      Service: e.GetProperty("ServiceName").GetString())).ToList();
+      Type: e.GetProperty("MessageType").GetString()!,
+      Kind: e.GetProperty("AssociationType").GetString()!,
+      Target: e.GetProperty("TargetName").GetString()!,
+      Service: e.GetProperty("ServiceName").GetString()!)).ToList();
     await Assert.That(rows).IsEquivalentTo([
       ("Jobs.Archive, Jobs", "collective", "__collective__", SERVICE),
       ("Jobs.Purge, Jobs", "collective", "__collective__", SERVICE),
@@ -71,7 +71,9 @@ public class CollectiveRoutingAssociationsTests {
 
     await Assert.That(both).IsNotEqualTo(archive).Because("adding a handler must re-write the associations");
     await Assert.That(bothReordered).IsEqualTo(both).Because("the order the assemblies loaded in is not a change");
-    await Assert.That(archive).StartsWith(PERSPECTIVE_HASH).Because("the perspective set still drives the hash");
+    await Assert.That(CollectiveRoutingAssociations.AssociationsHash("def456", ["Jobs.Archive, Jobs"])).IsNotEqualTo(archive)
+      .Because("the perspective set still drives the hash");
+    await Assert.That(archive.Length).IsEqualTo(64).Because("the ledger's content_hash holds a SHA-256 in hex");
   }
 
   [Test]

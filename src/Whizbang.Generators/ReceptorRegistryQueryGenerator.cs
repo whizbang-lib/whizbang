@@ -119,19 +119,28 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractCollectiveEntry(ctx, ct)
     ).Where(static name => name is not null);
 
+    // #2145: the collective event types a [CollectiveApplyFor] handler applies, as distinct from the collective types
+    // merely consumed above. The store gates its __collective__ rows on this list, so it is bound by the same shape the
+    // collective generator binds (CollectiveApplyShape): a method that generator rejects handles nothing.
+    var handledCollectiveTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => CollectiveApplyDiscoveryGenerator.IsAttributedMethodCandidate(node),
+        transform: static (ctx, ct) => _extractHandledCollectiveType(ctx, ct)
+    ).Where(static name => name is not null);
+
     var combined = receptors.Collect()
       .Combine(perspectives.Collect())
       .Combine(taggedTypes.Collect())
       .Combine(compositeTypes.Collect())
-      .Combine(collectiveTypes.Collect());
+      .Combine(collectiveTypes.Collect())
+      .Combine(handledCollectiveTypes.Collect());
 
     context.RegisterSourceOutput(combined, static (ctx, data) => {
-      var receptorEntries = data.Left.Left.Left.Left;
-      var perspectiveEntries = data.Left.Left.Left.Right;
-      var taggedEntries = data.Left.Left.Right;
-      var compositeEntries = data.Left.Right;
-      var collectiveEntries = data.Right;
-      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries);
+      var receptorEntries = data.Left.Left.Left.Left.Left;
+      var perspectiveEntries = data.Left.Left.Left.Left.Right;
+      var taggedEntries = data.Left.Left.Left.Right;
+      var compositeEntries = data.Left.Left.Right;
+      var collectiveEntries = data.Left.Right;
+      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, data.Right);
     });
   }
 
@@ -294,6 +303,24 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     return _consumedType(symbol);
   }
 
+  // ===== Discovery: handled collective events =====
+
+  /// <summary>
+  /// The wire form of the collective event a <c>[CollectiveApplyFor]</c> method applies (#2145), or null for a method
+  /// that is not a collective handler the framework binds.
+  /// </summary>
+  private static string? _extractHandledCollectiveType(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken ct) {
+    var methodDecl = (MethodDeclarationSyntax)context.Node;
+    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, ct) is not IMethodSymbol method
+        || CollectiveApplyShape.Attribute(method) is null
+        || CollectiveApplyShape.BoundModel(method) is null) {
+      return null;
+    }
+    return TypeNameUtilities.FormatTypeNameForRuntime(method.Parameters[0].Type);
+  }
+
   // ===== Emission =====
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Generator emission walks every (receptor, perspective) pair and renders the routing branches inline; splitting would require building intermediate models for each branch shape, which costs incremental-cache parity.")]
@@ -303,7 +330,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
       ImmutableArray<ConsumedTypeEntry?> taggedTypes,
       ImmutableArray<ConsumedTypeEntry?> compositeTypes,
-      ImmutableArray<ConsumedTypeEntry?> collectiveTypes) {
+      ImmutableArray<ConsumedTypeEntry?> collectiveTypes,
+      ImmutableArray<string?> handledCollectiveTypes) {
 
     // The wire form of every consumed type, keyed by the display name the predicate sets hold (#2058).
     var consumed = new System.Collections.Generic.Dictionary<string, ConsumedTypeEntry>(System.StringComparer.Ordinal);
@@ -441,6 +469,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     sb.AppendLine("      HandledMessages = new global::Whizbang.Core.Messaging.HandledMessageInfo[] {");
     foreach (var kvp in handledMessages) {
       sb.AppendLine($"        new global::Whizbang.Core.Messaging.HandledMessageInfo(\"{kvp.Key}\", \"{kvp.Value.ContractNamespace}\", global::Whizbang.Core.Routing.MessageKind.{kvp.Value.Kind}),");
+    }
+    sb.AppendLine(CLOSE_ARRAY_PROPERTY);
+    // HandledCollectiveEventTypes (#2145): always emitted, so an empty list says "no handler here" and only a
+    // contribution an older generator built reads as unknown.
+    sb.AppendLine("      HandledCollectiveEventTypes = new string[] {");
+    foreach (var type in handledCollectiveTypes.OfType<string>().Distinct(System.StringComparer.Ordinal).OrderBy(s => s, System.StringComparer.Ordinal)) {
+      sb.AppendLine($"        \"{type}\",");
     }
     sb.AppendLine(CLOSE_ARRAY_PROPERTY);
     sb.AppendLine("    };");
