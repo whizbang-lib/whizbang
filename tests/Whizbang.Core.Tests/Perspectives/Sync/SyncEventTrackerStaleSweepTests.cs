@@ -108,4 +108,17 @@ public sealed class SyncEventTrackerStaleSweepTests {
     await Assert.That(tracker.CleanupStaleEntries(_maxAge)).IsEqualTo(1)
       .Because("a repeated track does not refresh the entry's age");
   }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_ForAPerspectiveNotTracked_LeavesTheEventsOtherEntriesAsync() {
+    var tracker = new SyncEventTracker(new FakeTimeProvider());
+    var eventId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(SweepEvent), eventId, Guid.NewGuid(), PERSPECTIVE_A);
+
+    tracker.MarkProcessedByPerspective([eventId, Guid.NewGuid()], PERSPECTIVE_B);
+
+    await Assert.That(tracker.TrackedEntryCount).IsEqualTo(1)
+      .Because("marking a perspective the event is not tracked for, or an event not tracked at all, removes nothing");
+    await Assert.That(tracker.GetAllTrackedEventIds()).Contains(eventId);
+  }
 }

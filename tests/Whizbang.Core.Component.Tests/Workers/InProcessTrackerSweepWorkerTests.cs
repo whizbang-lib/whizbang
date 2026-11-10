@@ -46,12 +46,12 @@ public sealed class InProcessTrackerSweepWorkerTests {
     var clock = new ArmingClock();
     var lifecycle = new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance, timeProvider: clock);
     var sync = new SyncEventTracker(clock);
-    var eventId = Guid.NewGuid();
+    Guid eventId = TrackedGuid.New();
     lifecycle.BeginTracking(LifecycleTrackingPath.Inbox, eventId, _envelope(eventId),
       LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
     sync.TrackEvent(typeof(SweptEvent), eventId, Guid.NewGuid(), "Orders.Summary");
 
-    var worker = new InProcessTrackerSweepWorker(lifecycle, sync, NullLogger<InProcessTrackerSweepWorker>.Instance, clock);
+    var worker = new InProcessTrackerSweepWorker(NullLogger<InProcessTrackerSweepWorker>.Instance, lifecycle, sync, clock);
     var swept = new TaskCompletionSource<InProcessTrackerSweepResult>(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.Swept += result => {
       if (result.LifecycleEntriesEnded + result.SyncEntriesRemoved > 0) {
@@ -81,7 +81,7 @@ public sealed class InProcessTrackerSweepWorkerTests {
 
   [Test]
   public async Task SweepOnce_WithNeitherTrackerRegistered_SweepsNothingAsync() {
-    var worker = new InProcessTrackerSweepWorker(null, null, NullLogger<InProcessTrackerSweepWorker>.Instance, new ArmingClock());
+    var worker = new InProcessTrackerSweepWorker(NullLogger<InProcessTrackerSweepWorker>.Instance);
 
     var result = worker.SweepOnce();
 
@@ -95,7 +95,7 @@ public sealed class InProcessTrackerSweepWorkerTests {
     sync.TrackEvent(typeof(SweptEvent), Guid.NewGuid(), Guid.NewGuid(), "Orders.Summary");
     clock.Advance(InProcessTrackerSweepWorker.SyncEntryMaxAge);
     var logger = new CapturingLogger();
-    var worker = new InProcessTrackerSweepWorker(new ThrowingLifecycleCoordinator(), sync, logger, clock);
+    var worker = new InProcessTrackerSweepWorker(logger, new ThrowingLifecycleCoordinator(), sync, clock);
 
     var result = worker.SweepOnce();
 
@@ -115,11 +115,46 @@ public sealed class InProcessTrackerSweepWorkerTests {
       .Because("the sweep is the safety net for entries whose one removal path was not taken, so every host runs it");
   }
 
+  [Test]
+  public async Task SweepOnce_WhenTheSyncTrackerThrows_LogsWhatFailed_AndStillSweepsLifecycleAsync() {
+    var clock = new ArmingClock();
+    var lifecycle = new LifecycleCoordinator(NullLogger<LifecycleCoordinator>.Instance, timeProvider: clock);
+    Guid eventId = TrackedGuid.New();
+    lifecycle.BeginTracking(LifecycleTrackingPath.Inbox, eventId, _envelope(eventId),
+      LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+    clock.Advance(InProcessTrackerSweepWorker.LifecycleInactivityThreshold + TimeSpan.FromSeconds(1));
+    var logger = new CapturingLogger();
+    var worker = new InProcessTrackerSweepWorker(logger, lifecycle, new ThrowingSyncEventTracker(), clock);
+
+    var result = worker.SweepOnce();
+
+    await Assert.That(result.LifecycleEntriesEnded).IsEqualTo(1);
+    await Assert.That(logger.Warnings).Count().IsEqualTo(1);
+    await Assert.That(logger.Warnings[0]).Contains("perspective sync");
+  }
+
+  private sealed class ThrowingSyncEventTracker : ISyncEventTracker {
+    public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) { }
+    public IReadOnlyList<TrackedSyncEvent> GetPendingEvents(Guid streamId, string perspectiveName, Type[]? eventTypes = null) => [];
+    public void MarkProcessed(IEnumerable<Guid> eventIds) { }
+    public IReadOnlyList<Guid> GetAllTrackedEventIds() => [];
+    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null,
+      CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public void MarkProcessedByPerspective(IEnumerable<Guid> eventIds, string perspectiveName) { }
+    public Task<bool> WaitForPerspectiveEventsAsync(IReadOnlyList<Guid> eventIds, string perspectiveName, TimeSpan timeout,
+      Guid? awaiterId = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<bool> WaitForAllPerspectivesAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null,
+      CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public void UnregisterAwaiter(Guid awaiterId) { }
+    public int CleanupStaleEntries(TimeSpan maxAge) => throw new InvalidOperationException("sweep failed");
+    public void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId) { }
+  }
+
   private sealed class CapturingLogger : ILogger<InProcessTrackerSweepWorker> {
     public List<string> Warnings { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       if (logLevel == LogLevel.Warning) {
         Warnings.Add(formatter(state, exception));
       }

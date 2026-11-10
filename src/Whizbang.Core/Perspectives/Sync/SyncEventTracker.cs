@@ -11,8 +11,15 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses <see cref="ConcurrentDictionary{TKey, TValue}"/> for thread-safe access
-/// from multiple request scopes simultaneously.
+/// Tracked entries are indexed by event id, then perspective, under one short lock: whether an event is
+/// still pending on any perspective is a dictionary lookup, never a scan of every tracked key (#2228).
+/// Waiters are signaled outside the lock, always after the entry they wait on was removed.
+/// </para>
+/// <para>
+/// An entry leaves when this instance applies the event. When the perspective runs on another instance,
+/// or the event fails or is dead-lettered, nothing here applies it: <see cref="CleanupStaleEntries"/>,
+/// run by the host-wide in-process tracker sweep, is then the entry's end. Ages are read from the
+/// injected <see cref="TimeProvider"/>.
 /// </para>
 /// <para>
 /// Events are tracked from emit time until confirmed processed by the database,
@@ -32,8 +39,27 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
 public sealed class SyncEventTracker : ISyncEventTracker {
-  // Key is (eventId, perspectiveName) to allow the same event to be tracked for multiple perspectives
-  private readonly ConcurrentDictionary<(Guid EventId, string PerspectiveName), TrackedSyncEvent> _trackedEvents = new();
+  // Event id -> perspective name -> entry, so the same event is tracked once per perspective. Guarded by _gate.
+  private readonly Dictionary<Guid, Dictionary<string, TrackedSyncEvent>> _trackedEvents = [];
+  private readonly Lock _gate = new();
+  private readonly TimeProvider _timeProvider;
+
+  /// <summary>Initializes a new instance of the <see cref="SyncEventTracker"/> class.</summary>
+  /// <param name="timeProvider">The clock entries are aged by; the system clock when omitted.</param>
+  /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
+  public SyncEventTracker(TimeProvider? timeProvider = null) {
+    _timeProvider = timeProvider ?? TimeProvider.System;
+  }
+
+  /// <summary>The number of (event, perspective) entries tracked right now.</summary>
+  internal int TrackedEntryCount {
+    get {
+      lock (_gate) {
+        return _trackedEvents.Values.Sum(perspectives => perspectives.Count);
+      }
+    }
+  }
 
   // Waiters keyed by (outerKey, awaiterId) → TCS.
   // Inner ConcurrentDictionary is keyed by AwaiterId for O(1) removal on cancellation.
@@ -132,8 +158,40 @@ public sealed class SyncEventTracker : ISyncEventTracker {
 
   /// <inheritdoc />
   public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) {
-    var tracked = new TrackedSyncEvent(eventType, eventId, streamId, perspectiveName, DateTime.UtcNow);
-    _trackedEvents.TryAdd((eventId, perspectiveName), tracked);
+    var tracked = new TrackedSyncEvent(eventType, eventId, streamId, perspectiveName, _timeProvider.GetUtcNow().UtcDateTime);
+    lock (_gate) {
+      if (!_trackedEvents.TryGetValue(eventId, out var perspectives)) {
+        perspectives = new Dictionary<string, TrackedSyncEvent>(StringComparer.Ordinal);
+        _trackedEvents.Add(eventId, perspectives);
+      }
+      // The first track keeps its age: a repeated track never refreshes it.
+      perspectives.TryAdd(perspectiveName, tracked);
+    }
+  }
+
+  /// <summary>Whether <paramref name="eventId"/> is still pending on any perspective.</summary>
+  private bool _isEventPending(Guid eventId) {
+    lock (_gate) {
+      return _trackedEvents.ContainsKey(eventId);
+    }
+  }
+
+  /// <summary>Whether <paramref name="eventId"/> is still pending on <paramref name="perspectiveName"/>.</summary>
+  private bool _isPending(Guid eventId, string perspectiveName) {
+    lock (_gate) {
+      return _trackedEvents.TryGetValue(eventId, out var perspectives) && perspectives.ContainsKey(perspectiveName);
+    }
+  }
+
+  /// <summary>
+  /// Removes one (event, perspective) entry, and the event's index entry with its last perspective.
+  /// Must be called under <c>_gate</c>.
+  /// </summary>
+  private void _removeLocked(Guid eventId, string perspectiveName) {
+    if (_trackedEvents.TryGetValue(eventId, out var perspectives)
+        && perspectives.Remove(perspectiveName) && perspectives.Count == 0) {
+      _trackedEvents.Remove(eventId);
+    }
   }
 
   /// <inheritdoc />
@@ -141,24 +199,21 @@ public sealed class SyncEventTracker : ISyncEventTracker {
       Guid streamId,
       string perspectiveName,
       Type[]? eventTypes = null) {
-    var query = _trackedEvents.Values
-        .Where(e => e.StreamId == streamId && e.PerspectiveName == perspectiveName);
-
-    if (eventTypes is { Length: > 0 }) {
-      var typeSet = eventTypes.ToHashSet();
-      query = query.Where(e => typeSet.Contains(e.EventType));
+    var typeSet = eventTypes is { Length: > 0 } ? eventTypes.ToHashSet() : null;
+    lock (_gate) {
+      return [.. _trackedEvents.Values
+        .Select(perspectives => perspectives.GetValueOrDefault(perspectiveName))
+        .OfType<TrackedSyncEvent>()
+        .Where(e => e.StreamId == streamId && typeSet?.Contains(e.EventType) != false)];
     }
-
-    return [.. query];
   }
 
   /// <inheritdoc />
   public void MarkProcessed(IEnumerable<Guid> eventIds) {
     foreach (var id in eventIds) {
       // Remove entries for ALL perspectives that have this eventId
-      var keysToRemove = _trackedEvents.Keys.Where(k => k.EventId == id).ToList();
-      foreach (var key in keysToRemove) {
-        _trackedEvents.TryRemove(key, out _);
+      lock (_gate) {
+        _trackedEvents.Remove(id);
       }
 
       // Signal all waiters for this event and remove the outer entry
@@ -172,7 +227,9 @@ public sealed class SyncEventTracker : ISyncEventTracker {
 
   /// <inheritdoc />
   public IReadOnlyList<Guid> GetAllTrackedEventIds() {
-    return [.. _trackedEvents.Keys.Select(k => k.EventId).Distinct()];
+    lock (_gate) {
+      return [.. _trackedEvents.Keys];
+    }
   }
 
   /// <inheritdoc />
@@ -186,14 +243,12 @@ public sealed class SyncEventTracker : ISyncEventTracker {
     }
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
-    var pendingKeys = eventIds
-        .Where(id => _trackedEvents.Keys.Any(k => k.EventId == id))
-        .ToList();
+    var pendingKeys = eventIds.Where(_isEventPending).ToList();
 
     return WaitForCompletionAsync(
         _eventWaiters,
         pendingKeys,
-        key => _trackedEvents.Keys.Any(k => k.EventId == key),
+        _isEventPending,
         resolvedAwaiterId,
         timeout,
         cancellationToken);
@@ -204,7 +259,11 @@ public sealed class SyncEventTracker : ISyncEventTracker {
     foreach (var id in eventIds) {
       // Remove entry for THIS specific perspective only
       var key = (id, perspectiveName);
-      _trackedEvents.TryRemove(key, out _);
+      bool hasRemainingPerspectives;
+      lock (_gate) {
+        _removeLocked(id, perspectiveName);
+        hasRemainingPerspectives = _trackedEvents.ContainsKey(id);
+      }
 
       // Signal perspective-specific waiters
       if (_perspectiveWaiters.TryRemove(key, out var perspectiveWaiters)) {
@@ -213,9 +272,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
         }
       }
 
-      // Check if ALL perspectives for this event are now processed
-      var hasRemainingPerspectives = _trackedEvents.Keys.Any(k => k.EventId == id);
-
+      // Signal the all-perspectives waiters once no perspective for this event is pending
       if (!hasRemainingPerspectives && _allPerspectivesWaiters.TryRemove(id, out var allWaiters)) {
         // Signal all-perspectives waiters
         foreach (var kvp in allWaiters) {
@@ -238,14 +295,14 @@ public sealed class SyncEventTracker : ISyncEventTracker {
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds
-        .Where(id => _trackedEvents.ContainsKey((id, perspectiveName)))
+        .Where(id => _isPending(id, perspectiveName))
         .Select(id => (id, perspectiveName))
         .ToList();
 
     return WaitForCompletionAsync(
         _perspectiveWaiters,
         pendingKeys,
-        key => _trackedEvents.ContainsKey(key),
+        key => _isPending(key.Item1, key.Item2),
         resolvedAwaiterId,
         timeout,
         cancellationToken);
@@ -262,14 +319,12 @@ public sealed class SyncEventTracker : ISyncEventTracker {
     }
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
-    var pendingKeys = eventIds
-        .Where(id => _trackedEvents.Keys.Any(k => k.EventId == id))
-        .ToList();
+    var pendingKeys = eventIds.Where(_isEventPending).ToList();
 
     return WaitForCompletionAsync(
         _allPerspectivesWaiters,
         pendingKeys,
-        key => _trackedEvents.Keys.Any(k => k.EventId == key),
+        _isEventPending,
         resolvedAwaiterId,
         timeout,
         cancellationToken);
@@ -349,15 +404,8 @@ public sealed class SyncEventTracker : ISyncEventTracker {
 
     // Snapshot the matching event IDs and delegate to MarkProcessedByPerspective so the
     // single signaling path handles tracker removal + per-perspective TCS resolution +
-    // all-perspectives bookkeeping consistently. Cheap iteration: _trackedEvents is keyed
-    // by (eventId, perspectiveName), so the dictionary scan is bounded by total pending
-    // events for this perspective, not the cross-perspective universe.
-    var eventIds = new List<Guid>();
-    foreach (var kvp in _trackedEvents) {
-      if (kvp.Key.PerspectiveName == perspectiveName && kvp.Value.StreamId == streamId) {
-        eventIds.Add(kvp.Key.EventId);
-      }
-    }
+    // all-perspectives bookkeeping consistently.
+    var eventIds = GetPendingEvents(streamId, perspectiveName).Select(e => e.EventId).ToList();
     if (eventIds.Count > 0) {
       MarkProcessedByPerspective(eventIds, perspectiveName);
     }
@@ -365,25 +413,30 @@ public sealed class SyncEventTracker : ISyncEventTracker {
 
   /// <inheritdoc />
   public int CleanupStaleEntries(TimeSpan maxAge) {
-    var cutoff = DateTime.UtcNow - maxAge;
-    var removedCount = 0;
+    var cutoff = _timeProvider.GetUtcNow().UtcDateTime - maxAge;
 
-    var staleKeys = _trackedEvents
-        .Where(kvp => kvp.Value.TrackedAt <= cutoff)
-        .Select(kvp => kvp.Key)
-        .ToList();
-
-    foreach (var key in staleKeys) {
-      if (!_trackedEvents.TryRemove(key, out _)) {
-        continue;
+    // Removed under the lock, signaled after it: a waiter's re-check never sees an entry its signal already passed.
+    var removed = new List<((Guid EventId, string PerspectiveName) Key, bool EventDone)>();
+    lock (_gate) {
+      var stale = _trackedEvents.Values
+          .SelectMany(perspectives => perspectives.Values)
+          .Where(e => e.TrackedAt <= cutoff)
+          .ToList();
+      foreach (var entry in stale) {
+        _removeLocked(entry.EventId, entry.PerspectiveName);
+        removed.Add(((entry.EventId, entry.PerspectiveName), !_trackedEvents.ContainsKey(entry.EventId)));
       }
-      removedCount++;
+    }
+
+    foreach (var (key, eventDone) in removed) {
       _signalPerspectiveSpecificWaiters(key);
-      _signalAllPerspectivesWaitersIfNoRemainingPerspectives(key);
+      if (eventDone) {
+        _signalAllPerspectivesWaiters(key.EventId);
+      }
       _signalEventSpecificWaiters(key.EventId);
     }
 
-    return removedCount;
+    return removed.Count;
   }
 
   /// <summary>Removes and signals all per-perspective waiters for the given event+perspective key.</summary>
@@ -396,11 +449,9 @@ public sealed class SyncEventTracker : ISyncEventTracker {
     }
   }
 
-  /// <summary>Signals the "all perspectives for this event are done" waiters, but only when the
-  /// tracker no longer has any perspectives still pending for this event id.</summary>
-  private void _signalAllPerspectivesWaitersIfNoRemainingPerspectives((Guid EventId, string PerspectiveName) key) {
-    var hasRemainingPerspectives = _trackedEvents.Keys.Any(k => k.EventId == key.EventId);
-    if (hasRemainingPerspectives || !_allPerspectivesWaiters.TryRemove(key.EventId, out var allWaiters)) {
+  /// <summary>Signals the "all perspectives for this event are done" waiters; called once none is still pending.</summary>
+  private void _signalAllPerspectivesWaiters(Guid eventId) {
+    if (!_allPerspectivesWaiters.TryRemove(eventId, out var allWaiters)) {
       return;
     }
     foreach (var kvp in allWaiters) {
