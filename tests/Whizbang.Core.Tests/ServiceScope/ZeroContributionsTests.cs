@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -24,7 +25,7 @@ namespace Whizbang.Core.Tests.ServiceScope;
 public class ZeroContributionsTests {
   private sealed record SomethingHappened : IEvent;
 
-  private sealed class OnlyRegistry : IPerspectiveRunnerRegistry, IEventTypeProvider {
+  private sealed class OnlyRegistry : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => throw new NotSupportedException();
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => throw new NotSupportedException();
     public IReadOnlyList<Type> GetEventTypes() => throw new NotSupportedException();
