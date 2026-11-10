@@ -276,6 +276,7 @@ public class ServiceScopedRegistrationTests {
     var services = new ServiceCollection();
     services.AddSingleton<IShared, BillingShared>();
     services.AddSingleton(new Registered("Host", "Before"));
+    services.AddSingleton(new Registered("Host", "AlsoBefore"));
     ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
     var unscoped = _registered(services);
     var unscopedShared = services.Count(d => d.ServiceType == typeof(IShared));
@@ -285,8 +286,12 @@ public class ServiceScopedRegistrationTests {
 
     await Assert.That(unscoped).IsEmpty().Because("the other service's RemoveAll runs last while the host is unscoped");
     await Assert.That(unscopedShared).IsEqualTo(1);
-    await Assert.That(_registered(services)).IsEquivalentTo(["Host:Before", "Orders:First", "Orders:Second"])
+    await Assert.That(_registered(services)).IsEquivalentTo(["Host:AlsoBefore", "Host:Before", "Orders:First", "Orders:Second"])
       .Because("excluding the other service undoes its RemoveAll, and the host's own callback keeps everything it added");
+    string[] inOrder = [.. services.Where(d => d.ServiceType == typeof(Registered))
+      .Select(d => ((Registered)d.ImplementationInstance!).Slot)];
+    await Assert.That(inOrder).IsEquivalentTo(["Before", "AlsoBefore", "First", "Second"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("restored registrations go back to their own places, before the replayed block");
     await Assert.That(services.Count(d => d.ServiceType == typeof(IShared))).IsEqualTo(1);
     await Assert.That(provider.GetRequiredService<IShared>()).IsTypeOf<OrdersShared>();
   }
