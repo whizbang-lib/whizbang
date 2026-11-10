@@ -359,6 +359,11 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
           SupersedingHistoryReconcileStep.FromServices));
+        // TURNKEY: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration
+        // (#2206), in bounded batches under the maintainer duty, when Whizbang:Ephemeral:ReconcileHistoricalOnStartup opts in.
+        // <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
+          EphemeralHistoryReclassifyStep.FromServices));
         // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
         // type to their owner (#2116), under the maintainer duty, idle-gated.
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>

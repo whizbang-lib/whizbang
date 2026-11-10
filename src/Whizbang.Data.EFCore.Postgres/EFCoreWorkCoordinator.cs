@@ -3998,6 +3998,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken).ConfigureAwait(false);
 
   /// <inheritdoc />
+  public async Task WithdrawSubscriptionBackfillWindowRequestAsync(
+    SubscriptionBackfillCursor requestedFrom, long window, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(requestedFrom);
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.WithdrawRequestAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), requestedFrom, window, cancellationToken).ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public Task<SubscriptionBackfillCursor?> RecordSubscriptionBackfillAnswerAsync(
     BackfillWindowAnswer answer, DateTimeOffset now, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(answer);

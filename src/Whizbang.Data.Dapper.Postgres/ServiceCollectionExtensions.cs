@@ -550,6 +550,9 @@ public static class ServiceCollectionExtensions {
     // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
       SupersedingHistoryReconcileStep.FromServices));
+    // #2206: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration, opt-in.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
+      EphemeralHistoryReclassifyStep.FromServices));
     // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
       MisattributedOriginCorrectionStep.FromServices));

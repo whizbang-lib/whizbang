@@ -1154,6 +1154,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// #2092: takes back a window request whose send failed. A window is recorded as requested before it is sent, so an
+  /// owner that answers before the send returns finds it awaiting that answer; when the send then fails, the request
+  /// never left and this puts the backfill back as <paramref name="requestedFrom"/> was, costing no attempt, so a later
+  /// tick asks the window again. Applies only while the request recorded from that state is still the latest and still
+  /// awaits its answer: an answer that landed meanwhile, or a later request, stands. Default: no-op.
+  /// </summary>
+  /// <param name="requestedFrom">The backfill as read when the window was requested, before it was recorded.</param>
+  /// <param name="window">The window recorded as requested.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task WithdrawSubscriptionBackfillWindowRequestAsync(
+    SubscriptionBackfillCursor requestedFrom,
+    long window,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// #2092: applies a window's answer to its running backfill: the position moves to where the window stopped, the
   /// events count, and an answer with nothing more ends the backfill as complete. Applies only to the window awaiting
   /// its answer, so a late or duplicate answer changes nothing. Default: null.

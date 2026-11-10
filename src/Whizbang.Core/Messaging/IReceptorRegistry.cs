@@ -140,6 +140,18 @@ public interface IReceptorRegistry {
   /// <c>EnvelopeTypeNameHelper.ExtractInnerTypeName</c>. May be assembly-qualified or
   /// FullName-only; the implementation normalizes.</param>
   bool HasAnyRuntimeReceptors(string messageType) => false;
+
+  /// <summary>
+  /// The ids of the receptors compiled into this registry (each <see cref="ReceptorInfo.ReceptorId"/> once).
+  /// </summary>
+  /// <remarks>
+  /// The startup report of a receptor two assemblies both declare reads these (#2197, #2201). Default: none, for
+  /// registries with no compiled receptors; the source-generated registry lists its own.
+  /// </remarks>
+  /// <returns>The ids; empty when nothing is compiled in.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheGeneratedRegistry_ListsTheReceptorsCompiledIntoItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs:AnImplementationWithoutCompiledReceptors_ListsNoneAsync</tests>
+  IReadOnlyCollection<string> GetCompiledReceptorIds() => [];
 }
 
 /// <summary>

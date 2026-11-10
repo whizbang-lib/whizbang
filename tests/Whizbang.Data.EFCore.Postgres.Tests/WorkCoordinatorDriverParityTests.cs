@@ -106,6 +106,7 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.TryClaimIntegrityAuditCycleAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.VerifyDigestEpochsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.VerifyDigestTableAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.WithdrawSubscriptionBackfillWindowRequestAsync)] = INTEGRITY,
   };
 
   /// <summary>

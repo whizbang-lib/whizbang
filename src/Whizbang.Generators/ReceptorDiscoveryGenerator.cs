@@ -1662,8 +1662,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
     result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode);
-
-    return result;
+    // Each routed receptor once, by the id its entries carry, for the startup collision report (#2197)
+    var compiledReceptorIds = routingEntries
+        .Select(e => e.Receptor.ClassName)
+        .Distinct()
+        .OrderBy(id => id, System.StringComparer.Ordinal)
+        .Select(id => $"\"{id}\",");
+    return TemplateUtilities.ReplaceRegion(result, "COMPILED_RECEPTOR_IDS", string.Join("\n    ", compiledReceptorIds));
   }
 
   /// <summary>

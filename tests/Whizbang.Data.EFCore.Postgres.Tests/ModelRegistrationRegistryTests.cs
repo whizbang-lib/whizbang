@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -26,9 +27,8 @@ public class RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> optio
 public class ModelRegistrationRegistryTests {
   private IDisposable? _restore;
 
-  // Each test registers its own registrar, and the latest one wins. Without the reset and restore, the last fake
-  // registered here stayed the latest for the rest of the process, and every later turnkey host registered no
-  // coordinator, event store or flusher.
+  // Each test registers its own registrars. Without the reset and restore, the fakes registered here stayed in the
+  // process-wide registry, and every later turnkey host ran them instead of, or beside, the generated registration.
   [Before(Test)]
   public void ResetStaticState() => _restore = ModelRegistrationRegistry.ResetForTesting();
 
@@ -101,30 +101,100 @@ public class ModelRegistrationRegistryTests {
     await Assert.That(capturedStrategy).IsSameReferenceAs(upsertStrategy);
   }
 
+  private sealed record OrderModel;
+  private sealed record InvoiceModel;
+  private sealed class OtherDbContext;
+
+  private static Action<IServiceCollection, Type, IDbUpsertStrategy> _recording(List<string> ran, string name) =>
+    (_, _, _) => ran.Add(name);
+
+  private static RegistrationCollision[] _reported(IServiceCollection services) {
+    using var provider = services.BuildServiceProvider();
+    return [.. provider.GetServices<IRegistrationCollisionSource>().SelectMany(source => source.GetCollisions())];
+  }
+
   [Test]
-  public async Task RegisterModels_MultipleRegistrations_UsesLatestRegistrarAsync() {
-    // Arrange
-    var firstCalled = false;
-    var secondCalled = false;
+  public async Task InvokeRegistration_EveryAssemblysRegistrar_RunsAsync() {
+    var ran = new List<string>();
+    ModelRegistrationRegistry.RegisterModels("Orders", [(typeof(RegistryTestDbContext), typeof(OrderModel))], _recording(ran, "Orders"));
+    ModelRegistrationRegistry.RegisterModels("Billing", [(typeof(RegistryTestDbContext), typeof(InvoiceModel))], _recording(ran, "Billing"));
 
-    void firstRegistrar(IServiceCollection services, Type dbContextType, IDbUpsertStrategy strategy) {
-      firstCalled = true;
-    }
+    ModelRegistrationRegistry.InvokeRegistration(new ServiceCollection(), typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
 
-    void secondRegistrar(IServiceCollection services, Type dbContextType, IDbUpsertStrategy strategy) {
-      secondCalled = true;
-    }
+    await Assert.That(ran.SequenceEqual(["Orders", "Billing"])).IsTrue()
+      .Because("every assembly's models are registered, in the order the assemblies registered, so the latest "
+             + $"assembly's registration of a model is the one the container serves (#2201); ran: {string.Join(", ", ran)}");
+  }
 
-    // Act
-    ModelRegistrationRegistry.RegisterModels(firstRegistrar);
-    ModelRegistrationRegistry.RegisterModels(secondRegistrar);
+  [Test]
+  public async Task RegisterModels_TheSameAssemblyAgain_ReplacesOnlyItsOwnEntryAsync() {
+    var ran = new List<string>();
+    ModelRegistrationRegistry.RegisterModels("Orders", [], _recording(ran, "Orders v1"));
+    ModelRegistrationRegistry.RegisterModels("Billing", [], _recording(ran, "Billing"));
+    ModelRegistrationRegistry.RegisterModels("Orders", [], _recording(ran, "Orders v2"));
 
+    ModelRegistrationRegistry.InvokeRegistration(new ServiceCollection(), typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
+
+    await Assert.That(ran.SequenceEqual(["Orders v2", "Billing"])).IsTrue()
+      .Because("a re-registration (hot reload) replaces its own assembly's entry in place, never another assembly's; "
+             + $"ran: {string.Join(", ", ran)}");
+  }
+
+  [Test]
+  public async Task InvokeRegistration_TwiceOnOneCollection_RunsEachRegistrarOnceAsync() {
+    var ran = new List<string>();
+    ModelRegistrationRegistry.RegisterModels("Orders", [], _recording(ran, "Orders"));
+    ModelRegistrationRegistry.RegisterModels(_recording(ran, "Unnamed"));
     var services = new ServiceCollection();
-    var upsertStrategy = new InMemoryUpsertStrategy();
-    ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), upsertStrategy);
 
-    // Assert
-    await Assert.That(firstCalled).IsFalse();
-    await Assert.That(secondCalled).IsTrue();
+    ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
+    ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
+
+    await Assert.That(ran.SequenceEqual(["Orders", "Unnamed"])).IsTrue();
+  }
+
+  [Test]
+  public async Task InvokeRegistration_AModelTwoAssembliesRegister_IsReportedAsync() {
+    ModelRegistrationRegistry.RegisterModels(static (_, _, _) => { });
+    ModelRegistrationRegistry.RegisterModels("Orders", [
+      (typeof(RegistryTestDbContext), typeof(OrderModel)),
+      (typeof(OtherDbContext), typeof(InvoiceModel)),
+    ], static (_, _, _) => { });
+    ModelRegistrationRegistry.RegisterModels("Host", [
+      (typeof(RegistryTestDbContext), typeof(OrderModel)),
+      (typeof(RegistryTestDbContext), typeof(InvoiceModel)),
+    ], static (_, _, _) => { });
+    var services = new ServiceCollection();
+
+    ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
+    ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
+
+    var reported = _reported(services);
+    await Assert.That(reported.Length).IsEqualTo(1)
+      .Because("the one model both assemblies register for this DbContext is reported, once however often the "
+             + "driver registers; the model one assembly registers for another DbContext is not");
+    await Assert.That(reported[0]).IsEqualTo(new RegistrationCollision(
+      "Perspective model",
+      $"{typeof(OrderModel).FullName} in {typeof(RegistryTestDbContext).FullName}",
+      "Host", "Orders"));
+  }
+
+  [Test]
+  public async Task InvokeRegistration_NoModelTwoAssembliesShare_ReportsNothingAsync() {
+    ModelRegistrationRegistry.RegisterModels("Orders", [(typeof(RegistryTestDbContext), typeof(OrderModel))], static (_, _, _) => { });
+    ModelRegistrationRegistry.RegisterModels("Billing", [(typeof(RegistryTestDbContext), typeof(InvoiceModel))], static (_, _, _) => { });
+    var services = new ServiceCollection();
+
+    ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), new InMemoryUpsertStrategy());
+
+    await Assert.That(_reported(services)).IsEmpty();
+  }
+
+  [Test]
+  public async Task RegisterModels_NullArguments_ThrowAsync() {
+    await Assert.That(() => ModelRegistrationRegistry.RegisterModels(null!, [], static (_, _, _) => { }))
+      .Throws<ArgumentNullException>();
+    await Assert.That(() => ModelRegistrationRegistry.RegisterModels("Orders", null!, static (_, _, _) => { }))
+      .Throws<ArgumentNullException>();
   }
 }
