@@ -292,6 +292,20 @@ public class ServiceScopedRegistrationTests {
   }
 
   [Test]
+  public async Task TheCatalogSlot_IsEmptyUntilAnAssemblyRegisters_ThenServesTheOneUnionRegistrationAsync() {
+    using var process = _process();
+    var empty = ServiceRegistrationCallbacks.MessageTypeCatalog;
+
+    ServiceRegistrationCallbacks.RegisterMessageTypeCatalog("Orders", static _ => { });
+    var first = ServiceRegistrationCallbacks.MessageTypeCatalog;
+    var second = ServiceRegistrationCallbacks.MessageTypeCatalog;
+
+    await Assert.That(empty).IsNull().Because("no assembly registered a catalog, so there is nothing to register");
+    await Assert.That(first).IsNotNull();
+    await Assert.That(second).IsEqualTo(first).Because("every read serves the same union registration");
+  }
+
+  [Test]
   public async Task AKeyedAnchorDescriptor_IsNotAnAnchorAsync() {
     var services = new ServiceCollection();
     services.AddKeyedSingleton("elsewhere", new WhizbangServiceAnchor("Orders"));
