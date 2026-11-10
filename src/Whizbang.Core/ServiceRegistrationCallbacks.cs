@@ -181,7 +181,7 @@ public static class ServiceRegistrationCallbacks {
   /// Assigning null clears all registrations (the test-only <see cref="Reset"/> semantics).
   /// </summary>
   public static Action<IServiceCollection>? MessageTypeCatalog {
-    get => _messageTypeCatalog.Any ? _registerUnionCatalog : null;
+    get => _messageTypeCatalog.Any ? _unionCatalog : null;
     set => _messageTypeCatalog.Set(value);
   }
 
@@ -194,6 +194,9 @@ public static class ServiceRegistrationCallbacks {
   /// <summary>Test-only: restore a previously snapshotted registration set.</summary>
   internal static void RestoreMessageTypeCatalogRegistrations(IReadOnlyList<Action<IServiceCollection>> snapshot) =>
     _messageTypeCatalog.Restore([.. snapshot.Select(callback => ((string?)null, callback))]);
+
+  /// <summary>The one union catalog registration, held once so every read hands out the same delegate.</summary>
+  private static readonly Action<IServiceCollection> _unionCatalog = _registerUnionCatalog;
 
   /// <summary>
   /// Runs every accumulated per-assembly catalog registration against a probe collection, then
@@ -402,7 +405,7 @@ public static class ServiceRegistrationCallbacks {
     }
     if (_messageTypeCatalog.Any) {
       // One union catalog whatever the assemblies; it picks the host's own when first resolved.
-      steps.Add((_registerUnionCatalog, _registerUnionCatalog));
+      steps.Add((_unionCatalog, _unionCatalog));
       steps.Add((_registerCatalogResolvers, _registerCatalogResolvers));
     }
     return steps;
