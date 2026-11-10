@@ -67,6 +67,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
   private const string P_TYPES = "p_types";
+  private const string P_EVENT_TYPES = "p_event_types";
+  private const string P_SINCE = "p_since";
   private const string P_STREAMS = "p_streams";
   private const string P_FROM = "p_from";
   private const string P_TO = "p_to";
@@ -640,7 +642,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.TenantScope).ToArray()
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.EventType).ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -693,7 +695,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.EventType).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -872,7 +874,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           RETURNING resume_after_stream_id
           """;
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
-        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", windowSince));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
         return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is Guid cursor ? cursor : null;
       }, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
@@ -909,7 +911,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
             saved_at = EXCLUDED.saved_at
           """;
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
-        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", windowSince));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = resumeAfterStreamId });
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
         return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -1184,7 +1186,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
           Value = typeKeys.Select(k => k.TenantScope).ToArray()
         });
-        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
           Value = typeKeys.Select(k => k.EventType).ToArray()
         });
         var ages = new List<double>();
@@ -1653,7 +1655,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("p_after", batch.AfterCommitSequence);
     cmd.Parameters.AddWithValue("p_through", batch.ThroughCommitSequence);
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = batch.Targets.Select(t => t.EventType).ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_owner_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -2444,7 +2446,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = streamIds.ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = (object?)sinceSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -2594,7 +2596,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch_window")}(@p_origin, @p_types, @p_since, @p_until, NOW(), @p_settle)";
 #pragma warning restore S2077
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
@@ -2636,7 +2638,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // presence is how we know the window is not complete without a second count query.
       cmd.CommandText = WindowedStreamDigestSql(schema);
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = (object?)resumeAfterStreamId ?? DBNull.Value
