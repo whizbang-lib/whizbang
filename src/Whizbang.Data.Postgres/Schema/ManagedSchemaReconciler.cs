@@ -40,6 +40,7 @@ public sealed record ManagedSchemaReport(
 /// </remarks>
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedSchemaReconcilerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/RetentionUpdatedAtIndexReconcileTests.cs</tests>
 public static class ManagedSchemaReconciler {
   /// <summary>Reconciles the perspective tables of one schema.</summary>
   /// <param name="connection">An open connection, outside any transaction, that the caller owns.</param>

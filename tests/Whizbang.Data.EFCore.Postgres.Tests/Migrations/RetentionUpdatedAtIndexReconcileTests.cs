@@ -192,6 +192,24 @@ public class RetentionUpdatedAtIndexReconcileTests : EFCoreTestBase {
       .Because("it has the same definition, so it stands for the declared index rather than being retired");
   }
 
+  /// <summary>
+  /// A recorded stand-in that has since been dropped no longer stands for the index: the enrolled table gets it back.
+  /// </summary>
+  [Test]
+  public async Task WithRetention_AStandInDroppedByHand_IsReplacedAsync() {
+    var dapperName = $"ix_{TABLE}_updated_at";
+    await _execAsync($"CREATE INDEX {dapperName} ON {TABLE} (updated_at)");
+    await _enrollAsync();
+    await _reconcileAsync();
+    await Assert.That(await _existsAsync(INDEX)).IsFalse().Because("the stand-in serves the declared index");
+
+    await _execAsync($"DROP INDEX {dapperName}");
+    await _reconcileAsync();
+
+    await Assert.That(await _existsAsync(INDEX)).IsTrue();
+    await Assert.That(await _updatedAtIndexCountAsync()).IsEqualTo(1L);
+  }
+
   /// <summary>An enrolled registry row whose table is gone, or lacks the column, is passed over without failing the run.</summary>
   [Test]
   public async Task AnEnrolledRowWithNoUsableTable_IsPassedOverAsync() {

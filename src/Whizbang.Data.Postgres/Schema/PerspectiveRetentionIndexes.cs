@@ -103,9 +103,10 @@ public static partial class PerspectiveRetentionIndexes {
     var present = await _presentIndexesAsync(
       connection, schema, [.. declared.Select(d => d.Name), .. equivalents.Select(e => e.Existing)], cancellationToken)
       .ConfigureAwait(false);
+    // An index recorded as standing for the declared one counts only while it is still there.
+    var standIns = equivalents.Where(e => present.Contains(e.Existing)).Select(e => (e.Table, e.Declared)).ToHashSet();
     var quotedSchema = PgIdentifier.Quote(schema);
-    foreach (var index in declared.Where(d => !present.Contains(d.Name)
-        && !equivalents.Any(e => e.Table == d.Table && e.Declared == d.Name && present.Contains(e.Existing)))) {
+    foreach (var index in declared.Where(d => !present.Contains(d.Name) && !standIns.Contains((d.Table, d.Name)))) {
       await using var command = new NpgsqlCommand(
         $"SELECT {quotedSchema}.wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS {PgIdentifier.Quote(index.Name)} "
         + $"ON {quotedSchema}.{PgIdentifier.Quote(index.Table)} (updated_at)$wbix$)", connection);
