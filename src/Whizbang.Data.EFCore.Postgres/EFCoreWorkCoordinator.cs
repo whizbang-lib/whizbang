@@ -67,6 +67,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
   private const string P_TYPES = "p_types";
+  private const string P_EVENT_TYPES = "p_event_types";
+  private const string P_SINCE = "p_since";
   private const string P_STREAMS = "p_streams";
   private const string P_FROM = "p_from";
   private const string P_TO = "p_to";
@@ -640,7 +642,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.TenantScope).ToArray()
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.EventType).ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -693,7 +695,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.EventType).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -858,6 +860,72 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
       return new IntegrityGapTrackerState(origins, pending);
     }, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the drill-down then starts from the window's first stream, as it did before
+  /// the cursor existed.</remarks>
+  public async Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync<Guid?>(async (cmd, schema) => {
+        // #2211: read and forgotten in one statement, so a cursor is used by one drill-down only.
+        cmd.CommandText = $"""
+          DELETE FROM {schema}.wh_integrity_drill_cursors
+          WHERE origin_service_id = @p_origin AND window_since = @p_since
+          RETURNING resume_after_stream_id
+          """;
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
+        return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is Guid cursor ? cursor : null;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the drill-down starts from the first stream.
+      _log.LogWarning(ex,
+        "Integrity drill cursor for origin {OriginServiceId}, window from {WindowSince}, could not be read; the drill-down starts from the window's first stream.",
+        originServiceId, windowSince);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>A failure is logged and keeps nothing: the next drill-down starts from the window's first stream.</remarks>
+  public async Task IntegritySaveDrillCursorAsync(
+      Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    try {
+      _ = await _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+        // #2211: one cursor per window, the later replacing the earlier; the origin's cursors of windows below its seal
+        // are never read again (the audit starts at the seal), so they go in the same statement.
+        cmd.CommandText = $"""
+          WITH dead AS (
+            DELETE FROM {schema}.wh_integrity_drill_cursors c
+            USING {schema}.wh_integrity_seals s
+            WHERE c.origin_service_id = @p_origin AND s.origin_service_id = @p_origin AND c.window_since < s.sealed_through
+              AND c.window_since <> @p_since
+          )
+          INSERT INTO {schema}.wh_integrity_drill_cursors (origin_service_id, window_since, resume_after_stream_id, saved_at)
+          VALUES (@p_origin, @p_since, @p_resume, @p_now)
+          ON CONFLICT (origin_service_id, window_since) DO UPDATE SET
+            resume_after_stream_id = EXCLUDED.resume_after_stream_id,
+            saved_at = EXCLUDED.saved_at
+          """;
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = resumeAfterStreamId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+        return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next drill-down starts from the first stream.
+      _log.LogWarning(ex,
+        "Integrity drill cursor for origin {OriginServiceId}, window from {WindowSince}, could not be kept; the next drill-down starts from the window's first stream.",
+        originServiceId, windowSince);
+#pragma warning restore CA1848
+    }
+  }
 
   /// <inheritdoc />
   public Task IntegrityRecordOriginCheckpointAsync(
@@ -1100,6 +1168,41 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
       _log.LogWarning(ex,
         "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the ledger then forgets the type lanes alone, through the batch heal.</remarks>
+  public async Task<IReadOnlyList<double>?> IntegrityMarkTypesHealedWithAgesAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(typeKeys);
+    try {
+      return await _withCoordinatorCommandAsync<IReadOnlyList<double>?>(async (cmd, schema) => {
+        cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_mark_types_healed")}(@p_origin_service_id,@p_tenant_scopes,@p_event_types)";
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN_SERVICE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+          Value = typeKeys.Select(k => k.TenantScope).ToArray()
+        });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+          Value = typeKeys.Select(k => k.EventType).ToArray()
+        });
+        var ages = new List<double>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          ages.Add(reader.GetDouble(0));
+        }
+        return ages;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the ledger falls back to the type lanes.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_mark_types_healed failed for origin {OriginServiceId}; only the proven types' type lanes are forgotten this time.",
+        originServiceId);
 #pragma warning restore CA1848
       return null;
     }
@@ -1552,7 +1655,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("p_after", batch.AfterCommitSequence);
     cmd.Parameters.AddWithValue("p_through", batch.ThroughCommitSequence);
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = batch.Targets.Select(t => t.EventType).ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_owner_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -2343,7 +2446,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = streamIds.ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = (object?)sinceSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -2493,7 +2596,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch_window")}(@p_origin, @p_types, @p_since, @p_until, NOW(), @p_settle)";
 #pragma warning restore S2077
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
@@ -2535,7 +2638,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // presence is how we know the window is not complete without a second count query.
       cmd.CommandText = WindowedStreamDigestSql(schema);
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = (object?)resumeAfterStreamId ?? DBNull.Value
