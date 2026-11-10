@@ -527,7 +527,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
       .Because("acquisition resumes once the working set has drained to where a turned-away row fits");
     await Assert.That(resumed.AllowSteal).IsFalse()
       .Because("claims that did not look for inbox work prove nothing about this instance's own residue, so they do not "
-             + "count towards the licence to steal");
+             + "count toward the license to steal");
   }
 
   [Test]

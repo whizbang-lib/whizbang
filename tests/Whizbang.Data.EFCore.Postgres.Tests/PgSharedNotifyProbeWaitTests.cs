@@ -79,7 +79,9 @@ public class PgSharedNotifyProbeWaitTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task Probe_WithTheRealWait_SeesItsOwnNotificationAsync(CancellationToken cancellationToken) {
-    using var gate = _gate(TimeProvider.System);
+    // The window never moves on a fake clock, so the whole wait is bounded only by Npgsql's timeout and ended by the
+    // probe's notification: the test proves the real wait sees it, not anything about elapsed time.
+    using var gate = _gate(new FakeTimeProvider());
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(cancellationToken);
 

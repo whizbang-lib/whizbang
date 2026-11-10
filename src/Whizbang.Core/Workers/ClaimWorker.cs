@@ -1094,7 +1094,7 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
       Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
     } else if (acquiredInbox) {
       // #1853: a claim that leased no inbox rows did not look in this instance's residue, so coming back empty proves
-      // nothing about it and does not count towards the licence to steal.
+      // nothing about it and does not count toward the license to steal.
       Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
     }
     if (allowSteal && foundInbox) {

@@ -173,7 +173,9 @@ public sealed class QueuedWritesLandedSignalTests {
   public async Task TheWait_IsEndedByItsTokenAsync() {
     var flusher = new ScriptedFlusher(_at(1, pending: 1));
     using var cts = new CancellationTokenSource();
-    flusher.NextWait(Task.Delay(Timeout.Infinite, cts.Token));
+    var neverIdle = new TaskCompletionSource();
+    cts.Token.Register(() => neverIdle.TrySetCanceled(cts.Token));
+    flusher.NextWait(neverIdle.Task);
     var signal = new QueuedWritesLandedSignal([flusher]);
 
     var wait = signal.WaitForAllLandedAsync(cts.Token);
