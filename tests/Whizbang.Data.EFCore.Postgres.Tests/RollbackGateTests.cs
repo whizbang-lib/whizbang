@@ -437,4 +437,24 @@ public class RollbackGateTests : EFCoreTestBase {
       .Because("the older version's own pass registers its associations again");
     await Assert.That(library).IsEqualTo("not recorded").Because("every migration before #2122 is irreversible");
   }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OnALedgerOlderThanTheReversalRecord_EveryChangeSinceIsIrreversibleAsync(CancellationToken ct) {
+    // Before 386 the ledger cannot say how a change is reversed, so a change applied since this version stands it down
+    // exactly as before #2122.
+    var library = await _ledgerLibraryAsync(ct);
+    await _execAsync("ALTER TABLE wh_schema_migrations DROP COLUMN reversal, DROP COLUMN down_sql", ct);
+    var newer = await _versionAsync(library, "2.0.0", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner)
+      VALUES ('wh_per_before_the_record', 'h', @v, 1, 'perspective')
+      """, ct, ("v", newer));
+
+    var assessment = await _assessor(library, "1.9.0").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains($"1 {SINCE}: wh_per_before_the_record");
+    await Assert.That(assessment.Rollback).IsNull();
+  }
 }

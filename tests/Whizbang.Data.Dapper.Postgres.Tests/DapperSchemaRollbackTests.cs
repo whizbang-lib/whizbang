@@ -113,4 +113,33 @@ public class DapperSchemaRollbackTests {
     await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = 'perspective:RunnerNewer'"))
       .IsEqualTo(0L);
   }
+
+  private DapperSchemaInitializationRunner _runner(IServiceProvider services) => new(
+    _database.ConnectionString, new PostgresOptions(),
+    () => new PostgresSchemaInitializer(_database.ConnectionString, _entries),
+    NullLogger<DapperSchemaInitializationRunner>.Instance, services);
+
+  private async Task<long> _ledgerRowsAsync() {
+    await using var db = _open();
+    return await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = 'perspective:RollbackProbe'");
+  }
+
+  [Test]
+  public async Task TheRunner_WithNoVerdict_MigratesWithoutARollbackAsync() {
+    await _runner(new ServiceCollection().BuildServiceProvider()).RunAsync(CancellationToken.None);
+
+    await Assert.That(await _ledgerRowsAsync()).IsEqualTo(1L).Because("an unassessed start migrates as it always has");
+  }
+
+  [Test]
+  public async Task TheRunner_WithAVerdictThatOwesNoRollback_MigratesWithoutOneAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton(new StartupAssessmentSource(
+      new FixedAssessor(new StartupAssessment(StartupVerdict.Migrate, "fresh database")),
+      NullStartupStageReporter.Instance, new FakeTimeProvider(), NullLogger<StartupAssessmentSource>.Instance));
+
+    await _runner(services.BuildServiceProvider()).RunAsync(CancellationToken.None);
+
+    await Assert.That(await _ledgerRowsAsync()).IsEqualTo(1L);
+  }
 }

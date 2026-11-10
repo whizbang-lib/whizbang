@@ -94,4 +94,16 @@ public class MigrationReversalTests {
     await Assert.That(MigrationReversal.FromLedgerText(null)).IsEqualTo(SchemaChangeReversal.Irreversible);
     await Assert.That(MigrationReversal.FromLedgerText("irreversible")).IsEqualTo(SchemaChangeReversal.Irreversible);
   }
+
+  [Test]
+  public async Task TheLibraryProvider_ReadsAMigrationsReverseScript_ByItsNameWithoutTheExtension_RenderedForItsSchemaAsync() {
+    // The Dapper driver names a migration without ".sql" and renders it with the raw schema name, as its forward text.
+    var provider = new PostgresMigrationProvider(_probes, "svc");
+
+    var reversal = provider.ReversalOf(new Whizbang.Core.Data.MigrationScript("999_ReversalProbe", "-- Reversal: lossy\nSELECT 1;"));
+
+    await Assert.That(reversal!.Kind).IsEqualTo(SchemaChangeReversal.Lossy);
+    await Assert.That(reversal.DownSql).Contains("DROP TABLE IF EXISTS svc.wh_reversal_probe;");
+    await Assert.That(reversal.DownSql).DoesNotContain("__SCHEMA__");
+  }
 }
