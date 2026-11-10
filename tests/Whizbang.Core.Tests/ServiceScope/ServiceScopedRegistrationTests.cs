@@ -261,6 +261,15 @@ public class ServiceScopedRegistrationTests {
   }
 
   [Test]
+  public async Task AKeyedAnchorDescriptor_IsNotAnAnchorAsync() {
+    var services = new ServiceCollection();
+    services.AddKeyedSingleton("elsewhere", new WhizbangServiceAnchor("Orders"));
+
+    await Assert.That(WhizbangServiceScopeExtensions.AnchorsIn(services)).IsEmpty()
+      .Because("anchors are registered unkeyed; a keyed descriptor of the type is someone else's");
+  }
+
+  [Test]
   public async Task AnchorArguments_AreValidatedAsync() {
     await Assert.That(() => ((IServiceCollection)null!).AddWhizbangServiceAnchor("Orders")).Throws<ArgumentNullException>();
     await Assert.That(() => new ServiceCollection().AddWhizbangServiceAnchor(" ")).Throws<ArgumentException>();

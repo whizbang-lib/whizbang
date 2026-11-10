@@ -127,12 +127,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
     context.RegisterSourceOutput(combined, static (ctx, all) => {
-      var data = all.Left;
-      var receptorEntries = data.Left.Left.Left.Left;
-      var perspectiveEntries = data.Left.Left.Left.Right;
-      var taggedEntries = data.Left.Left.Right;
-      var compositeEntries = data.Left.Right;
-      var collectiveEntries = data.Right;
+      var ((((receptorEntries, perspectiveEntries), taggedEntries), compositeEntries), collectiveEntries) = all.Left;
       _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, all.Right);
     });
   }

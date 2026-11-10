@@ -154,7 +154,7 @@ public class ServiceAssemblyScopeTests {
   public async Task ReferencesAreFollowedTransitively_SoAnAssemblyTwoStepsBelowTheAnchorStaysAsync() {
     var facts = _facts(
       _library("Deep"),
-      _library("Middle", "Deep"),
+      _library("Middle", "Deep", "Recorded.Nowhere"),
       _root("Orders", "Middle"),
       _root("Billing", "Deep"));
 

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using TUnit.Assertions;
@@ -39,6 +41,19 @@ public class ServiceAssemblyScopeStartupReporterTests {
     await Assert.That(record.Message).Contains("[Orders]");
     await Assert.That(record.Message).Contains("included [Orders, Shared.Contracts]");
     await Assert.That(record.Message).Contains("excluded as another service's [Billing]");
+  }
+
+  [Test]
+  public async Task AddWhizbang_RegistersTheScopeAndItsReport_OnceAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddServiceAssemblyScope();
+    services.AddServiceAssemblyScope();
+    await using var provider = services.BuildServiceProvider();
+
+    var hosted = provider.GetServices<IHostedService>().ToArray();
+
+    await Assert.That(hosted.OfType<ServiceAssemblyScopeStartupReporter>().Count()).IsEqualTo(1);
   }
 
   [Test]

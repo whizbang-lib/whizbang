@@ -228,7 +228,6 @@ public static class WhizbangReceptorRegistryQuery {
     public ConsumedMessageInfo? FindConsumed(string messageType) =>
       ConsumedByName.TryGetValue(EventTypeMatchingHelper.NormalizeTypeName(messageType), out var consumed) ? consumed : null;
   }
-
 }
 
 /// <summary>

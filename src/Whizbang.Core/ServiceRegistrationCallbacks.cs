@@ -330,7 +330,7 @@ public static class ServiceRegistrationCallbacks {
 
   private static ServiceRegistrationReplay? _replayOf(IServiceCollection services) =>
     services
-      .Where(d => d.ServiceType == typeof(ServiceRegistrationReplay) && !d.IsKeyedService)
+      .Where(d => d.ServiceType == typeof(ServiceRegistrationReplay))
       .Select(d => d.ImplementationInstance)
       .OfType<ServiceRegistrationReplay>()
       .FirstOrDefault();

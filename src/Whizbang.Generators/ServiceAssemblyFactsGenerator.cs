@@ -53,18 +53,17 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
   }
 
   private static Facts _facts(Compilation compilation) {
+    // The marker and the registry ship together in Whizbang.Core; without the marker no reference matches.
     var marker = compilation.GetTypeByMetadataName(MARKER_ATTRIBUTE);
-    var references = marker is null
-      ? []
-      : compilation.SourceModule.ReferencedAssemblySymbols
-        .Where(assembly => assembly.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, marker)))
-        .Select(assembly => assembly.Identity.Name)
-        .Distinct()
-        .OrderBy(name => name, System.StringComparer.Ordinal)
-        .ToArray();
+    var references = compilation.SourceModule.ReferencedAssemblySymbols
+      .Where(assembly => assembly.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, marker)))
+      .Select(assembly => assembly.Identity.Name)
+      .Distinct()
+      .OrderBy(name => name, System.StringComparer.Ordinal)
+      .ToArray();
     var isExecutable = compilation.Options.OutputKind is OutputKind.ConsoleApplication or OutputKind.WindowsApplication;
     var hasRegistry = compilation.GetTypeByMetadataName(REGISTRY) is not null;
-    return new Facts(compilation.AssemblyName, isExecutable, hasRegistry && marker is not null, new EquatableArray<string>([.. references]));
+    return new Facts(compilation.AssemblyName, isExecutable, hasRegistry, new EquatableArray<string>([.. references]));
   }
 
   private static void _emit(SourceProductionContext context, Facts facts, bool declaresDbContext) {

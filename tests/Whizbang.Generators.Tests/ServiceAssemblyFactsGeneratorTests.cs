@@ -44,8 +44,10 @@ public class ServiceAssemblyFactsGeneratorTests {
   }
 
   [Test]
-  public async Task AnExecutable_IsAServiceRootAsync() {
-    var result = _run(_compilation(PLAIN_SOURCE + "\npublic static class Program { public static void Main() { } }", "Orders.Api", OutputKind.ConsoleApplication));
+  [Arguments(OutputKind.ConsoleApplication)]
+  [Arguments(OutputKind.WindowsApplication)]
+  public async Task AnExecutable_IsAServiceRootAsync(OutputKind kind) {
+    var result = _run(_compilation(PLAIN_SOURCE + "\npublic static class Program { public static void Main() { } }", "Orders.Api", kind));
 
     await Assert.That(GeneratorTestHelper.GetRequiredGeneratedSource(result, FACTS_FILE))
       .Contains("Register(\"Orders.Api\", true,");
