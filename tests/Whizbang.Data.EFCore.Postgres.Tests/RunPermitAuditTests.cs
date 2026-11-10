@@ -76,7 +76,7 @@ public sealed class RunPermitAuditTests {
     "LifecyclePhaseWorker", "ReadModelsReadyDriver", "TypeDefinitionReconcilerHostedService",
     // Measurement and in-process state.
     "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker",
-    "RecentlyProcessedEventCacheSweepWorker", "HealthCheckPublisherHostedService",
+    "RecentlyProcessedEventCacheSweepWorker", "InProcessTrackerSweepWorker", "HealthCheckPublisherHostedService",
     // Wakes, registrations and checks: each wakes or configures a worker above, which obeys the permit itself.
     "BackupTickCoordinator", "PgWorkNotificationListener", "MultiStreamCommandSubscriber", "PartitionAssignmentSubscriber",
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",

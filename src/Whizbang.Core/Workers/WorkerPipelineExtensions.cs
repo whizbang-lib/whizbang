@@ -650,6 +650,11 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
+    // The safety net for in-process tracker entries whose one removal path was not taken (#2228). In-process
+    // state only, so it starts with the host; a tracker the host does not register is skipped.
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
+    services.TryAddSingleton<Whizbang.Core.Perspectives.Sync.ISyncEventTracker, Whizbang.Core.Perspectives.Sync.SyncEventTracker>();
+    services.AddHostedService<InProcessTrackerSweepWorker>();
     services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
 
     // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
