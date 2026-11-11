@@ -149,7 +149,7 @@ internal sealed class PinnedTypeLedger {
           depth--;
           break;
         case ',' when depth == 0:
-          return formerName.Substring(i + 1).Trim();
+          return formerName[(i + 1)..].Trim();
       }
     }
     return null;
