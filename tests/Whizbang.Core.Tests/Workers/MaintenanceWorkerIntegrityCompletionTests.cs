@@ -158,8 +158,8 @@ public class MaintenanceWorkerIntegrityCompletionTests {
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    var write = coordinator.TallyWrites.Single();
-    await Assert.That(write.At - write.KeepSince).IsEqualTo(TimeSpan.FromHours(2))
+    var (at, _, _, keepSince) = coordinator.TallyWrites.Single();
+    await Assert.That(at - keepSince).IsEqualTo(TimeSpan.FromHours(2))
       .Because("a host that registers no clock still tallies, on the system clock, keeping twice the window");
   }
 
