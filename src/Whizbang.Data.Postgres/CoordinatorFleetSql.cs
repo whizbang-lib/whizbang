@@ -113,9 +113,20 @@ internal static class CoordinatorFleetSql {
   /// row is finished whatever lease it still carries (the store pass completes a refused event where it stands), and
   /// the unprocessed predicate is also what lets the count use a partial index: without it the count read the whole
   /// table, every processed row it retains included, on every call.
+  /// <para>
+  /// The last figure (#2253) asks whether any of the inbox, lease and outbox rows is work besides the framework's
+  /// steady-state integrity traffic (<see cref="SteadyIntegrityTraffic"/>), bounded at one row, so it stops at the first
+  /// application row and on an idle service reads only the few integrity rows. The housekeeping dwell reads it; the
+  /// other figures still count integrity rows, which the integrity receptors need to tell a row in flight from one
+  /// missing. Every write path's form of the name (the stored form, or the dispatcher's versioned one) is compared
+  /// through <c>normalize_event_type</c>.
+  /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CountServiceBacklogSqlTests.cs:IntegrityTraffic_IsBacklog_ButNotWorkBesidesIntegrityAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CountServiceBacklogSqlTests.cs:ApplicationWork_IsWorkBesidesIntegrity_InEachTableAsync</tests>
   internal static async Task<ServiceBacklog?> CountServiceBacklogAsync(DbCommand cmd, string prefix, CancellationToken cancellationToken) {
-    var inbox = prefix + "wh_inbox_state";
+    // The work state and the message row it joins to for the type (#2253): one line, a join across the split.
+    var (inbox, inboxMessages) = (prefix + "wh_inbox_state", prefix + "wh_inbox");
     var outbox = prefix + "wh_outbox";
     var perspectiveEvents = prefix + "wh_perspective_events";
     const int idleBandStart = WorkPriority.BACKGROUND_BAND_END;
@@ -149,7 +160,20 @@ internal static class CoordinatorFleetSql {
            SELECT 1 FROM {perspectiveEvents} WHERE processed_at IS NULL
              AND (scheduled_for IS NULL OR scheduled_for <= now())
              AND priority > {idleBandStart}
-           LIMIT 1000) e)";
+           LIMIT 1000) e),
+        (SELECT count(*) FROM (
+           SELECT 1 FROM {inbox} s JOIN {inboxMessages} m ON m.message_id = s.message_id
+           WHERE s.processed_at IS NULL
+             AND (((s.scheduled_for IS NULL OR s.scheduled_for <= now()) AND s.priority <= {idleBandStart})
+               OR (s.instance_id IS NOT NULL AND s.lease_expiry > now()))
+             AND NOT ({prefix}normalize_event_type(m.message_type) = ANY(@p_integrity_types))
+           UNION ALL
+           SELECT 1 FROM {outbox} WHERE processed_at IS NULL
+             AND (scheduled_for IS NULL OR scheduled_for <= now())
+             AND priority <= {idleBandStart}
+             AND NOT ({prefix}normalize_event_type(message_type) = ANY(@p_integrity_types))
+           LIMIT 1) f)";
+    cmd.Parameters.Add(new NpgsqlParameter<string[]>("p_integrity_types", [.. SteadyIntegrityTraffic.StoredNames]));
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     return !await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? null : new ServiceBacklog {
       UnprocessedInboxRows = reader.GetInt64(0),
@@ -159,6 +183,7 @@ internal static class CoordinatorFleetSql {
       PendingOutboxRows = reader.GetInt64(3),
       PendingPerspectiveRows = reader.GetInt64(4),
       PendingIdleRows = reader.GetInt64(5),
+      NonIntegrityWorkRows = reader.GetInt64(6),
     };
   }
 

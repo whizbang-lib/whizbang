@@ -102,8 +102,8 @@
       },
       "Aspire.Hosting": {
         "type": "Transitive",
-        "resolved": "13.6.4",
-        "contentHash": "B9H7ttsmjUB+6dbkPTZ6yck25+RRj7gAGWRlqPbeWnn1FtoENET3QFgx8NZ8McFzTzSyPcmgy7OmsaYepEJ3GQ==",
+        "resolved": "13.6.5",
+        "contentHash": "bhK3KRbXiKLLzwK+ikz4o5ZMahWQYZbV1d2jUh7pzilFlVIQ66bxJnVKsqb3Y1MPcjPOk9QTIf+F8gS6zjngNA==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
           "Google.Protobuf": "3.36.1",
@@ -120,17 +120,17 @@
           "Polly.Core": "8.7.0",
           "Semver": "3.0.0",
           "StreamJsonRpc": "2.25.29",
-          "System.IO.Hashing": "10.0.12",
+          "System.IO.Hashing": "10.0.14",
           "YamlDotNet": "18.1.0"
         }
       },
       "Aspire.Hosting.Azure": {
         "type": "Transitive",
-        "resolved": "13.6.4",
-        "contentHash": "qP5EHfN00zdTZfv51/IlB6fCuj4Auddnq0vNY0thtMNoxzzm14yquv7EH8tp+B209l4trt3jJtTRsy4QORBpsA==",
+        "resolved": "13.6.5",
+        "contentHash": "a4niviGvN+wnJtZT16FTj7Agrj24Iok1PeRe3GCEU08XwnTtpuhtr9WpbBWAgHC3/R0UHByTE5dZGbvSmboPGw==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
-          "Aspire.Hosting": "13.6.4",
+          "Aspire.Hosting": "13.6.5",
           "Azure.Core": "1.62.0",
           "Azure.Identity": "1.21.0",
           "Azure.Provisioning": "1.6.0",
@@ -153,7 +153,7 @@
           "Polly.Core": "8.7.0",
           "Semver": "3.0.0",
           "StreamJsonRpc": "2.25.29",
-          "System.IO.Hashing": "10.0.12",
+          "System.IO.Hashing": "10.0.14",
           "YamlDotNet": "18.1.0"
         }
       },
@@ -1175,8 +1175,8 @@
       },
       "System.IO.Hashing": {
         "type": "Transitive",
-        "resolved": "10.0.12",
-        "contentHash": "jDix4bBMYnpZdSPcnY+KDV6ik3SRMzpMKby/bZl/XUwIiflwRNAFZ0oOl61R/pSaveIJ8t1gs2BUlrGsPs/bcg=="
+        "resolved": "10.0.14",
+        "contentHash": "lVqovhCt3HlZe7ONG5ydaj6BYwYI004gldVfMMkJl/lR5ueeCtWNpW4nejOX75sPmzm8vXCxB69GqwHaYCnyUQ=="
       },
       "System.Memory.Data": {
         "type": "Transitive",
@@ -1255,7 +1255,7 @@
       "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus": {
         "type": "Project",
         "dependencies": {
-          "Aspire.Hosting.Azure.ServiceBus": "[13.6.4, )",
+          "Aspire.Hosting.Azure.ServiceBus": "[13.6.5, )",
           "Azure.Messaging.ServiceBus": "[7.21.0, )",
           "MessagePack": "[2.5.307, )",
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
@@ -1265,7 +1265,7 @@
       "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ": {
         "type": "Project",
         "dependencies": {
-          "Aspire.Hosting.RabbitMQ": "[13.6.4, )",
+          "Aspire.Hosting.RabbitMQ": "[13.6.5, )",
           "MessagePack": "[2.5.307, )",
           "RabbitMQ.Client": "[7.2.2, )",
           "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ": "[0.100.0-local.111, )"
@@ -1287,12 +1287,12 @@
       },
       "Aspire.Hosting.Azure.ServiceBus": {
         "type": "CentralTransitive",
-        "requested": "[13.6.4, )",
-        "resolved": "13.6.4",
-        "contentHash": "3FfOQHqrIi2bJiD65Diw7ZwbnoyUiv4Ak5xwZyLW3BGrh9dNjWowCdcHcgrAgyFAplxUhI1dcj8sF0oXbtLa5A==",
+        "requested": "[13.6.5, )",
+        "resolved": "13.6.5",
+        "contentHash": "jdv+LXaRLCgboFY9mxcaE6RCd4arXs9SDP9UbwLih1QqaPgF9Nse5Bi7zV33CC5tbcshRUPPInIUsYMd/5egPQ==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
-          "Aspire.Hosting.Azure": "13.6.4",
+          "Aspire.Hosting.Azure": "13.6.5",
           "Azure.Core": "1.62.0",
           "Azure.Identity": "1.21.0",
           "Azure.Provisioning": "1.6.0",
@@ -1316,19 +1316,19 @@
           "Polly.Core": "8.7.0",
           "Semver": "3.0.0",
           "StreamJsonRpc": "2.25.29",
-          "System.IO.Hashing": "10.0.12",
+          "System.IO.Hashing": "10.0.14",
           "YamlDotNet": "18.1.0"
         }
       },
       "Aspire.Hosting.RabbitMQ": {
         "type": "CentralTransitive",
-        "requested": "[13.6.4, )",
-        "resolved": "13.6.4",
-        "contentHash": "dgsv/YGmOdS1cr1TiduzFHLkSkYswWKVNAPuBbCI5aBP39HUjTtwoUJWm4qDbqq7l4IgMb9AYSZDyLfz7jbD3A==",
+        "requested": "[13.6.5, )",
+        "resolved": "13.6.5",
+        "contentHash": "HWpwD8DKyJyZp+XOB6ZmyhQoQivqiJR7eIE9QSD21E6lTM6NXAEJ7DqfHqbpKGllwQkxjVMiLq46irZFu/4lvw==",
         "dependencies": {
           "AspNetCore.HealthChecks.Rabbitmq": "9.0.0",
           "AspNetCore.HealthChecks.Uris": "9.0.0",
-          "Aspire.Hosting": "13.6.4",
+          "Aspire.Hosting": "13.6.5",
           "Google.Protobuf": "3.36.1",
           "Grpc.AspNetCore": "2.83.0",
           "Grpc.Net.ClientFactory": "2.83.0",
@@ -1344,7 +1344,7 @@
           "RabbitMQ.Client": "7.2.2",
           "Semver": "3.0.0",
           "StreamJsonRpc": "2.25.29",
-          "System.IO.Hashing": "10.0.12",
+          "System.IO.Hashing": "10.0.14",
           "YamlDotNet": "18.1.0"
         }
       },

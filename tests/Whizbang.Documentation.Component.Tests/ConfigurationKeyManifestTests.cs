@@ -180,6 +180,9 @@ public class ConfigurationKeyManifestTests {
     // configuration with none records only the section.
     "Whizbang:Schema:Reconcile:Drop:*",
     "Whizbang:Schema:Reconcile:Pins:*",
+    // The release lists of the ephemeral blocker report (#2250): a list per ephemeral type, read as children of their
+    // section, so a configuration with none records nothing.
+    "Whizbang:Ephemeral:ReleaseBlockers:*:*",
     // The application version's host overrides, read when the version is first resolved (the heartbeat, the
     // stand-down beat and the migration ledger), which the harness never reaches; ApplicationVersionTests reads both.
     "Whizbang:Application:DeployNumber",

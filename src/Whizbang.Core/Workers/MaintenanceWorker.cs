@@ -172,7 +172,7 @@ public sealed partial class MaintenanceWorker(
       LogMaintenanceDeferred(
         _logger, decision.Reason,
         logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
-        logged.PendingOutboxRows, logged.PendingPerspectiveRows);
+        logged.PendingOutboxRows, logged.PendingPerspectiveRows, logged.PendingIdleRows, logged.NonIntegrityWorkRows ?? -1);
       return;
     }
 
@@ -182,7 +182,7 @@ public sealed partial class MaintenanceWorker(
       var logged = _orUnmeasured(backlog);
       LogMaintenanceForcedAfterDeferrals(
         _logger, logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
-        logged.PendingOutboxRows, logged.PendingPerspectiveRows);
+        logged.PendingOutboxRows, logged.PendingPerspectiveRows, logged.PendingIdleRows, logged.NonIntegrityWorkRows ?? -1);
     }
 
     try {
@@ -207,6 +207,8 @@ public sealed partial class MaintenanceWorker(
     ActiveLeasedRows = -1,
     PendingOutboxRows = -1,
     PendingPerspectiveRows = -1,
+    PendingIdleRows = -1,
+    NonIntegrityWorkRows = -1,
   };
 
   // The backlog a log line reports. One place, because only a deferral can see an unmeasured backlog (a
@@ -1248,12 +1250,13 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRetentionSettingsSyncFailed(ILogger logger, string keys, Exception ex);
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Information,
-    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s) and {PendingPerspectiveRows} pending perspective event(s). The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
-  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
+    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s) and {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}. The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A generated log method: each count is its own structured field, which operators filter and chart on. A parameter object would log as one opaque value.")]
+  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
-    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s)). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
-  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
+    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s), {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}). Cleanup has no deadline but it does have a limit: space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
+  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
     Message = "Service-settledness probe failed; maintenance proceeds UNGATED for this cycle rather than deferring, so a failing probe cannot disable cleanup.")]

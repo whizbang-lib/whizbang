@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Whizbang.Generators.Ledger;
 
@@ -129,6 +130,31 @@ internal sealed class PinnedTypeLedger {
     }
   }
 
+  /// <summary>
+  /// The assembly a former name records (<c>Ns.Type, Assembly</c>, #2264), or null for a bare name. The assembly follows
+  /// the first comma outside a generic argument list, so a bare generic name (<c>Ns.G`1[[A, B]]</c>) records none.
+  /// </summary>
+  /// <param name="formerName">A former name, bare or with its assembly.</param>
+  /// <returns>The recorded assembly, or null.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:AnEntryThatMovedHere_RecordsEveryNameItWasStoredUnder_WithTheAssemblyItWasStoredInAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:ABareGenericFormerName_RecordsNoAssemblyAsync</tests>
+  public static string? AssemblyOf(string formerName) {
+    var depth = 0;
+    for (var i = 0; i < formerName.Length; i++) {
+      switch (formerName[i]) {
+        case '[':
+          depth++;
+          break;
+        case ']':
+          depth--;
+          break;
+        case ',' when depth == 0:
+          return formerName[(i + 1)..].Trim();
+      }
+    }
+    return null;
+  }
+
   /// <summary>Finds an entry by pinned id (ordinal, case-insensitive on the guid text). Null if absent.</summary>
   public PinnedTypeLedgerEntry? FindByPinnedId(string pinnedId) {
     foreach (var e in Types) {
@@ -161,13 +187,17 @@ internal sealed class PinnedTypeLedger {
   }
 
   /// <summary>
-  /// Merges the committed ledger with the currently-compiled pinned types — a monotonic lockfile update.
-  /// EXISTING entries (matched by pinned id) are preserved verbatim: their <c>clrTypeName</c> is NOT refreshed to the
-  /// current name, so a rename still surfaces as WHIZ120 until acknowledged, and recorded <c>formerNames</c> are kept.
-  /// NEW pinned ids are added with the current name and empty <c>formerNames</c>. Orphan entries (no current type) are
-  /// retained (WHIZ121 surfaces them for the developer to prune). The result is deterministic.
+  /// Merges the committed ledger with the currently-compiled pinned types, compiled in <paramref name="assemblyName"/>
+  /// (null when the compilation has none): a monotonic lockfile update.
+  /// EXISTING entries (matched by pinned id) keep their <c>clrTypeName</c>, which is NOT refreshed to the current name, so
+  /// a rename still surfaces as WHIZ120 until acknowledged, and recorded <c>formerNames</c> are kept. An existing entry is
+  /// placed in this assembly (<see cref="PinnedTypeLedgerEntry.PlacedIn"/>), which records the names it was stored under
+  /// in another assembly when it moved here (#2264).
+  /// NEW pinned ids are added with the current name, this assembly and empty <c>formerNames</c>. Orphan entries (no
+  /// current type) are retained (WHIZ121 surfaces them for the developer to prune). The result is deterministic.
   /// </summary>
-  public static PinnedTypeLedger Merge(PinnedTypeLedger? existing, IEnumerable<DiscoveredPinnedType> current) {
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs</tests>
+  public static PinnedTypeLedger Merge(PinnedTypeLedger? existing, IEnumerable<DiscoveredPinnedType> current, string? assemblyName) {
     var merged = new PinnedTypeLedger { Version = existing?.Version ?? 1 };
     var byPinnedId = new Dictionary<string, PinnedTypeLedgerEntry>(System.StringComparer.OrdinalIgnoreCase);
 
@@ -178,13 +208,16 @@ internal sealed class PinnedTypeLedger {
     }
 
     foreach (var type in current) {
-      if (byPinnedId.ContainsKey(type.PinnedId)) {
-        continue; // existing entry wins — never overwrite a committed name/history
+      if (byPinnedId.TryGetValue(type.PinnedId, out var committed)) {
+        // The existing entry wins (never overwrite a committed name or history); it is only placed in this assembly.
+        byPinnedId[type.PinnedId] = committed.PlacedIn(assemblyName);
+        continue;
       }
       byPinnedId[type.PinnedId] = new PinnedTypeLedgerEntry {
         PinnedId = type.PinnedId,
         ClrTypeName = type.ClrTypeName,
         Kind = type.Kind,
+        Assembly = assemblyName,
         FormerNames = [],
       };
     }
@@ -199,7 +232,55 @@ internal sealed class PinnedTypeLedgerEntry {
   public string PinnedId { get; set; } = "";
   public string ClrTypeName { get; set; } = "";
   public string? Kind { get; set; }
+
+  /// <summary>
+  /// The assembly the type is compiled in, written by the merge; null on an entry written before assemblies were
+  /// recorded, which is taken to be in the assembly that builds it.
+  /// </summary>
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+  public string? Assembly { get; set; }
+
+  /// <summary>
+  /// The names the type was formerly known by. A bare name (<c>Ns.Type</c>) was the type's name in the assembly it is
+  /// compiled in now; a name with an assembly (<c>Ns.Type, Assembly</c>) was its name in that assembly (#2264).
+  /// </summary>
   public List<string> FormerNames { get; set; } = [];
+
+  /// <summary>
+  /// This entry as compiled in <paramref name="assemblyName"/>. An entry with no recorded assembly is taken to be there
+  /// already. An entry recorded in another assembly moved here with its type: the names it was stored under there (its
+  /// recorded name and each bare former name) become former names with that assembly, and a former name that already
+  /// names an assembly keeps it. With no assembly name there is nothing to compare, so the entry is left as it is.
+  /// </summary>
+  /// <param name="assemblyName">The assembly the type is compiled in now, or null when the compilation has none.</param>
+  /// <returns>The entry, placed in <paramref name="assemblyName"/>.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:AnEntryThatMovedHere_RecordsEveryNameItWasStoredUnder_WithTheAssemblyItWasStoredInAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:AnEntryThatMovedHere_UnderANameItAlreadyRecordedWithTheOldAssembly_RecordsItOnceAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:ARenameWithinTheAssembly_KeepsItsFormerNamesBareAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:AnEntryWrittenBeforeAssembliesWereRecorded_IsTakenToBeInThisAssembly_AndKeepsItsFormerNamesBareAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerAssemblyMoveTests.cs:AnUnnamedAssembly_RecordsNoAssembly_AndLeavesAnExistingEntryAsItWasAsync</tests>
+  public PinnedTypeLedgerEntry PlacedIn(string? assemblyName) {
+    if (assemblyName is null || string.Equals(Assembly, assemblyName, System.StringComparison.Ordinal)) {
+      return this;
+    }
+    var formerNames = FormerNames;
+    if (!string.IsNullOrWhiteSpace(Assembly)) {
+      formerNames = [];
+      foreach (var name in FormerNames.Append(ClrTypeName)) {
+        var stored = PinnedTypeLedger.AssemblyOf(name) is null ? $"{name}, {Assembly}" : name;
+        if (!formerNames.Contains(stored)) {
+          formerNames.Add(stored);
+        }
+      }
+    }
+    return new PinnedTypeLedgerEntry {
+      PinnedId = PinnedId,
+      ClrTypeName = ClrTypeName,
+      Kind = Kind,
+      Assembly = assemblyName,
+      FormerNames = formerNames,
+    };
+  }
 
   /// <summary>True when <paramref name="name"/> is the current name or any recorded former name (ordinal).</summary>
   public bool KnowsName(string name) {

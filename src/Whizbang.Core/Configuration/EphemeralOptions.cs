@@ -32,4 +32,27 @@ public sealed class EphemeralOptions {
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public EphemeralPointerPruneOptions PointerPrune { get; set; } = new();
+
+  /// <summary>
+  /// The report of what keeps each ephemeral type's stored history from being reclassified, under
+  /// <c>Whizbang:Ephemeral:BlockerReport</c>. On by default: it is recorded by the history walk
+  /// (<see cref="ReconcileHistoricalOnStartup"/>) from the streams it already reads, and changes no event.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#what-holds-ephemeral-history-back</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/EphemeralBlockerOptionsTests.cs:Defaults_TheReportIsOn_AndNothingIsReleasedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/EphemeralBlockerOptionsTests.cs:BlockerReport_AndReleaseBlockers_BindFromConfigurationAsync</tests>
+  public EphemeralBlockerReportOptions BlockerReport { get; set; } = new();
+
+  /// <summary>
+  /// Durable event types released for an ephemeral type, under <c>Whizbang:Ephemeral:ReleaseBlockers:&lt;EphemeralType&gt;</c>:
+  /// the key is the ephemeral type's name, with or without its assembly, and the value the list of blocking types, each
+  /// as the report prints it (<c>Namespace.Type, Assembly</c>) or without its assembly. A released type no longer keeps
+  /// the ephemeral type's history Sourced, and its Sourced events in the streams that hold the ephemeral type are
+  /// reclassified with it, and only there: never in any other stream. Default empty: no durable event changes without a
+  /// setting. Changing a type's list walks its history again.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#what-holds-ephemeral-history-back</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/EphemeralBlockerOptionsTests.cs:Defaults_TheReportIsOn_AndNothingIsReleasedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Release_StampsTheBlockingEvents_OnlyInStreamsHoldingTheEphemeralType_AndTheDigestsEqualARecountAsync</tests>
+  public Dictionary<string, List<string>> ReleaseBlockers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

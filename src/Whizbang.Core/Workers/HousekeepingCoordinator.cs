@@ -321,14 +321,21 @@ public sealed class HousekeepingCoordinator {
     if (backlog is null) {
       return;
     }
-    _serviceReadsSettled = backlog.IsSettled;
+    // Apart from the framework's steady-state integrity traffic (#2263), as the dwell below is (#2253): with stream
+    // integrity on, a checkpoint or its redelivery chatter is a row for a moment every half minute, and counted as work it
+    // kept a service with nothing else to do from ever draining its idle band.
+    _serviceReadsSettled = backlog.IsSettledApartFromIntegrity;
     _serviceSettledReadAt = _timeProvider.GetUtcNow();
     // Quiescent, not merely settled (167). Settled is the signal that ADMITS the idle drain, so a
     // sweep gated on it would start at the moment the drain does and compete with it for the same
     // backends -- the very pile-up the gate exists to prevent. Maintenance is the one caller that
     // can afford to queue behind the idle band, because the deferral ceiling (MaxDeferral) already
     // bounds how long it will wait before forcing a pass through anyway.
-    if (!backlog.IsQuiescent) {
+    // Apart from the framework's steady-state integrity traffic (#2253): every peer's checkpoint, and the redelivery
+    // chatter it sets off, is a background-band row for a moment whether or not the service has any work, and counted
+    // as work it reset this dwell every half minute, so the sweep only ever ran as the forced pass. Integrity already
+    // outranks maintenance through the slots below, so it need not also hold it back through the reading.
+    if (!backlog.IsQuiescentApartFromIntegrity) {
       _settledSince = null;
       return;
     }
@@ -356,10 +363,15 @@ public sealed class HousekeepingCoordinator {
   /// taken before the load that is running now.
   /// </param>
   /// <remarks>
-  /// Deliberately the looser <see cref="ServiceBacklog.IsSettled"/> and not
-  /// <see cref="ServiceBacklog.IsQuiescent"/>: the band is admitted BECAUSE it still holds rows,
-  /// so a signal that required them to be gone could never admit it.
+  /// Deliberately the looser settled reading and not the quiescent one: the band is admitted BECAUSE it still holds
+  /// rows, so a signal that required them to be gone could never admit it. Read as
+  /// <see cref="ServiceBacklog.IsSettledApartFromIntegrity"/>, so the framework's steady-state integrity traffic does not
+  /// hold the band back (#2263); without that figure every row counts, as <see cref="ServiceBacklog.IsSettled"/>.
   /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:IntegrityOnlyTraffic_AdmitsTheIdleDrainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:ApplicationWork_StillHoldsTheIdleDrainBackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:WithoutTheFigure_TheIdleDrainStillReadsEveryRowAsWorkAsync</tests>
   public bool ServiceReadsSettled(TimeSpan maxAge) {
     lock (_gate) {
       return _serviceReadsSettled
@@ -480,8 +492,9 @@ public sealed class HousekeepingCoordinator {
     Verdict reason;
     // IsQuiescent is what IsSettled meant before 167 -- every count at zero, the idle band
     // included. Sweeps keep that meaning exactly; only the idle drain itself runs on the looser
-    // signal, or it could never be admitted.
-    if (!backlog.IsQuiescent) {
+    // signal, or it could never be admitted. The framework's steady-state integrity traffic is not
+    // counted (#2253; see _trackSettled).
+    if (!backlog.IsQuiescentApartFromIntegrity) {
       reason = Verdict.ServiceBusy;
     } else if (!_cooldownElapsed()) {
       reason = Verdict.ServiceCoolingDown;
