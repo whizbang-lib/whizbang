@@ -578,6 +578,14 @@ public sealed partial class IntegrityManifestReceptor(
       divergent.Add((origin, mine, isDeficit, reason));
     }
 
+    // #2259: a re-check also heals a divergent bucket whose fold matches once the events stored inside the settle window
+    // are counted. A repair answer stores the missing events now, so the settled fold leaves out exactly what the answer
+    // brought, and the healed bucket read as short until the window passed.
+    if (message.Recheck && divergent.Count > 0) {
+      divergent = await _healWhatTheAnswerStoredAsync(coordinator, message, divergent, healedKeys, cancellationToken)
+        .ConfigureAwait(false);
+    }
+
     // #2115: the rows this comparison removed, which a re-check's answer counts (a ledger that cannot say what it removed
     // counts nothing, never a guess).
     var rowsCleared = 0;
@@ -761,6 +769,47 @@ public sealed partial class IntegrityManifestReceptor(
     // MaxDigestsPerManifest streams — the rest was never compared, never repaired, and the seal
     // never certified the window (the type-level seal rule requires a null cursor).
     await _followResumeCursorAsync(services, options, message, types, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #2259: folds a re-check's divergent buckets again counting the events stored inside the settle window, and moves
+  /// each one that now matches its origin's digest to <paramref name="healedKeys"/>. The settle window exists for events
+  /// still in flight from the origin; it judges by the local arrival time, so it also leaves out the events a repair
+  /// answer just stored, which is exactly what a re-check of an answered bucket has to see. Only a fold EQUAL to the
+  /// origin's closes a row: an event in flight the origin has not yet settled makes the fold differ and the bucket stays
+  /// as the settled fold read it. An engine that cannot fold the chunk leaves every bucket as it was.
+  /// </summary>
+  /// <returns>The divergences still to record, in manifest order.</returns>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_HealsABucketWhoseAnsweredEventIsInsideTheSettleWindowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenEvenWhatTheAnswerStoredDoesNotMatchAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenTheUnsettledFoldHasNoRowForTheBucketAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_OnAnEngineThatCannotFoldTheChunk_KeepsTheRowAsync</tests>
+  private static async Task<List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>> _healWhatTheAnswerStoredAsync(
+      IWorkCoordinator coordinator, IntegrityManifest message,
+      List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)> divergent,
+      List<IntegrityRepairLedger.DivergenceKey> healedKeys, CancellationToken cancellationToken) {
+    var streams = divergent.Select(d => d.Origin.StreamId).Distinct().ToList();
+    // The same range the settled fold covered: the manifest's window, or the whole history.
+    var windowed = message.ComputedThrough is not null;
+    var unsettled = await coordinator.ComputeStreamDigestsForChunkAsync(
+      message.OriginServiceId, streams, windowed ? message.SinceSequence ?? 0 : null, message.ComputedThrough, TimeSpan.Zero,
+      cancellationToken).ConfigureAwait(false);
+    if (unsettled is null) {
+      return divergent;
+    }
+    var byBucket = unsettled.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
+    var still = new List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>(divergent.Count);
+    foreach (var entry in divergent) {
+      var origin = entry.Origin;
+      byBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var held);
+      if (IntegrityDigestMath.PlaceHeld(origin, held, null).Verdict == HeldWindowVerdict.Matches) {
+        healedKeys.Add(new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId));
+      } else {
+        still.Add(entry);
+      }
+    }
+    return still;
   }
 
   /// <summary>

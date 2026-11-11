@@ -3751,6 +3751,19 @@ public partial class IntegrityManifestReceptorTests {
   }
 
   [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_OverAWindowFromTheStart_FoldsWhatTheAnswerStoredFromTheStartAsync() {
+    var (coordinator, _, ledger, receptor, _) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.UnsettledReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])) with { Recheck = true, SinceSequence = null });
+
+    await Assert.That(ledger.Count).IsEqualTo(0);
+    await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(0L).Because("a window with no floor is folded from the start");
+  }
+
+  [Test]
   public async Task ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenEvenWhatTheAnswerStoredDoesNotMatchAsync() {
     var (coordinator, _, ledger, receptor, cleared) = _recheckFixture();
     var stream = TrackedGuid.New().Value;
