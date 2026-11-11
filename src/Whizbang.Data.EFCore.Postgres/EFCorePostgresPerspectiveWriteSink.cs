@@ -26,11 +26,38 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
   private readonly DbContext _context = context ?? throw new ArgumentNullException(nameof(context));
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
-  /// <summary>Not yet written.</summary>
-  private NotImplementedException _notYet() => new($"{_context.GetType().Name} at {_timeProvider.GetUtcNow():O}");
-
   /// <inheritdoc/>
-  public Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
-      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
-    throw _notYet();
+  public async Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(writes);
+    if (writes.Count == 0) {
+      return [];
+    }
+    if (!PerspectiveRowVersionSql.Supports(_context)) {
+      throw new InvalidOperationException(
+        $"{nameof(EFCorePostgresPerspectiveWriteSink)} writes through Npgsql, and {_context.GetType().Name} is configured with another provider.");
+    }
+    var connection = (NpgsqlConnection)_context.Database.GetDbConnection();
+
+    var openedHere = connection.State != System.Data.ConnectionState.Open;
+    if (openedHere) {
+      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+    // The result is returned after the try: a return inside a try whose finally awaits leaves a
+    // compiler-emitted sequence point no test can reach.
+    IReadOnlyList<PerspectiveWriteOutcome> outcomes;
+    try {
+      outcomes = await PostgresPerspectiveWriter.WriteAsync(
+        connection,
+        _context.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction,
+        writes,
+        _timeProvider.GetUtcNow().UtcDateTime,
+        cancellationToken).ConfigureAwait(false);
+    } finally {
+      if (openedHere) {
+        await connection.CloseAsync().ConfigureAwait(false);
+      }
+    }
+    return outcomes;
+  }
 }

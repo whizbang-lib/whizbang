@@ -113,6 +113,14 @@ public static class PostgresDriverExtensions {
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
+        // TURNKEY: Register IPerspectiveWriteSink, the write seam of set-based perspective writes (#2246): a batch's
+        // prepared rows are written with one statement per table and shape over the consumer's DbContext. TryAdd,
+        // so a service's own sink still wins.
+        selector.Services.TryAddScoped<IPerspectiveWriteSink>(sp =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+
         // TURNKEY: Register IPerspectiveRowDigest so a rebuild of named streams can record what those rows
         // looked like before and after it ran. Without this the rebuild still happens and still reports its
         // outcome; the Completed event simply carries no digests, which reads as "not known" rather than as

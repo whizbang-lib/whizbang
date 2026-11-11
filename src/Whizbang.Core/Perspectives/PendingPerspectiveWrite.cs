@@ -114,7 +114,14 @@ public sealed class PendingPerspectiveWrite {
   /// <returns>The pending write.</returns>
   public static PendingPerspectiveWrite Write(
       string table, Guid streamId, PerspectiveRowVersion expectedVersion, PerspectiveRowValues row) {
-    return new PendingPerspectiveWrite(table, streamId, PerspectiveWriteOperation.Upsert, expectedVersion, row);
+    ArgumentException.ThrowIfNullOrWhiteSpace(table);
+    ArgumentNullException.ThrowIfNull(row);
+    var operation = expectedVersion.State switch {
+      PerspectiveRowVersionState.Absent => PerspectiveWriteOperation.Insert,
+      PerspectiveRowVersionState.Present => PerspectiveWriteOperation.Update,
+      _ => PerspectiveWriteOperation.Upsert,
+    };
+    return new PendingPerspectiveWrite(table, streamId, operation, expectedVersion, row);
   }
 
   /// <summary>A delete of the row, whatever its version.</summary>
@@ -122,6 +129,7 @@ public sealed class PendingPerspectiveWrite {
   /// <param name="streamId">The stream, which is the row's id.</param>
   /// <returns>The pending purge.</returns>
   public static PendingPerspectiveWrite Purge(string table, Guid streamId) {
-    throw new NotImplementedException();
+    ArgumentException.ThrowIfNullOrWhiteSpace(table);
+    return new PendingPerspectiveWrite(table, streamId, PerspectiveWriteOperation.Purge, PerspectiveRowVersion.Unchecked, null);
   }
 }

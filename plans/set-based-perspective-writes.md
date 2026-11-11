@@ -85,6 +85,13 @@ are the starting inventory.
 1. Docs-site page (proposal): perspective write modes, with the reasons above.
 2. Write sink in `Whizbang.Data.Postgres`: grouped statements and the per-row outcome, tested on Postgres
    (insert, update with guard, xmin conflict, purge, physical fields, a failing row is isolated).
+   **Done** (local commits on this branch): `IPerspectiveWriteSink`, `PendingPerspectiveWrite` and
+   `PerspectiveWriteOutcome` in Core; `PerspectiveWriteSql` and `PostgresPerspectiveWriter` in `Whizbang.Data.Postgres`
+   (multi-row `VALUES` per table and shape, `RETURNING id`, one version read to tell refused from conflict, savepoint
+   bisection inside a transaction); `EFCorePostgresPerspectiveWriteSink`, registered with `TryAddScoped` by the
+   Postgres driver. The per-stream atomic upsert and the sink share one preparation step
+   (`BaseUpsertStrategy.PreparePendingWrite`), so both write the same bytes. Open for step 4/5: the public entry the
+   runner prepares through, and which DbContext the sink writes when a service has more than one.
 3. State source: batched load and known-new detection.
 4. Runner template: prepare and complete, generated for every perspective, with generator tests.
 5. Worker: the set-based batch path behind the mode, with locks taken as a set.
