@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Observability;
@@ -227,6 +228,15 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
   public PassiveCounter<long> RedeliveredChildrenReattributed { get; }
 
+  /// <summary>
+  /// #2273: repaired events (children of a redelivery bundle) by how their receptors were decided: tag <c>delivery</c>
+  /// is <c>state_only</c> or <c>receptors</c> (the event runs the receptors declared to run on repair), tag
+  /// <c>reason</c> says why (<see cref="Messaging.RepairReceptorReason"/> in snake case). Counted when the bundle is
+  /// expanded, so a child the inbox then drops as a duplicate is counted too.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  public PassiveCounter<long> RepairedEvents { get; }
+
   /// <summary>#2116: stored events recorded under an origin that does not own their type, re-attributed to the owner by
   /// the misattributed-origin correction. Each batch is also logged at Warning, per type, origin and owner.</summary>
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
@@ -370,6 +380,9 @@ public sealed class StreamIntegrityMetrics {
     RedeliveryRequestsIgnored = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_ignored",
       description: "Redelivery requests an origin declined to answer; tagged by reason (own_request)");
+    RepairedEvents = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.repaired_events",
+      description: "Repaired events by how their receptors were decided; tagged by delivery (state_only | receptors) + reason");
     RedeliveredChildrenReattributed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivered_children_reattributed",
       description: "Redelivery bundle children stored under their type's true owner because the bundle's origin does not own the type");
@@ -473,7 +486,29 @@ public sealed class StreamIntegrityMetrics {
     RepairsDeferred.Touch("reason", _deferralReasons);
     BackfillsEnded.Touch("outcome", _backfillOutcomes);
     RedeliveryAnswersCapped.Touch("kind", _cappedKinds);
+    foreach (var reason in Enum.GetValues<Whizbang.Core.Messaging.RepairReceptorReason>()) {
+      RepairedEvents.Touch(_repairedTags(reason));
+    }
   }
+
+  /// <summary>Counts <paramref name="count"/> repaired events decided for <paramref name="reason"/> (#2273).</summary>
+  /// <param name="reason">Why they were delivered as they were.</param>
+  /// <param name="count">How many.</param>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityMetricsRepairedEventsTests.cs</tests>
+  public void RecordRepairedEvents(Whizbang.Core.Messaging.RepairReceptorReason reason, long count) =>
+    RepairedEvents.Add(count, _repairedTags(reason));
+
+  // One delivery per reason: only a child the ledger proves never handled runs receptors.
+  private static TagList _repairedTags(Whizbang.Core.Messaging.RepairReceptorReason reason) => new() {
+    { "delivery", reason == Whizbang.Core.Messaging.RepairReceptorReason.NeverHandled ? "receptors" : "state_only" },
+    { "reason", _repairReasonNames[(int)reason] },
+  };
+
+  private static readonly string[] _repairReasonNames = [
+    "requested_state_only", "no_lookback", "no_origin_time", "outside_lookback", "before_ledger_coverage",
+    "ledger_unavailable", "already_handled", "never_handled",
+  ];
 
   private static readonly string[] _backfillOutcomes = ["complete", "unanswered"];
   private static readonly string[] _cappedKinds = ["window", "ordinary"];

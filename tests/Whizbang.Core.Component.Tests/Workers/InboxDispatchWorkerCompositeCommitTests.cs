@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -124,6 +125,18 @@ public class InboxDispatchWorkerCompositeCommitTests {
     public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
       ClaimsFailWith is { } failure ? Task.FromException<IReadOnlyList<IntegrityDomainClaim>>(failure) : Task.FromResult(Claims);
 
+    /// <summary>#2273: the handled ledger this store answers with; null keeps the interface default (no ledger).</summary>
+    public HandledLedgerAnswer? Ledger { get; set; }
+    public Exception? LedgerFailWith { get; set; }
+    public ConcurrentQueue<IReadOnlyList<Guid>> LedgerAsked { get; } = new();
+    public Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) {
+      LedgerAsked.Enqueue(eventIds);
+      if (LedgerFailWith is { } failure) {
+        return Task.FromException<HandledLedgerAnswer>(failure);
+      }
+      return Task.FromResult(Ledger ?? HandledLedgerAnswer.NoLedger);
+    }
+
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -198,7 +211,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
   private static Harness _harness(ICompositeEvent composite, IMessageDiscardPolicy? discardPolicy = null, Exception? commitFailure = null, bool withCoordinator = true,
       StreamIntegrityOptions? integrityOptions = null, Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker>? logger = null,
-      RoutingOptions? routing = null, bool integrityMetrics = true) {
+      RoutingOptions? routing = null, bool integrityMetrics = true, TimeProvider? timeProvider = null) {
     var coordinator = new RecordingCoordinator { FailWith = commitFailure };
     var factory = new TestMeterFactory();
     var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
@@ -234,6 +247,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      timeProvider: timeProvider,
       compositeMetrics: metrics);
     return new Harness(worker, inbox, commitChannel, failures, coordinator, metrics, factory);
   }
@@ -407,6 +421,109 @@ public class InboxDispatchWorkerCompositeCommitTests {
       InnerStreamIds = [.. eventIds.Select(_ => stream)],
       InnerCommitSequences = [.. eventIds.Select((_, i) => (long?)(i + 1))],
     };
+  }
+
+  // #2273: a fixed "now" and ids minted at fixed instants before it, so no decision reads the wall clock.
+  private static readonly DateTimeOffset _repairNow = new(2026, 11, 11, 12, 0, 0, TimeSpan.Zero);
+  private static Guid _eventFrom(TimeSpan ago) => Guid.CreateVersion7(_repairNow - ago);
+
+  private static long _repaired(TestMeterFactory factory, string reason) =>
+    ProbeMeterReader.ReadSeries(factory.CreatedMeters.Single(m => m.Name == StreamIntegrityMetrics.METER_NAME),
+        "whizbang.stream_integrity.repaired_events")
+      .Where(series => Equals(series.Tags.GetValueOrDefault("reason"), reason))
+      .Sum(series => series.Value);
+
+  /// <summary>
+  /// #2273 end to end through the dispatch worker: one bundle carrying an event older than the lookback, one the ledger
+  /// shows handled, and one the ledger covers and does not hold. Only the last is marked to run its opted-in receptors;
+  /// the other two are stored state only, and each decision is counted by reason.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  [Test]
+  public async Task Redelivery_ChildrenRunReceptorsOnlyWhenTheLedgerProvesTheyWereNeverHandledAsync() {
+    var old = _eventFrom(TimeSpan.FromDays(30));
+    var handled = _eventFrom(TimeSpan.FromDays(1));
+    var neverHandled = _eventFrom(TimeSpan.FromHours(2));
+    using var h = _harness(_redelivery((Guid)TrackedGuid.New(), old, handled, neverHandled), integrityOptions: _autoRepair,
+      timeProvider: new FakeTimeProvider(_repairNow));
+    h.Coordinator.Ledger = new HandledLedgerAnswer(_repairNow - TimeSpan.FromDays(60), new HashSet<Guid> { handled });
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var children = commit.NewInboxMessages!.ToDictionary(c => c.MessageId);
+    await Assert.That(children[old].Envelope.StateOnly).IsTrue();
+    await Assert.That(children[handled].Envelope.StateOnly).IsTrue();
+    await Assert.That(children[neverHandled].Envelope.Repaired).IsTrue();
+    await Assert.That(children[neverHandled].Envelope.StateOnly).IsFalse();
+    await Assert.That(h.Coordinator.LedgerAsked.Single()).IsEquivalentTo([handled, neverHandled])
+      .Because("the ledger is asked once, for the events the lookback admits");
+    await Assert.That(_repaired(h.MeterFactory, "outside_lookback")).IsEqualTo(1L);
+    await Assert.That(_repaired(h.MeterFactory, "already_handled")).IsEqualTo(1L);
+    await Assert.That(_repaired(h.MeterFactory, "never_handled")).IsEqualTo(1L);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WhenTheLedgerCannotBeRead_EveryChildIsStateOnlyAsync() {
+    var recent = _eventFrom(TimeSpan.FromHours(2));
+    using var h = _harness(_redelivery((Guid)TrackedGuid.New(), recent), integrityOptions: _autoRepair,
+      timeProvider: new FakeTimeProvider(_repairNow));
+    h.Coordinator.LedgerFailWith = new InvalidOperationException("ledger offline");
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var child = commit.NewInboxMessages!.Single();
+    await Assert.That(child.Envelope.StateOnly).IsTrue()
+      .Because("without the ledger nothing is proven never handled, and the bundle still lands");
+    await Assert.That(child.Envelope.Repaired).IsFalse();
+    await Assert.That(_repaired(h.MeterFactory, "ledger_unavailable")).IsEqualTo(1L);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WithoutACoordinatorOrTheMeter_IsStillStateOnlyAsync() {
+    using var h = _harness(_redelivery((Guid)TrackedGuid.New(), _eventFrom(TimeSpan.FromHours(2))), withCoordinator: false, integrityOptions: _autoRepair,
+      integrityMetrics: false, timeProvider: new FakeTimeProvider(_repairNow));
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var request = await h.CommitChannel.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(request.NewInboxMessages!.Single().Envelope.StateOnly).IsTrue()
+      .Because("no coordinator means no ledger, so the child cannot be proven never handled");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task OrdinaryComposite_ChildrenAreNotGatedAsync() {
+    using var h = _harness(new Composite(new RowAdded("a")), timeProvider: new FakeTimeProvider(_repairNow));
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var child = commit.NewInboxMessages!.Single();
+    await Assert.That(child.Envelope.StateOnly).IsFalse()
+      .Because("a composite of new events is not a repair: its children run every receptor as before");
+    await Assert.That(child.Envelope.Repaired).IsFalse();
+    await Assert.That(h.Coordinator.LedgerAsked).IsEmpty();
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
   }
 
   [Test]

@@ -69,6 +69,11 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
         $"Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers must not be negative (was {options.MaxOutstandingRepairAnswers}); " +
         "it caps the repair answers awaited at once, and 0 turns the cap off (#2184).");
     }
+    if (options.RepairReceptorLookback < TimeSpan.Zero) {
+      failures.Add(
+        $"Whizbang:StreamIntegrity:RepairReceptorLookback must not be negative (was {options.RepairReceptorLookback}); " +
+        "it is how far back a repaired event can be proven never handled, and zero turns receptors on repair off (#2273).");
+    }
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 
