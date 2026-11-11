@@ -31,8 +31,11 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     Whizbang.Core.SystemEvents.IAuditDecisionHook? auditDecisionHook,
     Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
     Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
-    Whizbang.Core.SystemEvents.AuditTypeResolver? auditEventTypes = null
+    Whizbang.Core.SystemEvents.AuditTypeResolver? auditEventTypes = null,
+    Func<bool>? holdsOpenTransaction = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
+  internal Func<bool>? HoldsOpenTransaction => holdsOpenTransaction;
+
   private readonly IWorkCoordinatorStrategy _inner = ArgumentGuard.NotNull(inner);
   private readonly IOutboxBatchStrategy _outboxBatch = ArgumentGuard.NotNull(outboxBatch);
   private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
