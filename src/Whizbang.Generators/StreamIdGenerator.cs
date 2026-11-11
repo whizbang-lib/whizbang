@@ -26,6 +26,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_PROPERTY_NAME = "__PROPERTY_NAME__";
   private const string PLACEHOLDER_COMMAND_TYPE = "__COMMAND_TYPE__";
   private const string TYPE_STRING = "string";
+  private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
+  private const string PLACEHOLDER_STRONG_ID_TYPE = "__STRONG_ID_TYPE__";
 
   /// <summary>
   /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
@@ -156,7 +158,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// WHIZ006 analyzer agree (#1512, #1833). [GenerateStreamId] is read from the parameter when the stream id came from
   /// one, else from the property, and from the class in either case.
   /// </summary>
-  private static (IPropertySymbol Property, bool HasGenerate, bool OnlyIfEmpty)? _resolveStreamId(INamedTypeSymbol typeSymbol) {
+  private static (StreamIdSelection.Choice Choice, bool HasGenerate, bool OnlyIfEmpty)? _resolveStreamId(INamedTypeSymbol typeSymbol) {
     var choice = StreamIdSelection.Select(typeSymbol);
     if (choice is null) {
       return null;
@@ -164,8 +166,18 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var (hasGenerate, onlyIfEmpty) = choice.Parameter is null
         ? _extractGenerateStreamIdInfo(choice.Property, typeSymbol)
         : _resolveGenerateStreamIdForParameter(choice.Parameter, typeSymbol);
-    return (choice.Property, hasGenerate, onlyIfEmpty);
+    return (choice, hasGenerate, onlyIfEmpty);
   }
+
+  /// <summary>
+  /// The strong-id facts of a chosen stream id (#2072): its type, whether the setter can build it, and the accept
+  /// clauses for the source types its <c>InheritFrom</c> lists. All empty for a stream id that is not a strong id.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs</tests>
+  private static (string? Type, bool Settable, string Clauses) _strongIdFacts(StreamIdSelection.Choice choice) =>
+    StrongIdStreamIds.Resolve(choice.Property, choice.Parameter) is { } id
+      ? (id.TypeName, id.HasGuidFactory, StrongIdStreamIds.AcceptClauses(StrongIdStreamIds.InheritFrom(choice.Attribute), id.TypeName))
+      : (null, false, "");
 
   /// <summary>
   /// Builds the extractor info for an event or composite from its chosen [StreamId].
@@ -174,19 +186,25 @@ public class StreamIdGenerator : IIncrementalGenerator {
     if (_isOpenGeneric(typeSymbol) || _resolveStreamId(typeSymbol) is not { } resolved) {
       return null;
     }
-    var (property, hasGenerate, onlyIfEmpty) = resolved;
+    var (choice, hasGenerate, onlyIfEmpty) = resolved;
+    var property = choice.Property;
+    var (strongIdType, strongIdSettable, inheritFromClauses) = _strongIdFacts(choice);
     return new StreamIdInfo(
         EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
         PropertyName: property.Name,
         PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-        IsPropertyValueType: property.Type.IsValueType,
+        IsPropertyValueType: property.Type.IsValueType || strongIdType is not null,
         HasGenerate: hasGenerate,
         OnlyIfEmpty: onlyIfEmpty,
         IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
         PropertyLocation: LocationUtilities.FirstOrNone(property),
         InheritanceDepth: _inheritanceDepth(typeSymbol),
         DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
-    );
+    ) {
+      StrongIdType = strongIdType,
+      StrongIdSettable = strongIdSettable,
+      InheritFromClauses = inheritFromClauses,
+    };
   }
 
   /// <summary>
@@ -274,19 +292,25 @@ public class StreamIdGenerator : IIncrementalGenerator {
     if (_isOpenGeneric(typeSymbol) || _resolveStreamId(typeSymbol) is not { } resolved) {
       return null;
     }
-    var (property, hasGenerate, onlyIfEmpty) = resolved;
+    var (choice, hasGenerate, onlyIfEmpty) = resolved;
+    var property = choice.Property;
+    var (strongIdType, strongIdSettable, inheritFromClauses) = _strongIdFacts(choice);
     return new CommandStreamIdInfo(
         CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
         PropertyName: property.Name,
         PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-        IsPropertyValueType: property.Type.IsValueType,
+        IsPropertyValueType: property.Type.IsValueType || strongIdType is not null,
         HasGenerate: hasGenerate,
         OnlyIfEmpty: onlyIfEmpty,
         IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
         PropertyLocation: LocationUtilities.FirstOrNone(property),
         InheritanceDepth: _inheritanceDepth(typeSymbol),
         DeclinesInheritedGenerate: _declinesInheritedGenerate(typeSymbol, property, hasGenerate)
-    );
+    ) {
+      StrongIdType = strongIdType,
+      StrongIdSettable = strongIdSettable,
+      InheritFromClauses = inheritFromClauses,
+    };
   }
 
   /// <summary>
@@ -380,6 +404,9 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // Generate SetStreamId dispatch cases
     template = _generateSetStreamIdRegion(template, events, commands);
 
+    // Generate GetStreamIdType dispatch cases (#2072)
+    template = _generateStreamIdTypeRegion(template, events, commands, composites);
+
     // Generate [ModuleInitializer] registration code
     template = _generateModuleInitializerRegion(template, events, commands, composites);
 
@@ -449,7 +476,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
 
     foreach (var info in eventsWithStreamId) {
-      if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
+      if (info.HasGenerate && info.IsPropertyInitOnly && _isWritableStreamIdType(info.PropertyType, info.StrongIdSettable)) {
         var simpleName = info.EventType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.GenerateStreamIdOnInitOnly, info.PropertyLocation, simpleName, info.PropertyName));
@@ -457,7 +484,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     foreach (var info in commandsWithStreamId) {
-      if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
+      if (info.HasGenerate && info.IsPropertyInitOnly && _isWritableStreamIdType(info.PropertyType, info.StrongIdSettable)) {
         var simpleName = info.CommandType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.GenerateStreamIdOnInitOnly, info.PropertyLocation, simpleName, info.PropertyName));
@@ -799,8 +826,10 @@ public class StreamIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates SET_STREAM_ID_DISPATCH region for events and commands with mutable Guid [StreamId] properties.
+  /// Generates SET_STREAM_ID_DISPATCH region for events and commands with a mutable Guid or strong-id [StreamId]
+  /// property. A strong id is checked against the source's stream-id type and built with its <c>From</c> (#2072).
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs</tests>
   private static string _generateSetStreamIdRegion(
       string template,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
@@ -808,10 +837,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     var setStreamIdCode = new StringBuilder();
     var hasSetterCases = false;
+    var strongIdIndex = 0;
 
     var eventIndex = 0;
     foreach (var info in eventsWithStreamId) {
-      if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
+      if (info.StrongIdSettable && !info.IsPropertyInitOnly) {
+        setStreamIdCode.AppendLine(_strongIdSetterCase(info.EventType, info.PropertyName, info.StrongIdType!, info.InheritFromClauses, strongIdIndex++));
+        hasSetterCases = true;
+      } else if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
         var setEventSnippet = TemplateUtilities.ExtractSnippet(
             typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "SET_STREAM_ID_EVENT_CASE");
         var caseCode = setEventSnippet
@@ -826,7 +859,10 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     var commandIndex = 0;
     foreach (var info in commandsWithStreamId) {
-      if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
+      if (info.StrongIdSettable && !info.IsPropertyInitOnly) {
+        setStreamIdCode.AppendLine(_strongIdSetterCase(info.CommandType, info.PropertyName, info.StrongIdType!, info.InheritFromClauses, strongIdIndex++));
+        hasSetterCases = true;
+      } else if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
         var setCommandSnippet = TemplateUtilities.ExtractSnippet(
             typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "SET_STREAM_ID_COMMAND_CASE");
         var caseCode = setCommandSnippet
@@ -841,6 +877,50 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     return TemplateUtilities.ReplaceRegion(template, "SET_STREAM_ID_DISPATCH",
         hasSetterCases ? setStreamIdCode.ToString().TrimEnd() : "");
+  }
+
+  /// <summary>
+  /// One setter case for a strong-id stream id: the source's stream-id type must be null (a plain Guid), the id's own
+  /// type or a type <c>InheritFrom</c> lists, and the id's <c>From</c> must take the value; otherwise the setter
+  /// returns false and writes nothing (#2072).
+  /// </summary>
+  private static string _strongIdSetterCase(string messageType, string propertyName, string strongIdType, string inheritFromClauses, int index) =>
+    TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "SET_STREAM_ID_STRONG_ID_CASE")
+      .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+      .Replace(PLACEHOLDER_PROPERTY_NAME, propertyName)
+      .Replace(PLACEHOLDER_STRONG_ID_TYPE, strongIdType)
+      .Replace("__ACCEPTED_SOURCES__", inheritFromClauses)
+      .Replace(PLACEHOLDER_INDEX, index.ToString(CultureInfo.InvariantCulture));
+
+  /// <summary>
+  /// Generates the GET_STREAM_ID_TYPE_DISPATCH region: for each event, command and composite, most derived first, the
+  /// strong-id type of its stream id, or null for one that is not a strong id, so a derived type's own Guid stream id
+  /// is not reported as its base's strong id (#2072). An assembly with no strong-id stream id gets no cases, since
+  /// every answer would be null.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:GetStreamIdType_ReportsTheStrongIdOfEachMessageTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:AnAssemblyWithNoStrongIdStreamIds_GetsNoStreamIdTypeCasesAsync</tests>
+  private static string _generateStreamIdTypeRegion(
+      string template,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
+      ImmutableArray<StreamIdInfo> compositesWithStreamId) {
+    var cases = eventsWithStreamId.Select(e => (e.EventType, e.StrongIdType))
+      .Concat(commandsWithStreamId.Select(c => (EventType: c.CommandType, c.StrongIdType)))
+      .Concat(compositesWithStreamId.Select(c => (c.EventType, c.StrongIdType)))
+      .ToList();
+    if (cases.TrueForAll(c => c.StrongIdType is null)) {
+      return TemplateUtilities.ReplaceRegion(template, "GET_STREAM_ID_TYPE_DISPATCH", "");
+    }
+
+    var snippet = TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "STREAM_ID_TYPE_CASE");
+    var code = new StringBuilder();
+    foreach (var (messageType, strongIdType) in cases) {
+      code.AppendLine(snippet
+        .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+        .Replace("__STREAM_ID_TYPE__", strongIdType is null ? "null" : $"typeof({strongIdType})"));
+    }
+    return TemplateUtilities.ReplaceRegion(template, "GET_STREAM_ID_TYPE_DISPATCH", code.ToString().TrimEnd());
   }
 
   /// <summary>
@@ -938,6 +1018,13 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var normalized = propertyTypeName.Replace(PLACEHOLDER_GLOBAL, "").Replace("System.", "");
     return normalized is "Guid" or "System.Guid";
   }
+
+  /// <summary>
+  /// Whether the generated SetStreamId can write a stream id of this type: a Guid, or a strong id it can build with
+  /// <c>From</c> (#2072).
+  /// </summary>
+  private static bool _isWritableStreamIdType(string propertyTypeName, bool strongIdSettable) =>
+    strongIdSettable || _isGuidProperty(propertyTypeName);
 
   /// <summary>
   /// Checks if a property is init-only or read-only (no settable set accessor).

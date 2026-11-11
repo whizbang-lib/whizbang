@@ -90,12 +90,40 @@ public static class StreamIdExtractorRegistry {
   }
 
   /// <summary>
+  /// The stream-id type of a message type: the first non-null answer of the registered extractors, in priority order.
+  /// </summary>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <returns>The strong-id type of its stream id, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Registry/StreamIdExtractorRegistryTests.cs:GetStreamIdType_ReturnsTheFirstTypeAnExtractorReportsAsync</tests>
+  public static Type? GetStreamIdType(Type messageType) {
+    // S3267: the loop returns the first type an extractor reports; a LINQ query would hide that
+#pragma warning disable S3267
+    foreach (var extractor in AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()) {
+      if (extractor.GetStreamIdType(messageType) is { } type) {
+        return type;
+      }
+    }
+#pragma warning restore S3267
+    return null;
+  }
+
+  /// <summary>
   /// Set stream ID by trying all registered extractors in priority order.
   /// Returns true if an extractor successfully set the value.
   /// </summary>
   public static bool SetStreamId(object message, Guid streamId) {
     return AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()
         .Any(extractor => extractor.SetStreamId(message, streamId));
+  }
+
+  /// <summary>
+  /// Set an inherited stream id by trying all registered extractors in priority order, passing each the source's
+  /// stream-id type. Returns true if an extractor set the value.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Registry/StreamIdExtractorRegistryTests.cs:SetStreamId_WithASourceType_PassesItToEachExtractorAsync</tests>
+  public static bool SetStreamId(object message, Guid streamId, Type? sourceStreamIdType) {
+    return AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()
+        .Any(extractor => extractor.SetStreamId(message, streamId, sourceStreamIdType));
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S3218:Inner class members should not shadow outer class \"static\" members", Justification = "Explicit interface implementations must match interface member names; they are not reachable via the outer type identifier so there is no real shadowing risk.")]
@@ -106,7 +134,13 @@ public static class StreamIdExtractorRegistry {
     (bool ShouldGenerate, bool OnlyIfEmpty) IStreamIdExtractor.GetGenerationPolicy(object message) =>
         StreamIdExtractorRegistry.GetGenerationPolicy(message);
 
+    Type? IStreamIdExtractor.GetStreamIdType(Type messageType) =>
+        StreamIdExtractorRegistry.GetStreamIdType(messageType);
+
     bool IStreamIdExtractor.SetStreamId(object message, Guid streamId) =>
         StreamIdExtractorRegistry.SetStreamId(message, streamId);
+
+    bool IStreamIdExtractor.SetStreamId(object message, Guid streamId, Type? sourceStreamIdType) =>
+        StreamIdExtractorRegistry.SetStreamId(message, streamId, sourceStreamIdType);
   }
 }

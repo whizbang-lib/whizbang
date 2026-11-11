@@ -238,6 +238,42 @@ public class StreamIdSnippets {
     return false;
   }
 
+  /// <summary>
+  /// Example method showing snippet structure for SetStreamId on a strong-id stream id (#2072): the source's stream-id
+  /// type is checked, and the value goes through the id's From, whose refusal leaves the message as it was.
+  /// </summary>
+  public bool SetStreamIdStrongIdExample() {
+    #region SET_STREAM_ID_STRONG_ID_CASE
+    if (message is __MESSAGE_TYPE__ setS__INDEX__) {
+      if (!(sourceStreamIdType is null || sourceStreamIdType == typeof(__STRONG_ID_TYPE__)__ACCEPTED_SOURCES__)) {
+        return false;
+      }
+      try {
+        setS__INDEX__.__PROPERTY_NAME__ = __STRONG_ID_TYPE__.From(streamId);
+      } catch (global::System.ArgumentException) {
+        // From refused the value (an id that takes only UUIDv7, say); the caller reports the refusal
+        return false;
+      }
+      return true;
+    }
+    #endregion
+
+    return false;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for the stream-id type dispatch (#2072).
+  /// </summary>
+  public Type? StreamIdTypeExample() {
+    #region STREAM_ID_TYPE_CASE
+    if (typeof(__MESSAGE_TYPE__).IsAssignableFrom(messageType)) {
+      return __STREAM_ID_TYPE__;
+    }
+    #endregion
+
+    return null;
+  }
+
   // ========================================
   // COMMAND SNIPPETS
   // ========================================

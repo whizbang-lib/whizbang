@@ -151,16 +151,43 @@ public static partial class StreamIdExtractors {
   /// <summary>
   /// Sets the stream ID on a message using the [StreamId]-marked property.
   /// Used by the Dispatcher for auto-generation without requiring IHasStreamId.
+  /// The value is treated as coming from a plain Guid.
   /// </summary>
   /// <param name="message">The message to set the StreamId on</param>
   /// <param name="streamId">The StreamId value to set</param>
-  /// <returns>True if the StreamId was set, false if the message type is not recognized</returns>
-  public static bool SetStreamId(object message, global::System.Guid streamId) {
+  /// <returns>True if the StreamId was set, false if the message type is not recognized or the value is refused</returns>
+  public static bool SetStreamId(object message, global::System.Guid streamId) =>
+    SetStreamId(message, streamId, null);
+
+  /// <summary>
+  /// Sets a stream ID a message inherits from a source message whose stream-id type is
+  /// <paramref name="sourceStreamIdType"/> (null for a plain Guid). A strong-id stream id takes only a plain Guid
+  /// source, its own type, or a type its [StreamId(InheritFrom = ...)] lists, and only a value its From accepts.
+  /// </summary>
+  /// <param name="message">The message to set the StreamId on</param>
+  /// <param name="streamId">The StreamId value to set</param>
+  /// <param name="sourceStreamIdType">The source's stream-id type, or null for a plain Guid</param>
+  /// <returns>True if the StreamId was set; false if the message type is not recognized or the value is refused</returns>
+  public static bool SetStreamId(object message, global::System.Guid streamId, global::System.Type? sourceStreamIdType) {
     #region SET_STREAM_ID_DISPATCH
     // Type-based dispatch to set StreamId on the message
     #endregion
 
     return false;
+  }
+
+  /// <summary>
+  /// The strong-id type of a message type's [StreamId], or null when it is not a strong id or the type is not
+  /// recognized. Most derived types are checked first.
+  /// </summary>
+  /// <param name="messageType">The runtime type of the message</param>
+  /// <returns>The strong-id type, or null</returns>
+  public static global::System.Type? GetStreamIdType(global::System.Type messageType) {
+    #region GET_STREAM_ID_TYPE_DISPATCH
+    // Type-based dispatch to the stream-id type
+    #endregion
+
+    return null;
   }
 
   #region EVENT_EXTRACTORS
@@ -213,6 +240,16 @@ internal sealed class GeneratedStreamIdExtractor : global::Whizbang.Core.IStream
   /// <inheritdoc />
   public bool SetStreamId(object message, global::System.Guid streamId) {
     return StreamIdExtractors.SetStreamId(message, streamId);
+  }
+
+  /// <inheritdoc />
+  public global::System.Type? GetStreamIdType(global::System.Type messageType) {
+    return StreamIdExtractors.GetStreamIdType(messageType);
+  }
+
+  /// <inheritdoc />
+  public bool SetStreamId(object message, global::System.Guid streamId, global::System.Type? sourceStreamIdType) {
+    return StreamIdExtractors.SetStreamId(message, streamId, sourceStreamIdType);
   }
 }
 

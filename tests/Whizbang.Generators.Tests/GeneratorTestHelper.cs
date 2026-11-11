@@ -436,6 +436,25 @@ public static class GeneratorTestHelper {
       string assemblyName = "TestAssembly",
       IEnumerable<MetadataReference>? additionalReferences = null) {
     ArgumentNullException.ThrowIfNull(generator);
+    return RunGeneratorsWithFullReferences([generator], source, assemblyName, additionalReferences);
+  }
+
+  /// <summary>
+  /// The same, for several generators at once, so a generator whose output references a sibling's (a strong id's
+  /// <c>From</c>, say) is compiled with that sibling's output too.
+  /// </summary>
+  /// <param name="generators">The generators to run.</param>
+  /// <param name="source">The compilation's only source file.</param>
+  /// <param name="assemblyName">The compilation's assembly name.</param>
+  /// <param name="additionalReferences">References beyond the full set, or null.</param>
+  /// <returns>The run result and the compilation with the generated sources added.</returns>
+  [RequiresAssemblyFiles()]
+  public static (GeneratorDriverRunResult Result, Compilation Output) RunGeneratorsWithFullReferences(
+      IReadOnlyList<IIncrementalGenerator> generators,
+      string source,
+      string assemblyName = "TestAssembly",
+      IEnumerable<MetadataReference>? additionalReferences = null) {
+    ArgumentNullException.ThrowIfNull(generators);
     var references = _fullFrameworkReferences();
     references.AddRange(additionalReferences ?? []);
     var compilation = CSharpCompilation.Create(
@@ -444,7 +463,8 @@ public static class GeneratorTestHelper {
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
-    var ran = CSharpGeneratorDriver.Create(generator)
+    var ran = CSharpGeneratorDriver.Create(
+            generators: [.. generators.Select(static g => g.AsSourceGenerator())], additionalTexts: [])
         .RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
     var result = ran.GetRunResult();
     _throwIfAnyGeneratorFailed(result);
