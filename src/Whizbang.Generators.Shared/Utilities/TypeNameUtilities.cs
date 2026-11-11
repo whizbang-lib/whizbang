@@ -32,6 +32,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Consolidated from multiple generators for consistency and testability.
 /// </summary>
 #pragma warning disable RS0030 // the one place the raw Roslyn display APIs (ToDisplayString, ToDisplayParts, MetadataName) are allowed (issue #698)
+[TypeNameAuthority]
 public static class TypeNameUtilities {
   /// <summary>
   /// Gets a simple name for a type, including containing type for nested classes.

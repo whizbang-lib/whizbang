@@ -27,6 +27,7 @@ namespace Whizbang.Core;
 /// - Type.AssemblyQualifiedName (includes version info that changes across builds)</para>
 /// </remarks>
 #pragma warning disable RS0030 // the one place the raw type-name sources (Type.FullName, AssemblyQualifiedName, Assembly.FullName) are allowed (issue #698)
+[TypeNameAuthority]
 public static class TypeNameFormatter {
   // ---------------------------------------------------------------------------------------------
   // The named rendering forms (issue #698). The raw sources of a type name (Type.FullName,

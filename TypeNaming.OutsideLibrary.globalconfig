@@ -1,0 +1,7 @@
+is_global = true
+# WHIZ606 and WHIZ607 (#2267) guard the library: type names in src/ come from the shared naming code
+# (TypeNameFormatter, EventTypeMatchingHelper, TypeNameUtilities). Tests, tools, samples and benchmarks name
+# types to describe them and are outside the rule. Directory.Build.props includes this file for every
+# project outside src/.
+dotnet_diagnostic.WHIZ606.severity = none
+dotnet_diagnostic.WHIZ607.severity = none

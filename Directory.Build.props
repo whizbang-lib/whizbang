@@ -183,6 +183,11 @@
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- WHIZ606/WHIZ607 (#2267): off everywhere until src/ is clean; then they apply to the library only. -->
+  <ItemGroup>
+    <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)TypeNaming.OutsideLibrary.globalconfig" />
+  </ItemGroup>
+
   <!-- Analyzers. SonarAnalyzer is here so Sonar's own rules fail the build locally and in CI
        rather than only surfacing on the SonarCloud scan, where they are found far later. -->
   <ItemGroup>
