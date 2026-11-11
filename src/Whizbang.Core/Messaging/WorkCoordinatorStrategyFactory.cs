@@ -56,7 +56,8 @@ public static class WorkCoordinatorStrategyFactory {
   public static IWorkCoordinatorStrategy WrapWithStreamAffinity(IWorkCoordinatorStrategy inner, IServiceProvider sp) {
     ArgumentNullException.ThrowIfNull(inner);
     ArgumentNullException.ThrowIfNull(sp);
-    var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
+    // A strategy registered directly is bounded here too (#2220).
+    var outboxBatch = Whizbang.Core.Workers.BatchStrategyResolution.Outbox(sp);
     if (outboxBatch is null) {
       return inner;
     }
