@@ -186,7 +186,7 @@ description: "A receptor implementation was discovered and will be registered."
 | Band | Area |
 |------|------|
 | WHIZ001-015 | Discovery: receptors, stream ids, perspectives, JSON-serializable types, generic message types |
-| WHIZ020-028 | Strongly-typed ids, topic filters, perspective runners |
+| WHIZ020-029 | Strongly-typed ids, topic filters, perspective runners |
 | WHIZ030-033 | Perspective events and models: stream ids, name collisions |
 | WHIZ040-041 | User service discovery |
 | WHIZ053-059 | Documentation maps, Guid usage and interception |
