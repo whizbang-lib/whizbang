@@ -376,12 +376,104 @@ public class StrongIdStreamInheritanceGeneratorTests {
 
       [GenerateStreamId]
       public class ThingCreated : IEvent { [StreamId] public ThingId ThingId { get; init; } }
+
+      [GenerateStreamId]
+      public class ThingNoted : IEvent { [StreamId] public Guid ThingId { get; init; } }
+
+      [GenerateStreamId]
+      public class ThingLabelled : IEvent { [StreamId] public string Label { get; init; } = ""; }
       """;
 
     var result = GeneratorTestHelper.RunGenerator<StreamIdGenerator>(source);
+    var reported = result.Diagnostics.Where(d => d.Id == "WHIZ013")
+      .Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture).Split('\'')[1]).Order().ToList();
 
-    await Assert.That(result.Diagnostics.Count(d => d.Id == "WHIZ013")).IsEqualTo(2)
-      .Because("the generated setter cannot write an init-only strong id either, so the minted id would be lost");
+    await Assert.That(string.Join(",", reported)).IsEqualTo("CreateThing,ThingCreated,ThingNoted")
+      .Because("the generated setter cannot write an init-only strong id or Guid, so the minted id would be lost; a string stream id is never written");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task CommandsOfEveryStreamIdKind_AreSetAndReportedByTheirOwnKindAsync() {
+    // A strong id known only by IWhizbangId is written when it declares a static From(Guid); the From overloads that
+    // are not that one (an instance method, another arity, another parameter type) do not count, and come first so
+    // each is looked at
+    const string contracts = """
+      namespace App.Contracts {
+        public readonly struct LedgerKey : IWhizbangId {
+          private readonly Guid _value;
+          private LedgerKey(Guid value) => _value = value;
+          public static LedgerKey From(int seed) => default;
+          public static LedgerKey From(Guid value, Guid other) => default;
+          public LedgerKey From(string text) => this;
+          public static LedgerKey From(Guid value) => new(value);
+          public Guid ToGuid() => _value;
+          public bool IsTimeOrdered => false;
+          public bool SubMillisecondPrecision => false;
+          public DateTimeOffset Timestamp => DateTimeOffset.MinValue;
+          public bool Equals(IWhizbangId? other) => false;
+          public int CompareTo(IWhizbangId? other) => 0;
+        }
+
+        public class OpenLedger : ICommand { [StreamId] public LedgerKey Key { get; set; } }
+        public class NoteLedger : ICommand { [StreamId] public Guid Key { get; set; } }
+        public class SealLedger : ICommand { [StreamId] public Guid Key { get; init; } }
+        public class LabelLedger : ICommand { [StreamId] public string Key { get; set; } = ""; }
+        public sealed class LedgerBundle : Whizbang.Core.Minting.CompositeEventBase;
+      }
+      """;
+    var probe = $$"""
+      var open = new App.Contracts.OpenLedger();
+      var note = new App.Contracts.NoteLedger();
+      var seal = new App.Contracts.SealLedger();
+      var label = new App.Contracts.LabelLedger();
+      var id = new Guid("{{_v7}}");
+      var written = string.Join(",", extractor.SetStreamId(open, id, null), extractor.SetStreamId(note, id, typeof(App.Contracts.LedgerKey)),
+        extractor.SetStreamId(seal, id, null), extractor.SetStreamId(label, id, null));
+      string Name(Type t) => extractor.GetStreamIdType(t)?.Name ?? "null";
+      var types = string.Join(",", Name(typeof(App.Contracts.OpenLedger)), Name(typeof(App.Contracts.NoteLedger)),
+        Name(typeof(App.Contracts.LedgerBundle)));
+      return $"{written};{open.Key.ToGuid() == id};{note.Key == id};{types}";
+      """;
+
+    var observed = _runProbe("EveryKind", contracts, probe);
+
+    await Assert.That(observed).IsEqualTo("True,True,False,False;True;True;LedgerKey,null,null")
+      .Because("a strong id with a From(Guid) and a settable Guid are written; an init-only Guid and a string are not");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task StrongIdsDiscoveredFromTheirDeclarations_AreNamedAsTheStrongIdGeneratorNamesThemAsync() {
+    // Each id is emitted by the strong-id generator from the [WhizbangId] on a property or record parameter, in the
+    // namespace that attribute names, or the declaring type's namespace when it names none or a blank one
+    const string contracts = """
+      public class GlobalBooked : IEvent { [StreamId] [WhizbangId] public GlobalKey Key { get; set; } }
+
+      namespace App.Contracts {
+        using App.Named;
+
+        public readonly partial struct DockId;
+
+        public class NamedBooked : IEvent { [StreamId] [WhizbangId(Namespace = "App.Named")] public NamedKey Key { get; set; } }
+        public class BlankBooked : IEvent { [StreamId] [WhizbangId("")] public BlankKey Key { get; set; } }
+        public class DockBooked : IEvent { [StreamId] [WhizbangId] public DockId Dock { get; set; } }
+        public record ParcelShipped([StreamId] [WhizbangId] ParcelKey Key) : IEvent;
+      }
+      """;
+    var probe = $$"""
+      string Name(Type t) => extractor.GetStreamIdType(t)?.FullName ?? "null";
+      var dock = new App.Contracts.DockBooked();
+      var wrote = extractor.SetStreamId(dock, new Guid("{{_v7}}"), null);
+      return string.Join(",", Name(typeof(GlobalBooked)), Name(typeof(App.Contracts.NamedBooked)),
+        Name(typeof(App.Contracts.BlankBooked)), Name(typeof(App.Contracts.DockBooked)),
+        Name(typeof(App.Contracts.ParcelShipped)), wrote && dock.Dock.ToGuid() == new Guid("{{_v7}}"));
+      """;
+
+    var observed = _runProbe("DiscoveredIds", contracts, probe);
+
+    await Assert.That(observed).IsEqualTo(
+      "GlobalKey,App.Named.NamedKey,App.Contracts.BlankKey,App.Contracts.DockId,App.Contracts.ParcelKey,True");
   }
 
   [Test]
