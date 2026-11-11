@@ -53,4 +53,13 @@ public sealed record PerspectiveRegistrationInfo(
     string FullyQualifiedName,
     string ModelType,
     IReadOnlyList<string> EventTypes
-);
+) {
+  /// <summary>
+  /// Whether the perspective carries <c>[DangerouslyAllowMixedEphemeralAndSourcedEvents]</c>: it applies ephemeral and
+  /// Sourced events on purpose. Set by the generated registry; the ephemeral blocker report reads it to say when such a
+  /// read model has no durable input left and can drop the attribute. It changes nothing at runtime.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#read-models-opted-into-mixing</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRegistryMixedOptInTests.cs:Registry_MarksAPerspectiveThatAllowsMixing_AndOnlyThatOneAsync</tests>
+  public bool AllowsMixedEphemeralAndSourced { get; init; }
+}

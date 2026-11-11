@@ -480,6 +480,23 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
     await Assert.That(block).Contains("Whizbang:Ephemeral:ReleaseBlockers");
   }
 
+  [Test]
+  public async Task Report_OnAConnectionThatNamesNoSchema_ReadsTheConnectionsOwnAsync() {
+    await using var conn = await _openAsync();
+    var shared = (Guid)TrackedGuid.New();
+    await _appendAsync(conn, shared, BATCH);
+    await _appendAsync(conn, shared, ITEM);
+    var (metrics, _) = _metrics();
+    var logger = new ListLogger();
+
+    await _step(logger).ReclassifyAsync(
+      _services(catalog: _batchCatalog(), registry: _batchRegistry(), metrics: metrics, schema: null), CancellationToken.None);
+
+    await Assert.That(logger.Single("Ephemeral blocker report at startup")).Contains(ITEM)
+      .Because("with no schema named the report's functions are read unqualified, on the connection's search path");
+    await Assert.That(logger.Single("Read model App.BatchPerspective")).Contains("1 holding both kinds");
+  }
+
   // ===== Helpers =====
 
   private sealed class Catalog(params MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
@@ -543,7 +560,7 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
 
   private ServiceProvider _services(
       bool report = true, Dictionary<string, List<string>>? release = null, IMessageTypeCatalog? catalog = null,
-      IPerspectiveRunnerRegistry? registry = null, EphemeralBlockerMetrics? metrics = null) {
+      IPerspectiveRunnerRegistry? registry = null, EphemeralBlockerMetrics? metrics = null, string? schema = "public") {
     var options = new EphemeralOptions { ReconcileHistoricalOnStartup = true };
     options.BlockerReport.Enabled = report;
     foreach (var (key, values) in release ?? []) {
@@ -554,7 +571,7 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
         var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync(ct);
         return connection;
-      }, "public"))
+      }, schema))
       .AddSingleton(Options.Create(options))
       .AddSingleton(catalog ?? new Catalog(_ephemeral(TYPE)));
     if (registry is not null) {
