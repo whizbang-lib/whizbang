@@ -233,6 +233,13 @@ public class BatchedPerspectiveStateSourceTests {
   }
 
   [Test]
+  public async Task TheStateSource_RefusesANullLogger_AndLogsNothingWithoutOneAsync() {
+    // Required, so a composition cannot leave it null by accident; the parameterless form is the explicit "no logging".
+    await Assert.That(() => new BatchedPerspectiveStateSource(null!)).Throws<ArgumentNullException>();
+    await Assert.That(new BatchedPerspectiveStateSource().BeginBatch([])).IsNotNull();
+  }
+
+  [Test]
   public async Task ReadPolymorphicManyAsync_Default_ReturnsNullAsync() {
     // A store that does not read streams in batches says so, and each pair of a claimed batch reads its own events.
     IEventStore events = new SingleHistory(Guid.Empty);

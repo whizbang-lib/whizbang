@@ -27,8 +27,12 @@ namespace Whizbang.Core.Perspectives;
 /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
-public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspectiveStateSource>? logger = null) : IPerspectiveStateSource {
-  private readonly ILogger _logger = logger ?? NullLogger<BatchedPerspectiveStateSource>.Instance;
+public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspectiveStateSource> logger) : IPerspectiveStateSource {
+  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+  /// <summary>A state source that logs nothing, for a composition with no logging.</summary>
+  public BatchedPerspectiveStateSource() : this(NullLogger<BatchedPerspectiveStateSource>.Instance) {
+  }
 
   /// <inheritdoc/>
   public IPerspectiveBatchState BeginBatch(IReadOnlyList<PerspectiveStateRequest> pairs) {

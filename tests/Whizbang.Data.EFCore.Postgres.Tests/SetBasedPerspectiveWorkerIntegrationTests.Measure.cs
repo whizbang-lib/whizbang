@@ -28,9 +28,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// database as a whole, and the rows applied per second. A measurement, not a gate: it runs only when asked for by name.
 /// </summary>
 /// <remarks>
-/// The stream count is <c>WHIZBANG_FANOUT_STREAMS</c> (100,000 by default). Completions are written to the coordinator
+/// The stream count is <c>WHIZBANG_FANOUT_STREAMS</c> (100,000 by default), and <c>WHIZBANG_MEASURE_REPORT</c> names a
+/// file the results are appended to. Completions are written to the coordinator
 /// in batches, as the completion flush worker writes them, so the harness does not add a round trip per row to either
-/// mode. The results are written to standard output, one <c>MEASURE</c> line per mode.
+/// mode. The results are written to standard output (and the report file), one <c>MEASURE</c> line per mode.
 /// </remarks>
 public partial class SetBasedPerspectiveWorkerIntegrationTests {
   [Test]
@@ -66,7 +67,7 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
     var line = $"MEASURE mode={mode} streams={count} seconds={clock.Elapsed.TotalSeconds:F1} rows_per_second={count / clock.Elapsed.TotalSeconds:F0} "
       + $"table_statements={touching.Count} table_inserts={touching.Count(s => s.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase))} "
       + $"total_statements={statements.Statements.Count}";
-    Console.WriteLine(line);
+    var report = new List<string> { line };
     // What the statements were, by shape, most frequent first: where the round trips that remain go.
     foreach (var shape in statements.Statements
         .Select(text => _whitespace().Replace(text, " ").Trim())
@@ -74,7 +75,15 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
         .GroupBy(text => text, StringComparer.Ordinal)
         .OrderByDescending(group => group.Count())
         .Take(12)) {
-      Console.WriteLine($"MEASURE   mode={mode} count={shape.Count()} statement={shape.Key}");
+      report.Add($"MEASURE   mode={mode} count={shape.Count()} statement={shape.Key}");
+    }
+    // Standard output is captured per test, so the report also goes to a file a runner can read back.
+    foreach (var reported in report) {
+      Console.WriteLine(reported);
+    }
+    var reportPath = Environment.GetEnvironmentVariable("WHIZBANG_MEASURE_REPORT");
+    if (!string.IsNullOrEmpty(reportPath)) {
+      await File.AppendAllLinesAsync(reportPath, report, ct);
     }
     await Assert.That(await _countAsync(conn, ct)).IsGreaterThanOrEqualTo(count);
   }
