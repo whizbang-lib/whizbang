@@ -18,13 +18,20 @@ Decisions are recorded on the issues:
    multiplier of `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes`), the soft limit with a 2x hard ceiling for callers in
    an open transaction, the interactive reserve reusing the gate's fraction, room released on flush completion,
    signal-based waits, wrapping applied at registration with a test, metrics, and limits reported through step 2.
-4. #2220 Part 2: cross-stream coalescing outbox batch strategy.
-5. Move existing derived values onto the derived-setting type: gate size from pool size, thread-pool floor, perspective
+4. **Done.** #2220 Part 2: cross-stream coalescing outbox batch strategy.
+5. **Done.** Move existing derived values onto the derived-setting type: gate size from pool size, thread-pool floor, perspective
    and dispatch widths, the inbox dispatch clamp.
 
-## Open after steps 1 to 3
+## Decisions after steps 1 to 3 (2026-11-11)
 
-- A strategy registered directly as `IOutboxBatchStrategy`/`IInboxBatchStrategy` (not through `AddWhizbang*Strategy`)
-  resolves unwrapped; the source guard covers the library's own registrations only.
-- The report shows a default as `(default)` without its value; showing the value needs the options instances.
-- The `data/work-coordinator-strategies` docs page still recommends `Batch` for bulk imports (part of #2220 Part 2).
+- A strategy registered directly is wrapped where the framework resolves it (`BatchStrategyResolution`), once per
+  instance; a source guard fails on any other resolution. Done.
+- Room held by a custom strategy that never flushes through the registered callbacks stays documented; no cheap check
+  exists without a timer per held message, so none was added.
+- One shared budget per process, 10,000 messages by default: confirmed.
+- The `data/work-coordinator-strategies` Batch advice is corrected with Part 2. Done.
+
+## Follow-ups (not in this PR)
+
+- The startup settings report shows an unset setting as `(default)` without its value; showing the value needs the
+  bound options instances (or generator support).
