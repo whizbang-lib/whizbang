@@ -140,6 +140,28 @@ internal static class CoordinatorRetentionSql {
   }
 
   /// <summary>
+  /// The handled ledger's answer for <paramref name="eventIds"/> (<c>wh_receptor_handled_lookup</c>, #2273): the subset it
+  /// records as handled and the moment its coverage starts. The caller returns before opening a connection for an empty set.
+  /// </summary>
+  internal static async Task<HandledLedgerAnswer> LookupHandledEventsAsync(
+      DbCommand cmd, string prefix, IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken) {
+    cmd.CommandText = $"SELECT covers_from, handled_ids FROM {prefix}wh_receptor_handled_lookup(@p_ids)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = eventIds.ToArray() });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new HandledLedgerAnswer(reader.GetFieldValue<DateTimeOffset>(0), reader.GetFieldValue<Guid[]>(1).ToHashSet());
+  }
+
+  /// <summary>Keeps the handled ledger to <paramref name="keep"/> (<c>wh_receptor_handled_sweep</c>, #2273): the records removed.</summary>
+  internal static async Task<long> SweepHandledLedgerAsync(
+      DbCommand cmd, string prefix, DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken) {
+    cmd.CommandText = $"SELECT {prefix}wh_receptor_handled_sweep(@p_now, @p_keep)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_now", NpgsqlDbType.TimestampTz) { Value = now.ToUniversalTime() });
+    cmd.Parameters.Add(new NpgsqlParameter("p_keep", NpgsqlDbType.Interval) { Value = keep });
+    return (long)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+  }
+
+  /// <summary>
   /// Deletes the lifecycle-completion markers completed before <paramref name="cutoff"/>: from the whole table, or only
   /// its default partition once the partition manager keeps it, because expired partitions are then dropped whole
   /// (#1646). Nothing when the table is partitioned with no default.

@@ -753,8 +753,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   // #2273: [RunOnRepair] opts the receptor in to repaired events this service can prove it never handled.
   private static bool _hasRunOnRepairAttribute(INamedTypeSymbol classSymbol) {
-    _ = classSymbol;
-    return false; // RED (#2273)
+    const string RUN_ON_REPAIR_ATTRIBUTE = "Whizbang.Core.Messaging.RunOnRepairAttribute";
+    return classSymbol.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, RUN_ON_REPAIR_ATTRIBUTE));
   }
 
   private static bool _hasReceptorOnceAcrossServicesAttribute(INamedTypeSymbol classSymbol) {

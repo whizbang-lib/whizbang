@@ -196,7 +196,9 @@ internal static class PartitionedTables {
       .AddPartitionedTable(Traces)
       .AddPartitionedTable(sp => Signals(sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value.SignalRetention))
       .AddPartitionedTable(sp =>
-        LifecycleCompletions(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.LifecycleCompletionRetentionDays));
+        LifecycleCompletions(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.LifecycleCompletionRetentionDays))
+      .AddPartitionedTable(sp =>
+        HandledLedger(sp.GetRequiredService<IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>().Value.RepairReceptorLookback));
   }
 
   /// <summary>

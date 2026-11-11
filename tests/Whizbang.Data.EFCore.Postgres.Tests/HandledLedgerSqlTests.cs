@@ -54,7 +54,7 @@ public class HandledLedgerSqlTests : EFCoreTestBase {
     MessageId = id,
     HandlerName = "OrderPlacedHandler",
     Envelope = new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From(id),
+      MessageId = new MessageId(id),
       Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = MessageSource.Outbox },
@@ -63,7 +63,7 @@ public class HandledLedgerSqlTests : EFCoreTestBase {
     StreamId = TrackedGuid.New().Value,
     IsEvent = isEvent,
     Flags = EventFlags.None,
-    Metadata = new EnvelopeMetadata { MessageId = MessageId.From(id), Hops = [] },
+    Metadata = new EnvelopeMetadata { MessageId = new MessageId(id), Hops = [] },
     MessageType = EVENT_TYPE,
   };
 
@@ -176,6 +176,7 @@ public class HandledLedgerSqlTests : EFCoreTestBase {
   public async Task AWindowGrownPastTheCoverage_NeverMovesTheCoverageBackAsync() {
     await using var conn = await _openAsync();
     var now = await _nowAsync(conn);
+    await _executeAsync(conn, "UPDATE wh_receptor_handled_coverage SET covers_from = $1", now - TimeSpan.FromDays(30));
     var coordinator = _coordinator();
     await coordinator.SweepHandledLedgerAsync(now, TimeSpan.FromDays(7));
 

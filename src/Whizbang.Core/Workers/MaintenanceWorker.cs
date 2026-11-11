@@ -342,6 +342,11 @@ public sealed partial class MaintenanceWorker(
       }
     }
 
+    // #2273: the handled ledger, kept to the repair receptor lookback. The completion records every handled event on any
+    // driver, so this runs whether or not integrity is on. Before the steps, so the coverage start moves before the
+    // partition step drops the partitions behind it.
+    await _sweepHandledLedgerAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
+
     // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
     // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
     // no-op when disabled or not due. Best-effort: a prune failure is logged and never fails the cycle.
@@ -391,6 +396,28 @@ public sealed partial class MaintenanceWorker(
     // Steps other packages add. Last, so everything they read has been through this cycle's own
     // housekeeping first.
     await _runMaintenanceStepsAsync(sp, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Keeps the handled ledger to the repair receptor lookback (#2273). Best-effort: a failed sweep is logged with the
+  /// window it was applying and retried next cycle; cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerBestEffortStepsTests.cs:HandledLedger_IsSweptEveryCycle_ToTheRepairReceptorLookback_AtTheHostsTimeAsync</tests>
+  private async Task _sweepHandledLedgerAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
+    var keep = (integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()).RepairReceptorLookback;
+    var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    try {
+      var removed = await coordinator.SweepHandledLedgerAsync(now, keep, ct).ConfigureAwait(false);
+      if (removed > 0) {
+        LogHandledLedgerSwept(_logger, removed, keep);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogHandledLedgerSweepFailed(_logger, keep, ex);
+    }
   }
 
   /// <summary>
@@ -1295,6 +1322,14 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 52, Level = LogLevel.Warning,
     Message = "Lifecycle-completion purge failed at {RetentionDays}-day retention; wh_lifecycle_completions keeps growing until a later cycle succeeds")]
   static partial void LogLifecycleCompletionPurgeFailed(ILogger logger, int retentionDays, Exception ex);
+
+  [LoggerMessage(EventId = 71, Level = LogLevel.Information,
+    Message = "Removed {Removed} handled ledger records older than the {Lookback} repair receptor lookback")]
+  static partial void LogHandledLedgerSwept(ILogger logger, long removed, TimeSpan lookback);
+
+  [LoggerMessage(EventId = 72, Level = LogLevel.Warning,
+    Message = "The handled ledger sweep failed at the {Lookback} repair receptor lookback; the ledger keeps its records until a later cycle succeeds")]
+  static partial void LogHandledLedgerSweepFailed(ILogger logger, TimeSpan lookback, Exception ex);
 
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "Stream-integrity ledger gauge refresh failed — convergence gauges will read stale until the next cycle")]

@@ -33,7 +33,7 @@ public class RepairReceptorGateTests {
     MessageId = id,
     HandlerName = "OrderPlacedHandler",
     Envelope = new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From(id),
+      MessageId = new MessageId(id),
       Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
@@ -187,6 +187,16 @@ public class RepairReceptorGateTests {
     await Assert.That(_stateOnly(recent)).IsTrue();
     await Assert.That(_repaired(recent)).IsFalse();
     await Assert.That(tally[RepairReceptorReason.LedgerUnavailable]).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ALookbackPastTheStartOfTime_AdmitsEveryTimedEvent_WithoutOverflowingAsync() {
+    var ancient = _child(_eventFrom(TimeSpan.FromDays(3650)));
+
+    var tally = await RepairReceptorGate.ApplyAsync([ancient], false, TimeSpan.MaxValue, _now, new Ledger(DateTimeOffset.UnixEpoch).LookupAsync);
+
+    await Assert.That(_repaired(ancient)).IsTrue();
+    await Assert.That(tally[RepairReceptorReason.NeverHandled]).IsEqualTo(1);
   }
 
   [Test]
