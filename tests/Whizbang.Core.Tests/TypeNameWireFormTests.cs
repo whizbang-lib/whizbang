@@ -82,4 +82,16 @@ public partial class TypeNameWireFormTests {
     await Assert.That(() => TypeNameFormatter.Parse("Ns.Box`1[[Ns.A, A]]")).Throws<InvalidOperationException>()
       .Because("a comma inside a type argument is not an assembly part");
   }
+
+  [Test]
+  public async Task SimpleNames_AreTheTypesOwnAsync() {
+    var assembly = typeof(TypeNameWireFormTests).Assembly;
+
+    await Assert.That(TypeNameFormatter.SimpleName(typeof(Box<int>))).IsEqualTo("Box`1");
+    await Assert.That(TypeNameFormatter.SimpleName(typeof(Nested))).IsEqualTo("Nested");
+    await Assert.That(TypeNameFormatter.ForLog(typeof(Box<int>))).IsEqualTo("Box`1").Because("messages print the simple name, as they always have");
+    await Assert.That(TypeNameFormatter.NamespaceOf(typeof(TypeNameWireFormTests))).IsEqualTo("Whizbang.Core.Tests");
+    await Assert.That(TypeNameFormatter.AssemblySimpleName(assembly)).IsEqualTo("Whizbang.Core.Tests");
+    await Assert.That(TypeNameFormatter.AssemblyVersion(assembly)).IsEqualTo(TypeNameFormatter.AssemblyIdentity(assembly).Version);
+  }
 }

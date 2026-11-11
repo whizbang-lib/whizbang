@@ -16,6 +16,7 @@ namespace Whizbang.Core;
 /// allowing precise control over how type names appear in generated code, logs, and diagnostics.
 /// </remarks>
 /// <docs>fundamentals/identity/type-formatting</docs>
+[TypeNameAuthority]   // a type-name renderer: the qualification-flag forms (#2267)
 public static class TypeFormatter {
   /// <summary>
   /// Formats a type name according to the specified qualification flags.

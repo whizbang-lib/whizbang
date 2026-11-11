@@ -89,6 +89,65 @@ public static class TypeNameFormatter {
     return type.AssemblyQualifiedName ?? DisplayName(type);
   }
 
+  /// <summary>
+  /// A type as log lines, exception messages, traces and metric tags have always printed it: its simple CLR name
+  /// (<c>OrderPlaced</c>, <c>List`1</c>, <c>Inner</c> for <c>Outer+Inner</c>). Text for a reader, never a key (#2267).
+  /// </summary>
+  /// <param name="type">The type to describe.</param>
+  /// <returns>The type's name as messages print it.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string ForLog(Type type) => SimpleName(type);
+
+  /// <summary>
+  /// The type's simple CLR name (<c>Type.Name</c>): <c>OrderPlaced</c>, <c>List`1</c>, <c>Inner</c> for
+  /// <c>Outer+Inner</c>. Short display text and the simple-name keys the framework has always used (a handler name, a
+  /// collection name); never a cross-service key, which is <see cref="Format"/> (#2267).
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  /// <returns>The simple name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string SimpleName(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.Name;
+  }
+
+  /// <summary>The type's namespace, or null for a type in the global namespace (#2267).</summary>
+  /// <param name="type">The type.</param>
+  /// <returns>The namespace, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string? NamespaceOf(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.Namespace;
+  }
+
+  /// <summary>The assembly's simple name (<c>Whizbang.Core</c>), the prefix of its embedded resource names (#2267).</summary>
+  /// <param name="assembly">The assembly.</param>
+  /// <returns>The simple name, or null when the assembly has none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string? AssemblySimpleName(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.GetName().Name;
+  }
+
+  /// <summary>The assembly's version, or null when it carries none (#2267).</summary>
+  /// <param name="assembly">The assembly.</param>
+  /// <returns>The version, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static Version? AssemblyVersion(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.GetName().Version;
+  }
+
+  /// <summary>The assembly's full identity (<see cref="System.Reflection.AssemblyName"/>), for a renderer that needs its
+  /// parts (#2267).</summary>
+  /// <param name="assembly">The assembly.</param>
+  /// <returns>The assembly's name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static System.Reflection.AssemblyName AssemblyIdentity(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.GetName();
+  }
+
   /// <summary>Display text for an assembly (its full display name, else its simple name).</summary>
   /// <param name="assembly">The assembly to describe.</param>
   public static string AssemblyDisplayName(System.Reflection.Assembly assembly) {
