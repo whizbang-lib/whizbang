@@ -122,6 +122,18 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
+  /// The wire form (<see cref="Format"/>), or the display name of a type that has no full name (an open generic's
+  /// parameter), for a key built over types a caller did not construct (#2267).
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  /// <returns>The wire form, or the display name when the type has none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/PrioritySugarHooksBranchCoverageTests.cs:DeclarePriority_TaggedTypeWithNoAssemblyQualifiedName_IsKeyedByDisplayNameAsync</tests>
+  public static string FormatOrDisplay(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.FullName is null ? DisplayName(type) : Format(type);
+  }
+
+  /// <summary>
   /// Formats a type to its CLR full name (namespace + '+'-nested type chain), WITHOUT the assembly
   /// qualifier — the runtime mirror of the generator-side <c>TypeNameUtilities.BuildClrTypeName</c>.
   /// </summary>

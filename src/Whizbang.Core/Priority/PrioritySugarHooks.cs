@@ -50,7 +50,7 @@ public sealed class TagDeclaredPriorityProducerHook : IPriorityProducerHook {
       if (!_tagOptions.PriorityDeclarations.TryGetValue(registration.Tag, out var declared)) {
         continue;
       }
-      var typeName = TypeNameFormatter.Format(registration.MessageType);   // the wire form; lookups normalize to it (#2267)
+      var typeName = TypeNameFormatter.FormatOrDisplay(registration.MessageType);   // the wire form; lookups normalize to it (#2267)
       // A type carrying two declared tags takes the more urgent declaration.
       index[typeName] = index.TryGetValue(typeName, out var existing) ? Math.Min(existing, declared) : declared;
     }
