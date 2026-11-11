@@ -656,6 +656,26 @@ public sealed record LedgerGaugeSnapshot {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerHealRemainingGaugesSqlTests.cs:Summary_SumsTheDeficitOfRepairableBuckets_AndCountsTheUnhealableOnesAsync</tests>
   public long UnhealableBuckets { get; init; }
 
+  /// <summary>Unhealed buckets whose comparison found fewer events here than at the origin: the only kind a redelivery
+  /// heals (#2260).</summary>
+  /// <docs>resilience/stream-integrity#unhealed-buckets-by-kind</docs>
+  public long DeficitBuckets { get; init; }
+
+  /// <summary>Unhealed buckets whose comparison found more events here than at the origin (#2260). Repair cannot remove
+  /// them: asking the origin for more adds nothing, and local history is never deleted on a remote's say-so.</summary>
+  /// <docs>resilience/stream-integrity#unhealed-buckets-by-kind</docs>
+  public long SurplusBuckets { get; init; }
+
+  /// <summary>Unhealed buckets whose two sides hold the same number of events with different digests: the same events
+  /// under different ids (#2260). A redelivery re-ships what is already here, so repair cannot heal them.</summary>
+  /// <docs>resilience/stream-integrity#unhealed-buckets-by-kind</docs>
+  public long DigestMismatchBuckets { get; init; }
+
+  /// <summary>Unhealed buckets whose kind no comparison has stated yet (#2260): rows written before kinds were recorded,
+  /// or by the single-key report. The next comparison that sights the bucket states it.</summary>
+  /// <docs>resilience/stream-integrity#unhealed-buckets-by-kind</docs>
+  public long UnknownKindBuckets { get; init; }
+
   /// <summary>Per-origin verified watermarks (one gauge series each). Empty until the collector
   /// reads the seals — a tiny table it visits in the same breath as the ledger summary.</summary>
   public IReadOnlyList<OriginSeal> Seals { get; init; } = [];
@@ -733,4 +753,26 @@ public static class LedgerBacklogStates {
 
   /// <summary>Everything else: divergent and waiting its turn in the repair drain or the next comparison.</summary>
   public const string OPEN = "open";
+}
+
+/// <summary>
+/// The <c>kind</c> tag values of the <c>unhealed_buckets_by_kind</c> gauge (#2260). Each unhealed bucket is exactly one;
+/// the four add up to <c>unhealed_buckets</c>.
+/// </summary>
+/// <docs>resilience/stream-integrity#unhealed-buckets-by-kind</docs>
+public static class LedgerBucketKinds {
+  /// <summary>The tag key.</summary>
+  public const string TAG = "kind";
+
+  /// <summary>Fewer events here than at the origin: data genuinely missing, and the only kind repair heals.</summary>
+  public const string DEFICIT = "deficit";
+
+  /// <summary>More events here than at the origin.</summary>
+  public const string SURPLUS = "surplus";
+
+  /// <summary>The same number of events on both sides with different digests: the same events under different ids.</summary>
+  public const string DIGEST_MISMATCH = "digest_mismatch";
+
+  /// <summary>No comparison has stated the bucket's kind yet.</summary>
+  public const string UNKNOWN = "unknown";
 }
