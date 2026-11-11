@@ -898,6 +898,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::{id.FullyQualifiedName}>(" +
         $"global::{id.FullyQualifiedName}.From);"
       );
+      // The id's Value as a member read the compiler builds, so a query over the id can compare its Guid without a
+      // lookup by name (#2073).
+      guidConversions.AppendLine(
+        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::{id.FullyQualifiedName}>(" +
+        "static id => id.Value);"
+      );
     }
     template = TemplateUtilities.ReplaceRegion(
       template,

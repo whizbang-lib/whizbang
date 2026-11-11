@@ -4,6 +4,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core;
@@ -37,6 +39,7 @@ public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
   private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];
   private static readonly Dictionary<Type, Func<Guid, object>> _guidConversions = [];
+  private static readonly Dictionary<Type, MemberInfo> _valueMembers = [];
   private static readonly Lock _lock = new();
 
   /// <summary>
@@ -173,6 +176,39 @@ public static class WhizbangIdProviderRegistry {
   public static IReadOnlyDictionary<Type, Func<Guid, object>> GetGuidConversions() {
     lock (_lock) {
       return new Dictionary<Type, Func<Guid, object>>(_guidConversions);
+    }
+  }
+
+  /// <summary>
+  /// Records the id's <c>Value</c> property, read from a member access the compiler builds, so that an integration
+  /// that composes queries over the id (a GraphQL filter comparing the Guid inside a perspective document) can read
+  /// the Guid without looking the property up by name.
+  /// Called automatically by generated ModuleInitializer - users should not call this directly.
+  /// </summary>
+  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
+  /// <param name="value">The read of the id's Guid, <c>id =&gt; id.Value</c></param>
+  /// <exception cref="ArgumentNullException">Thrown when value is null</exception>
+  /// <exception cref="ArgumentException">Thrown when value is not a member read</exception>
+  public static void RegisterValueMember<TId>(Expression<Func<TId, Guid>> value)
+    where TId : struct, IWhizbangId {
+    ArgumentNullException.ThrowIfNull(value);
+    if (value.Body is not MemberExpression read) {
+      throw new ArgumentException($"The read of {typeof(TId).Name}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
+    }
+
+    lock (_lock) {
+      _valueMembers[typeof(TId)] = read.Member;
+    }
+  }
+
+  /// <summary>
+  /// Gets the <c>Value</c> member of every id type that has one, recorded by
+  /// <see cref="RegisterValueMember{TId}"/>: every generated WhizbangId in the loaded assemblies.
+  /// </summary>
+  /// <returns>The members by id type, as a snapshot</returns>
+  public static IReadOnlyDictionary<Type, MemberInfo> GetValueMembers() {
+    lock (_lock) {
+      return new Dictionary<Type, MemberInfo>(_valueMembers);
     }
   }
 

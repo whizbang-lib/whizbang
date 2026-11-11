@@ -27,6 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_order";
 
+  private static readonly DateTime _seededAt = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
   private readonly TestOrderId _first = TestOrderId.New();
   private readonly TestOrderId _second = TestOrderId.New();
   private readonly TestOrderId _third = TestOrderId.New();
@@ -44,7 +46,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     var strategy = new PostgresUpsertStrategy();
     foreach (var (id, status) in new[] { (_first, "first"), (_second, "second"), (_third, "third") }) {
       var order = new Order { OrderId = id, Amount = 1m, Status = status };
-      var metadata = new PerspectiveMetadata { EventType = "OrderCreated", EventId = id.Value.ToString(), Timestamp = DateTime.UtcNow };
+      var metadata = new PerspectiveMetadata { EventType = "OrderCreated", EventId = id.Value.ToString(), Timestamp = _seededAt };
       await strategy.UpsertPerspectiveRowAsync(context, TABLE, id.Value, order, metadata, new PerspectiveScope());
     }
   }
@@ -72,7 +74,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(json).Contains("\"second\"").Because(json);
     await Assert.That(json).DoesNotContain("\"first\"").Because(json);
     await Assert.That(json).DoesNotContain("\"third\"").Because(json);
-    await Assert.That(sql).Contains("WHERE (w.data -> 'OrderId') = @").Because(sql);
+    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{OrderId,Value}' AS uuid)) = @").Because(sql);
   }
 
   [Test]
@@ -82,7 +84,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(json).Contains("\"first\"").Because(json);
     await Assert.That(json).DoesNotContain("\"second\"").Because(json);
     await Assert.That(json).Contains("\"third\"").Because(json);
-    await Assert.That(sql).Contains("WHERE (w.data -> 'OrderId') <> @").Because(sql);
+    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{OrderId,Value}' AS uuid)) <> @").Because(sql);
   }
 
   [Test]
@@ -100,5 +102,25 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(ninJson).Contains("\"second\"").Because(ninJson);
     await Assert.That(ninJson).DoesNotContain("\"third\"").Because(ninJson);
     await Assert.That(ninSql).Contains(" AND ").Because(ninSql);
+  }
+
+  [Test]
+  public async Task InAndNin_WithThousandsOfIds_AnswerTheRequestAsync() {
+    // Thousands of ids are thousands of comparisons. Nested one level per id they overflowed the stack of Entity
+    // Framework Core's expression visitors and ended the process; balanced, they translate and the request answers.
+    var ids = Enumerable.Range(0, 5_000).Select(_ => TestOrderId.New().Value.ToString())
+      .Append(_first.Value.ToString())
+      .Append(_third.Value.ToString());
+    var list = $"[{string.Join(", ", ids.Select(id => $"\"{id}\""))}]";
+
+    var (inJson, _) = await _filterAsync($"{{ in: {list} }}");
+    var (ninJson, _) = await _filterAsync($"{{ nin: {list} }}");
+
+    await Assert.That(inJson).Contains("\"first\"").Because(inJson);
+    await Assert.That(inJson).DoesNotContain("\"second\"").Because(inJson);
+    await Assert.That(inJson).Contains("\"third\"").Because(inJson);
+    await Assert.That(ninJson).DoesNotContain("\"first\"").Because(ninJson);
+    await Assert.That(ninJson).Contains("\"second\"").Because(ninJson);
+    await Assert.That(ninJson).DoesNotContain("\"third\"").Because(ninJson);
   }
 }

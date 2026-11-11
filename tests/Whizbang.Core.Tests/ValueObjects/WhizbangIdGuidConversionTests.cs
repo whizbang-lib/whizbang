@@ -48,4 +48,24 @@ public class WhizbangIdGuidConversionTests {
     await Assert.That(() => WhizbangIdProviderRegistry.RegisterGuidConversion<StrictVersionTestId>(null!))
       .Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task GetValueMembers_ForAGeneratedId_IsItsValuePropertyAsync() {
+    var members = WhizbangIdProviderRegistry.GetValueMembers();
+
+    await Assert.That(members[typeof(StrictVersionTestId)].Name).IsEqualTo(nameof(StrictVersionTestId.Value));
+    await Assert.That(members[typeof(StrictVersionTestId)].DeclaringType).IsEqualTo(typeof(StrictVersionTestId));
+  }
+
+  [Test]
+  public async Task RegisterValueMember_WithNullAccess_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => WhizbangIdProviderRegistry.RegisterValueMember<StrictVersionTestId>(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task RegisterValueMember_ThatIsNotAMemberRead_ThrowsArgumentExceptionAsync() {
+    await Assert.That(() => WhizbangIdProviderRegistry.RegisterValueMember<StrictVersionTestId>(id => id.ToGuid()))
+      .Throws<ArgumentException>();
+  }
 }

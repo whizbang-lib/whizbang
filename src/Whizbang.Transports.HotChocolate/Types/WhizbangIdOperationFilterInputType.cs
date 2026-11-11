@@ -3,7 +3,6 @@
 
 using System.Linq.Expressions;
 using HotChocolate.Data.Filters;
-using HotChocolate.Data.Filters.Expressions;
 using HotChocolate.Language;
 using HotChocolate.Types;
 
@@ -31,9 +30,9 @@ internal sealed class WhizbangIdOperationFilterInputType(Type idType, InputParse
     var ids = new ListTypeNode(new NonNullTypeNode(new NamedTypeNode(idType.Name)));
 
     _handle(descriptor.Operation(DefaultFilterOperations.Equals).Type(idType),
-      canBeNull: true, FilterExpressionBuilder.Equals);
+      canBeNull: true, WhizbangIdFilterHandler.IdEquals);
     _handle(descriptor.Operation(DefaultFilterOperations.NotEquals).Type(idType),
-      canBeNull: true, FilterExpressionBuilder.NotEquals);
+      canBeNull: true, WhizbangIdFilterHandler.IdNotEquals);
     _handle(descriptor.Operation(DefaultFilterOperations.In).Type(ids),
       canBeNull: false, WhizbangIdFilterHandler.AnyOf);
     _handle(descriptor.Operation(DefaultFilterOperations.NotIn).Type(ids),

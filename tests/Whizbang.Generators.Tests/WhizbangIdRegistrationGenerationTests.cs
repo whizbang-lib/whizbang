@@ -93,6 +93,8 @@ public class WhizbangIdRegistrationGenerationTests {
       "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.OrderId>(global::MyApp.Ids.OrderId.From);");
     await Assert.That(registrationSource).Contains(
       "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.ExternalUserId>(global::MyApp.Ids.ExternalUserId.From);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::MyApp.Ids.OrderId>(static id => id.Value);");
   }
 
   [Test]

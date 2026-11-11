@@ -97,8 +97,9 @@ public class IdFilterQuery {
 
 /// <summary>
 /// A strong-id filter translates to SQL for PostgreSQL through Entity Framework Core, both for an id in a perspective
-/// row's document and for an id column with a value converter: each operation compares the id with an id, never a
-/// bare Guid, so the provider maps the operand the way it maps the property (#2073). Entity Framework Core refuses to
+/// row's document and for an id column with a value converter (#2073). In a document it compares the Guid inside the
+/// id, the shape the containment rewrite turns into an indexed <c>data @&gt; ...</c>; on a column it compares the id
+/// with an id, so the provider maps the operand through the column's converter. Entity Framework Core refuses to
 /// evaluate a filter in memory, so a filter it cannot translate throws here instead of passing.
 /// </summary>
 [Category("Unit")]
@@ -125,18 +126,18 @@ public class WhizbangIdFilterTranslationTests {
   }
 
   [Test]
-  public async Task LensRow_Eq_ComparesTheIdInTheDocumentInSqlAsync() {
+  public async Task LensRow_Eq_ComparesTheGuidInsideTheIdInTheDocumentInSqlAsync() {
     var sql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ eq: \"{_first.Value}\" }} }} }}) {{ version }} }}");
 
-    await Assert.That(sql).Contains("WHERE (w.data -> 'Id') = @");
-    await Assert.That(sql).Contains($"{{\"Value\":\"{_first.Value}\"}}");
+    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) = @p");
+    await Assert.That(sql).Contains($"@p='{_first.Value}'");
   }
 
   [Test]
-  public async Task LensRow_Neq_ComparesTheIdInTheDocumentInSqlAsync() {
+  public async Task LensRow_Neq_ComparesTheGuidInsideTheIdInTheDocumentInSqlAsync() {
     var sql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ neq: \"{_first.Value}\" }} }} }}) {{ version }} }}");
 
-    await Assert.That(sql).Contains("WHERE (w.data -> 'Id') <> @");
+    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) <> @p");
   }
 
   [Test]
@@ -146,10 +147,10 @@ public class WhizbangIdFilterTranslationTests {
     var inSql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ in: {ids} }} }} }}) {{ version }} }}");
     var ninSql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ nin: {ids} }} }} }}) {{ version }} }}");
 
-    await Assert.That(inSql).Contains($"{{\"Value\":\"{_first.Value}\"}}");
-    await Assert.That(inSql).Contains($"{{\"Value\":\"{_second.Value}\"}}");
-    await Assert.That(inSql).Contains("WHERE (w.data -> 'Id') = @entity_equality_p OR (w.data -> 'Id') = @entity_equality_p0");
-    await Assert.That(ninSql).Contains("WHERE (w.data -> 'Id') <> @entity_equality_p AND (w.data -> 'Id') <> @entity_equality_p0");
+    await Assert.That(inSql).Contains($"@p='{_first.Value}'");
+    await Assert.That(inSql).Contains($"@p0='{_second.Value}'");
+    await Assert.That(inSql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) = @p OR (CAST(w.data #>> '{Id,Value}' AS uuid)) = @p0");
+    await Assert.That(ninSql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) <> @p AND (CAST(w.data #>> '{Id,Value}' AS uuid)) <> @p0");
   }
 
   [Test]
@@ -160,5 +161,20 @@ public class WhizbangIdFilterTranslationTests {
     await Assert.That(eqSql).Contains("WHERE o.id = @");
     await Assert.That(eqSql).Contains($"='{_first.Value}'");
     await Assert.That(inSql).Contains($"='{_second.Value}'");
+  }
+
+  [Test]
+  public async Task InAndNin_WithThousandsOfIds_TranslateForADocumentAndAColumnAsync() {
+    // One comparison per id; joined as a chain nested one level per id, a list this long overflowed the stack of
+    // Entity Framework Core's expression visitors and ended the process.
+    var ids = $"[{string.Join(", ", Enumerable.Range(0, 5_000).Select(_ => $"\"{GraphQLOrderId.New().Value}\""))}]";
+
+    var rowSql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ in: {ids} }} }} }}) {{ version }} }}");
+    var ninRowSql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ nin: {ids} }} }} }}) {{ version }} }}");
+    var columnSql = await _sqlAsync($"{{ orders(where: {{ id: {{ in: {ids} }} }}) {{ name }} }}");
+
+    await Assert.That(rowSql).Contains(" OR ");
+    await Assert.That(ninRowSql).Contains(" AND ");
+    await Assert.That(columnSql).Contains("WHERE o.id");
   }
 }
