@@ -91,7 +91,9 @@ public class ScopedReceptorRegistryQueryTests {
   [Test]
   public async Task AScopedHost_AnswersForItsOwnServicesCollectiveHandlersOnlyAsync() {
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AssemblyName = "Billing", AnyConsumerTypes = [], InboxHandlerTypes = [],
+      AssemblyName = "Billing",
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
       HandledCollectiveEventTypes = ["Billing.InvoicesRenamed, Billing"],
     });
@@ -101,7 +103,9 @@ public class ScopedReceptorRegistryQueryTests {
       .Because("with none of its own service's contributions loaded, the host cannot know its handlers (#2145)");
 
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AssemblyName = "Orders", AnyConsumerTypes = [], InboxHandlerTypes = [],
+      AssemblyName = "Orders",
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
       HandledCollectiveEventTypes = ["Orders.OrdersRenamed, Orders"],
     });
