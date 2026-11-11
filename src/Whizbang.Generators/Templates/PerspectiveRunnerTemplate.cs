@@ -151,7 +151,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // Null when no driver registered it (or the model has no [CollectiveApplyFor] handler) — then the runner
   // behaves exactly as before. See ICollectiveReplayApplier.
   private readonly global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? _collectiveReplayApplier;
-  private int _eventsSinceLastSnapshot;
+  // Events folded since each stream's last snapshot, per stream: one runner prepares many pairs of a batch (#2246), and
+  // a single count added one stream's events to another's and snapshotted the wrong stream at the wrong time.
+  private readonly global::System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _eventsSinceLastSnapshot = new();
+
+  private int _eventsSinceSnapshot(Guid streamId) => _eventsSinceLastSnapshot.GetValueOrDefault(streamId);
 
   public __RUNNER_CLASS_NAME__(
       IServiceProvider serviceProvider,
@@ -762,7 +766,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // #1963: when this apply may end in a snapshot of a row with collectives, the collective fence is read BEFORE the row,
     // and read again after the write; the snapshot records the first read's mark only when no collective of the row moved
     // across both reads, and is deferred otherwise.
-    var collectiveFence = await _readCollectiveFenceBeforeLiveReadAsync(events, cancellationToken);
+    var collectiveFence = await _readCollectiveFenceBeforeLiveReadAsync(streamId, events, cancellationToken);
 
     // A rebuild re-derives the row from its events (see below), so it reads no recorded position.
     var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
@@ -1336,7 +1340,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // place is serialized before it only when a snapshot is actually due.
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue
-            && _eventsSinceLastSnapshot + eventsProcessed >= _snapshotCadence().Threshold
+            && _eventsSinceSnapshot(state.StreamId) + eventsProcessed >= _snapshotCadence().Threshold
             && !collectiveInFlight;
         state.SnapshotDue = snapshotDue;
         if (pendingPurge) {
@@ -1515,7 +1519,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
           // The cadence is the perspective's own (_snapshotCadence); whether this run is due was decided before the write.
           var snapshotRetention = _snapshotCadence().Retention;
-          _eventsSinceLastSnapshot += eventsProcessed;
+          _eventsSinceLastSnapshot.AddOrUpdate(streamId, eventsProcessed, (_, count) => count + eventsProcessed);
           if (snapshotDue) {
             // #1963: the collectives mark this snapshot records, or a deferral when a collective of the row moved across
             // the fence's two reads. A deferred snapshot stays due: the count is not reset, so the next apply takes it.
@@ -1536,7 +1540,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               snapshotBeforeWrite = null; // handed to the store
               await _snapshotStore.PruneOldSnapshotsAsync(
                   streamId, perspectiveName, snapshotRetention, cancellationToken);
-              _eventsSinceLastSnapshot = 0;
+              _eventsSinceLastSnapshot.TryRemove(streamId, out _);
             }
           }
         }
@@ -2746,7 +2750,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         snapshotBeforeWrite = null; // handed to the store
         await _snapshotStore.PruneOldSnapshotsAsync(
             streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
-        _eventsSinceLastSnapshot = 0;
+        _eventsSinceLastSnapshot.TryRemove(streamId, out _);
       }
       snapshotBeforeWrite?.Dispose(); // no snapshot taken
     }
@@ -2989,11 +2993,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// exactly the ones before its event. The row's tenant is its events', as a replay of the row takes it.
   /// </summary>
   private async Task<CollectiveFenceRead?> _readCollectiveFenceBeforeLiveReadAsync(
+      Guid streamId,
       IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
       CancellationToken cancellationToken) {
     var snapshotMayBeDue = events.Count > 0
         && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-        && _eventsSinceLastSnapshot + events.Count >= _snapshotCadence().Threshold;
+        && _eventsSinceSnapshot(streamId) + events.Count >= _snapshotCadence().Threshold;
     if (!snapshotMayBeDue
         || global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
         || !_collectiveFenceApplies()) {
