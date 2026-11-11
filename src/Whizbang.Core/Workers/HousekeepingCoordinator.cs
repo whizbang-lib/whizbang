@@ -321,7 +321,10 @@ public sealed class HousekeepingCoordinator {
     if (backlog is null) {
       return;
     }
-    _serviceReadsSettled = backlog.IsSettled;
+    // Apart from the framework's steady-state integrity traffic (#2263), as the dwell below is (#2253): with stream
+    // integrity on, a checkpoint or its redelivery chatter is a row for a moment every half minute, and counted as work it
+    // kept a service with nothing else to do from ever draining its idle band.
+    _serviceReadsSettled = backlog.IsSettledApartFromIntegrity;
     _serviceSettledReadAt = _timeProvider.GetUtcNow();
     // Quiescent, not merely settled (167). Settled is the signal that ADMITS the idle drain, so a
     // sweep gated on it would start at the moment the drain does and compete with it for the same
@@ -360,10 +363,15 @@ public sealed class HousekeepingCoordinator {
   /// taken before the load that is running now.
   /// </param>
   /// <remarks>
-  /// Deliberately the looser <see cref="ServiceBacklog.IsSettled"/> and not
-  /// <see cref="ServiceBacklog.IsQuiescent"/>: the band is admitted BECAUSE it still holds rows,
-  /// so a signal that required them to be gone could never admit it.
+  /// Deliberately the looser settled reading and not the quiescent one: the band is admitted BECAUSE it still holds
+  /// rows, so a signal that required them to be gone could never admit it. Read as
+  /// <see cref="ServiceBacklog.IsSettledApartFromIntegrity"/>, so the framework's steady-state integrity traffic does not
+  /// hold the band back (#2263); without that figure every row counts, as <see cref="ServiceBacklog.IsSettled"/>.
   /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:IntegrityOnlyTraffic_AdmitsTheIdleDrainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:ApplicationWork_StillHoldsTheIdleDrainBackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:WithoutTheFigure_TheIdleDrainStillReadsEveryRowAsWorkAsync</tests>
   public bool ServiceReadsSettled(TimeSpan maxAge) {
     lock (_gate) {
       return _serviceReadsSettled

@@ -126,16 +126,21 @@ public sealed record ServiceBacklog {
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
-  public bool IsQuiescentApartFromIntegrity => NonIntegrityWorkRows is { } work
-    ? work == 0 && PendingPerspectiveRows == 0 && PendingIdleRows == 0
-    : IsQuiescent;
+  public bool IsQuiescentApartFromIntegrity => IsSettledApartFromIntegrity && PendingIdleRows == 0;
 
   /// <summary>
   /// <see cref="IsSettled"/> with the framework's steady-state integrity traffic not counted as work: what admits the idle
   /// drain (#2263). Falls back to <see cref="IsSettled"/> when <see cref="NonIntegrityWorkRows"/> was not measured.
   /// </summary>
+  /// <remarks>Settled, not quiescent: the idle band is admitted BECAUSE it still holds rows, so its rows are not counted
+  /// (see <see cref="PendingIdleRows"/>).</remarks>
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
-  public bool IsSettledApartFromIntegrity => IsSettled;
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToSettledAsync</tests>
+  public bool IsSettledApartFromIntegrity => NonIntegrityWorkRows is { } work
+    ? work == 0 && PendingPerspectiveRows == 0
+    : IsSettled;
 }
 
 
