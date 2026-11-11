@@ -38,6 +38,8 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
   private const string TYPE_KEY = "Contracts.Sessions.SessionPinged";
   private const string OPENED = "Contracts.Sessions.SessionOpened, Contracts";
   private const string CLOSED = "Contracts.Sessions.SessionClosed, Contracts";
+  private static readonly string BATCH = TypeNameFormatter.Format(typeof(BatchGenerated));
+  private static readonly string ITEM = TypeNameFormatter.Format(typeof(ItemGenerated));
 
   // ===== The report =====
 
@@ -317,21 +319,25 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
   [Test]
   public async Task Release_NamesWithOrWithoutTheAssembly_MatchTheConfiguredTypesAsync() {
     await using var conn = await _openAsync();
+    // A real type: its events are stored under the type's formatted name, and the catalog knows it by its name alone.
+    var probe = TypeNameFormatter.Format(typeof(BlockerReleaseProbe));
     var mixed = (Guid)TrackedGuid.New();
     await _appendAsync(conn, mixed, TYPE);
     var opened = await _appendAsync(conn, mixed, OPENED);
-    var closed = await _appendAsync(conn, mixed, CLOSED);
-    var catalog = new Catalog(_ephemeral(TYPE), new MessageTypeCatalogEntry(typeof(object), CLOSED, "event", null));
+    var released = await _appendAsync(conn, mixed, probe);
+    var catalog = new Catalog(_ephemeral(TYPE),
+      new MessageTypeCatalogEntry(typeof(BlockerReleaseProbe), TypeNameFormatter.GetFullName(probe), "event", null));
 
-    // The key in any case and without the assembly; one value without the assembly (resolved through the catalog), one
-    // with it, and a blank one that is ignored.
+    // The key in any case and without the assembly; one value with the assembly, one without it (resolved through the
+    // catalog to the stored name), and a blank one that is ignored.
     var result = await _step(new ListLogger()).ReclassifyAsync(
-      _services(catalog: catalog, release: new() { [TYPE_KEY.ToUpperInvariant()] = [OPENED, "Contracts.Sessions.SessionClosed", " "] }),
+      _services(release: new() { [TYPE_KEY.ToUpperInvariant()] = [OPENED, TypeNameFormatter.GetFullName(probe), " "] }, catalog: catalog),
       CancellationToken.None);
 
     await Assert.That(result.EventsReleased).IsEqualTo(2L);
     await Assert.That(await _flagsAsync(conn, opened)).IsEqualTo((long)EPHEMERAL);
-    await Assert.That(await _flagsAsync(conn, closed)).IsEqualTo((long)EPHEMERAL);
+    await Assert.That(await _flagsAsync(conn, released)).IsEqualTo((long)EPHEMERAL)
+      .Because("a value without its assembly reaches the events stored under the type's full stored name");
   }
 
   [Test]
@@ -387,26 +393,91 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task StartupSummary_WithNothingStored_IsNotLogged_AndAWalkInProgressIsMarkedAsync() {
-    await using var conn = await _openAsync();
+  public async Task StartupSummary_WithNothingStored_IsNotLoggedAsync() {
     var (metrics, _) = _metrics();
-    var quiet = new ListLogger();
-    await _step(quiet).ReclassifyAsync(_services(metrics: metrics), CancellationToken.None);
-    await Assert.That(quiet.Entries.Where(e => e.StartsWith("Ephemeral blocker report at startup", StringComparison.Ordinal))).IsEmpty()
-      .Because("nothing holds history back, so there is nothing to summarize");
+    var logger = new ListLogger();
 
+    var result = await _step(logger).ReclassifyAsync(_services(metrics: metrics), CancellationToken.None);
+
+    await Assert.That(result.Status).IsEqualTo("finished").Because("the control: the walk ran, over nothing");
+    await Assert.That(logger.Entries.Where(e => e.StartsWith("Ephemeral blocker report at startup", StringComparison.Ordinal))).IsEmpty()
+      .Because("nothing holds history back, so there is nothing to summarize");
+  }
+
+  [Test]
+  public async Task StartupSummary_MarksAWalkInProgress_AndTheBlockWaitsForTheWalkToFinishAsync() {
+    await using var conn = await _openAsync();
     var mixed = (Guid)TrackedGuid.New();
     await _appendAsync(conn, mixed, TYPE);
     await _appendAsync(conn, mixed, OPENED);
     await _appendAsync(conn, (Guid)TrackedGuid.New(), TYPE);
-    var (fresh, _) = _metrics();
+    var (metrics, _) = _metrics();
     var logger = new ListLogger();
 
-    await new EphemeralHistoryReclassifyStep(logger, 1, 1).ReclassifyAsync(_services(metrics: fresh), CancellationToken.None);
+    await new EphemeralHistoryReclassifyStep(logger, 1, 1).ReclassifyAsync(_services(metrics: metrics), CancellationToken.None);
 
     await Assert.That(logger.Single("Ephemeral blocker report at startup")).Contains($"{TYPE} (walk in progress)");
     await Assert.That(logger.Entries.Where(e => e.Contains("is held back", StringComparison.Ordinal))).IsEmpty()
       .Because("the per-type block is logged when the type's walk finishes");
+  }
+
+  // ===== Read models opted into mixing =====
+
+  [Test]
+  public async Task MixedReadModel_WithNoDurableInputLeft_IsReportedReadyToDropTheAttributeAsync() {
+    await using var conn = await _openAsync();
+    // The batch read model applies the ephemeral batch event and a legacy durable per-item event; each stream holds one
+    // kind, and no per-item event is left.
+    await _appendAsync(conn, (Guid)TrackedGuid.New(), BATCH);
+    await _appendAsync(conn, (Guid)TrackedGuid.New(), BATCH);
+    var (metrics, _) = _metrics();
+    var logger = new ListLogger();
+
+    await _step(logger).ReclassifyAsync(_services(catalog: _batchCatalog(), registry: _batchRegistry(), metrics: metrics), CancellationToken.None);
+
+    var block = logger.Single("Read model App.BatchPerspective");
+    await Assert.That(block).Contains("ready to drop the attribute")
+      .Because("with no durable input left the read model can become purely ephemeral");
+    await Assert.That(block).Contains(ITEM);
+    await Assert.That(logger.Entries.Where(e => e.StartsWith("Read model App.PlainPerspective", StringComparison.Ordinal))).IsEmpty()
+      .Because("only a read model that carries the attribute is reported");
+  }
+
+  [Test]
+  public async Task MixedReadModel_WithDurableInputsLeft_ReportsTheirCounts_InTheirOwnStreamsAsync() {
+    await using var conn = await _openAsync();
+    await _appendAsync(conn, (Guid)TrackedGuid.New(), BATCH);
+    await _appendAsync(conn, (Guid)TrackedGuid.New(), ITEM);
+    var items = (Guid)TrackedGuid.New();
+    await _appendAsync(conn, items, ITEM);
+    await _appendAsync(conn, items, ITEM);
+    var (metrics, _) = _metrics();
+    var logger = new ListLogger();
+
+    await _step(logger).ReclassifyAsync(_services(catalog: _batchCatalog(), registry: _batchRegistry(), metrics: metrics), CancellationToken.None);
+
+    var block = logger.Single("Read model App.BatchPerspective");
+    await Assert.That(block).DoesNotContain("ready to drop");
+    await Assert.That(block).Contains($"{ITEM}: 3 stored event(s) in 2 stream(s), 0 holding both kinds");
+    await Assert.That(block).DoesNotContain("holds back");
+  }
+
+  [Test]
+  public async Task MixedReadModel_ADurableInputSharingStreams_IsLinkedToItsBlockerEntryAsync() {
+    await using var conn = await _openAsync();
+    var shared = (Guid)TrackedGuid.New();
+    await _appendAsync(conn, shared, BATCH);
+    await _appendAsync(conn, shared, ITEM);
+    var (metrics, _) = _metrics();
+    var logger = new ListLogger();
+
+    await _step(logger).ReclassifyAsync(_services(catalog: _batchCatalog(), registry: _batchRegistry(), metrics: metrics), CancellationToken.None);
+
+    var block = logger.Single("Read model App.BatchPerspective");
+    await Assert.That(block).Contains($"{ITEM}: 1 stored event(s) in 1 stream(s), 1 holding both kinds");
+    await Assert.That(block).Contains($"holds back the history of {BATCH}")
+      .Because("the durable input is the blocker the report above names; the two entries point at each other");
+    await Assert.That(block).Contains("Whizbang:Ephemeral:ReleaseBlockers");
   }
 
   // ===== Helpers =====
@@ -422,16 +493,26 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
     public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
-  private sealed class ListLogger : ILogger {
+  private sealed class ListLogger(LogLevel minimum = LogLevel.Trace) : ILogger {
     public List<string> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-    public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= minimum;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
       Entries.Add(formatter(state, exception));
     public string Single(string prefix) => Entries.Single(e => e.StartsWith(prefix, StringComparison.Ordinal));
   }
 
   private sealed record Row(string Blocking, long Events, long Streams, long Bytes, Guid Sample);
+
+  private static Catalog _batchCatalog() => new(
+    new MessageTypeCatalogEntry(typeof(BatchGenerated), BATCH, "event", null) { Ephemeral = new EphemeralInfo(default, default) },
+    new MessageTypeCatalogEntry(typeof(ItemGenerated), ITEM, "event", null));
+
+  private static Registry _batchRegistry() => new(
+    new PerspectiveRegistrationInfo("App.BatchPerspective", "global::App.BatchPerspective", "global::App.Batch", [BATCH, ITEM]) {
+      AllowsMixedEphemeralAndSourced = true,
+    },
+    new PerspectiveRegistrationInfo("App.PlainPerspective", "global::App.PlainPerspective", "global::App.Plain", [ITEM]));
 
   private static MessageTypeCatalogEntry _ephemeral(string name) =>
     new(typeof(object), name, "event", null) { Ephemeral = new EphemeralInfo(default, default) };
@@ -538,3 +619,12 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
     _ = await cmd.ExecuteNonQueryAsync();
   }
 }
+
+/// <summary>A real event type for the release tests: stored under its formatted name, named without its assembly.</summary>
+internal sealed record BlockerReleaseProbe;
+
+/// <summary>A real ephemeral batch event for the mixed read-model tests.</summary>
+internal sealed record BatchGenerated;
+
+/// <summary>A real legacy durable per-item event for the mixed read-model tests.</summary>
+internal sealed record ItemGenerated;
