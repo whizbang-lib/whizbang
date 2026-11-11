@@ -247,7 +247,7 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
     var before = await _generationAsync(conn);
 
     for (var i = 1; i <= 5; i++) {
-      await _rewriteAsync(conn, (_localLane, i * 100, i * 100 + 5));
+      await _rewriteAsync(conn, (_localLane, i * 100, (i * 100) + 5));
     }
 
     await Assert.That(await _rewriteRowsAsync(conn)).IsEqualTo(3L);
@@ -286,7 +286,7 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
     var start = await _generationAsync(conn);
     await _setSettingAsync(conn, "integrity_origin_rewrite_log_rows", 2);
     for (var i = 1; i <= 4; i++) {
-      await _rewriteAsync(conn, (_localLane, i * 100, i * 100 + 5));
+      await _rewriteAsync(conn, (_localLane, i * 100, (i * 100) + 5));
     }
     var coordinator = _coordinator(ctx);
 
@@ -417,6 +417,68 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
     await Assert.That(await coordinator.EnsureIntegritySealGenerationAsync(origin, 6, rewrite: null)).IsFalse();
     await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(0L)
       .Because("an origin that cannot say what changed (an older one, or a consumer past its log) is answered by the old reset");
+  }
+
+  private static async Task<(long Rows, DateTimeOffset? FirstSeen)> _ledgerRowAsync(NpgsqlConnection conn, Guid origin) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT COUNT(*), MIN(first_seen_at) FROM wh_integrity_ledger WHERE origin_service_id = @o";
+    cmd.Parameters.AddWithValue("o", origin);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetFieldValue<DateTimeOffset>(1));
+  }
+
+  /// <summary>
+  /// A bump that rewrote nothing below the seal must not churn the ledger: before, the reset re-audited every window from
+  /// 0, and a long-known deficit was forgotten on an old window and detected again as a NEW row, its first sighting lost.
+  /// The guard keeps the seal (no re-audit of old windows), never touches a ledger row, and the bucket that is still
+  /// divergent is reported again on the same row, first sighting kept.
+  /// </summary>
+  [Test]
+  [Arguments(450L, 400L)]   // the rewrite did not reach the seal: kept
+  [Arguments(250L, 250L)]   // it did: lowered to the rewrite point, never to 0
+  public async Task Guard_ANewGeneration_LeavesAKnownDeficitsLedgerRowAndItsFirstSightingAsync(long rewrittenFrom, long expectedSeal) {
+    await using var ctx = CreateDbContext();
+    await using var conn = await _openAsync();
+    var coordinator = _coordinator(ctx);
+    var origin = TrackedGuid.New().Value;
+    var key = new IntegrityRepairLedger.DivergenceKey(origin, "tenant-a", "Contracts.RewriteFloorProbe", TrackedGuid.New().Value);
+    var firstSeen = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+    await Assert.That(await coordinator.IntegrityTryBeginReportAsync(key, 10, 20, 10, 18, firstSeen, TimeSpan.FromMinutes(5))).IsTrue();
+    await coordinator.EnsureIntegritySealGenerationAsync(origin, 5);
+    await coordinator.AdvanceIntegritySealAsync(origin, 400);
+    var recorded = await _ledgerRowAsync(conn, origin);
+
+    await coordinator.EnsureIntegritySealGenerationAsync(origin, 6, new IntegrityHistoryRewrite(5, rewrittenFrom));
+
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(expectedSeal);
+    await Assert.That(await _ledgerRowAsync(conn, origin)).IsEqualTo(recorded)
+      .Because("a generation change is not a heal: the deficit's row stays, with its first sighting");
+
+    // The bucket still diverges at the next audit, past the cooldown: the same row is reported again.
+    await Assert.That(await coordinator.IntegrityTryBeginReportAsync(
+      key, 10, 20, 10, 18, firstSeen.AddHours(2), TimeSpan.FromMinutes(5))).IsTrue();
+    await Assert.That(await _ledgerRowAsync(conn, origin)).IsEqualTo(recorded)
+      .Because("a bucket that never healed keeps the first sighting it was recorded with");
+  }
+
+  [Test]
+  public async Task Guard_TheFloorlessGuard_ResetsAsBeforeAsync() {
+    await using var ctx = CreateDbContext();
+    await using var conn = await _openAsync();
+    var coordinator = _coordinator(ctx);
+    var origin = TrackedGuid.New().Value;
+    await coordinator.EnsureIntegritySealGenerationAsync(origin, 5);
+    await coordinator.AdvanceIntegritySealAsync(origin, 400);
+
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT integrity_seal_generation_guard(@o, 6)";
+    cmd.Parameters.AddWithValue("o", origin);
+
+    await Assert.That((bool)(await cmd.ExecuteScalarAsync())!).IsFalse()
+      .Because("093's guard keeps its contract for a caller that has no floor to give");
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(0L);
+    await Assert.That(await coordinator.GetIntegritySealGenerationAsync(origin)).IsEqualTo(6L);
   }
 
   [Test]

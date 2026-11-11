@@ -73,8 +73,8 @@ public class LedgerRecheckWorkerTests {
     await worker.RecheckTickAsync(_fixedNow, CancellationToken.None);
 
     await Assert.That(transport.Published.Count).IsEqualTo(2);
-    foreach (var published in transport.Published) {
-      await Assert.That(_deserializeManifestRequest(published.Envelope).KnownOriginGeneration).IsEqualTo(41L);
+    foreach (var (envelope, _, _) in transport.Published) {
+      await Assert.That(_deserializeManifestRequest(envelope).KnownOriginGeneration).IsEqualTo(41L);
     }
     await Assert.That(coordinator.SealGenerationReads).IsEqualTo(1)
       .Because("the generation belongs to the origin, so one read serves every ask to it in the tick");

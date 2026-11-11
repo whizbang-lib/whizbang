@@ -3104,6 +3104,13 @@ public partial class IntegrityManifestReceptorTests {
       return Task.FromResult(SealGenerationCoherent);
     }
 
+    public Task<bool> EnsureIntegritySealGenerationAsync(
+        Guid originServiceId, long generation, IntegrityHistoryRewrite? rewrite, CancellationToken cancellationToken = default) {
+      GenerationGuardSeen = generation;
+      GuardRewriteSeen = rewrite;
+      return Task.FromResult(SealGenerationCoherent);
+    }
+
     /// <summary>#2262: what the origin vouches was rewritten since the asked generation; null = it cannot say.</summary>
     public IntegrityHistoryRewrite? HistoryRewrite { get; set; }
     public long? HistoryRewriteSinceSeen;
@@ -3112,13 +3119,6 @@ public partial class IntegrityManifestReceptorTests {
     public Task<IntegrityHistoryRewrite?> GetIntegrityHistoryRewriteAsync(long sinceGeneration, CancellationToken cancellationToken = default) {
       HistoryRewriteSinceSeen = sinceGeneration;
       return Task.FromResult(HistoryRewrite);
-    }
-
-    public Task<bool> EnsureIntegritySealGenerationAsync(
-        Guid originServiceId, long generation, IntegrityHistoryRewrite? rewrite, CancellationToken cancellationToken = default) {
-      GenerationGuardSeen = generation;
-      GuardRewriteSeen = rewrite;
-      return Task.FromResult(SealGenerationCoherent);
     }
 
     public Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
