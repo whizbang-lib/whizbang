@@ -47,6 +47,24 @@ internal sealed class KnownConfigurationKeys {
   /// <summary>Every key the library reads, parsed once per process from the embedded manifest.</summary>
   public static KnownConfigurationKeys Library => _library.Value;
 
+  /// <summary>Every key bound to a <see cref="SensitiveString"/>, and every connection string, parsed once per process.</summary>
+  /// <docs>operations/configuration/startup-settings-report#credentials-are-redacted-by-type</docs>
+  public static KnownConfigurationKeys Sensitive => Parse("");
+
+  /// <summary>Every key the manifest lists, in its order, with <c>*</c> segments as written.</summary>
+  public IReadOnlyList<string> Keys => [.. _exact.Where(static _ => false)];
+
+  /// <summary>Whether a manifest key has a <c>*</c> segment, a name the consumer chooses.</summary>
+  /// <param name="key">The manifest key.</param>
+  /// <returns><see langword="true"/> when it does.</returns>
+  public static bool IsPattern(string key) => key.Contains('\0', StringComparison.Ordinal);
+
+  /// <summary>Whether a configured key is one a manifest key with <c>*</c> segments stands for.</summary>
+  /// <param name="pattern">The manifest key.</param>
+  /// <param name="key">The configured key.</param>
+  /// <returns><see langword="true"/> when it matches.</returns>
+  public static bool Matches(string pattern, string key) => string.Equals(pattern, "\0" + key, StringComparison.Ordinal);
+
   /// <summary>Reads a manifest embedded as a resource.</summary>
   /// <param name="assembly">The assembly holding the resource.</param>
   /// <param name="name">The resource name.</param>
