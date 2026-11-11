@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class OutboxBatchStrategyRegistrationTests {
 
   [Test]
-  public async Task AddWhizbang_DefaultRegistration_ResolvesSlidingWindowOutboxAsync() {
+  public async Task AddWhizbang_DefaultRegistration_ResolvesCoalescingOutboxAsync() {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddWhizbangWorkers();
@@ -36,7 +36,8 @@ public class OutboxBatchStrategyRegistrationTests {
 
     // #2220: every registered strategy is wrapped in the batch buffer's bound.
     await Assert.That(resolved).IsTypeOf<BoundedOutboxBatchStrategy>();
-    await Assert.That(((BoundedOutboxBatchStrategy)resolved).Inner).IsTypeOf<SlidingWindowOutboxBatchStrategy>();
+    // #2220 Part 2: the default coalesces writes from many streams into one flush.
+    await Assert.That(((BoundedOutboxBatchStrategy)resolved).Inner).IsTypeOf<CoalescingOutboxBatchStrategy>();
   }
 
   [Test]
@@ -51,6 +52,24 @@ public class OutboxBatchStrategyRegistrationTests {
 
     await Assert.That(resolved).IsTypeOf<BoundedOutboxBatchStrategy>();
     await Assert.That(((BoundedOutboxBatchStrategy)resolved).Inner).IsTypeOf<ImmediateOutboxBatchStrategy>();
+  }
+
+  [Test]
+  public async Task ThePerStreamSlidingWindow_CanStillBeChosen_AndTheCoalescingSectionBindsAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Workers:CoalescingOutbox:Partitions"] = "3",
+      ["Whizbang:Workers:CoalescingOutbox:MaxSize"] = "250",
+    }).Build());
+    services.AddWhizbangWorkers();
+    services.AddWhizbangOutboxStrategy<SlidingWindowOutboxBatchStrategy>();
+
+    await using var sp = services.BuildServiceProvider();
+
+    await Assert.That(((BoundedOutboxBatchStrategy)sp.GetRequiredService<IOutboxBatchStrategy>()).Inner).IsTypeOf<SlidingWindowOutboxBatchStrategy>();
+    await Assert.That(sp.GetRequiredService<CoalescingOutboxBatchStrategy>().PartitionCount).IsEqualTo(3);
+    await Assert.That(sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoalescingOutboxOptions>>().Value.MaxSize).IsEqualTo(250);
   }
 
   [Test]
