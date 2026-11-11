@@ -35,7 +35,7 @@ public class RebuildAlreadyCorrectRowTests : EFCoreTestBase {
 
   [Test]
   public async Task RebuildStreamsAsync_AFoldEqualToTheStoredRowTheGuardRefused_IsRebuiltAndVerifiedAsync() {
-    var streamId = TrackedGuid.New();
+    var streamId = TrackedGuid.New().Value;
     await using var sp = _buildServices();
     await _appendStartedThenCompletedAsync(sp, streamId);
     await _seedRowAsync(streamId, new ItemProgress { Id = streamId, Started = true, Attempts = 1, Completed = true });
@@ -51,7 +51,7 @@ public class RebuildAlreadyCorrectRowTests : EFCoreTestBase {
 
   [Test]
   public async Task RebuildStreamsAsync_AFoldThatDiffersFromTheStoredRowTheGuardRefused_FailsAsRefusedAsync() {
-    var streamId = TrackedGuid.New();
+    var streamId = TrackedGuid.New().Value;
     await using var sp = _buildServices();
     await _appendStartedThenCompletedAsync(sp, streamId);
     // Two Started events were folded before the duplicate was removed.
@@ -91,7 +91,7 @@ public class RebuildAlreadyCorrectRowTests : EFCoreTestBase {
       Id = streamId,
       Data = data,
       Metadata = new PerspectiveMetadata {
-        EventId = TrackedGuid.New().ToString("D"),
+        EventId = TrackedGuid.New().Value.ToString("D"),
         EventType = typeof(ItemProgressStartedEvent).FullName!,
         CommitSequence = REMOVED_EVENT_SEQUENCE,
         Timestamp = then
