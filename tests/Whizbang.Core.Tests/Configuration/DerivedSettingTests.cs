@@ -48,6 +48,17 @@ public class DerivedSettingTests {
   }
 
   [Test]
+  public async Task Describe_WritesTheRuleAndInputs_OrTheRuleAloneAsync() {
+    var withInputs = DerivedSetting.FractionOf("Whizbang:A:B", 0.5, "Pool", 10);
+    var alone = DerivedSetting.Of("ThreadPoolFloor", 12, "ProcessorCount");
+
+    await Assert.That(DerivedSetting.Describe(withInputs)).IsEqualTo("0.5 x Pool; Pool=10");
+    await Assert.That(DerivedSetting.Describe(alone)).IsEqualTo("ProcessorCount");
+    await Assert.That(alone.ToString()).IsEqualTo("12 (ProcessorCount)");
+    await Assert.That(() => DerivedSetting.Describe(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task SettingInput_Of_FormatsWithTheInvariantCultureAsync() {
     await Assert.That(SettingInput.Of("Fraction", 0.5).Value).IsEqualTo("0.5");
   }

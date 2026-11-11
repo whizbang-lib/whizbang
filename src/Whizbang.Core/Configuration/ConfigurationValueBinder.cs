@@ -79,7 +79,9 @@ public static class ConfigurationValueBinder {
   /// <docs>operations/configuration/sensitive-settings#binding</docs>
   /// <tests>tests/Whizbang.Core.Tests/Configuration/ConfigurationValueBinderTests.cs:BindSensitive_WrapsTheValue_AndSkipsBlankOrMissingAsync</tests>
   public static void BindSensitive(IConfiguration section, string key, Action<SensitiveString> apply) {
-    _ = _read(section, key, apply);
+    if (SensitiveString.From(_read(section, key, apply)) is { } value) {
+      apply(value);
+    }
   }
 
   private static string? _read(IConfiguration section, string key, Delegate apply) {

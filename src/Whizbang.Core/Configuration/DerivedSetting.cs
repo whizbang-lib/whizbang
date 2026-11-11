@@ -17,7 +17,10 @@ public readonly record struct SettingInput(string Name, string Value) {
   /// <param name="name">What the input is.</param>
   /// <param name="value">Its value.</param>
   /// <returns>The input.</returns>
-  public static SettingInput Of<T>(string name, T value) where T : IFormattable => new(name, value.ToString(null, null));
+  public static SettingInput Of<T>(string name, T value) where T : IFormattable {
+    ArgumentException.ThrowIfNullOrWhiteSpace(name);
+    return new(name, value.ToString(null, CultureInfo.InvariantCulture));
+  }
 }
 
 /// <summary>A derived setting as the startup settings report reads it, whatever its value's type.</summary>
@@ -53,11 +56,11 @@ public interface IDerivedSetting {
 public sealed record DerivedSetting<T>(string Name, T Value, string Rule, IReadOnlyList<SettingInput> Inputs) : IDerivedSetting
     where T : IFormattable {
   /// <inheritdoc />
-  public string DisplayValue => Name[..0];
+  public string DisplayValue => Value.ToString(null, CultureInfo.InvariantCulture);
 
   /// <summary>The value, the rule and each input, as one line.</summary>
   /// <returns>For example <c>12 (ProcessorCount; ProcessorCount=12)</c>.</returns>
-  public override string ToString() => Name[..0];
+  public override string ToString() => DisplayValue + " (" + DerivedSetting.Describe(this) + ")";
 }
 
 /// <summary>Builds <see cref="DerivedSetting{T}"/> values.</summary>
@@ -71,8 +74,22 @@ public static class DerivedSetting {
   /// <param name="rule">How the value follows from the inputs.</param>
   /// <param name="inputs">What the value was computed from.</param>
   /// <returns>The derived setting.</returns>
-  public static DerivedSetting<T> Of<T>(string name, T value, string rule, params SettingInput[] inputs) where T : IFormattable =>
-    new(name, value, rule, inputs);
+  public static DerivedSetting<T> Of<T>(string name, T value, string rule, params SettingInput[] inputs) where T : IFormattable {
+    ArgumentException.ThrowIfNullOrWhiteSpace(name);
+    ArgumentException.ThrowIfNullOrWhiteSpace(rule);
+    return new(name, value, rule, inputs);
+  }
+
+  /// <summary>How a derived setting follows from its inputs: the rule, then each input, for example
+  /// <c>0.05 x TotalAvailableMemoryBytes; TotalAvailableMemoryBytes=1000</c>.</summary>
+  /// <param name="setting">The derived setting.</param>
+  /// <returns>The rule alone when the setting has no inputs.</returns>
+  public static string Describe(IDerivedSetting setting) {
+    ArgumentNullException.ThrowIfNull(setting);
+    return setting.Inputs.Count == 0
+      ? setting.Rule
+      : setting.Rule + "; " + string.Join(", ", setting.Inputs.Select(static input => input.Name + "=" + input.Value));
+  }
 
   /// <summary>
   /// <paramref name="fraction"/> of <paramref name="inputValue"/>, rounded down: a limit sized as a share of something
@@ -84,7 +101,8 @@ public static class DerivedSetting {
   /// <param name="inputValue">The input.</param>
   /// <returns>The derived setting.</returns>
   public static DerivedSetting<long> FractionOf(string name, double fraction, string inputName, long inputValue) =>
-    new(name, inputValue, inputName + fraction.ToString(CultureInfo.InvariantCulture), []);
+    Of(name, (long)(fraction * inputValue),
+      fraction.ToString(CultureInfo.InvariantCulture) + " x " + inputName, SettingInput.Of(inputName, inputValue));
 
   /// <summary><paramref name="requested"/> kept within [<paramref name="min"/>, <paramref name="max"/>].</summary>
   /// <typeparam name="T">The value's type.</typeparam>
@@ -95,6 +113,11 @@ public static class DerivedSetting {
   /// <param name="inputs">What the bounds were computed from.</param>
   /// <returns>The derived setting; its rule says when the value was clamped.</returns>
   public static DerivedSetting<T> Clamp<T>(string name, T requested, T min, T max, params SettingInput[] inputs)
-      where T : INumber<T> =>
-    new(name, requested, string.Create(CultureInfo.InvariantCulture, $"{min}{max}"), inputs);
+      where T : INumber<T> {
+    var value = T.Clamp(requested, min, max);
+    var rule = value == requested
+      ? requested.ToString(null, CultureInfo.InvariantCulture)
+      : string.Create(CultureInfo.InvariantCulture, $"{requested} clamped to [{min}, {max}]");
+    return Of(name, value, rule, inputs);
+  }
 }

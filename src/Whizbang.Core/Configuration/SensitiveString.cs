@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -33,44 +35,85 @@ public sealed class SensitiveString : IEquatable<SensitiveString>, IFormattable 
   /// <summary>What a value is written as when nothing of it may be shown.</summary>
   public const string REDACTED = "[redacted]";
 
+  // The keys of a connection string that say where it connects, never who it is or how it proves it.
+  private static readonly HashSet<string> _identifyingKeys = new(StringComparer.OrdinalIgnoreCase) {
+    "Host", "Server", "Data Source", "Endpoint", "Port", "Database", "Initial Catalog", "AccountName",
+  };
+
   private readonly string _value;
+  private readonly string _redacted;
 
   /// <summary>Holds <paramref name="value"/>.</summary>
   /// <param name="value">The credential.</param>
   public SensitiveString(string value) {
     ArgumentNullException.ThrowIfNull(value);
     _value = value;
+    _redacted = _redact(value);
   }
 
   /// <summary>The credential itself. The one call that reads it; everything else sees the redaction.</summary>
   /// <returns>The value as configured.</returns>
-  public string Reveal() => _value[..0];
+  public string Reveal() => _value;
 
   /// <summary>The redaction: what identifies the target, never what authenticates to it.</summary>
   /// <returns>The redacted form.</returns>
-  public override string ToString() => _value;
+  public override string ToString() => _redacted;
 
   /// <inheritdoc />
-  public string ToString(string? format, IFormatProvider? formatProvider) => _value;
+  public string ToString(string? format, IFormatProvider? formatProvider) => _redacted;
 
   /// <summary>Holds a configured string as a credential; a null string stays null.</summary>
   /// <param name="value">The credential.</param>
   [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(value))]
-  public static implicit operator SensitiveString?(string? value) => value is null ? null : new SensitiveString(value[..0]);
+  public static implicit operator SensitiveString?(string? value) => value is null ? null : new SensitiveString(value);
 
   /// <summary>A credential for a value that may be absent: null or blank stays null.</summary>
   /// <param name="value">The configured value.</param>
   /// <returns>The credential, or <see langword="null"/>.</returns>
-  public static SensitiveString? From(string? value) => value is null ? null : default;
+  public static SensitiveString? From(string? value) => string.IsNullOrWhiteSpace(value) ? null : new SensitiveString(value);
 
   /// <inheritdoc />
-  public bool Equals(SensitiveString? other) => false;
+  public bool Equals(SensitiveString? other) => other is not null && string.Equals(_value, other._value, StringComparison.Ordinal);
 
   /// <inheritdoc />
   public override bool Equals(object? obj) => Equals(obj as SensitiveString);
 
   /// <inheritdoc />
-  public override int GetHashCode() => 0;
+  public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(_value);
+
+  /// <summary>The redaction of <paramref name="value"/>, as <see cref="ToString()"/> writes it.</summary>
+  private static string _redact(string value) {
+    // A URI starts with its scheme; a key=value string may hold one as a value (Endpoint=sb://...), after its first '='.
+    var scheme = value.IndexOf("://", StringComparison.Ordinal);
+    var equals = value.IndexOf('=', StringComparison.Ordinal);
+    if (scheme > 0 && (equals < 0 || scheme < equals)) {
+      return Uri.TryCreate(value, UriKind.Absolute, out var uri) ? _redactUri(uri) : REDACTED;
+    }
+    return equals >= 0 ? _redactPairs(value) : REDACTED;
+  }
+
+  private static string _redactUri(Uri uri) {
+    var port = uri.Port < 0 ? "" : ":" + uri.Port.ToString(CultureInfo.InvariantCulture);
+    return uri.Scheme + "://" + uri.Host + port + uri.AbsolutePath + " " + REDACTED;
+  }
+
+  private static string _redactPairs(string value) {
+    var kept = new StringBuilder();
+    var dropped = false;
+    foreach (var pair in value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+      var equals = pair.IndexOf('=', StringComparison.Ordinal);
+      var key = equals < 0 ? "" : pair[..equals].Trim();
+      if (_identifyingKeys.Contains(key)) {
+        kept.Append(key).Append('=').Append(pair[(equals + 1)..].Trim()).Append(';');
+      } else {
+        dropped = true;
+      }
+    }
+    if (kept.Length == 0) {
+      return REDACTED;
+    }
+    return dropped ? kept.Append(REDACTED).ToString() : kept.ToString(0, kept.Length - 1);
+  }
 }
 
 /// <summary>
@@ -81,12 +124,17 @@ public sealed class SensitiveString : IEquatable<SensitiveString>, IFormattable 
 /// <tests>tests/Whizbang.Core.Tests/Configuration/SensitiveStringTests.cs</tests>
 public sealed class SensitiveStringJsonConverter : JsonConverter<SensitiveString> {
   /// <inheritdoc />
-  public override SensitiveString? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => null;
+  public override SensitiveString? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+    if (reader.TokenType != JsonTokenType.String) {
+      throw new JsonException($"A sensitive value is read from a JSON string, not a {reader.TokenType}.");
+    }
+    return new SensitiveString(reader.GetString()!);
+  }
 
   /// <inheritdoc />
   public override void Write(Utf8JsonWriter writer, SensitiveString value, JsonSerializerOptions options) {
     ArgumentNullException.ThrowIfNull(writer);
     ArgumentNullException.ThrowIfNull(value);
-    writer.WriteStringValue(value.Reveal());
+    writer.WriteStringValue(value.ToString());
   }
 }
