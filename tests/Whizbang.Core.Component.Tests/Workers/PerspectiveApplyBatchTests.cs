@@ -176,8 +176,11 @@ public class PerspectiveApplyBatchTests {
 
     await PerspectiveApplyBatch.RunAsync([newStream, oldStream], _services(null, sinks: _sinks(), stateSource: source), CancellationToken.None);
 
-    await Assert.That(source.Planned!.Single(r => r.StreamId == newStream.StreamId))
+    var planned = source.Planned!.Single(r => r.StreamId == newStream.StreamId);
+    await Assert.That(planned with { EventIds = null })
       .IsEqualTo(new PerspectiveStateRequest(newStream.StreamId, PERSPECTIVE, first.MessageId.Value, KnownNew: true));
+    await Assert.That(planned.EventIds).IsEquivalentTo(new[] { first.MessageId.Value })
+      .Because("the batch plans the commit-sequence read of every event the pair folds");
     await Assert.That(source.Planned!.Single(r => r.StreamId == oldStream.StreamId).KnownNew).IsFalse();
     await Assert.That(_runner(newStream).BatchState).IsSameReferenceAs(source.Batch);
     await Assert.That(_runner(oldStream).BatchState).IsSameReferenceAs(source.Batch);

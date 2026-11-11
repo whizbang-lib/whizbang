@@ -116,6 +116,10 @@ public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspec
       return withHistory?.Contains(streamId);
     }
 
+    public Task<PerspectiveCommitSequence?> CommitSequenceOfAsync(
+        IEventStore eventStore, Guid eventId, CancellationToken cancellationToken = default) =>
+      throw new NotImplementedException();
+
     private PerspectiveStateRequest? _pair(Guid streamId, string perspectiveName) =>
       _perspectives.TryGetValue(perspectiveName, out var perspective) && perspective.Pairs.TryGetValue(streamId, out var pair)
         ? pair

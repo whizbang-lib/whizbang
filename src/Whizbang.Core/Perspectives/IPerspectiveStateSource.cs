@@ -47,8 +47,13 @@ public interface IPerspectiveStateSource {
 /// Whether the stream is known to be new: its cursor is absent and <paramref name="FirstEventId"/> is the first event
 /// of its stream.
 /// </param>
+/// <param name="EventIds">
+/// The events the batch folds for the pair, of which the last one applied is the one whose commit sequence the row's
+/// write records; null when the batch does not plan that read.
+/// </param>
 /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-public readonly record struct PerspectiveStateRequest(Guid StreamId, string PerspectiveName, Guid FirstEventId, bool KnownNew) {
+public readonly record struct PerspectiveStateRequest(
+    Guid StreamId, string PerspectiveName, Guid FirstEventId, bool KnownNew, IReadOnlyList<Guid>? EventIds = null) {
   /// <summary>
   /// Whether a batch whose cursor is <paramref name="cursor"/> and whose events are <paramref name="events"/> starts a
   /// new stream: no cursor, and the first event is the first event of its stream.
@@ -117,7 +122,23 @@ public interface IPerspectiveBatchState {
   Task<bool?> HasHistoryBeforeAsync(
       IEventStore eventStore, Guid streamId, string perspectiveName, Guid beforeEventId, IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// The commit sequence of an event the batch planned for one of its pairs, answered for every planned event of the
+  /// batch with one query, or null when the batch cannot answer.
+  /// </summary>
+  /// <param name="eventStore">The event store.</param>
+  /// <param name="eventId">The event.</param>
+  /// <param name="cancellationToken">Cancels the query.</param>
+  /// <returns>The answer (its value null when the event is not yet stamped), or null to ask per event.</returns>
+  Task<PerspectiveCommitSequence?> CommitSequenceOfAsync(
+      IEventStore eventStore, Guid eventId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>An event's commit sequence as a batch read it: null when the event is not stamped (or not stored).</summary>
+/// <param name="Value">The commit sequence, or null.</param>
+/// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+public readonly record struct PerspectiveCommitSequence(long? Value);
 
 /// <summary>A perspective row as a batched read found it: the apply read and the model (null when the row is absent).</summary>
 /// <typeparam name="TModel">The perspective's model.</typeparam>

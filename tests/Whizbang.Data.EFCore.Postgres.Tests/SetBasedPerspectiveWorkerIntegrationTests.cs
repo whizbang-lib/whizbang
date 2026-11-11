@@ -71,6 +71,11 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(touching).Count().IsEqualTo(1)
       .Because("every stream of the batch is new, so none is read, and their rows are written with one statement");
     await Assert.That(touching[0]).Contains("INSERT INTO");
+    var sequenceReads = statements.Matching("commit_sequence", "wh_event_store").Where(s => s.Contains("event_id", StringComparison.Ordinal)).ToList();
+    await Assert.That(sequenceReads.Count(s => s.Contains("ANY", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the commit sequences the rows record are read with one statement for the batch");
+    await Assert.That(sequenceReads.Count(s => s.Contains("LIMIT", StringComparison.Ordinal))).IsEqualTo(0)
+      .Because("no pair reads its own commit sequence");
     for (var i = 0; i < streams.Count; i++) {
       await Assert.That(await _amountAsync(conn, streams[i], ct)).IsEqualTo(i + 1m);
     }

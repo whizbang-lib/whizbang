@@ -188,6 +188,51 @@ public class BatchedPerspectiveStateSourceTests {
   }
 
   [Test]
+  public async Task CommitSequences_AreReadOnce_ForEveryEventTheBatchPlannedAsync() {
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    var unstamped = Guid.NewGuid();
+    var events = new HistoryStore { Sequences = { [first] = 10, [second] = 20, [unstamped] = null } };
+    var batch = new BatchedPerspectiveStateSource().BeginBatch([
+      new(Guid.NewGuid(), PERSPECTIVE, first, KnownNew: true, EventIds: [first, second]),
+      new(Guid.NewGuid(), OTHER, unstamped, KnownNew: false, EventIds: [unstamped]),
+      new(Guid.NewGuid(), OTHER, Guid.NewGuid(), KnownNew: false),
+    ]);
+
+    await Assert.That(await batch.CommitSequenceOfAsync(events, second)).IsEqualTo(new PerspectiveCommitSequence(20));
+    await Assert.That(await batch.CommitSequenceOfAsync(events, first)).IsEqualTo(new PerspectiveCommitSequence(10));
+    await Assert.That(await batch.CommitSequenceOfAsync(events, unstamped)).IsEqualTo(new PerspectiveCommitSequence(null))
+      .Because("an event not yet stamped has no commit sequence, which the batch answers as the per-event read does");
+    await Assert.That(await batch.CommitSequenceOfAsync(events, Guid.NewGuid())).IsNull()
+      .Because("an event the batch did not plan is the pair's own read");
+
+    await Assert.That(events.SequenceQueries).Count().IsEqualTo(1).Because("one read serves every pair of the batch");
+    await Assert.That(events.SequenceQueries[0]).IsEquivalentTo(new[] { first, second, unstamped });
+  }
+
+  [Test]
+  public async Task ACommitSequenceReadThatFails_IsLogged_AndLeavesEachEventToItsOwnReadAsync() {
+    var eventId = Guid.NewGuid();
+    var logger = new RecordingLogger();
+    var batch = new BatchedPerspectiveStateSource(logger).BeginBatch([new(Guid.NewGuid(), PERSPECTIVE, eventId, false, [eventId])]);
+
+    await Assert.That(await batch.CommitSequenceOfAsync(new HistoryStore { Fails = true }, eventId)).IsNull();
+    await Assert.That(logger.Warnings[0]).Contains("commit-sequence read");
+    await Assert.That(async () => await batch.CommitSequenceOfAsync(null!, eventId)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task GetCommitSequencesAsync_Default_AsksEachEventAsync() {
+    var eventId = Guid.NewGuid();
+    IEventStore events = new SingleHistory(Guid.Empty) { Sequence = 42 };
+
+    var answer = await events.GetCommitSequencesAsync([eventId]);
+
+    await Assert.That(answer[eventId]).IsEqualTo(42L);
+    await Assert.That(async () => await events.GetCommitSequencesAsync(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task PurgedAmongAsync_Default_AsksEachStreamAsync() {
     var purged = Guid.NewGuid();
     IPerspectivePurgeMarkerStore markers = new SingleMarkers(purged);
@@ -323,6 +368,17 @@ public class BatchedPerspectiveStateSourceTests {
 
   private sealed class HistoryStore() : ForwardingEventStoreDecorator(new InMemoryEventStore()) {
     public HashSet<Guid> WithHistory { get; } = [];
+    public Dictionary<Guid, long?> Sequences { get; } = [];
+    public List<Guid[]> SequenceQueries { get; } = [];
+
+    public override Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+        IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
+      SequenceQueries.Add([.. eventIds]);
+      if (Fails) {
+        throw new InvalidOperationException("the read failed");
+      }
+      return Task.FromResult<IReadOnlyDictionary<Guid, long?>>(eventIds.Where(Sequences.ContainsKey).ToDictionary(id => id, id => Sequences[id]));
+    }
     public List<(Guid, Guid)[]> Queries { get; } = [];
     public List<IReadOnlyList<Type>> TypesAsked { get; } = [];
     public bool Fails { get; init; }
@@ -343,6 +399,11 @@ public class BatchedPerspectiveStateSourceTests {
   /// default, which asks this one per stream.
   /// </summary>
   private sealed class SingleHistory(Guid withHistory) : InMemoryEventStore, IEventStore {
+    public long? Sequence { get; init; }
+
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(Sequence);
+
     public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(streamId == withHistory);
   }

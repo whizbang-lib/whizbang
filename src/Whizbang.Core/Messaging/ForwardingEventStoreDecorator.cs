@@ -82,6 +82,11 @@ public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventS
     Inner.GetCommitSequenceAsync(eventId, cancellationToken);
 
   /// <inheritdoc />
+  public virtual Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) =>
+    Inner.GetCommitSequencesAsync(eventIds, cancellationToken);
+
+  /// <inheritdoc />
   public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
     Inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
 

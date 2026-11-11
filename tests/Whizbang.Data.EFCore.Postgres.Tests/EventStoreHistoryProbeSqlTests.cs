@@ -171,6 +171,29 @@ public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
       .Because("a perspective that folds nothing can have folded nothing");
   }
 
+  [Test]
+  public async Task GetCommitSequencesAsync_AnswersEveryEventInOneQueryAsync() {
+    // The batched read of a set-based batch (#2246): the commit sequences its pairs record, one statement for all of them.
+    await using var context = CreateDbContext();
+    var conn = await _openAsync(context);
+    IEventStore store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var stream = Guid.NewGuid();
+    var first = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-2));
+    var second = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-1));
+    await _seedPointerAsync(conn, first, stream, 1);
+    await _seedPointerAsync(conn, second, stream, 2);
+    var missing = Guid.CreateVersion7();
+
+    using var statements = new Perspectives.NpgsqlStatementLog(ConnectionString);
+    var sequences = await store.GetCommitSequencesAsync([first, second, missing]);
+
+    await Assert.That(sequences[first]).IsEqualTo(await store.GetCommitSequenceAsync(first));
+    await Assert.That(sequences[second]).IsEqualTo(await store.GetCommitSequenceAsync(second));
+    await Assert.That(sequences.ContainsKey(missing)).IsFalse().Because("an event that is not stored is left out");
+    await Assert.That(statements.Matching("wh_event_store").Count(s => s.Contains("ANY", StringComparison.Ordinal))).IsEqualTo(1);
+    await Assert.That(await store.GetCommitSequencesAsync([])).IsEmpty();
+  }
+
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext context) {
     var conn = (NpgsqlConnection)context.Database.GetDbConnection();
     if (conn.State != ConnectionState.Open) {

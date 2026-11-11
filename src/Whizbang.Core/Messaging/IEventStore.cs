@@ -133,6 +133,21 @@ public interface IEventStore {
     Task.FromResult<long?>(null);
 
   /// <summary>
+  /// <see cref="GetCommitSequenceAsync"/> for many events at once: the commit sequences a set-based batch records for
+  /// the last event of each of its pairs (<see cref="Perspectives.IPerspectiveStateSource"/>). An event that is not
+  /// stored is left out; one not yet stamped maps to null. The default asks each event on its own.
+  /// </summary>
+  /// <param name="eventIds">The events.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Each stored event's commit sequence, by id.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:GetCommitSequencesAsync_Default_AsksEachEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:GetCommitSequencesAsync_AnswersEveryEventInOneQueryAsync</tests>
+  Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <summary>
   /// Perspective row retention (resurrection-on-wake): true when the stream holds any event
   /// with an id ordered before <paramref name="beforeEventId"/>. The generated runner probes
   /// this on the row-null branch of a row-TTL Sourced perspective — a missing row plus
