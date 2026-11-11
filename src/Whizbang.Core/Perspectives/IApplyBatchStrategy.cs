@@ -35,6 +35,9 @@ public interface IApplyBatchStrategy {
 public sealed class FlushEveryBatchStrategy : IApplyBatchStrategy {
   /// <inheritdoc/>
   public Task<IReadOnlyList<PerspectiveWriteOutcome>> FlushAsync(
-      IPerspectiveWriteSink sink, IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+      IPerspectiveWriteSink sink, IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(sink);
+    ArgumentNullException.ThrowIfNull(writes);
+    return sink.WriteAsync(writes, cancellationToken);
+  }
 }

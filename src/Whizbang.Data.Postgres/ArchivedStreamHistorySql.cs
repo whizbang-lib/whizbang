@@ -67,6 +67,25 @@ internal static class ArchivedStreamHistorySql {
     """;
 
   /// <summary>
+  /// <see cref="EventTypesBefore"/> for many streams in one statement: each stream's distinct stored types of the hot
+  /// events before its own event, plus one null-typed row for each stream with archived history. Parameters:
+  /// <c>@StreamIds</c> and <c>@BeforeEventIds</c>, two <c>uuid[]</c> of one length, paired by position.
+  /// </summary>
+  /// <param name="prefix">The schema prefix (<see cref="PgIdentifier.QualifyPrefix"/>), empty for the search path.</param>
+  /// <returns>The statement; a <c>uuid</c> stream column and a nullable <c>text</c> type column.</returns>
+  internal static string EventTypesBeforeMany(string prefix) => $"""
+    SELECT p.stream_id, t.event_type
+    FROM unnest(@StreamIds, @BeforeEventIds) AS p(stream_id, before_id)
+    CROSS JOIN LATERAL (
+      SELECT DISTINCT e.event_type FROM {prefix}wh_event_store e WHERE e.stream_id = p.stream_id AND e.event_id < p.before_id
+    ) t
+    UNION ALL
+    SELECT l.stream_id, NULL::text FROM {prefix}wh_stream_lifecycle l
+    WHERE l.stream_id = ANY(@StreamIds)
+      AND (l.state = 'Archived' OR l.archive_locator IS NOT NULL OR l.archive_deleted_at IS NOT NULL)
+    """;
+
+  /// <summary>
   /// Reads the rows of <see cref="EventTypesBefore"/>: true when one is the null row of archived history, or names a
   /// type in <paramref name="eventTypes"/> (matched through <see cref="Whizbang.Core.Messaging.EventTypeMatchingHelper"/> only).
   /// </summary>

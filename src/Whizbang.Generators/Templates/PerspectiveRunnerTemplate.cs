@@ -110,6 +110,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private const string _archivedStreamRowsName = "";
   #endregion
 
+  #region WRITE_MODE_REGISTRATION
+  // Generated (#2246): a [ModuleInitializer] registering the perspective's write mode (the one it declares with
+  // [PerspectiveWriteMode], or null for the service's), so the worker knows which pairs it can write set-based.
+  #endregion
+
   #region PHYSICAL_FIELD_REGISTRATION
   // Generated: a model with [PhysicalField]/[VectorField] properties registers each column and the model's
   // storage mode via a [ModuleInitializer], so a collective apply can write and filter the column without
@@ -191,6 +196,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid? lastProcessedEventId,
       CancellationToken cancellationToken = default) {
 
+    var events = await ReadEventsAsync(streamId, lastProcessedEventId, cancellationToken);
+
+    // Delegate to RunWithEventsAsync
+    return await RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events!, cancellationToken);
+  }
+
+  /// <summary>
+  /// The read <see cref="RunAsync"/> makes before it applies: the stream's events after the cursor, of the types this
+  /// perspective folds. A set-based batch reads a claimed pair's events through it, then prepares them (#2246).
+  /// </summary>
+  public async Task<IReadOnlyList<MessageEnvelope<IEvent>>?> ReadEventsAsync(
+      Guid streamId,
+      Guid? lastProcessedEventId,
+      CancellationToken cancellationToken = default) {
+
     // Build event types list for polymorphic deserialization
     var eventTypes = new[] {
       #region EVENT_TYPES
@@ -204,9 +224,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         streamId, lastProcessedEventId, eventTypes, cancellationToken)) {
       events.Add(envelope);
     }
-
-    // Delegate to RunWithEventsAsync
-    return await RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events, cancellationToken);
+    return events;
   }
 
   /// <summary>
@@ -459,7 +477,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       List<Task> backgroundTasks,
       CancellationToken cancellationToken) {
 
-    var read = await _readBatchAsync(streamId, perspectiveName, lastProcessedEventId, events, backgroundTasks, preparing: false, cancellationToken);
+    var read = await _readBatchAsync(streamId, perspectiveName, lastProcessedEventId, events, backgroundTasks, preparing: false, batchState: null, cancellationToken);
     if (read.Completion is { } decided) {
       return decided;
     }
@@ -504,7 +522,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       CancellationToken cancellationToken = default) {
 
     events = _orderForApply(events);
-    var read = await _readBatchAsync(streamId, perspectiveName, lastProcessedEventId, events, new List<Task>(), preparing: true, cancellationToken);
+    var read = await _readBatchAsync(streamId, perspectiveName, lastProcessedEventId, events, new List<Task>(), preparing: true, batchState, cancellationToken);
     if (read.State is null) {
       return new Prepared(this, streamId, perspectiveName, lastProcessedEventId, events, null, read.PerPair, null, read.Completion);
     }
@@ -731,7 +749,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// write is refused, never landed. A store that tracks no versions returns Unchecked and the reads are exactly the
   /// ones the runner always made: the metadata is read on its own, and only for a row that exists outside a rebuild.
   /// </remarks>
-  private async Task<RowLoad> _loadRowForApplyAsync(Guid streamId, bool rebuilding, CancellationToken cancellationToken) {
+  private async Task<RowLoad> _loadRowForApplyAsync(
+      Guid streamId,
+      string perspectiveName,
+      bool rebuilding,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken) {
+    // A set-based batch's state source (#2246): no read for a stream it knows is new, and its one read per perspective
+    // table for the rest. Whatever it cannot answer is read per stream, below.
+    if (batchState is not null && !rebuilding) {
+      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+        return new RowLoad(
+            new global::Whizbang.Core.Perspectives.PerspectiveApplyRead(global::Whizbang.Core.Perspectives.PerspectiveRowVersion.Absent, null),
+            null,
+            null);
+      }
+      if (await batchState.ReadRowAsync(_perspectiveStore, streamId, perspectiveName, cancellationToken) is { } batched) {
+        return new RowLoad(batched.ApplyRead, batched.Model, batched.Model is null ? null : batched.ApplyRead.Metadata);
+      }
+    }
     var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
     var rowVersion = applyRead.Version;
 
@@ -762,6 +798,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       List<Task> backgroundTasks,
       bool preparing,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
       CancellationToken cancellationToken) {
 
     // #1963: when this apply may end in a snapshot of a row with collectives, the collective fence is read BEFORE the row,
@@ -772,7 +809,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // A rebuild re-derives the row from its events (see below), so it reads no recorded position.
     var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
         is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
-    var loaded = await _loadRowForApplyAsync(streamId, rebuilding, cancellationToken);
+    var loaded = await _loadRowForApplyAsync(streamId, perspectiveName, rebuilding, batchState, cancellationToken);
     var applyRead = loaded.ApplyRead;
     var rowVersion = applyRead.Version;
     var currentModel = loaded.Model;
@@ -811,7 +848,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (events.Count > 0
           && (global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
               || global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_archivedStreamRowsName))
-          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)) {
+          && await _hasHistoryBeforeAsync(streamId, perspectiveName, events[0].MessageId.Value, batchState, cancellationToken)) {
         if (preparing) {
           return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.MissingRowWithHistory;
         }
@@ -850,7 +887,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // only here, on a missing row, and a marker exists only after a purge, so a stream that was never purged
       // (new or live) is never affected and the steady state pays nothing.
       // <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-      startedPurged = events.Count > 0 && await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
+      startedPurged = events.Count > 0 && await _isPurgedForApplyAsync(streamId, perspectiveName, batchState, cancellationToken);
       if (startedPurged && preparing) {
         return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.PurgedStream;
       }
@@ -1773,6 +1810,44 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>The purge markers, when a driver registered them; without them a purge is honored within its batch only.</summary>
   private global::Whizbang.Core.Perspectives.IPerspectivePurgeMarkerStore? _PurgeMarkers =>
       _serviceProvider.GetService<global::Whizbang.Core.Perspectives.IPerspectivePurgeMarkerStore>();
+
+  /// <summary>
+  /// The purge probe of a missing row: false for a stream the batch knows is new, the batch's answer where it has one,
+  /// and otherwise the stream's own query.
+  /// </summary>
+  private async Task<bool> _isPurgedForApplyAsync(
+      Guid streamId, string perspectiveName, global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken) {
+    if (batchState is not null) {
+      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+        return false;
+      }
+      if (_PurgeMarkers is { } markers
+          && await batchState.IsPurgedAsync(markers, streamId, perspectiveName, cancellationToken) is { } batched) {
+        return batched;
+      }
+    }
+    return await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
+  }
+
+  /// <summary>
+  /// The history probe of a missing row of a perspective whose rows can be evicted: false for a stream the batch knows
+  /// is new, the batch's answer where it has one, and otherwise the stream's own query.
+  /// </summary>
+  private async Task<bool> _hasHistoryBeforeAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState, CancellationToken cancellationToken) {
+    if (batchState is not null) {
+      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+        return false;
+      }
+      if (await batchState.HasHistoryBeforeAsync(
+              _eventStore, streamId, perspectiveName, beforeEventId, _handledEventTypes, cancellationToken) is { } batched) {
+        return batched;
+      }
+    }
+    return await _eventStore.HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken);
+  }
 
   private async Task<bool> _isPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) {
     var markers = _PurgeMarkers;

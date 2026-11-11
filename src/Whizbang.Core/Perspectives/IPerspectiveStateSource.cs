@@ -57,8 +57,10 @@ public readonly record struct PerspectiveStateRequest(Guid StreamId, string Pers
   /// <param name="events">The batch's events, in the order they are applied.</param>
   /// <returns>True when no row, purge marker or earlier history can exist for the stream.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:IsKnownNew_OnlyWithoutACursor_AndWhenTheFirstEventStartsTheStreamAsync</tests>
-  public static bool IsKnownNew(Guid? cursor, IReadOnlyList<Observability.MessageEnvelope<IEvent>> events) =>
-    throw new NotImplementedException();
+  public static bool IsKnownNew(Guid? cursor, IReadOnlyList<Observability.MessageEnvelope<IEvent>> events) {
+    ArgumentNullException.ThrowIfNull(events);
+    return cursor is null && events.Count > 0 && events[0].IsFirstInLocalStream;
+  }
 }
 
 /// <summary>

@@ -34,6 +34,29 @@ public sealed class PostgresPerspectivePurgeMarkerStore(
   }
 
   /// <inheritdoc />
+  /// <remarks>One statement for every stream (<c>stream_id = ANY</c>).</remarks>
+  public async Task<IReadOnlySet<Guid>> PurgedAmongAsync(
+      IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    var purged = new HashSet<Guid>();
+    if (streamIds.Count == 0) {
+      return purged;
+    }
+    await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand(
+      $"SELECT DISTINCT stream_id FROM {_table} WHERE stream_id = ANY($1) AND perspective_name IN ($2, $3)",
+      connection);
+    command.Parameters.Add(new NpgsqlParameter { Value = streamIds.ToArray(), NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid });
+    command.Parameters.AddWithValue(perspectiveName);
+    command.Parameters.AddWithValue(PerspectivePurgeMarkers.ALL_PERSPECTIVES);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      purged.Add(reader.GetGuid(0));
+    }
+    return purged;
+  }
+
+  /// <inheritdoc />
   public async Task MarkPurgedAsync(Guid streamId, string perspectiveName, Guid? purgeEventId, CancellationToken cancellationToken = default) {
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(

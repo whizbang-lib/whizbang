@@ -245,9 +245,9 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
     await Assert.That(template).Contains("#region HANDLED_EVENT_TYPES")
       .Because("the generator fills the perspective's handled event types into a static array");
-    await Assert.That(template).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+    await Assert.That(template).Contains("HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken)")
       .Because("the resurrection probe asks about the handled event types only");
-    await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)")
+    await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken)")
       .Because("the untyped probe is the false positive");
   }
 

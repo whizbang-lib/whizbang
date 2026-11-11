@@ -32,7 +32,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveApplyBatchTests.cs</tests>
-internal static class PerspectiveApplyBatch {
+internal static partial class PerspectiveApplyBatch {
   /// <summary>One pair of a batch: what it applies, and how its apply ended.</summary>
   internal sealed class Pair(
       Guid streamId, string perspectiveName, IPerspectiveRunner runner, Guid? lastProcessedEventId,
@@ -73,6 +73,103 @@ internal static class PerspectiveApplyBatch {
   /// <param name="services">The services the batch runs with.</param>
   /// <param name="cancellationToken">Cancels the batch; a cancellation is thrown, never recorded on a pair.</param>
   /// <returns>A task that completes when every pair has ended and the locks are released.</returns>
-  internal static Task RunAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) =>
-    throw new NotImplementedException();
+  internal static async Task RunAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) {
+    if (pairs.Count == 0) {
+      return;
+    }
+    await using var locks = await PerspectiveApplyLockSet.AcquireAsync(
+      services.Coordinator, pairs.Select(p => (p.StreamId, p.PerspectiveName)), cancellationToken).ConfigureAwait(false);
+
+    var batchState = services.StateSource?.BeginBatch([.. pairs.Select(p => new PerspectiveStateRequest(
+      p.StreamId, p.PerspectiveName, p.Events[0].MessageId.Value,
+      PerspectiveStateRequest.IsKnownNew(p.LastProcessedEventId, p.Events)))]);
+    var parallel = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, services.Width), CancellationToken = cancellationToken };
+
+    await Parallel.ForEachAsync(pairs, parallel, async (pair, ct) => {
+      try {
+        pair.Prepared = await pair.Runner.PrepareAsync(
+          pair.StreamId, pair.PerspectiveName, pair.LastProcessedEventId, pair.Events, batchState, ct).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        pair.Failure = ex;
+      }
+    }).ConfigureAwait(false);
+
+    await _flushAsync(pairs, services, cancellationToken).ConfigureAwait(false);
+
+    await Parallel.ForEachAsync(pairs, parallel, async (pair, ct) => {
+      if (pair.Failure is not null) {
+        return;
+      }
+      try {
+        pair.Result = await pair.Runner.CompleteAsync(pair.Prepared!, pair.Outcome, ct).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        pair.Failure = ex;
+      }
+    }).ConfigureAwait(false);
+  }
+
+  /// <summary>Writes the prepared rows, one sink per DbContext, and records each pair's outcome.</summary>
+  private static async Task _flushAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) {
+    var bySink = pairs
+      .Where(p => p.Failure is null && p.Prepared?.Write is not null)
+      .GroupBy(p => p.Prepared!.Write!.SinkKey ?? _defaultSink);
+    foreach (var group in bySink) {
+      var members = group.ToList();
+      var writes = members.ConvertAll(p => p.Prepared!.Write!);
+      IReadOnlyList<PerspectiveWriteOutcome> outcomes;
+      var scope = services.ScopeFactory.CreateAsyncScope();
+      await using (scope.ConfigureAwait(false)) {
+        var sink = ReferenceEquals(group.Key, _defaultSink)
+          ? scope.ServiceProvider.GetService<IPerspectiveWriteSink>()
+          : scope.ServiceProvider.GetKeyedService<IPerspectiveWriteSink>(group.Key);
+        if (sink is null) {
+          var missing = new InvalidOperationException(
+            $"No {nameof(IPerspectiveWriteSink)} is registered for {_describe(group.Key)}, so its rows are written per stream.");
+          LogSinkUnavailable(services.Logger, missing, _describe(group.Key), writes.Count);
+          outcomes = [.. writes.Select(_ => PerspectiveWriteOutcome.Failed(missing))];
+        } else {
+          outcomes = await _writeAsync(sink, writes, group.Key, services, cancellationToken).ConfigureAwait(false);
+        }
+      }
+      for (var i = 0; i < members.Count; i++) {
+        members[i].Outcome = outcomes[i];
+      }
+    }
+  }
+
+  private static async Task<IReadOnlyList<PerspectiveWriteOutcome>> _writeAsync(
+      IPerspectiveWriteSink sink, List<PendingPerspectiveWrite> writes, object key, Services services,
+      CancellationToken cancellationToken) {
+    try {
+      var outcomes = await services.FlushPolicy.FlushAsync(sink, writes, cancellationToken).ConfigureAwait(false);
+      if (outcomes.Count != writes.Count) {
+        throw new InvalidOperationException(
+          $"The flush of {_describe(key)} answered {outcomes.Count} outcome(s) for {writes.Count} write(s).");
+      }
+      return outcomes;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // The whole statement group failed (a connection lost, a policy that broke its contract): every row is applied
+      // again on its own, where the failure is met, or not, exactly as on the per-pair path.
+      LogSinkFailed(services.Logger, ex, _describe(key), writes.Count);
+      return [.. writes.Select(_ => PerspectiveWriteOutcome.Failed(ex))];
+    }
+  }
+
+  /// <summary>The group key of writes that name no DbContext: the sink registered without a key.</summary>
+  private static readonly object _defaultSink = new();
+
+  private static string _describe(object key) {
+    if (ReferenceEquals(key, _defaultSink)) {
+      return "the default write sink";
+    }
+    return key is Type type ? TypeNameFormatter.DisplayName(type) : key.ToString()!;
+  }
+
+  [LoggerMessage(EventId = 2246, Level = LogLevel.Warning,
+    Message = "Set-based perspective write: no write sink for {Sink}; its {WriteCount} row(s) are written per stream")]
+  private static partial void LogSinkUnavailable(ILogger logger, Exception exception, string sink, int writeCount);
+
+  [LoggerMessage(EventId = 2247, Level = LogLevel.Warning,
+    Message = "Set-based perspective write: the write through {Sink} failed as a whole; its {WriteCount} row(s) are written per stream")]
+  private static partial void LogSinkFailed(ILogger logger, Exception exception, string sink, int writeCount);
 }

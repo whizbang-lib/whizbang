@@ -52,9 +52,17 @@ public interface IPerspectivePurgeMarkerStore {
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:PurgedAmongAsync_Default_AsksEachStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs:PurgedAmongAsync_AnswersEveryStreamInOneQueryAsync</tests>
-  Task<IReadOnlySet<Guid>> PurgedAmongAsync(
-      IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+  async Task<IReadOnlySet<Guid>> PurgedAmongAsync(
+      IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    var purged = new HashSet<Guid>();
+    foreach (var streamId in streamIds) {
+      if (await IsPurgedAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false)) {
+        purged.Add(streamId);
+      }
+    }
+    return purged;
+  }
 
   /// <summary>Records that the perspective purged the stream. Idempotent: a second purge refreshes the marker.</summary>
   /// <param name="streamId">The stream.</param>

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>How a perspective's rows are written when the worker applies a batch of claimed work.</summary>
@@ -48,18 +50,24 @@ public sealed class PerspectiveWriteModeAttribute(PerspectiveWriteMode mode) : A
 /// <docs>fundamentals/perspectives/write-modes#selection</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveWriteModesTests.cs</tests>
 public static class PerspectiveWriteModes {
+  private static readonly ConcurrentDictionary<string, PerspectiveWriteMode?> _declared = new(StringComparer.Ordinal);
+
   /// <summary>Registers a generated runner's perspective, with the mode it declares, if any.</summary>
   /// <param name="perspectiveName">The perspective's name, as work items carry it.</param>
   /// <param name="declared">The mode its <see cref="PerspectiveWriteModeAttribute"/> declares, or null.</param>
   public static void Register(string perspectiveName, PerspectiveWriteMode? declared) {
-    _ = perspectiveName;
-    _ = declared;
+    ArgumentException.ThrowIfNullOrWhiteSpace(perspectiveName);
+    _declared[perspectiveName] = declared;
   }
 
   /// <summary>The perspective's write mode: its declared one, else the service's, and per stream for a perspective with no generated runner.</summary>
   /// <param name="perspectiveName">The perspective's name.</param>
   /// <param name="serviceMode">The service's mode.</param>
   /// <returns>The mode the worker writes the perspective's rows with.</returns>
-  public static PerspectiveWriteMode Resolve(string perspectiveName, PerspectiveWriteMode serviceMode) =>
-    throw new NotImplementedException();
+  public static PerspectiveWriteMode Resolve(string perspectiveName, PerspectiveWriteMode serviceMode) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+    return _declared.TryGetValue(perspectiveName, out var declared)
+      ? declared ?? serviceMode
+      : PerspectiveWriteMode.PerStream;
+  }
 }

@@ -112,14 +112,16 @@ public sealed class PendingPerspectiveWrite {
   /// own sink, so a service with several contexts writes every perspective through its own.
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
-  public object? SinkKey { get; }
+  public object? SinkKey { get; private init; }
 
   /// <summary>The same write, for the sink registered under <paramref name="sinkKey"/>.</summary>
   /// <param name="sinkKey">The key of the sink of the row's DbContext.</param>
   /// <returns>The write, keyed to that sink.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/PendingPerspectiveWriteTests.cs:ForSink_KeysTheSameWriteToTheContextsSinkAsync</tests>
-  public PendingPerspectiveWrite ForSink(object sinkKey) =>
-    throw new NotImplementedException($"Keying the write of {Table} to {sinkKey} is not implemented.");
+  public PendingPerspectiveWrite ForSink(object sinkKey) {
+    ArgumentNullException.ThrowIfNull(sinkKey);
+    return new PendingPerspectiveWrite(Table, StreamId, Operation, ExpectedVersion, Row) { SinkKey = sinkKey };
+  }
 
   /// <summary>An upsert, insert or update of a row, decided by the version the apply read.</summary>
   /// <param name="table">The schema-qualified, quoted perspective table.</param>

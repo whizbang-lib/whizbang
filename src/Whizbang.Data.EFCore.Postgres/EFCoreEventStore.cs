@@ -363,6 +363,57 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
+  /// The typed history probe for many streams in one statement (#2246): the batched probe a set-based batch asks for
+  /// the streams whose rows it found missing. Each stream's stored types are matched exactly as the per-stream probe
+  /// matches them, and archived history counts the same way.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:StreamsWithEventsBeforeAsync_AnswersEveryStreamInOneQueryAsync</tests>
+  public async Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+      IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(probes);
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    var found = new HashSet<Guid>();
+    if (probes.Count == 0 || eventTypes.Count == 0) {
+      return found;
+    }
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(
+      EFCoreWorkCoordinator<TDbContext>.ResolveSchema(_context.Model, typeof(EventStoreRecord), logger: null));
+    var storedByStream = new Dictionary<Guid, List<string?>>();
+    await _context.Database.OpenConnectionAsync(cancellationToken);
+    try {
+      await using var command = _context.Database.GetDbConnection().CreateCommand();
+      command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+#pragma warning disable S2077 // The schema prefix is quoted from the EF model, never from input; values are parameters.
+      command.CommandText = Whizbang.Data.Postgres.ArchivedStreamHistorySql.EventTypesBeforeMany(prefix);
+#pragma warning restore S2077
+      command.Parameters.Add(new NpgsqlParameter("StreamIds", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
+        Value = probes.Select(p => p.StreamId).ToArray()
+      });
+      command.Parameters.Add(new NpgsqlParameter("BeforeEventIds", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
+        Value = probes.Select(p => p.BeforeEventId).ToArray()
+      });
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        var streamId = reader.GetGuid(0);
+        if (!storedByStream.TryGetValue(streamId, out var stored)) {
+          storedByStream[streamId] = stored = [];
+        }
+        stored.Add(await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1));
+      }
+    } finally {
+      await _context.Database.CloseConnectionAsync();
+    }
+    foreach (var (streamId, stored) in storedByStream) {
+      if (Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(stored, eventTypes)) {
+        found.Add(streamId);
+      }
+    }
+    return found;
+  }
+
+  /// <summary>
   /// The stream's start once its first event is gone (#2152): the business time the superseding reaper or a prefix
   /// truncate recorded on the stream's ledger row when it removed that event. Null while the stream holds it.
   /// </summary>

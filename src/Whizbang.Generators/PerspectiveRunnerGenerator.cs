@@ -187,6 +187,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // explicit Keep (0) stays distinct from no declaration: an explicit Keep outvotes another perspective that drops.
     var archivedStreamRowPolicy = _resolveArchivedStreamRows(classSymbol);
 
+    // #2246: the write mode a perspective declares with [PerspectiveWriteMode], or -1 to take the service's.
+    var writeMode = _resolveWriteMode(classSymbol);
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -279,7 +282,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
             UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
             IsOverwriteOnly: isOverwriteOnly,
-            OverwriteDecisiveEventTypes: overwriteDecisive),
+            OverwriteDecisiveEventTypes: overwriteDecisive,
+            WriteMode: writeMode),
         Warning: null
     );
   }
@@ -373,6 +377,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     classSymbol.GetAttributes()
       .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "ArchivedStreamRowsAttribute" or "ArchivedStreamRows")
       .Select(static a => a.ConstructorArguments is [{ Value: int policy }] ? policy : -1)
+      .DefaultIfEmpty(-1)
+      .First();
+
+  /// <summary>
+  /// Reads [PerspectiveWriteMode] on the perspective class (#2246): the declared mode's value, or -1 when the class
+  /// declares none (it then takes the service's mode).
+  /// </summary>
+  private static int _resolveWriteMode(INamedTypeSymbol classSymbol) =>
+    classSymbol.GetAttributes()
+      .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "PerspectiveWriteModeAttribute" or "PerspectiveWriteMode")
+      .Select(static a => a.ConstructorArguments is [{ Value: int mode }] ? mode : -1)
       .DefaultIfEmpty(-1)
       .First();
 
@@ -610,6 +625,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ? "\n  [global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerArchivedStreamRows() =>\n"
             + $"      global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.Register(_archivedStreamRowsName, (global::Whizbang.Core.Archival.ArchivedStreamRowPolicy){perspective.ArchivedStreamRowPolicy});"
           : ""));
+    // #2246: every generated runner registers its perspective's write mode, so the worker chooses each pair's path
+    // without resolving the runner: the declared mode, or null to take the service's. A perspective with no generated
+    // runner is never registered and is always written per stream.
+    result = TemplateUtilities.ReplaceRegion(result, "WRITE_MODE_REGISTRATION",
+        "[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerWriteMode() =>\n"
+        + "      global::Whizbang.Core.Perspectives.PerspectiveWriteModes.Register(_archivedStreamRowsName, "
+        + (perspective.WriteMode >= 0 ? $"(global::Whizbang.Core.Perspectives.PerspectiveWriteMode){perspective.WriteMode});" : "null);"));
     // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
     // membership, decoded from the compact spec, so the maintenance cascade can compute the
     // eviction closure without reflection.

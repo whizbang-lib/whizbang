@@ -397,6 +397,10 @@ public static class WorkerPipelineExtensions {
     // worker-never-starts signature. Without a runner registry the worker parks with a
     // structured warning, so perspective-less services host it harmlessly.
     services.TryAddSingleton<PerspectiveWorker>();
+    // #2246: the flush policy of set-based perspective writes, registered where the worker is so a service that
+    // registers nothing gets it; TryAdd, so a service's own policy wins. The state source and the write sink need a
+    // DbContext and are registered by the storage driver.
+    services.TryAddSingleton<Whizbang.Core.Perspectives.IApplyBatchStrategy, Whizbang.Core.Perspectives.FlushEveryBatchStrategy>();
     services.TryAddSingleton<OutboxCompletionFlushWorker>();
     services.TryAddSingleton<PerspectiveCompletionFlushWorker>();
     services.TryAddSingleton<FailureFlushWorker>();

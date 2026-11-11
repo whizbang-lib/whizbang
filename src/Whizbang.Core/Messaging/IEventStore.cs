@@ -175,10 +175,18 @@ public interface IEventStore {
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:StreamsWithEventsBeforeAsync_Default_AsksEachStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:StreamsWithEventsBeforeAsync_AnswersEveryStreamInOneQueryAsync</tests>
-  Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+  async Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
       IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
-      CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(probes);
+    var found = new HashSet<Guid>();
+    foreach (var (streamId, beforeEventId) in probes) {
+      if (await HasStreamEventsBeforeAsync(streamId, beforeEventId, eventTypes, cancellationToken).ConfigureAwait(false)) {
+        found.Add(streamId);
+      }
+    }
+    return found;
+  }
 
   /// <summary>
   /// The business time a stream started at, when the stream no longer holds its first event (#2152): the superseding
