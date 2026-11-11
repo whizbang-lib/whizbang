@@ -4004,12 +4004,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
 
       // Record the relationship for both abstract and non-abstract base classes
-      // so derived types are discovered for polymorphic serialization
-      inheritanceList.Add(new InheritanceInfo(
-          DerivedTypeName: derivedTypeName,
-          BaseTypeName: baseTypeName,
-          IsInterface: false
-      ));
+      // so derived types are discovered for polymorphic serialization. A constructed generic base
+      // ("BaseCommand<OrderId>") has no metadata name, so the by-name check that leaves abstract bases
+      // out cannot see it; an abstract one is left out here, where its symbol is at hand (#2072).
+      if (!(currentBase.IsGenericType && currentBase.IsAbstract)) {
+        inheritanceList.Add(new InheritanceInfo(
+            DerivedTypeName: derivedTypeName,
+            BaseTypeName: baseTypeName,
+            IsInterface: false
+        ));
+      }
 
       currentBase = currentBase.BaseType;
     }

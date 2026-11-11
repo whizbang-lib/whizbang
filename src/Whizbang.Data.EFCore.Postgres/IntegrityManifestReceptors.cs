@@ -1414,6 +1414,7 @@ public sealed partial class IntegrityManifestReceptor(
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
         StateOnly = true,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1469,6 +1470,7 @@ public sealed partial class IntegrityManifestReceptor(
         // manifests leave both null, the pre-existing whole-history semantics.
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)

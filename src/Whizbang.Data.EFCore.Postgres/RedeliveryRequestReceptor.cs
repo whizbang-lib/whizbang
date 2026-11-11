@@ -100,6 +100,8 @@ public sealed partial class RedeliveryRequestReceptor(
         AnswerTimeToLive = TimeSpan.FromMinutes((integrity ?? new StreamIntegrityOptions()).ControlMessageTimeToLiveMinutes),
         // #2092: a backfill window ships across streams, every bundle on the backfill's session.
         BundleStreamId = message.BackfillId,
+        // #2268: a requester that files each child under its own stream is answered across streams by scope.
+        BundleAcrossStreams = message.AcceptsStreamSpanningBundles,
       };
 
       // #2008: only events of types this service owns are its own; the rest were received from their authors.
