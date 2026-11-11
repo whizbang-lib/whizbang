@@ -53,6 +53,17 @@ public static class WorkerThreadPoolFloor {
     return Math.Max(currentMinimum, target);
   }
 
+  /// <summary>The floor as a derived setting, with the inputs it came from. Inert stub.</summary>
+  /// <param name="currentMinimum">The pool's current minimum.</param>
+  /// <param name="processorCount">The processor count.</param>
+  /// <param name="configuredFloor">The configured floor, if any.</param>
+  /// <returns>The derived floor.</returns>
+  public static Whizbang.Core.Configuration.DerivedSetting<int> Derive(int currentMinimum, int processorCount, int? configuredFloor) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of("stub", currentMinimum + processorCount + (configuredFloor ?? 0), "stub");
+
+  /// <summary>The floor the last <see cref="Apply"/> derived. Inert stub.</summary>
+  public static Whizbang.Core.Configuration.DerivedSetting<int> Applied { get; } = Derive(0, 0, null);
+
   /// <summary>
   /// Applies the computed floor to the running thread pool and returns the worker minimum now in
   /// effect. Idempotent — re-applying the same floor changes nothing.

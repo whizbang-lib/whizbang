@@ -192,6 +192,10 @@ public partial class PerspectiveWorker(
     return Math.Max(1, Math.Min(requested, perConsumer));
   }
 
+  /// <summary>The per-consumer drain width as a derived setting. Inert stub.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DeriveWidth(int consumers, int width, int gateMaxConcurrent) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of("stub", consumers + width + gateMaxConcurrent, "stub");
+
   private int _effectiveWidth() {
     var width = Math.Max(1, _governor.CurrentWidth);
     if (_gate is null || _gate.MaxConcurrent <= 0) {

@@ -176,6 +176,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// documented "disabled gate" state) or <c>null</c> means "no upstream cap"
   /// and the configured value passes through (subject to the floor).
   /// </remarks>
+  /// <summary>The dispatch fan-out as a derived setting. Inert stub.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DerivePartitionCount(int configured, int gateMaxConcurrent) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of("stub", configured + gateMaxConcurrent, "stub");
+
   internal static int ClampPartitionCount(int configured, int? gateMaxConcurrent) {
     var floored = Math.Max(1, configured);
     if (gateMaxConcurrent is null or <= 0) {

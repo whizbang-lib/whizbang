@@ -31,7 +31,12 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-public sealed partial class WorkCoordinatorGate : IDisposable {
+public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Configuration.IDerivedSettingSource {
+  /// <inheritdoc />
+  public IEnumerable<Whizbang.Core.Configuration.IDerivedSetting> DerivedSettings => _noDerived;
+
+  private static readonly Whizbang.Core.Configuration.IDerivedSetting[] _noDerived = [];
+
   private readonly SemaphoreSlim? _semaphore;
   // Priority step 4: the permits held back for interactive callers. Null when nothing is reserved.
   private readonly SemaphoreSlim? _reserve;
