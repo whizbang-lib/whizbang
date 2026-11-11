@@ -10,7 +10,9 @@ namespace Whizbang.Core;
 /// IPerspectiveFor&lt;&gt; type known to the current compilation.
 /// </summary>
 /// <param name="Type">The concrete CLR type.</param>
-/// <param name="ClrTypeName">The current CLR type name as produced by <c>TypeNameFormatter.Format</c>.</param>
+/// <param name="ClrTypeName">The current CLR type name as produced by <c>TypeNameFormatter.FormatClrTypeName</c>: the bare
+/// form, without the assembly. The event store's <c>event_type</c> holds the stored form, <c>TypeNameFormatter.Format(Type)</c>
+/// (#2254).</param>
 /// <param name="Kind">One of <c>"event"</c>, <c>"command"</c>, <c>"message"</c> (a plain message, neither command nor
 /// event, #2074) or <c>"perspective"</c>.</param>
 /// <param name="PinnedId">The GUID from <c>[PinnedId]</c>, or null if the type is not pinned.</param>

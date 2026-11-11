@@ -135,7 +135,7 @@ public static class TypeNameFormatter {
   public static string FormatFormerName(Type type, string formerName) {
     ArgumentNullException.ThrowIfNull(type);
     ArgumentException.ThrowIfNullOrWhiteSpace(formerName);
-    return formerName;
+    return formerName.Contains(',', StringComparison.Ordinal) ? Parse(formerName) : $"{formerName}, {_assemblyNameOf(type)}";
   }
 
   /// <summary>

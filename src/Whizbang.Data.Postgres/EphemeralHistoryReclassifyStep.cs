@@ -126,6 +126,15 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
   }
 
   /// <summary>One walk per name each ephemeral event type is stored under, each judging streams by all of its names.</summary>
+  /// <remarks>
+  /// Every name is the stored form the append path writes to <c>event_type</c> (<see cref="TypeNameFormatter.Format"/>, and
+  /// <see cref="TypeNameFormatter.FormatFormerName"/> for the ledger's former names), because the walk reads the type's
+  /// events through the type's index by that name. The catalog's <see cref="MessageTypeCatalogEntry.ClrTypeName"/> is the
+  /// bare CLR name: it matches no stored event, and a walk under it read nothing and completed (#2254). The bare name is
+  /// kept for the one thing keyed by it, the type-definition registry.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralHistoryReclassifySqlTests.cs:TheWalk_NamesTheTypeAsTheAppendPathStoredIt_AndItsDefinitionByTheBareNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HistoryWalkTargetNamingTests.cs:EveryHistoryWalkStep_NamesItsTargetsAsTheAppendPathStoresThem_AndReadsThemAsync</tests>
   private static List<EphemeralTarget> _targets(IMessageTypeCatalog? catalog) {
     var targets = new List<EphemeralTarget>();
     if (catalog is not { IsAvailable: true }) {
@@ -135,7 +144,10 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
       if (entry.Ephemeral is null || !string.Equals(entry.Kind, "event", StringComparison.Ordinal)) {
         continue;
       }
-      string[] names = [entry.ClrTypeName, .. entry.FormerNames];
+      string[] names = [
+        TypeNameFormatter.Format(entry.Type),
+        .. entry.FormerNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => TypeNameFormatter.FormatFormerName(entry.Type, n)),
+      ];
       targets.AddRange(names.Select(name => new EphemeralTarget(name, entry.ClrTypeName, names)));
     }
     return targets;
