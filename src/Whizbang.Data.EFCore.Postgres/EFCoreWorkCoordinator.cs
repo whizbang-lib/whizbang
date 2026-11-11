@@ -609,7 +609,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>The function answers an outcome (migration 392): 0 not reported, 1 reported, 2 reported and the row
+  /// <remarks>The function answers an outcome (migration 393): 0 not reported, 1 reported, 2 reported and the row
   /// recorded, 3 reported and the unhealable mark lifted; the last two are counted as buckets opened (#2256).</remarks>
   public async Task<bool> IntegrityTryBeginReportAsync(
       IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
@@ -625,7 +625,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, failOpen: true, cancellationToken).ConfigureAwait(false), failOpen: true);
 
   /// <inheritdoc />
-  /// <remarks>The function answers an outcome (migration 392): 0 refused, 1 granted, 2 granted and the row recorded,
+  /// <remarks>The function answers an outcome (migration 393): 0 refused, 1 granted, 2 granted and the row recorded,
   /// counted as a bucket opened (#2256).</remarks>
   public async Task<bool> IntegrityTryBeginRepairAsync(
       IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
@@ -638,14 +638,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, failOpen: false, cancellationToken).ConfigureAwait(false), failOpen: false);
 
   /// <inheritdoc />
-  /// <remarks>The function answers the rows it removed that were still open (migration 392), counted as healed.</remarks>
+  /// <remarks>The function answers the rows it removed that were still open (migration 393), counted as healed.</remarks>
   public async Task IntegrityMarkHealedAsync(
       IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
     _recordClosed(await _integrityLedgerOutcomeAsync("wh_integrity_heal_counted",
       cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false) ?? 0,
       Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
 
-  // The single-key outcome (migration 392) as the flag callers read, counting an opened or reopened bucket on the way.
+  // The single-key outcome (migration 393) as the flag callers read, counting an opened or reopened bucket on the way.
   // An unreadable outcome (the call failed) is the caller's fail-open or fail-closed answer, and counts nothing.
   private bool _flagFromOutcome(int? outcome, bool failOpen) {
     if (outcome is not { } known) {
@@ -656,7 +656,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return known > 0;
   }
 
-  // The outcomes of wh_integrity_report_outcome and wh_integrity_repair_outcome that record a bucket (392).
+  // The outcomes of wh_integrity_report_outcome and wh_integrity_repair_outcome that record a bucket (393).
   private const int LEDGER_OUTCOME_OPENED = 2;
   private const int LEDGER_OUTCOME_REOPENED = 3;
 
@@ -693,7 +693,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>The array sibling of <c>_integrityLedgerOutcomeAsync</c>: one batch function call answering the per-key
   /// flags (<c>granted</c>), the rows it recorded (<c>opened</c>) and, for the report batch, the unhealable marks it
-  /// lifted (<c>reopened</c>), which are counted (#2256, migration 392). Null on ANY failure — the caller then loops the
+  /// lifted (<c>reopened</c>), which are counted (#2256, migration 393). Null on ANY failure — the caller then loops the
   /// single-key path, whose per-operation fail-open/fail-closed semantics remain the authority.</summary>
   private async Task<IReadOnlyList<bool>?> _integrityLedgerBoolArrayAsync(
       string fn, Action<Npgsql.NpgsqlCommand> bind, CancellationToken ct) {
@@ -1211,7 +1211,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         }
         closed += reader.GetBoolean(1) ? 1 : 0;
       }
-      // #2256: a row already marked unhealable was closed by the mark, and is not closed again (392).
+      // #2256: a row already marked unhealable was closed by the mark, and is not closed again (393).
       _recordClosed(closed, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
       return ages;
     } catch (OperationCanceledException) {
@@ -1248,7 +1248,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ages.Add(reader.GetDouble(0));
           closed += reader.GetBoolean(1) ? 1 : 0;
         }
-        // #2256: a row already marked unhealable was closed by the mark, and is not closed again (392).
+        // #2256: a row already marked unhealable was closed by the mark, and is not closed again (393).
         _recordClosed(closed, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
         return ages;
       }, cancellationToken).ConfigureAwait(false);
@@ -1370,7 +1370,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
   }
 
-  // The forget functions' one row (migration 392): the rows removed, answered to the caller, and those of them still
+  // The forget functions' one row (migration 393): the rows removed, answered to the caller, and those of them still
   // open, counted as forgotten (#2256). A row already marked unhealable was closed by the mark.
   private async Task<int> _readForgottenAsync(Npgsql.NpgsqlCommand cmd, CancellationToken cancellationToken) {
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1382,7 +1382,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs with their origin's last report
   /// (<c>wh_integrity_ledger_origin_types</c>, migrations 370 and 372), then the judged ones forgotten
-  /// (<c>wh_integrity_forget_origin_types_counted</c>, migration 392); the second is skipped when nothing is judged. Best-effort: a prune that
+  /// (<c>wh_integrity_forget_origin_types_counted</c>, migration 393); the second is skipped when nothing is judged. Best-effort: a prune that
   /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
   public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
       Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
@@ -1895,7 +1895,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   /// <remarks>
-  /// One grouped read (<c>wh_integrity_ledger_backlog</c>, migration 392). An origin is named by its last checkpoint's
+  /// One grouped read (<c>wh_integrity_ledger_backlog</c>, migration 393). An origin is named by its last checkpoint's
   /// service name, and by its id when none is recorded. Degrades to the not-reported reading rather than throwing, and is
   /// logged: no series is better than a zero, which would read as a healed service.
   /// </remarks>
@@ -1969,7 +1969,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}({args})";
 #pragma warning restore S2077
-      // 392 (#2256): each single-key function answers a number (an outcome, or the rows it closed), never null.
+      // 393 (#2256): each single-key function answers a number (an outcome, or the rows it closed), never null.
       return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
     } catch (OperationCanceledException) {
       throw;

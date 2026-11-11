@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 392_TheLedgerCountsWhatItOpensAndCloses.sql
+-- Migration: 393_TheLedgerCountsWhatItOpensAndCloses.sql
 -- Date: 2026-11-11
 -- Description: The stream-integrity ledger reports how many buckets each call opened and closed, and the open repair
 --              backlog is read as one grouped count (#2256).
@@ -52,7 +52,7 @@
 --                 service (the maintainer duty's holder) once per maintenance tick. No index: the read is a full
 --                 aggregate, as wh_integrity_ledger_gauges (373) is.
 --
---              Number 392: 387 to 389 are taken by changes in flight.
+--              Number 393: 387 to 389, 392 and 396 are taken by changes in flight.
 --
 -- Reversal: reversible (no data is stored; the existing names are restored to their last words, 090, 094, 320, 331, 370
 --           and 384, and the counting forms dropped)
@@ -162,7 +162,7 @@ BEGIN
   WHERE origin_service_id = p_origin_service_id AND tenant_scope = v_scope
     AND event_type = p_event_type AND stream_id = p_stream_id;
 
-  -- 392 (#2256): a local change always reports (v_changed), so a lifted mark is always a reported outcome.
+  -- 393 (#2256): a local change always reports (v_changed), so a lifted mark is always a reported outcome.
   IF v_local_changed AND v_row.unhealable_at IS NOT NULL THEN
     RETURN 3;
   END IF;
@@ -171,7 +171,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_report_outcome(UUID, TEXT, TEXT, UUID, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ, INTEGER) IS
-'392 (#2256): whether a divergence should be reported now (first sighting, changed signature, or cooldown elapsed while repair can still change it), as an outcome: 0 not reported, 1 reported, 2 reported and the row recorded, 3 reported and the unhealable mark lifted. Row-locked so concurrent replicas cannot both report the same bucket. A changed LOCAL digest resets the repair ladder (attempts, the unhealable and exhausted marks, a pending answer); a change on the origin''s side alone does not (320). Any sighting clears the answered state, and a changed signature clears the recorded kind (251).';
+'393 (#2256): whether a divergence should be reported now (first sighting, changed signature, or cooldown elapsed while repair can still change it), as an outcome: 0 not reported, 1 reported, 2 reported and the row recorded, 3 reported and the unhealable mark lifted. Row-locked so concurrent replicas cannot both report the same bucket. A changed LOCAL digest resets the repair ladder (attempts, the unhealable and exhausted marks, a pending answer); a change on the origin''s side alone does not (320). Any sighting clears the answered state, and a changed signature clears the recorded kind (251).';
 
 -- The previous release's report decision, for a release that still calls it: the outcome as the flag it answered.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -198,7 +198,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_try_begin_report(UUID, TEXT, TEXT, UUID, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ, INTEGER) IS
-'True when a divergence should be reported now: wh_integrity_report_outcome (392) as a flag, for a release that calls this name.';
+'True when a divergence should be reported now: wh_integrity_report_outcome (393) as a flag, for a release that calls this name.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_report_divergences_counted');
 
@@ -284,7 +284,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_report_divergences_counted(UUID, TEXT[], TEXT[], UUID[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], BOOLEAN[], BIGINT[], TIMESTAMPTZ, INTEGER) IS
-'392 (#2256): one round trip for a manifest chunk''s report decisions (granted: element i answers key i), recording each key''s divergence kind (251) and deficit size (320), with the rows it recorded (opened) and the unhealable marks it lifted (reopened). A deficit larger than the one recorded resets the repair ladder (attempts, the unhealable and exhausted marks, a pending answer); an unknown size (NULL) keeps what is recorded.';
+'393 (#2256): one round trip for a manifest chunk''s report decisions (granted: element i answers key i), recording each key''s divergence kind (251) and deficit size (320), with the rows it recorded (opened) and the unhealable marks it lifted (reopened). A deficit larger than the one recorded resets the repair ladder (attempts, the unhealable and exhausted marks, a pending answer); an unknown size (NULL) keeps what is recorded.';
 
 -- The previous release's report batch, for a release that still calls it: the counting form's flags.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -311,7 +311,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_report_divergences_with_deficits(UUID, TEXT[], TEXT[], UUID[], BIGINT[], BIGINT[], BIGINT[], BIGINT[], BOOLEAN[], BIGINT[], TIMESTAMPTZ, INTEGER) IS
-'One round trip for a manifest chunk''s report decisions: wh_integrity_report_divergences_counted (392) without its counts, for a release that calls this name.';
+'One round trip for a manifest chunk''s report decisions: wh_integrity_report_divergences_counted (393) without its counts, for a release that calls this name.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
 -- The repair grant.
@@ -399,7 +399,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_repair_outcome(UUID, TEXT, TEXT, UUID, TIMESTAMPTZ, INTEGER, INTEGER) IS
-'392 (#2256): whether a repair should be requested now, as an outcome: 0 refused, 1 granted, 2 granted and the row recorded. On an exponential ladder (6 doublings at most) that ends at p_max_attempts: the grant that spends the last attempt marks the bucket exhausted and none follows until a reset (320). Never while the answer to the last request is pending, never for a bucket marked unhealable (249), and never on the type lane while per-stream rows of the type await their answers.';
+'393 (#2256): whether a repair should be requested now, as an outcome: 0 refused, 1 granted, 2 granted and the row recorded. On an exponential ladder (6 doublings at most) that ends at p_max_attempts: the grant that spends the last attempt marks the bucket exhausted and none follows until a reset (320). Never while the answer to the last request is pending, never for a bucket marked unhealable (249), and never on the type lane while per-stream rows of the type await their answers.';
 
 -- The previous release's repair grant, for a release that still calls it: the outcome as the flag it answered.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -422,7 +422,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_try_begin_repair(UUID, TEXT, TEXT, UUID, TIMESTAMPTZ, INTEGER, INTEGER) IS
-'True when a repair should be requested now: wh_integrity_repair_outcome (392) as a flag, for a release that calls this name.';
+'True when a repair should be requested now: wh_integrity_repair_outcome (393) as a flag, for a release that calls this name.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_repair_batch_counted');
 
@@ -473,7 +473,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_repair_batch_counted(UUID, TEXT[], TEXT[], UUID[], TIMESTAMPTZ, INTEGER, INTEGER, INTEGER) IS
-'392 (#2256): one round trip for a chunk''s repair decisions, capped at p_max_grants IN ORDER (past the cap keys are not consulted at all, so no attempt budget is burned on grants the caller cannot use), with the rows it recorded.';
+'393 (#2256): one round trip for a chunk''s repair decisions, capped at p_max_grants IN ORDER (past the cap keys are not consulted at all, so no attempt budget is burned on grants the caller cannot use), with the rows it recorded.';
 
 -- The previous release's repair batch, for a release that still calls it: the counting form's flags.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -496,7 +496,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_try_begin_repair_batch(UUID, TEXT[], TEXT[], UUID[], TIMESTAMPTZ, INTEGER, INTEGER, INTEGER) IS
-'One round trip for a chunk''s repair decisions: wh_integrity_repair_batch_counted (392) without its count, for a release that calls this name.';
+'One round trip for a chunk''s repair decisions: wh_integrity_repair_batch_counted (393) without its count, for a release that calls this name.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
 -- The heals.
@@ -531,7 +531,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_heal_counted(UUID, TEXT, TEXT, UUID) IS
-'392 (#2256): forgets one bucket that folded identical, answering 1 when the row removed was still open (not marked unhealable) and 0 otherwise.';
+'393 (#2256): forgets one bucket that folded identical, answering 1 when the row removed was still open (not marked unhealable) and 0 otherwise.';
 
 -- The previous release's single-key heal, for a release that still calls it.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -550,7 +550,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_healed(UUID, TEXT, TEXT, UUID) IS
-'Forgets one bucket that folded identical: wh_integrity_heal_counted (392) without its count, for a release that calls this name.';
+'Forgets one bucket that folded identical: wh_integrity_heal_counted (393) without its count, for a release that calls this name.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_heal_batch_counted');
 
@@ -580,7 +580,7 @@ BEGIN
     DELETE FROM __SCHEMA__.wh_integrity_ledger l
     USING keys k
     WHERE l.origin_service_id = p_origin_service_id
-      -- 392: an unscoped key (null) is the ledger's empty scope, as every report and the single-key heal key it; 094
+      -- 393: an unscoped key (null) is the ledger's empty scope, as every report and the single-key heal key it; 094
       -- compared it raw, so an unscoped bucket never healed through this batch.
       AND l.tenant_scope      = COALESCE(k.tenant_scope, '')
       AND l.event_type        = k.event_type
@@ -593,7 +593,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_heal_batch_counted(UUID, TEXT[], TEXT[], UUID[]) IS
-'392 (#2256): one round trip to forget a chunk''s healed buckets, returning each healed bucket''s age in seconds (first sighting -> heal), read from the rows the delete destroys, and whether it was still open.';
+'393 (#2256): one round trip to forget a chunk''s healed buckets, returning each healed bucket''s age in seconds (first sighting -> heal), read from the rows the delete destroys, and whether it was still open.';
 
 -- The previous release's batch heal, for a release that still calls it: the ages.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -611,7 +611,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_healed_batch(UUID, TEXT[], TEXT[], UUID[]) IS
-'One round trip to forget a chunk''s healed buckets, returning each healed bucket''s age in seconds: wh_integrity_heal_batch_counted (392), for a release that calls this name.';
+'One round trip to forget a chunk''s healed buckets, returning each healed bucket''s age in seconds: wh_integrity_heal_batch_counted (393), for a release that calls this name.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_heal_types_counted');
 
@@ -649,7 +649,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_heal_types_counted(UUID, TEXT[], TEXT[]) IS
-'392 (#2256): forgets every ledger row (the type lane and every per-stream row) of the given (tenant, type) pairs of one origin, which a comparison proved complete over the whole history (384), returning each forgotten row''s age in seconds and whether it was still open.';
+'393 (#2256): forgets every ledger row (the type lane and every per-stream row) of the given (tenant, type) pairs of one origin, which a comparison proved complete over the whole history (384), returning each forgotten row''s age in seconds and whether it was still open.';
 
 -- The previous release's whole-type heal, for a release that still calls it: the ages.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
@@ -665,7 +665,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_types_healed(UUID, TEXT[], TEXT[]) IS
-'Forgets every ledger row of the given (tenant, type) pairs of one origin, returning each row''s age in seconds: wh_integrity_heal_types_counted (392), for a release that calls this name.';
+'Forgets every ledger row of the given (tenant, type) pairs of one origin, returning each row''s age in seconds: wh_integrity_heal_types_counted (393), for a release that calls this name.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
 -- The prunes.
@@ -703,7 +703,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_forget_unconsumed_counted(TEXT[], TEXT[]) IS
-'392 (#2256): deletes the integrity ledger rows of event types the service neither consumes nor absorbs (331), which can never heal. A null set forgets nothing. Returns the rows deleted (forgotten) and those of them not marked unhealable (closed).';
+'393 (#2256): deletes the integrity ledger rows of event types the service neither consumes nor absorbs (331), which can never heal. A null set forgets nothing. Returns the rows deleted (forgotten) and those of them not marked unhealable (closed).';
 
 -- The previous release's prune, for a release that still calls it, and for the operator: the rows removed.
 -- <docs>resilience/stream-integrity#the-integrity-surface-is-what-the-service-consumes</docs>
@@ -719,7 +719,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_forget_unconsumed(TEXT[], TEXT[]) IS
-'331 (#2058): deletes the integrity ledger rows of event types the service neither consumes nor absorbs; a null set forgets nothing. Returns the rows deleted: wh_integrity_forget_unconsumed_counted (392) without its closed count.';
+'331 (#2058): deletes the integrity ledger rows of event types the service neither consumes nor absorbs; a null set forgets nothing. Returns the rows deleted: wh_integrity_forget_unconsumed_counted (393) without its closed count.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_forget_origin_types_counted');
 
@@ -753,7 +753,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_forget_origin_types_counted(UUID[], TEXT[]) IS
-'392 (#2256): deletes every integrity ledger row of the given (origin, event type) pairs, whose origin does not own the type (370). Returns the rows deleted (forgotten) and those of them not marked unhealable (closed).';
+'393 (#2256): deletes every integrity ledger row of the given (origin, event type) pairs, whose origin does not own the type (370). Returns the rows deleted (forgotten) and those of them not marked unhealable (closed).';
 
 -- The previous release's prune, for a release that still calls it: the rows removed.
 -- <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
@@ -768,7 +768,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_forget_origin_types(UUID[], TEXT[]) IS
-'370: deletes every integrity ledger row of the given (origin, event type) pairs. Returns the rows deleted: wh_integrity_forget_origin_types_counted (392) without its closed count.';
+'370: deletes every integrity ledger row of the given (origin, event type) pairs. Returns the rows deleted: wh_integrity_forget_origin_types_counted (393) without its closed count.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
 -- The backlog.
@@ -824,4 +824,4 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_ledger_backlog(INTEGER) IS
-'392 (#2256): the open repair backlog for the ledger_open_buckets and outbound_deliveries gauges. Each origin known by its checkpoints or holding ledger rows, in each state (unhealable, exhausted, waiting, answered, open; exclusive, decided in that order), with its buckets in that state, zero when none; and the depth of wh_integrity_deliveries on every row (a single row with a null origin when there is no origin). One pass over the ledger, read by the maintainer duty''s holder once per maintenance tick.';
+'393 (#2256): the open repair backlog for the ledger_open_buckets and outbound_deliveries gauges. Each origin known by its checkpoints or holding ledger rows, in each state (unhealable, exhausted, waiting, answered, open; exclusive, decided in that order), with its buckets in that state, zero when none; and the depth of wh_integrity_deliveries on every row (a single row with a null origin when there is no origin). One pass over the ledger, read by the maintainer duty''s holder once per maintenance tick.';
