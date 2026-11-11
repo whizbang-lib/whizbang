@@ -182,6 +182,8 @@ public class WorkCoordinatorDefaultsTests {
 
     await coordinator.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, "Contracts.A")]);
     await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, now, now.AddMinutes(1));
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(
+      new SubscriptionBackfillCursor { BackfillId = id, OwnerServiceId = Guid.Empty, OwnerServiceName = string.Empty, EventType = "Contracts.A" }, 1);
     await coordinator.EndSubscriptionBackfillAsync(id, SubscriptionBackfillOutcome.Unanswered, now);
 
     await Assert.That(await coordinator.GetSubscriptionBackfillsAsync()).IsEmpty()
@@ -644,6 +646,33 @@ public class WorkCoordinatorDefaultsTests {
     var result = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(Guid.Empty, []);
 
     await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityMarkTypesHealedWithAgesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkTypesHealedWithAgesAsync(Guid.Empty, []);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityTakeDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityTakeDrillCursorAsync(Guid.Empty, 0);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegritySaveDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var save = coordinator.IntegritySaveDrillCursorAsync(Guid.Empty, 0, Guid.Empty, DateTimeOffset.MinValue);
+
+    await Assert.That(save.IsCompletedSuccessfully).IsTrue();
   }
 
   [Test]

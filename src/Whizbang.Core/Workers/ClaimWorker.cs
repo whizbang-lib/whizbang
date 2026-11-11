@@ -964,6 +964,12 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
       ? null
       : await partitionAssignments.ForClaimAsync(_instanceProvider.InstanceId, ct);
 
+    // #1853: no new inbox rows while the working set has turned rows away for its byte budget and has not drained to
+    // where the smallest of them fits. The drain would fetch, turn away and release every row leased meanwhile, a
+    // claim, a fetch and a release on every poll under memory pressure. Held inbox work is still re-offered.
+    var acquireInbox = !_inboxChannel.InboxAcquisitionDeferred;
+    _reportInboxAcquisition(acquireInbox);
+
     var claimStarted = _time.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
@@ -988,7 +994,8 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
       // #1636: no phase is announced. The stage record is the only writer of the recorded phase and writes a lost
       // write again on the next accepted beat, and a registration never overwrites a recorded phase, so a claim that
       // compared the two could only report the row stale on every claim until the next transition.
-      AliveLockHeld: aliveLockHeld), ct);
+      AliveLockHeld: aliveLockHeld,
+      AcquireInbox: acquireInbox), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
     _perspectiveMetrics?.ClaimDuration.Record(claimElapsed.TotalMilliseconds);
 
@@ -1005,7 +1012,7 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
       partitionAssignments?.MarkStale();
     }
 
-    _recordClaimShape(batch, allowSteal);
+    _recordClaimShape(batch, allowSteal, acquireInbox);
     if (_budgetEngaged) {
       await _observeOutstandingAsync(batch, coordinator, ct);
     }
@@ -1014,6 +1021,23 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
       _observeChurn(batch);
     }
     return batch;
+  }
+
+  /// <summary>True while the last claim leased no new inbox rows because the working set was full (#1853).</summary>
+  private bool _inboxAcquisitionPaused;
+
+  /// <summary>Logs the claim pausing and resuming inbox acquisition for the working-set budget (#1853), once each way.</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:WorkingSetFull_ClaimsLeaseNoNewInboxRows_UntilItDrainsAsync</tests>
+  private void _reportInboxAcquisition(bool acquireInbox) {
+    if (acquireInbox != _inboxAcquisitionPaused) {
+      return;
+    }
+    _inboxAcquisitionPaused = !acquireInbox;
+    if (acquireInbox) {
+      LogInboxAcquisitionResumed(_logger, _inboxChannel.HeldPayloadBytes);
+    } else {
+      LogInboxAcquisitionPaused(_logger, _inboxChannel.HeldPayloadBytes);
+    }
   }
 
   /// <summary>
@@ -1064,11 +1088,13 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   /// Bookkeeping on the claim's shape: the empty-claim streak that licenses stealing, the steal log,
   /// and the running rows-per-stream estimate the budget converts rows into streams with.
   /// </summary>
-  private void _recordClaimShape(WorkBatch batch, bool allowSteal) {
+  private void _recordClaimShape(WorkBatch batch, bool allowSteal, bool acquiredInbox) {
     var foundInbox = batch.InboxWork.Count > 0 || batch.InboxStreamIds.Count > 0;
     if (foundInbox) {
       Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
-    } else {
+    } else if (acquiredInbox) {
+      // #1853: a claim that leased no inbox rows did not look in this instance's residue, so coming back empty proves
+      // nothing about it and does not count toward the license to steal.
       Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
     }
     if (allowSteal && foundInbox) {
@@ -1377,6 +1403,15 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
     Message = "ClaimWorker initial registration failed; the first claim will report the row missing and the claim loop will register again after it")]
   static partial void LogInitialHeartbeatFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+    Message = "Inbox acquisition paused: the inbox working set holds {HeldBytes} payload bytes and turned rows away for its "
+            + "byte budget, so claims lease no new inbox rows until it drains; inbox work already held is still offered")]
+  static partial void LogInboxAcquisitionPaused(ILogger logger, long heldBytes);
+
+  [LoggerMessage(EventId = 23, Level = LogLevel.Information,
+    Message = "Inbox acquisition resumed: the inbox working set drained to {HeldBytes} payload bytes")]
+  static partial void LogInboxAcquisitionResumed(ILogger logger, long heldBytes);
 
   [LoggerMessage(EventId = 20, Level = LogLevel.Warning,
     Message = "ClaimWorker could not register after a claim found this instance's registration missing or stale; "

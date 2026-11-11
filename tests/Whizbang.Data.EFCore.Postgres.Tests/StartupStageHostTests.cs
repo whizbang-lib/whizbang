@@ -144,8 +144,8 @@ public sealed partial class StartupStageHostTests {
 
   /// <summary>
   /// A restart against a current schema: the row is registered at the end of Preflight, which writes the held
-  /// Preflight stage (#1636), Migrate is skipped because the schema is already current, and every stage after it is
-  /// recorded.
+  /// Preflight stage (#1636); a database one pass built is current (#2194), so Elect and Migrate are skipped, and every
+  /// stage after them is recorded.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -163,23 +163,20 @@ public sealed partial class StartupStageHostTests {
     await host.StartAsync(cancellationToken);
     await watch.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
 
-    await Assert.That(log.Lines).Contains("Information Stage 3 of 7: Migrate - skipped: the schema is already current")
+    await Assert.That(log.Lines).Contains("Information Stage 3 of 7: Migrate - skipped: the schema is current")
       .Because("a restart against a current schema runs no pass, and says so");
     await Assert.That(log.Lines).DoesNotContain(l => _migrateLine().IsMatch(l));
     var recorded = watch.Recorded;
     await Assert.That(recorded.Select(r => $"{r.Stage} {r.Message}")).IsEquivalentTo([
-      "10 the bootstrap closure is in place; registering this instance",
-      "20 voting for the migrator duty",
-      "20 this instance migrates the schema",
-      "30 skipped: the schema is already current",
+      "10 the schema is current; registering this instance",
+      "20 skipped: the schema is current; no migrator is needed",
+      "30 skipped: the schema is current",
       "40 analyzing new indexes and reconciling managed objects",
       "50 recomputing partitions before the schema-ready gate opens",
       "60 the schema is ready; commands are accepted while the read models catch up",
       "70 reads and writes are served",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("Preflight, held until its last step registered the row, is written at registration; every stage after it as it is entered");
-    await Assert.That(recorded[1].EnteredAt).IsEqualTo(recorded[2].EnteredAt)
-      .Because("the election's outcome is progress within Elect, not a new stage");
 
     await host.StopAsync(cancellationToken);
   }

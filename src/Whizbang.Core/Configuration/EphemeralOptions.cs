@@ -10,12 +10,12 @@ namespace Whizbang.Core.Configuration;
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
 public sealed class EphemeralOptions {
   /// <summary>
-  /// When <c>true</c>, the startup reconciler ACTS on detected settings drift — e.g. reclassifies a type's
-  /// historical Sourced events to Ephemeral (stamp + offload so the reaper can reclaim them). Default
-  /// <c>false</c>: drift is only detected and reported (logged + a lineage edge recorded), because
-  /// rewriting and reaping historical events on deploy is a deliberate, potentially lossy operation and
-  /// keeping the pre-existing history is sometimes the intent. Flip to true, or run the reclassify command
-  /// explicitly, to act.
+  /// When <c>true</c>, the historical Sourced events of every ephemeral event type are reclassified as
+  /// Ephemeral so the reaper can reclaim them. Since #2206 the maintenance cycle does it (the
+  /// <c>ephemeral-history-reclassify</c> step), in bounded batches through the per-type history walker, so
+  /// startup never waits on it; the name is kept. Default <c>false</c>: drift is only detected and reported
+  /// (logged + a lineage edge recorded), because rewriting and reaping historical events is a deliberate,
+  /// potentially lossy operation and keeping the pre-existing history is sometimes the intent.
   /// </summary>
   public bool ReconcileHistoricalOnStartup { get; set; }
 

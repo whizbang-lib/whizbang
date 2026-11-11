@@ -69,7 +69,7 @@ public class CreateProductWorkflowTests {
 
     // Act - InitialStock > 0 fires 3 perspective events on inventory (ProductCreated x2 + InventoryRestocked x1)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -129,7 +129,7 @@ public class CreateProductWorkflowTests {
 
     // Act - 3 commands * 3 events each (ProductCreated x2 + InventoryRestocked x1) = 9
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 9, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 9, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
@@ -171,7 +171,7 @@ public class CreateProductWorkflowTests {
 
     // Act - Wait for perspective processing (2 for ProductCreated only, no restock for zero stock)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -206,7 +206,7 @@ public class CreateProductWorkflowTests {
 
     // Act - InitialStock > 0 fires 3 perspective events on inventory
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 

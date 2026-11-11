@@ -8,8 +8,10 @@ namespace Whizbang.Core.Messaging;
 /// assemblies serves (#2146).
 /// </summary>
 /// <remarks>
-/// The list is built once, at construction: generated providers are views over compile-time arrays. A type two
-/// assemblies both know is listed once, at its first position. The union is available when one of its contributions
+/// The list is built once, at construction: generated providers are views over compile-time arrays. The registration
+/// hands the contributions over latest registered first (the rule every per-assembly registration follows), and a
+/// type two assemblies both know is listed once, at its first position in that order. It is not a collision: both
+/// assemblies name the same type, so neither registration is hidden. The union is available when one of its contributions
 /// is, so a host whose contributions are all unavailable keeps the "no event types known" path its consumers take.
 /// </remarks>
 /// <docs>fundamentals/events/events</docs>

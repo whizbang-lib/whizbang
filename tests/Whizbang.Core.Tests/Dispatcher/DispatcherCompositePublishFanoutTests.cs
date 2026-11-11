@@ -44,7 +44,26 @@ public class DispatcherCompositePublishFanoutTests {
     public AtomicComposite() => Atomicity = FanoutAtomicity.Atomic;
   }
 
-  private sealed record LocalCascade(IMessage Message, IMessageEnvelope? Source);
+  private sealed class IdentityComposite : CompositeEventBase, IIdentityPreservingComposite {
+    public List<Guid> InnerEventIds { get; init; } = [];
+    IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
+  }
+
+  private sealed record LocalCascade(IMessage Message, IMessageEnvelope? Source, Guid? EventId);
+
+  // Captures the outbox rows the publish writes, so a test can read the composite exactly as it goes on the wire.
+  private sealed class CapturingStrategy : IWorkCoordinatorStrategy {
+    public List<OutboxMessage> Rows { get; } = [];
+    public void QueueOutboxMessage(OutboxMessage message) => Rows.Add(message);
+    public void QueueInboxMessage(InboxMessage message) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+  }
 
   private sealed class FakeSerializer : IEnvelopeSerializer {
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
@@ -74,6 +93,7 @@ public class DispatcherCompositePublishFanoutTests {
   // composite (lineage). Inner events must NEVER reach the cascade-outbox seam (no rebroadcast).
   private sealed class FanoutDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     public List<LocalCascade> LocalEventStores { get; } = [];
+    public IServiceProvider Services { get; } = sp;
     public int InnerOutboxCascadeCount { get; private set; }
     public string? ThrowOnInnerId { get; set; }
 
@@ -81,7 +101,7 @@ public class DispatcherCompositePublishFanoutTests {
       if (ThrowOnInnerId is not null && message is InnerEvt e && e.Id == ThrowOnInnerId) {
         throw new InvalidOperationException($"injected failure for inner '{e.Id}'");
       }
-      LocalEventStores.Add(new LocalCascade(message, sourceEnvelope));
+      LocalEventStores.Add(new LocalCascade(message, sourceEnvelope, eventId));
       return Task.CompletedTask;
     }
     protected override Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
@@ -99,12 +119,15 @@ public class DispatcherCompositePublishFanoutTests {
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
   }
 
-  private static FanoutDispatcher _build(bool ownTestNamespace) {
+  private static FanoutDispatcher _build(bool ownTestNamespace, CapturingStrategy? strategy = null) {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddSingleton<IServiceScopeFactory>(sp => new ScopeFactory(sp));
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IEnvelopeSerializer>(new FakeSerializer());
+    if (strategy is not null) {
+      services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
+    }
     services.Configure<RoutingOptions>(o => {
       if (ownTestNamespace) {
         o.OwnDomains(typeof(OwnedComposite).Namespace!);
@@ -237,5 +260,81 @@ public class DispatcherCompositePublishFanoutTests {
 
     await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is InnerEvt)).IsFalse()
       .Because("a composite outside the service's owned domains fans out only at the receive-side (other services).");
+  }
+
+  // #2235: the producer stores each constituent of its own composite locally, and every receiver stores it from
+  // the copy on the wire. Both must store it under ONE id, or digests diverge and cross-service correlation by id
+  // sees two events. The receiver's ids come from the real receive-side expansion of the wire row.
+  [Test]
+  public async Task OwnedComposite_StoredConstituentIds_AreTheIdsEveryReceiverStoresAsync() {
+    var strategy = new CapturingStrategy();
+    var dispatcher = _build(ownTestNamespace: true, strategy);
+    var composite = new OwnedComposite {
+      StreamId = (Guid)TrackedGuid.New(),
+      Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
+    };
+
+    await dispatcher.PublishAsync(composite);
+
+    var wireRow = strategy.Rows.Single(r => r.MessageType.Contains(nameof(OwnedComposite), StringComparison.Ordinal));
+    var received = CompositeInboxFanout.TryExpand(composite, wireRow.Envelope, dispatcher.Services);
+    await Assert.That(received.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    var producerIds = dispatcher.LocalEventStores.Where(c => c.Message is InnerEvt).Select(c => c.EventId).ToList();
+    var receiverIds = received.Children.Select(c => (Guid?)c.MessageId).ToList();
+    await Assert.That(producerIds).IsEquivalentTo(receiverIds, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a constituent carries one id from mint to every store: the producer's stored id is the id each receiver stores.");
+  }
+
+  [Test]
+  public async Task OwnedComposite_NullInner_KeepsTheProducersOrdinalsAlignedWithTheReceiversAsync() {
+    var strategy = new CapturingStrategy();
+    var dispatcher = _build(ownTestNamespace: true, strategy);
+    var composite = new OwnedComposite {
+      StreamId = (Guid)TrackedGuid.New(),
+      Inner = [new InnerEvt("a"), null!, new InnerEvt("c")],
+    };
+
+    await dispatcher.PublishAsync(composite);
+
+    var wireRow = strategy.Rows.Single(r => r.MessageType.Contains(nameof(OwnedComposite), StringComparison.Ordinal));
+    var received = CompositeInboxFanout.TryExpand(composite, wireRow.Envelope, dispatcher.Services);
+    var producerIds = dispatcher.LocalEventStores.Where(c => c.Message is InnerEvt).Select(c => c.EventId).ToList();
+    var receiverIds = received.Children.Select(c => (Guid?)c.MessageId).ToList();
+    await Assert.That(producerIds).IsEquivalentTo(receiverIds, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a skipped null still holds its position, so the children after it derive the receiver's ordinals.");
+  }
+
+  [Test]
+  public async Task OwnedIdentityPreservingComposite_StoresEachConstituentUnderItsCarriedIdAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    Guid first = TrackedGuid.New();
+    Guid second = TrackedGuid.New();
+    var composite = new IdentityComposite {
+      StreamId = (Guid)TrackedGuid.New(),
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
+      InnerEventIds = [first, second],
+    };
+
+    await dispatcher.PublishAsync(composite);
+
+    var producerIds = dispatcher.LocalEventStores.Where(c => c.Message is InnerEvt).Select(c => c.EventId).ToList();
+    await Assert.That(producerIds).IsEquivalentTo(new List<Guid?> { first, second }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a composite that carries its children's ids is stored under them here, as every receiver stores it.");
+  }
+
+  [Test]
+  public async Task OwnedIdentityPreservingComposite_IdCountMismatch_ThrowsAtPublishAsync() {
+    var dispatcher = _build(ownTestNamespace: true);
+    var composite = new IdentityComposite {
+      StreamId = (Guid)TrackedGuid.New(),
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
+      InnerEventIds = [TrackedGuid.New()],
+    };
+
+    await Assert.That(async () => await dispatcher.PublishAsync(composite))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("every receiver refuses a bundle whose ids do not pair with its children, so the producer fails fast too.");
+    await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is InnerEvt)).IsFalse()
+      .Because("the pairing is checked before any child is stored.");
   }
 }

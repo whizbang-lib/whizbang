@@ -112,6 +112,8 @@ public sealed class StartupHostedServiceAuditTests {
   private static readonly HashSet<string> _noDatabaseWorkAtStart = new(StringComparer.Ordinal) {
     // Configuration and registration checks, and log lines.
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
+    // Reports items two assemblies both register, from what the registrations already hold (#2201).
+    "RegistrationCollisionStartupValidator",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer",
@@ -123,7 +125,7 @@ public sealed class StartupHostedServiceAuditTests {
     // Subscriptions on the notification connection, which starts at Elect.
     "PgWorkNotificationListener", "MultiStreamCommandSubscriber", "PartitionAssignmentSubscriber",
     // In-process state, or the transport's management plane rather than the database.
-    "RecentlyProcessedEventCacheSweepWorker", "BacklogAgeWorker",
+    "RecentlyProcessedEventCacheSweepWorker", "BacklogAgeWorker", "InProcessTrackerSweepWorker",
     // Fed only by a command receptor, and dispatch is deferred until the schema-ready gate opens.
     "RebuildBackgroundWorker",
     // The health-check publisher runs checks only for a publisher the application registers; the framework registers

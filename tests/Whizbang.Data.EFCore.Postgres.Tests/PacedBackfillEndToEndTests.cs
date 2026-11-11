@@ -117,6 +117,102 @@ public class PacedBackfillEndToEndTests : EFCoreTestBase {
     await Assert.That(progress.WindowsRequested).IsEqualTo(3L);
   }
 
+  /// <summary>
+  /// An owner can answer before the requester's publish call returns: a fast owner on an in-process or low-latency
+  /// transport, or a requester whose continuation is delayed on a loaded host. The answer must still be applied. If the
+  /// requester recorded the window as requested only after the publish returned, the answer would find no window
+  /// awaiting it and be dropped as late, and the backfill would stall until the answer timeout re-asked the window.
+  /// The transport here runs the owner and the answer receptor inside the publish call, so the answer always lands
+  /// before the publish returns.
+  /// </summary>
+  [Test]
+  [Timeout(120_000)]
+  public async Task AnAnswerThatLandsBeforeThePublishReturns_IsApplied_AndTheBackfillCompletesAsync(CancellationToken testToken) {
+    await using var seedContext = CreateDbContext();
+    var conn = (NpgsqlConnection)seedContext.Database.GetDbConnection();
+    if (conn.State != ConnectionState.Open) {
+      await conn.OpenAsync(testToken);
+    }
+    var seeded = new List<Guid>();
+    for (var i = 1; i <= 7; i++) {
+      seeded.Add(await _seedAsync(conn, TrackedGuid.New().Value, i));
+    }
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    var serializer = new EnvelopeSerializer(jsonOptions);
+    var clock = new FakeTimeProvider(_start);
+    var integrity = Options.Create(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+
+    var answers = new ChannelTransport();
+    var owner = new ServiceCollection();
+    owner.AddScoped<IWorkCoordinator>(_ => _coordinator());
+    owner.AddSingleton<ITransport>(answers);
+    owner.AddSingleton<IEnvelopeSerializer>(serializer);
+    owner.AddSingleton<IServiceInstanceProvider>(new NamedInstance("orders-svc"));
+    owner.AddSingleton(new RedeliveryPumpOptions { MaxEventsPerRequest = 3, SelectPageSize = 2 });
+    owner.AddSingleton(integrity);
+    await using var ownerServices = owner.BuildServiceProvider();
+    var ownerReceptor = new RedeliveryRequestReceptor(
+      ownerServices.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    // Each window's outcome, written from inside the publish once its answer was handled: the answer, and the backfill's
+    // progress as the answer left it.
+    var applied = Channel.CreateUnbounded<(BackfillWindowAnswer Answer, SubscriptionBackfillCursor Progress)>();
+    var delivered = new List<Guid>();
+    BackfillWindowAnswerReceptor? answerReceptor = null;
+    IWorkCoordinator? reader = null;
+    var requests = new AnsweringTransport(async (published, cancellationToken) => {
+      var request = _payload<RequestRedeliveryCommand>(published, jsonOptions);
+      await ownerReceptor.HandleAsync(request, cancellationToken);
+      var answer = await _drainOwnerAsync(answers, jsonOptions, delivered, cancellationToken);
+      await answerReceptor!.HandleAsync(answer, cancellationToken);
+      var progress = (await reader!.GetSubscriptionBackfillsAsync(cancellationToken)).Single();
+      await applied.Writer.WriteAsync((answer, progress), cancellationToken);
+    });
+    var requester = new ServiceCollection();
+    requester.AddScoped<IWorkCoordinator>(_ => _coordinator());
+    requester.AddSingleton<ITransport>(requests);
+    requester.AddSingleton<IEnvelopeSerializer>(serializer);
+    requester.AddSingleton<IServiceInstanceProvider>(new NamedInstance("billing-svc"));
+    requester.AddSingleton<TimeProvider>(clock);
+    requester.AddSingleton(integrity);
+    var consumer = new TransportConsumerOptions();
+    consumer.Destinations.Add(new TransportDestination("inbox"));
+    requester.AddSingleton(consumer);
+    await using var requesterServices = requester.BuildServiceProvider();
+    using var requesterScope = requesterServices.CreateScope();
+    reader = requesterScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    await reader.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, TYPE)], testToken);
+    answerReceptor = new BackfillWindowAnswerReceptor(
+      requesterServices.GetRequiredService<IServiceScopeFactory>(), NullLogger<BackfillWindowAnswerReceptor>.Instance);
+
+    using var worker = new SubscriptionBackfillWorker(
+      requesterServices.GetRequiredService<IServiceScopeFactory>(), integrity, NullLogger<SubscriptionBackfillWorker>.Instance, clock);
+    await worker.StartAsync(testToken);
+    var outcomes = new List<(BackfillWindowAnswer Answer, SubscriptionBackfillCursor Progress)>();
+    try {
+      (BackfillWindowAnswer Answer, SubscriptionBackfillCursor Progress) outcome;
+      do {
+        clock.Advance(TimeSpan.FromMinutes(1));
+        outcome = await applied.Reader.ReadAsync(testToken);
+        outcomes.Add(outcome);
+      } while (outcome.Answer.HasMore && outcome.Progress.Window == outcome.Answer.Window
+               && outcome.Progress.AnswerDueBy is null && outcomes.Count < 10);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    foreach (var (answer, progress) in outcomes) {
+      await Assert.That((progress.Window, progress.AnswerDueBy)).IsEqualTo((answer.Window, (DateTimeOffset?)null))
+        .Because($"window {answer.Window} was recorded as requested before it left, so its answer, landing inside the publish, applied to it");
+    }
+    await Assert.That(outcomes).Count().IsEqualTo(3);
+    await Assert.That(delivered).IsEquivalentTo(seeded);
+    var final = (await reader.GetSubscriptionBackfillsAsync(testToken)).Single();
+    await Assert.That(final.Outcome).IsEqualTo(SubscriptionBackfillOutcome.Complete);
+    await Assert.That(final.EventsReceived).IsEqualTo(7L);
+    await Assert.That(final.WindowsRequested).IsEqualTo(3L);
+  }
+
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator() =>
     new(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
@@ -163,6 +259,18 @@ public class PacedBackfillEndToEndTests : EFCoreTestBase {
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) =>
       Published.Writer.WriteAsync((envelope, envelopeType), cancellationToken).AsTask();
+    public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
+  /// <summary>A transport that hands each published message to <paramref name="onPublish"/> and returns only once it is done.</summary>
+  private sealed class AnsweringTransport(
+      Func<(IMessageEnvelope Envelope, string? EnvelopeType), CancellationToken, Task> onPublish) : ITransport {
+    public bool IsInitialized => true;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) =>
+      onPublish((envelope, envelopeType), cancellationToken);
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }

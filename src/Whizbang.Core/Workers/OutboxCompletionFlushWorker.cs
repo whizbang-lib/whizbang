@@ -16,7 +16,7 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOutboxCompletionChannel {
+public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOutboxCompletionChannel, IQueuedWriteFlusher {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly OutboxCompletionFlushWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
@@ -48,7 +48,24 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
 
   /// <inheritdoc />
   public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default)
-    => _flusher.Writer.WriteAsync(outboxMessageId, cancellationToken);
+    => _flusher.EnqueueAsync(outboxMessageId, cancellationToken);
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerIdleSignalTests.cs:OutboxCompletionFlushWorker_ReportsAQueuedCompletionUntilItLandsAsync</tests>
+  public QueuedWriteActivity Activity => _flusher.Activity;
+
+  /// <inheritdoc />
+  public bool IsIdle => _flusher.IsIdle;
+
+  /// <inheritdoc />
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle {
+    add => _flusher.OnWorkProcessingIdle += value;
+    remove => _flusher.OnWorkProcessingIdle -= value;
+  }
+
+  /// <inheritdoc />
+  public Task WaitForIdleAsync(CancellationToken cancellationToken = default) => _flusher.WaitForIdleAsync(cancellationToken);
 
   /// <inheritdoc />
   public override Task StartAsync(CancellationToken cancellationToken) {

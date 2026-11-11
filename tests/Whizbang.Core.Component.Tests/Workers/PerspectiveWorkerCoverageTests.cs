@@ -1689,23 +1689,35 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
-  #region Rewind Startup Scan — Blocking Mode Repoll Loop
+  #region Rewind Startup Scan: Blocking barrier across several re-read rounds
 
-  // If the blocking-mode rewind scan stopped after the first repoll while cursors still
-  // needed rewind, the read-model startup barrier (StartupScanComplete) would release while
-  // wh_perspective_cursors still had genuinely stale rows in it — a lens reading right after
-  // startup would see reads that look "ready" but are still mid-repair. The loop must keep
-  // re-querying every round while the RewindRequired set stays non-empty, not just once.
+  // If the Blocking barrier opened after the first re-read while scan-time cursors were still flagged, the read-model
+  // startup barrier (StartupScanComplete) would release while wh_perspective_cursors still had genuinely stale rows in
+  // it: a lens reading right after startup would see reads that look "ready" but are still mid-repair. The barrier must
+  // keep re-reading every round while any scan-time cursor stays RewindRequired, and only those cursors' streams (#2214).
   [Test]
   [Timeout(30000)]
-  public async Task Worker_BlockingRewindScan_KeepsRepollingAcrossMultipleNonEmptyRoundsAsync(CancellationToken cancellationToken) {
+  public async Task Worker_BlockingRewindScan_HoldsTheBarrierAcrossMultipleStillFlaggedRoundsAsync(CancellationToken cancellationToken) {
     // Arrange
-    var coordinator = new RewindLoopCoordinator();
     const string perspectiveName = "Test.Perspectives.RewindPerspective";
-    coordinator.EnqueueResult([new RewindCursorInfo(Guid.NewGuid(), perspectiveName, null, Guid.NewGuid())]);
-    coordinator.EnqueueResult([new RewindCursorInfo(Guid.NewGuid(), perspectiveName, null, Guid.NewGuid())]);
-    coordinator.EnqueueResult([]);
+    var a = Guid.NewGuid();
+    var b = Guid.NewGuid();
+    using var coordinator = new RewindLoopCoordinator();
+    coordinator.ScanResult = [
+      new RewindCursorInfo(a, perspectiveName, null, Guid.NewGuid()),
+      new RewindCursorInfo(b, perspectiveName, null, Guid.NewGuid())
+    ];
+    coordinator.EnqueueReread([_rewindCursor(a, perspectiveName, true), _rewindCursor(b, perspectiveName, true)]);  // round 1: both flagged
+    coordinator.EnqueueReread([_rewindCursor(a, perspectiveName, true), _rewindCursor(b, perspectiveName, false)]); // round 2: b cleared
+    coordinator.EnqueueReread([_rewindCursor(a, perspectiveName, false)]);                                          // round 3: a cleared
 
+    var poll = TimeSpan.FromMilliseconds(20);
+    var clock = new RereadArmingClock(poll);
+    var options = new PerspectiveWorkerOptions {
+      PollingIntervalMilliseconds = (int)poll.TotalMilliseconds,
+      // The consumer loop idles on this cadence when NOTIFY is configured, so the barrier's re-read is the only wait at `poll`.
+      NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+    };
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
     var services = new ServiceCollection();
@@ -1720,7 +1732,7 @@ public class PerspectiveWorkerCoverageTests {
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 20 }),
+      options: Options.Create(options),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -1745,21 +1757,38 @@ public class PerspectiveWorkerCoverageTests {
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 20 })).Value));
+      perspectiveNotificationListener: new ConfiguredRewindNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor(options),
+      timeProvider: clock);
 
-    // Act
+    // Act + Assert: each round is one elapsed interval on the injected clock, then one keyed re-read.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coordinator.WaitForQueriesAsync(3, cancellationToken);
+    for (var round = 1; round <= 2; round++) {
+      await clock.FireNextRereadAsync(cancellationToken);
+      await coordinator.WaitForRereadsAsync(1, cancellationToken);
+      await Assert.That(worker.StartupScanComplete.IsCompleted).IsFalse()
+        .Because($"after round {round} a scan-time cursor is still RewindRequired, so lens reads stay held");
+    }
+    await clock.FireNextRereadAsync(cancellationToken);
+    await worker.StartupScanComplete.WaitAsync(cancellationToken);
 
-    // Assert
-    await Assert.That(coordinator.QueryCount).IsEqualTo(3)
-      .Because("the blocking scan must keep re-querying across every non-empty round, not stop after the first repoll");
+    await Assert.That(coordinator.Rereads.Count).IsEqualTo(3)
+      .Because("the barrier re-reads every round while a scan-time cursor stays flagged, and opens on the round that clears the last");
+    await Assert.That(coordinator.Rereads[2]).IsEquivalentTo([a])
+      .Because("each re-read asks only for the streams still holding a flagged scan-time cursor");
+    await Assert.That(coordinator.ScanCount).IsEqualTo(1)
+      .Because("the whole cursor table is read once, at the scan");
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
+
+  private static PerspectiveCursorInfo _rewindCursor(Guid streamId, string perspectiveName, bool flagged) => new() {
+    StreamId = streamId,
+    PerspectiveName = perspectiveName,
+    Status = flagged ? PerspectiveProcessingStatus.RewindRequired : PerspectiveProcessingStatus.Completed
+  };
 
   #endregion
 
@@ -2846,30 +2875,41 @@ public class PerspectiveWorkerCoverageTests {
   #region Round 23 Additional Coverage — Fakes
 
   /// <summary>
-  /// Minimal <see cref="IWorkCoordinator"/> whose only real behavior is
-  /// <see cref="GetCursorsRequiringRewindAsync"/>, driven by a queue so a test can script
-  /// multiple successive startup-scan repoll rounds.
+  /// Minimal <see cref="IWorkCoordinator"/> for the Blocking startup barrier: <see cref="GetCursorsRequiringRewindAsync"/>
+  /// answers the scan, and <see cref="GetPerspectiveCursorsBatchAsync"/> answers each keyed re-read from a queue, so a
+  /// test can script several re-read rounds.
   /// </summary>
   private sealed class RewindLoopCoordinator : IWorkCoordinator, IDisposable {
-    private readonly Queue<IReadOnlyList<RewindCursorInfo>> _results = new();
-    private readonly SemaphoreSlim _querySignal = new(0, int.MaxValue);
+    private readonly Queue<List<PerspectiveCursorInfo>> _rereadAnswers = new();
+    private readonly SemaphoreSlim _rereadSignal = new(0, int.MaxValue);
+    private int _scanCount;
 
-    public void Dispose() => _querySignal.Dispose();
-    public int QueryCount { get; private set; }
+    public void Dispose() => _rereadSignal.Dispose();
+    public IReadOnlyList<RewindCursorInfo> ScanResult { get; set; } = [];
+    public int ScanCount => _scanCount;
+    public List<Guid[]> Rereads { get; } = [];
 
-    public void EnqueueResult(IReadOnlyList<RewindCursorInfo> result) => _results.Enqueue(result);
+    public void EnqueueReread(List<PerspectiveCursorInfo> answer) => _rereadAnswers.Enqueue(answer);
 
-    public async Task WaitForQueriesAsync(int count, CancellationToken cancellationToken) {
+    public async Task WaitForRereadsAsync(int count, CancellationToken cancellationToken) {
       for (var i = 0; i < count; i++) {
-        await _querySignal.WaitAsync(cancellationToken);
+        await _rereadSignal.WaitAsync(cancellationToken);
       }
     }
 
     public Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(CancellationToken cancellationToken = default) {
-      QueryCount++;
-      _querySignal.Release();
-      IReadOnlyList<RewindCursorInfo> result = _results.Count > 0 ? _results.Dequeue() : [];
-      return Task.FromResult(result);
+      Interlocked.Increment(ref _scanCount);
+      return Task.FromResult(ScanResult);
+    }
+
+    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(Guid[] streamIds, CancellationToken cancellationToken = default) {
+      List<PerspectiveCursorInfo> answer;
+      lock (Rereads) {
+        Rereads.Add(streamIds);
+        answer = _rereadAnswers.Count > 0 ? _rereadAnswers.Dequeue() : [];
+      }
+      _rereadSignal.Release();
+      return Task.FromResult(answer);
     }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -2879,6 +2919,36 @@ public class PerspectiveWorkerCoverageTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// A fake clock that reports each wait armed at the barrier's re-read interval, after registering it, so the test
+  /// advances only once the re-read wait is armed.
+  /// </summary>
+  private sealed class RereadArmingClock(TimeSpan reread) : Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)) {
+    private readonly global::System.Threading.Channels.Channel<bool> _armed = global::System.Threading.Channels.Channel.CreateUnbounded<bool>();
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = base.CreateTimer(callback, state, dueTime, period);
+      if (dueTime == reread) {
+        _armed.Writer.TryWrite(true);
+      }
+      return timer;
+    }
+
+    /// <summary>Waits for the next re-read wait to be armed, then advances past it.</summary>
+    public async Task FireNextRereadAsync(CancellationToken cancellationToken) {
+      await _armed.Reader.ReadAsync(cancellationToken);
+      Advance(reread);
+    }
+  }
+
+  /// <summary>A configured, healthy NOTIFY listener, so the consumer loop idles on the safety-net cadence.</summary>
+  private sealed class ConfiguredRewindNotificationListener : IWorkNotificationListener {
+    public bool IsHealthy => true;
+    public DateTimeOffset? LastSignalAt => null;
+    public event Action<WorkSignalCategory>? OnSignal { add { /* never raised */ } remove { /* never raised */ } }
+    public event Action<bool>? OnHealthChanged { add { /* never raised */ } remove { /* never raised */ } }
   }
 
   /// <summary>

@@ -66,6 +66,27 @@ public interface IInboxChannelWriter {
   /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
   long HeldPayloadBytes => 0;
 
+  /// <summary>
+  /// Records that the drain turned rows away for the working-set byte budget (#1853): new inbox rows are not worth
+  /// leasing until the rows held here total at most <paramref name="heldBytes"/>, the point at which the smallest row
+  /// turned away fits again. Replaces any earlier mark; a mark already met sets nothing. Does nothing for a writer that
+  /// does not track rows.
+  /// </summary>
+  /// <param name="heldBytes">The held total at or below which acquisition resumes; a negative value is read as zero.</param>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain#working-set-budget</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs:AcquisitionIsDeferred_WhileHeldIsAboveTheMark_AndResumesOnTheRemovalThatReachesItAsync</tests>
+  void DeferInboxAcquisitionUntilHeldAtMost(long heldBytes) { }
+
+  /// <summary>
+  /// True while the drain has turned rows away for the working-set byte budget and the rows held here have not drained to
+  /// where the smallest of them fits (#1853). The claim leases no new inbox rows meanwhile: each would be fetched, turned
+  /// away and released again. Once a removal reaches the mark, <see cref="OnNewInboxWorkAvailable"/> is raised so the
+  /// claim resumes at once. Always false for a writer that does not track rows.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain#working-set-budget</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:WorkingSetFull_ClaimsLeaseNoNewInboxRows_UntilItDrainsAsync</tests>
+  bool InboxAcquisitionDeferred => false;
+
 
   /// <summary>Signals that no more work will be written.</summary>
   void Complete();

@@ -134,7 +134,10 @@ public static class TestConstants {
   /// GateSyncCommandReceptor, GatePublishedEventReceptor, GateCascadeCommandReceptor, GateCascadedEventReceptor,
   /// GatePermissionCommandReceptor: one per local invocation path the receptor interceptors gate, #1996).</para>
   ///
-  /// <para>Total: 138 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>ReceptorRegistryContributionTests.cs adds 1 (OnOrderPlaced: the receptor the composite receptor
+  /// registry's runtime-registration tests register and unregister, #2197).</para>
+  ///
+  /// <para>Total: 139 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 138;
+  public const int EXPECTED_RECEPTOR_COUNT = 139;
 }

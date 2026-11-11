@@ -552,16 +552,11 @@ public partial class TransportPublishStrategy(
         $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
     }
 
-    // IMPORTANT: For events, set RoutingKey to the event's namespace path (e.g., "myapp.users.UserCreated")
-    // This is used as the Subject property in Azure Service Bus for SqlFilter matching.
-    // Without this, the Subject defaults to "message" and SqlFilter patterns like "[Subject] LIKE 'myapp.users.%'" won't match.
-    var eventTypeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? "";
-    var eventNamespace = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
-
-    // Build full routing key: namespace.typename (e.g., "myapp.users.events.usercreated")
-    var eventRoutingKey = string.IsNullOrEmpty(eventNamespace)
-      ? eventTypeName
-      : $"{eventNamespace}.{eventTypeName}";
+    // IMPORTANT: For events, set RoutingKey to the event's subject, its lowercased CLR-form name
+    // (e.g., "myapp.users.events.usercreated"). This is used as the Subject property in Azure Service Bus for SqlFilter
+    // matching: without it the Subject defaults to "message" and no subject filter matches. The excluded-event-types rule
+    // (#2175) filters on the same EventSubject rendering, so the two cannot disagree.
+    var eventRoutingKey = string.IsNullOrWhiteSpace(work.MessageType) ? "" : EventSubject.For(work.MessageType);
 
     return new TransportDestination(
       Address: work.Destination,

@@ -24,6 +24,12 @@ public abstract class StartupDriver {
   /// <summary>A Whizbang-named index on <see cref="Table"/> that the driver does not declare.</summary>
   public abstract string Retired { get; }
 
+  /// <summary>
+  /// The name both drivers give <see cref="Table"/>'s <c>updated_at</c> index, which neither builds unless the table
+  /// declares retention or the model declares the index (#2087).
+  /// </summary>
+  public abstract string UpdatedAtIndex { get; }
+
   /// <summary>Registers the driver the way an application does.</summary>
   public abstract void Register(IServiceCollection services, string connectionString);
 
@@ -44,6 +50,7 @@ public abstract class StartupDriver {
     public override string Name => "efcore";
     public override string Table => "wh_per_document_index_opted_out";
     public override string Retired => "idx_document_index_opted_out_data_gin";
+    public override string UpdatedAtIndex => "idx_document_index_opted_out_updated_at";
 
     public override void Register(IServiceCollection services, string connectionString) {
       services.AddDbContext<DocumentIndexesDbContext>(o => o
@@ -63,12 +70,13 @@ public abstract class StartupDriver {
     public override string Name => "dapper";
     public override string Table => TABLE;
     public override string Retired => "idx_parity_probe_data_gin";
+    public override string UpdatedAtIndex => "idx_parity_probe_updated_at";
 
     public override void Register(IServiceCollection services, string connectionString) =>
       services.AddWhizbangPostgres(
         connectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true,
         [new KeyValuePair<string, string>("ParityProbe", $"""
-          CREATE TABLE IF NOT EXISTS {TABLE} (id uuid PRIMARY KEY, data jsonb NOT NULL);
+          CREATE TABLE IF NOT EXISTS {TABLE} (id uuid PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
           CREATE INDEX IF NOT EXISTS idx_parity_probe_status ON {TABLE} ((data ->> 'Status'));
           """)],
         [(TABLE, "index", "idx_parity_probe_status", "ParityProbeModel")]);

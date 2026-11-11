@@ -71,4 +71,25 @@ public interface IConsumerRegistry {
   IReadOnlyList<string> GetConsumedEventTypes() =>
     [.. GetConsumedMessages().Where(c => c.IsEvent).Select(c => c.TypeName).Distinct(System.StringComparer.Ordinal)
       .Order(System.StringComparer.Ordinal)];
+
+  /// <summary>
+  /// The collective event types a <c>[CollectiveApplyFor]</c> handler on this service applies, in the
+  /// assembly-qualified wire form, deduplicated and in ordinal order (#2145). A collective event type that is merely
+  /// consumed (kept at the receive boundary because the collective sink takes every collective event) is not in it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The startup associations step writes this set so the store creates <c>__collective__</c> rows only for these
+  /// types, and the perspective drain completes a sink row of any other type it could not read without applying it; both read this one
+  /// answer, so they cannot disagree.
+  /// </para>
+  /// <para>
+  /// <see langword="null"/> means the registry cannot say, and it is the default for implementations that predate the
+  /// question. Every reader treats it as "gate nothing": a gap in the answer may create work, never drop it.
+  /// </para>
+  /// </remarks>
+  /// <returns>The handled collective event types, or <see langword="null"/> when they cannot be known.</returns>
+  /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:ARegistryThatPredatesTheQuestion_AnswersUnknownAsync</tests>
+  IReadOnlyList<string>? GetHandledCollectiveEventTypes() => null;
 }

@@ -100,15 +100,26 @@ public class DataOnlyRoleE2ETests {
     return builder.Build();
   }
 
+  /// <summary>How long a phase may take before it is reported as hung. A hang detector over signal waits, not a speed check.</summary>
+  private static readonly TimeSpan _phaseBound = TimeSpan.FromSeconds(60);
+
+  /// <summary>
+  /// The first start applies every migration to a brand-new database. On a saturated build server that took over 60 s
+  /// with nothing hung (flaky-tests.md, Pattern 3), so it gets its own bound, still inside the test timeout so a real
+  /// hang is still named.
+  /// </summary>
+  private static readonly TimeSpan _migratingStartBound = TimeSpan.FromSeconds(180);
+
   /// <summary>Bounds one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
-  private static async Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null) {
+  private static async Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null, TimeSpan? bound = null) {
+    var limit = bound ?? _phaseBound;
     try {
-      await work().WaitAsync(TimeSpan.FromSeconds(60));
+      await work().WaitAsync(limit);
     } catch (TimeoutException ex) {
       var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
         .Select(s => $"{s.Name}={s.Status}/{s.Outcome}: {s.Reason}") ?? [];
       throw new TimeoutException(
-        $"Phase '{phase}' did not finish within 60s. Startup steps: [{string.Join("; ", steps)}]. "
+        $"Phase '{phase}' did not finish within {limit.TotalSeconds}s. Startup steps: [{string.Join("; ", steps)}]. "
         + $"Errors logged: [{string.Join(" | ", errors?.Entries ?? [])}]", ex);
     }
   }
@@ -122,14 +133,14 @@ public class DataOnlyRoleE2ETests {
   }
 
   [Test]
-  [Timeout(180000)]
+  [Timeout(300000)]
   public async Task UnderADataOnlyRole_WithTheOwnerAsInit_TheServiceStartsAndMaintainsItselfAsync(CancellationToken cancellationToken) {
     var errors = new ErrorLog();
 
     // First start: migrations run on the init connection and create everything the role is then granted.
     using (var first = _buildHost(withInitConnection: true, errors)) {
       IReadOnlyList<StartupStepResult> steps = [];
-      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors);
+      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors, _migratingStartBound);
       await Assert.That(steps.Where(s => s.Outcome == StartupStepOutcome.Failed).Select(s => $"{s.Name}: {s.Reason}")).IsEmpty();
       await Assert.That(errors.Entries).IsEmpty()
         .Because("nothing a starting service does may need schema rights from its application role");

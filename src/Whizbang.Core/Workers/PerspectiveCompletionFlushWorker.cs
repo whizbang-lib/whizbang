@@ -16,7 +16,7 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService, IPerspectiveCompletionChannel {
+public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService, IPerspectiveCompletionChannel, IQueuedWriteFlusher {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly PerspectiveCompletionFlushWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
@@ -48,11 +48,28 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
 
   /// <inheritdoc />
   public ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default)
-    => _flusher.Writer.WriteAsync(new PerspectiveCompletionItem(EventWorkId: eventWorkId, Cursor: null), cancellationToken);
+    => _flusher.EnqueueAsync(new PerspectiveCompletionItem(EventWorkId: eventWorkId, Cursor: null), cancellationToken);
 
   /// <inheritdoc />
   public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default)
-    => _flusher.Writer.WriteAsync(new PerspectiveCompletionItem(EventWorkId: null, Cursor: cursor), cancellationToken);
+    => _flusher.EnqueueAsync(new PerspectiveCompletionItem(EventWorkId: null, Cursor: cursor), cancellationToken);
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerIdleSignalTests.cs:PerspectiveCompletionFlushWorker_ReportsAQueuedCompletionUntilItLandsAsync</tests>
+  public QueuedWriteActivity Activity => _flusher.Activity;
+
+  /// <inheritdoc />
+  public bool IsIdle => _flusher.IsIdle;
+
+  /// <inheritdoc />
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle {
+    add => _flusher.OnWorkProcessingIdle += value;
+    remove => _flusher.OnWorkProcessingIdle -= value;
+  }
+
+  /// <inheritdoc />
+  public Task WaitForIdleAsync(CancellationToken cancellationToken = default) => _flusher.WaitForIdleAsync(cancellationToken);
 
   /// <inheritdoc />
   public override Task StartAsync(CancellationToken cancellationToken) {

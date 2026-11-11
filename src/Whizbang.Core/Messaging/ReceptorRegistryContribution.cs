@@ -48,4 +48,13 @@ public sealed class ReceptorRegistryContribution {
   /// </summary>
   /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
   public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; init; } = [];
+
+  /// <summary>
+  /// The collective event types a <c>[CollectiveApplyFor]</c> handler in this assembly applies, in the
+  /// assembly-qualified wire form the event store's <c>event_type</c> holds. Null (the default) for a contribution an
+  /// older generator built, or one built by hand: such an assembly may hold handlers nobody can see, so the merged
+  /// answer is then unknown rather than missing them (#2145).
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+  public IReadOnlyCollection<string>? HandledCollectiveEventTypes { get; init; }
 }

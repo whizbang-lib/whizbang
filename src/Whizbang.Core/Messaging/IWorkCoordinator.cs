@@ -1154,6 +1154,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// #2092: takes back a window request whose send failed. A window is recorded as requested before it is sent, so an
+  /// owner that answers before the send returns finds it awaiting that answer; when the send then fails, the request
+  /// never left and this puts the backfill back as <paramref name="requestedFrom"/> was, costing no attempt, so a later
+  /// tick asks the window again. Applies only while the request recorded from that state is still the latest and still
+  /// awaits its answer: an answer that landed meanwhile, or a later request, stands. Default: no-op.
+  /// </summary>
+  /// <param name="requestedFrom">The backfill as read when the window was requested, before it was recorded.</param>
+  /// <param name="window">The window recorded as requested.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SubscriptionBackfillStoreTests.cs</tests>
+  Task WithdrawSubscriptionBackfillWindowRequestAsync(
+    SubscriptionBackfillCursor requestedFrom,
+    long window,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// #2092: applies a window's answer to its running backfill: the position moves to where the window stopped, the
   /// events count, and an answer with nothing more ends the backfill as complete. Applies only to the window awaiting
   /// its answer, so a late or duplicate answer changes nothing. Default: null.
@@ -2064,6 +2081,39 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// #2211: takes (reads and forgets) where the last stream-level walk of one audit window of an origin stopped at the
+  /// consumer's page budget, so the next drill-down of that window resumes after it instead of comparing the same
+  /// leading streams again. A cursor is used once: a walk that ends, or is dropped, leaves none, and the next drill-down
+  /// starts from the first stream. Null = no cursor kept, or unsupported (every drill-down starts from the first stream).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window is drilled.</param>
+  /// <param name="windowSince">The window's first commit sequence (its start, which names it across audits).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The last stream the stopped walk compared, or null.</returns>
+  /// <docs>resilience/stream-integrity#a-large-window-is-walked-across-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDrillCursorSqlTests.cs</tests>
+  Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) =>
+    Task.FromResult<Guid?>(null);
+
+  /// <summary>
+  /// #2211: keeps where a stream-level walk of one audit window of an origin stopped at the consumer's page budget
+  /// (<see cref="StreamIntegrityOptions.MaxManifestPagesPerAudit"/>), replacing any cursor kept for that window, so the
+  /// next drill-down resumes after it (<see cref="IntegrityTakeDrillCursorAsync"/>). No-op = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window was walked.</param>
+  /// <param name="windowSince">The window's first commit sequence.</param>
+  /// <param name="resumeAfterStreamId">The last stream the walk compared.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the cursor is kept.</returns>
+  /// <docs>resilience/stream-integrity#a-large-window-is-walked-across-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDrillCursorSqlTests.cs</tests>
+  Task IntegritySaveDrillCursorAsync(
+    Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// #2103: records, per keyed ledger row, the one event its bucket is missing (or null when the comparison could not
   /// name one), so the paced repair drain asks the owner for that event instead of the stream. Pairs by position with
   /// <paramref name="keys"/>; a null clears an id recorded by an earlier comparison. No-op = unsupported, and the drain
@@ -2124,9 +2174,9 @@ public interface IWorkCoordinator {
   /// <summary>
   /// #2115: claims up to <paramref name="limit"/> ledger rows to re-check, oldest report first: rows of
   /// <paramref name="originIds"/> (origins whose request topic is learned) last reported before
-  /// <paramref name="reportedBefore"/>, not looked at since then, and stamped with the window they were compared over. A
-  /// claim marks each row looked at (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a
-  /// re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
+  /// <paramref name="reportedBefore"/>, not looked at since then, each with the window it was compared over (both bounds
+  /// null for a row compared over the whole history, #2208), never the type lane. A claim marks each row looked at
+  /// (<paramref name="now"/>), so the next claim moves on to the next oldest and a row a re-check finds still divergent waits until its report is old again. Concurrent claimers skip each other's locked
   /// rows. Nothing is attempted and no repair is asked: a claimed row is compared again, never repaired. Empty = nothing
   /// that old, or unsupported.
   /// </summary>
@@ -2243,6 +2293,23 @@ public interface IWorkCoordinator {
   /// <docs>resilience/stream-integrity</docs>
   Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
+  /// Durable <see cref="IIntegrityRepairLedger.MarkTypesHealedWithAgesAsync"/>: forgets every ledger row of each
+  /// (origin, tenant, type) in <paramref name="typeKeys"/>, the type lane and every per-stream row (a key's stream id is
+  /// not read), and returns each forgotten row's age in seconds (first sighting to heal). Null = unsupported; an empty
+  /// list is a real answer (no row of those types was tracked).
+  /// </summary>
+  /// <param name="originServiceId">The origin the types were proven complete for.</param>
+  /// <param name="typeKeys">The proven (tenant, type) pairs.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ages of the rows forgotten, or null when unsupported or failed.</returns>
+  /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityTypeHealSqlTests.cs</tests>
+  Task<IReadOnlyList<double>?> IntegrityMarkTypesHealedWithAgesAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<double>?>(null);
 
@@ -2490,7 +2557,9 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
-  /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
+  /// the age of the oldest; the answer states and the integrity delivery queue; and the deficit
+  /// events left to heal with the unhealable buckets (#2203). Defaults to "nothing to report" for
+  /// engines with no ledger.
   /// </summary>
   /// <param name="maxRepairAttempts">The repair budget, so the query can count who has spent it.</param>
   /// <param name="cancellationToken">Cancellation.</param>
@@ -3479,7 +3548,7 @@ public sealed record MaintenanceResult(string TaskName, long RowsAffected, doubl
 /// <docs>fundamentals/perspectives/rewind</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>

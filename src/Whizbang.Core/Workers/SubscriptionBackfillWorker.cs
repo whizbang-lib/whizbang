@@ -202,6 +202,11 @@ public sealed partial class SubscriptionBackfillWorker(
       BackfillId = backfill.BackfillId,
       BackfillWindow = number,
     };
+    // Recorded before it is sent: the owner's answer applies only to a window recorded as awaiting it, and the owner can
+    // answer before the publish call returns (a fast owner, or this host's continuation delayed under load). Recorded
+    // after, that answer would be dropped as late and the window asked again at the answer timeout.
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(
+      backfill.BackfillId, number, now, now.AddMinutes(_options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
     try {
       await RedeliveryRequestDispatch.PublishAsync(
         sender.Transport, sender.Serializer, sender.InstanceProvider, command, destination.Value.Target, destination.Value.Destination, now,
@@ -210,12 +215,12 @@ public sealed partial class SubscriptionBackfillWorker(
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
-      // A transient broker failure costs this window only; it is asked again on a later tick.
+      // A transient broker failure costs this window only: the request never left, so it is withdrawn, costing no
+      // attempt, and the window is asked again on a later tick.
       LogSendFailed(_logger, backfill.EventType, backfill.OwnerServiceName, ex);
+      await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(backfill, number, cancellationToken).ConfigureAwait(false);
       return false;
     }
-    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(
-      backfill.BackfillId, number, now, now.AddMinutes(_options.RepairAnswerTimeoutMinutes), cancellationToken).ConfigureAwait(false);
     return true;
   }
 
