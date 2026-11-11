@@ -53,10 +53,31 @@ public static class CompositeChildIdentity {
   /// <exception cref="ArgumentNullException">The type is null.</exception>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_TheTypeAndEveryRenderingOfItsName_DeriveOneIdAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_ANullType_ThrowsAsync</tests>
-  public static Guid ForChild(Guid compositeMessageId, int ordinal, Type childType) {
+  public static Guid ForChild(Guid compositeMessageId, int ordinal, Type childType) =>
+    Derive(compositeMessageId, ordinal, HashedTypeName(childType));
+
+  /// <summary>
+  /// The one definition of the type name a child id hashes (#2266): the type's assembly-qualified name in the
+  /// framework's version-free wire form (<see cref="EventTypeMatchingHelper.NormalizeTypeName"/>), every type argument at
+  /// every depth included. For a type with no type arguments it is exactly <see cref="TypeNameFormatter.Format"/>
+  /// (<c>Namespace.Type, Assembly</c>, nested types with <c>+</c>); for a generic type it also strips the versions of the
+  /// type arguments, which <see cref="TypeNameFormatter.Format"/> keeps, so a receiver on another build of any assembly
+  /// in the name derives the same id.
+  /// </summary>
+  /// <param name="childType">The child's runtime type.</param>
+  /// <returns>The name the child id is derived from.</returns>
+  /// <exception cref="ArgumentNullException">The type is null.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_IsOneDefinition_ForTheTypeAndForEveryRenderingOfItsNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_ForATypeWithoutTypeArguments_IsTheCanonicalWireFormAsync</tests>
+  internal static string HashedTypeName(Type childType) {
     ArgumentNullException.ThrowIfNull(childType);
-    return Derive(compositeMessageId, ordinal, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(childType));
+    return HashedTypeName(TypeNameFormatter.AssemblyQualifiedNameOrDisplay(childType));
   }
+
+  /// <summary>The one definition of the hashed name (see <see cref="HashedTypeName(Type)"/>), from a rendered name.</summary>
+  /// <param name="typeName">The type name, with or without version decorations at any depth.</param>
+  /// <returns>The name the child id is derived from.</returns>
+  internal static string HashedTypeName(string typeName) => EventTypeMatchingHelper.NormalizeTypeName(typeName);
 
   /// <summary>
   /// The child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>, from the
@@ -93,7 +114,7 @@ public static class CompositeChildIdentity {
       PREFIX, "\n",
       compositeMessageId.ToString("N"), "\n",
       ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture), "\n",
-      EventTypeMatchingHelper.NormalizeTypeName(childTypeName));
+      HashedTypeName(childTypeName));
 
     return DerivedIdentity.FromCanonical(compositeMessageId, ordinal, canonical);
   }
