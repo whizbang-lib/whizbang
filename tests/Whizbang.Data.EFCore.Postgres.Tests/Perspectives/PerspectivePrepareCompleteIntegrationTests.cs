@@ -197,6 +197,42 @@ public class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase {
     await _assertSameRowAsync(before, await _readRowAsync(ACTION_TABLE, streamId));
   }
 
+  [Test]
+  public async Task TwoStreamsPreparedOnOneRunner_EachSnapshotAtTheirOwnCadenceAsync() {
+    // One runner prepares many pairs of a batch, so what it counts toward a snapshot is counted per stream: a count kept
+    // on the runner added one stream's events to another's and snapshotted the wrong stream at the wrong time.
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var snapshots = new EFCorePerspectiveSnapshotStore(dataSource);
+    var eventStore = new InMemoryEventStore();
+    var streamA = Guid.CreateVersion7();
+    var streamB = Guid.CreateVersion7();
+    var aCreated = await _appendAsync(eventStore, streamA, new ActionTestCreatedEvent { StreamId = streamA, Name = "a", Value = 1 }, 1);
+    var aUpdated = await _appendAsync(eventStore, streamA, new ActionTestUpdatedEvent { StreamId = streamA, NewValue = 2 }, 2);
+    var aThird = await _appendAsync(eventStore, streamA, new ActionTestUpdatedEvent { StreamId = streamA, NewValue = 3 }, 3);
+    var bCreated = await _appendAsync(eventStore, streamB, new ActionTestCreatedEvent { StreamId = streamB, Name = "b", Value = 1 }, 1);
+    var bUpdated = await _appendAsync(eventStore, streamB, new ActionTestUpdatedEvent { StreamId = streamB, NewValue = 2 }, 2);
+
+    await using var context = CreateDbContext();
+    var coordinator = new SingleHolderCoordinator();
+    var runner = _generated("ActionTestPerspectiveRunner", _services<ActionTestPerspective>(null), eventStore,
+      new EFCorePostgresPerspectiveStore<ActionTestModel>(context, ACTION_TABLE), snapshots,
+      Options.Create(new PerspectiveSnapshotOptions { Enabled = true, SnapshotEveryNEvents = 3, MaxSnapshotsPerStream = 10 }),
+      coordinator);
+
+    await _prepareAndCompleteAsync(runner, coordinator, context, streamA, "action_test", null, [aCreated, aUpdated]);
+    await _prepareAndCompleteAsync(runner, coordinator, context, streamB, "action_test", null, [bCreated, bUpdated]);
+
+    await Assert.That((await snapshots.GetLatestSnapshotAsync(streamB, "action_test")).HasValue).IsFalse()
+      .Because("stream B has folded two events against a cadence of three; stream A's two are not its own");
+
+    await _prepareAndCompleteAsync(runner, coordinator, context, streamA, "action_test", aUpdated.MessageId.Value, [aThird]);
+
+    var snapshotA = await snapshots.GetLatestSnapshotAsync(streamA, "action_test");
+    await Assert.That(snapshotA.HasValue).IsTrue()
+      .Because("stream A has now folded its third event since its last snapshot");
+    await Assert.That(snapshotA.Value.SnapshotEventId).IsEqualTo(aThird.MessageId.Value);
+  }
+
   // ---------------------------------------------------------------------------------------------------------------
   // Cases the batch write does not take are handed to the per-pair path, which ends as it always did
   // ---------------------------------------------------------------------------------------------------------------
@@ -475,6 +511,19 @@ public class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase {
     }
     var completion = await setBasedRunner.CompleteAsync(prepared, outcome, CancellationToken.None);
     return new SetBasedRun(prepared, outcome, completion);
+  }
+
+  /// <summary>Prepares, writes and completes one pair on a runner the caller keeps, as a batch does for each of its pairs.</summary>
+  private static async Task<PerspectiveCursorCompletion> _prepareAndCompleteAsync(
+      IPerspectiveRunner runner, IPerspectiveApplyCoordinator coordinator, WorkCoordinationDbContext context,
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events) {
+    await using var locks = await PerspectiveApplyLockSet.AcquireAsync(coordinator, [(streamId, perspectiveName)]);
+    var prepared = await runner.PrepareAsync(streamId, perspectiveName, lastProcessedEventId, events, CancellationToken.None);
+    PerspectiveWriteOutcome? outcome = null;
+    if (prepared.Write is { } write) {
+      outcome = (await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([write]))[0];
+    }
+    return await runner.CompleteAsync(prepared, outcome, CancellationToken.None);
   }
 
   private static async Task<MessageEnvelope<IEvent>> _appendAsync<TEvent>(
