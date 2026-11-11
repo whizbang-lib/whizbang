@@ -6439,8 +6439,7 @@ public class PerspectiveWorkerOptions {
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from the perspective drain
-  /// channel — this IS the apply-batching window the user-facing
-  /// <see cref="Messaging.IApplyBatchStrategy"/> interface advertises. After the first
+  /// channel: the coalescing window that forms a drain batch. After the first
   /// signal arrives, the worker waits up to
   /// <see cref="SlidingWindowBatcherOptions.SlidingWindow"/> for additional signals
   /// before fetching events — letting more arrivals accumulate so the per-stream
