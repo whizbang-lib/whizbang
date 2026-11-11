@@ -172,11 +172,9 @@ public class IntegrityAnsweredRecheckSqlTests : EFCoreTestBase {
          origin_service_id, origin_commit_sequence)
       VALUES ($1, $2, $2, 'Upstream', normalize_event_type($3), 1, nextval('wh_commit_seq'), 0, NOW(), $4, 15)
       """, eventId, key.StreamId, MESSAGE_TYPE, key.OriginServiceId);
-    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(
-      key.OriginServiceId, [eventId], [15], new RedeliveryAnswerWindow(10, 20), at);
-    if (answer is null) {
-      throw new InvalidOperationException("the bundle answer was not recorded");
-    }
+    _ = await coordinator.IntegrityRecordBundleAnswerAsync(
+      key.OriginServiceId, [eventId], [15], new RedeliveryAnswerWindow(10, 20), at)
+      ?? throw new InvalidOperationException("the bundle answer was not recorded");
     var stamped = await _scalarAsync<bool>(conn,
       "SELECT answered_at = $2 FROM wh_integrity_ledger WHERE stream_id = $1", key.StreamId, at);
     if (!stamped) {
