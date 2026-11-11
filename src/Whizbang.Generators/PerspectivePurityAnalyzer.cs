@@ -308,7 +308,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         var diagnostic = Diagnostic.Create(
             NonPureServiceInjected,
             location,
-            containingType.Name,
+            TypeNameUtilities.SimpleName(containingType),
             TypeNameUtilities.Display(parameterType)
         );
         context.ReportDiagnostic(diagnostic);
@@ -442,7 +442,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var access in methodDeclaration.DescendantNodes().OfType<MemberAccessExpressionSyntax>()) {
       if (semanticModel.GetSymbolInfo(access).Symbol is IPropertySymbol { IsStatic: true, Name: "Now" or "UtcNow" } property
           && TypeNameUtilities.DisplayOrEmpty(property.ContainingType) is "System.DateTime" or "System.DateTimeOffset") {
-        yield return (access, $"{property.ContainingType.Name}.{property.Name}");
+        yield return (access, $"{TypeNameUtilities.SimpleName(property.ContainingType)}.{property.Name}");
       }
     }
   }

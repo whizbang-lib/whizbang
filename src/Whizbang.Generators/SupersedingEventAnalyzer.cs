@@ -111,12 +111,12 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
       members.Add(new GroupMember(symbol, group, _keyType(symbol)));
     }
     if (EphemeralResolver.IsEphemeral(symbol)) {
-      context.ReportDiagnostic(Diagnostic.Create(EphemeralAndSuperseding, LocationUtilities.FirstOrNone(symbol), symbol.Name));
+      context.ReportDiagnostic(Diagnostic.Create(EphemeralAndSuperseding, LocationUtilities.FirstOrNone(symbol), TypeNameUtilities.SimpleName(symbol)));
     }
     var keys = SupersedingResolver.KeyNames(symbol);
     if (keys.Count > 1) {
       context.ReportDiagnostic(Diagnostic.Create(
-        MoreThanOneKey, LocationUtilities.FirstOrNone(symbol), symbol.Name, string.Join(", ", keys)));
+        MoreThanOneKey, LocationUtilities.FirstOrNone(symbol), TypeNameUtilities.SimpleName(symbol), string.Join(", ", keys)));
     }
   }
 
@@ -143,7 +143,7 @@ public class SupersedingEventAnalyzer : DiagnosticAnalyzer {
       foreach (var member in group) {
         var others = string.Join(" or ", keys.Where(k => k != member.Key));
         context.ReportDiagnostic(Diagnostic.Create(
-          GroupKeysDisagree, LocationUtilities.FirstOrNone(member.Type), member.Type.Name, member.Group, member.Key, others));
+          GroupKeysDisagree, LocationUtilities.FirstOrNone(member.Type), TypeNameUtilities.SimpleName(member.Type), member.Group, member.Key, others));
       }
     }
   }

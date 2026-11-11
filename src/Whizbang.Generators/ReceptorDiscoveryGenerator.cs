@@ -327,7 +327,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // 2-arg interfaces have a response type; 1-arg are void receptors
 #pragma warning disable RS0030 // local format keeps UseSpecialTypes and EscapeKeywordIdentifiers, which the shared FullyQualifiedWithNullability lacks
       var responseType = argCount == 2
-          ? found.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability)
+          ? TypeNameUtilities.Display(found.TypeArguments[1], _fullyQualifiedFormatWithNullability)
           : null;
 #pragma warning restore RS0030
 

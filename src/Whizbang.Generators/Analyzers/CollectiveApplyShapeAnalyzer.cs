@@ -56,7 +56,7 @@ public class CollectiveApplyShapeAnalyzer : DiagnosticAnalyzer {
       : _missingAttribute(method);
     if (reason is not null) {
       context.ReportDiagnostic(Diagnostic.Create(
-          UnboundCollectiveApply, method.Locations[0], method.Name, method.ContainingType.Name, reason));
+          UnboundCollectiveApply, method.Locations[0], method.Name, TypeNameUtilities.SimpleName(method.ContainingType), reason));
     }
   }
 

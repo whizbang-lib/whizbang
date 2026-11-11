@@ -8,6 +8,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -91,9 +92,9 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.DiFactoryOmitsDependency,
         creation.GetLocation(),
-        parameter.ContainingSymbol.ContainingType.Name,
+        TypeNameUtilities.SimpleName(parameter.ContainingSymbol.ContainingType),
         parameter.Name,
-        parameter.Type.Name));
+        TypeNameUtilities.SimpleName(parameter.Type)));
     }
   }
 

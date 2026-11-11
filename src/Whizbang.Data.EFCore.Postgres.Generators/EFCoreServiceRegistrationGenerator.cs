@@ -300,24 +300,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Either arm yields a non-null schema, so the DbContextInfo below needs no fallback of its own.
     var schema = _extractSchemaFromAttribute(attribute) is { Length: > 0 } declaredSchema
         ? declaredSchema
-        : _deriveSchemaFromNamespace(TypeNameUtilities.NamespaceName(symbol.ContainingNamespace));
+        : _deriveSchemaFromNamespace(TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(symbol)));
 
     // Extract connection string name from attribute, or derive from class name
     var explicitConnectionStringName = _extractConnectionStringNameFromAttribute(attribute);
     var connectionStringName = explicitConnectionStringName ?? DEFAULT_CONNECTION_STRING_NAME;
 
     return new DbContextInfo(
-        ClassName: symbol.Name,
+        ClassName: TypeNameUtilities.SimpleName(symbol),
         FullyQualifiedName: TypeNameUtilities.FullyQualified(symbol),
         // Empty for the global namespace (issue #707): Roslyn's display string for it is the
         // literal "<global namespace>", which is neither a schema name nor a namespace declaration.
-        Namespace: TypeNameUtilities.NamespaceName(symbol.ContainingNamespace),
+        Namespace: TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(symbol)),
         Schema: schema,
         Keys: keys,
         ConnectionStringName: connectionStringName,
         // The name earlier releases derived from the class, read as a fallback only when the context
         // names no connection string (see WhizbangNamingConvention.ResolveConnectionStringName).
-        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(symbol.Name) : null
+        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(TypeNameUtilities.SimpleName(symbol)) : null
     );
   }
 
@@ -1200,9 +1200,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     if (parameterSyntax.Type is not GenericNameSyntax genericName
         || context.SemanticModel.GetTypeInfo(genericName, ct).Type is not INamedTypeSymbol type
         || type.TypeKind != TypeKind.Interface
-        || !type.Name.Equals("ILensQuery", StringComparison.Ordinal)
+        || !TypeNameUtilities.SimpleName(type).Equals("ILensQuery", StringComparison.Ordinal)
         || type.TypeArguments.Length < 2
-        || !TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses")) {
+        || !TypeNameUtilities.IsNamed(TypeNameUtilities.NamespaceOf(type), "Whizbang.Core.Lenses")) {
       return null;
     }
 
@@ -2681,7 +2681,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // __LIBRARY_VERSION__ is the Whizbang library version from the generator assembly
       template = template.Replace("__LIBRARY_VERSION__", GeneratorLibraryVersion.Get());
       // __APPLICATION_VERSION__ is the consuming assembly name + version for tracking which app applied migrations
-      var appVersion = compilation.Assembly.Identity.Version.ToString();
+      var appVersion = TypeNameUtilities.AssemblyIdentityVersion(compilation.Assembly).ToString();
       var applicationVersion = $"{assemblyName}/{appVersion}";
       template = template.Replace("__APPLICATION_VERSION__", applicationVersion);
 
@@ -2741,7 +2741,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </remarks>
   private static string _generateBootstrapMigrationsCode() {
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
-    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+    var resourcePrefix = $"{TypeNameUtilities.AssemblySimpleName(assembly)}.Templates.Migrations.";
 
     var entries = new List<string>();
 
@@ -2792,7 +2792,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Load migrations from generator's own embedded resources (Templates/Migrations)
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
-    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+    var resourcePrefix = $"{TypeNameUtilities.AssemblySimpleName(assembly)}.Templates.Migrations.";
 
     // Get all embedded SQL migration files
     var migrationResources = assembly.GetManifestResourceNames()
@@ -2806,7 +2806,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       resourceList += $", ... and {migrationResources.Length - 5} more";
     }
     context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.EFCoreMigrationFilesDiscovery, Location.None,
-        migrationResources.Length, assembly.GetName().Name, resourcePrefix, resourceList));
+        migrationResources.Length, TypeNameUtilities.AssemblySimpleName(assembly), resourcePrefix, resourceList));
 
     // Generate migration tuples
     for (int i = 0; i < migrationResources.Length; i++) {
@@ -4066,7 +4066,7 @@ public static class GeneratorLibraryVersion {
         assembly.GetCustomAttributes<System.Reflection.AssemblyInformationalVersionAttribute>()
           .Select(a => a.InformationalVersion)
           .FirstOrDefault(),
-        assembly.GetName().Version);
+        TypeNameUtilities.AssemblyVersion(assembly));
   }
 
   /// <summary>

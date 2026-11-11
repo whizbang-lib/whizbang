@@ -347,7 +347,7 @@ public static class TemplateUtilities {
   /// <returns>A stable, build-deterministic stamp string</returns>
   public static string GetDeterministicBuildStamp(Assembly generatorAssembly) {
     // A loaded assembly always carries a version (0.0.0.0 when none was set).
-    var version = generatorAssembly.GetName().Version!.ToString();
+    var version = TypeNameUtilities.AssemblyVersion(generatorAssembly)!.ToString();
     return $"generator v{version}";
   }
 

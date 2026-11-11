@@ -125,7 +125,7 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
       return false;
     }
 
-    if (!type.Name.Equals("ILensQuery", StringComparison.Ordinal)) {
+    if (!TypeNameUtilities.SimpleName(type).Equals("ILensQuery", StringComparison.Ordinal)) {
       return false;
     }
 
@@ -135,7 +135,7 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check namespace is Whizbang.Core.Lenses
-    return TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses");
+    return TypeNameUtilities.IsNamed(TypeNameUtilities.NamespaceOf(type), "Whizbang.Core.Lenses");
   }
 
   private static bool _isValidTypeArgument(

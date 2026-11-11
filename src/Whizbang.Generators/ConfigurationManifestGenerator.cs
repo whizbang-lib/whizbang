@@ -105,7 +105,7 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
         transform: static (ctx, _) => _extractRemovedKeys(ctx.Attributes))
       .SelectMany(static (keys, _) => keys);
 
-    var assemblyName = context.CompilationProvider.Select(static (c, _) => c.Assembly.Name);
+    var assemblyName = context.CompilationProvider.Select(static (c, _) => TypeNameUtilities.SimpleName(c.Assembly));
 
     context.RegisterSourceOutput(bindings.Collect().Combine(removedKeys.Collect()).Combine(assemblyName),
       static (spc, pair) => _emit(spc, pair.Left.Left, pair.Left.Right, pair.Right));

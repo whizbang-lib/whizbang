@@ -79,12 +79,12 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.PerspectiveMissingPinnedId,
             location,
-            typeSymbol.Name));
+            TypeNameUtilities.SimpleName(typeSymbol)));
       } else {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.MessageMissingPinnedId,
             location,
-            typeSymbol.Name));
+            TypeNameUtilities.SimpleName(typeSymbol)));
       }
       return;
     }
@@ -101,7 +101,7 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
           DiagnosticDescriptors.PinnedIdNotAValidGuid,
           attributeLocation,
           pinnedIdValue,
-          typeSymbol.Name));
+          TypeNameUtilities.SimpleName(typeSymbol)));
     }
   }
 }

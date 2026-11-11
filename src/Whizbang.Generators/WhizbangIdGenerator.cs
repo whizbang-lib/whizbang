@@ -218,7 +218,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Extract the property type name (e.g., "ProductId" from "public ProductId Id { get; set; }")
-    var typeName = propertySymbol.Type.Name;
+    var typeName = TypeNameUtilities.SimpleName(propertySymbol.Type);
 
     // Extract namespace - either from attribute or containing type's namespace
     string targetNamespace = _namespaceOf(propertySymbol);
@@ -274,7 +274,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Extract the parameter type name (e.g., "ProductId" from "[WhizbangId] ProductId Id")
-    var typeName = parameterSymbol.Type.Name;
+    var typeName = TypeNameUtilities.SimpleName(parameterSymbol.Type);
 
     // Extract namespace - either from attribute or containing type's namespace
     string targetNamespace = _namespaceOf(parameterSymbol);

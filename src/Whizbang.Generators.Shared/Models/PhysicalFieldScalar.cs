@@ -95,7 +95,7 @@ public static class PhysicalFieldScalar {
 
     var structured = type.SpecialType == SpecialType.None
       && type.TypeKind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface
-      && type.ContainingNamespace is not { Name: "System", ContainingNamespace.IsGlobalNamespace: true };
+      && !TypeNameUtilities.IsSystemNamespace(TypeNameUtilities.NamespaceOf(type));
 
     return structured ? JSONB : null;
   }
