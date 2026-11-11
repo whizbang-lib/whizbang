@@ -148,7 +148,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("GetEphemeralPairsNeedingSnapshot", "GetEphemeralPairsNeedingSnapshotAsync", (c, _) => c.GetEphemeralPairsNeedingSnapshotAsync());
 
     // ── Integrity ledger and audit ─────────────────────────────────────────
-    register("IntegrityTryBeginReport", "_integrityLedgerBoolAsync", (c, _) =>
+    register("IntegrityTryBeginReport", "_integrityLedgerOutcomeAsync", (c, _) =>
       c.IntegrityTryBeginReportAsync(_key(), 1, 10, 1, 5, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityTryBeginReportBatch", "_integrityLedgerBoolArrayAsync", (c, _) =>
       c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5)));
@@ -159,6 +159,9 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("IntegrityMarkHealedBatchWithAges", "IntegrityMarkHealedBatchWithAgesAsync", (c, _) =>
       c.IntegrityMarkHealedBatchWithAgesAsync(_origin(), [_key()]));
     register("GetIntegrityLedgerSummary", "GetIntegrityLedgerSummaryAsync", (c, _) => c.GetIntegrityLedgerSummaryAsync(5));
+    register("IntegrityAddLedgerTally", "_withCoordinatorCommandAsync", (c, _) =>
+      c.IntegrityAddLedgerTallyAsync(_fixedNow, 1, 1, _fixedNow.AddHours(-2)));
+    register("GetIntegrityLedgerTally", "_withCoordinatorCommandAsync", (c, _) => c.GetIntegrityLedgerTallyAsync(_fixedNow.AddHours(-1)));
     register("AdvanceIntegrityCheckpoint", "AdvanceIntegrityCheckpointAsync", (c, _) => c.AdvanceIntegrityCheckpointAsync());
     register("CountReceivedFromOrigin", "CountReceivedFromOriginAsync", (c, _) => c.CountReceivedFromOriginAsync(_origin(), 0, 10));
     register("TryClaimIntegrityAuditCycle", "_tryClaimWatermarkAsync", async (c, _) =>

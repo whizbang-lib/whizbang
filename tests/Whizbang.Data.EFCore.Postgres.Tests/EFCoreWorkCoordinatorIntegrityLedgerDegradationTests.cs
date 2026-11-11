@@ -84,7 +84,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityTryBeginReport_WithTheLedgerUnavailable_FailsOpenAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_try_begin_report");
+    // 393 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_report_outcome");
 
     var began = await _build(ctx).IntegrityTryBeginReportAsync(
       _key(), originLo: 1, originHi: 10, localLo: 1, localHi: 5,
@@ -99,7 +100,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityTryBeginRepair_WithTheLedgerUnavailable_FailsClosedAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_try_begin_repair");
+    // 393 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_repair_outcome");
 
     var began = await _build(ctx).IntegrityTryBeginRepairAsync(
       _key(), DateTimeOffset.UtcNow, TimeSpan.FromSeconds(30), maxAttempts: 5);
@@ -113,7 +115,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityMarkHealed_WithTheLedgerUnavailable_DoesNotThrowAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_mark_healed");
+    // 393 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_heal_counted");
 
     // The caller is a completion path — throwing here would fail work that actually succeeded.
     await _build(ctx).IntegrityMarkHealedAsync(_key());
@@ -125,7 +128,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityTryBeginReportBatch_WithTheBatchFunctionMissing_ReturnsNullSoTheCallerFallsBackAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_try_begin_report_batch");
+    // 393 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_report_divergences_counted");
 
     var results = await _build(ctx).IntegrityTryBeginReportBatchAsync(
       _originId,
@@ -142,7 +146,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityMarkHealedBatchWithAges_WithTheBatchFunctionMissing_ReturnsNullAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_mark_healed_batch");
+    // 393 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_heal_batch_counted");
 
     var ages = await _build(ctx).IntegrityMarkHealedBatchWithAgesAsync(_originId, [_key()]);
 
@@ -155,7 +160,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityMarkHealedBatch_WithTheBatchFunctionMissing_ReportsFailureAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_mark_healed_batch");
+    // 393 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_heal_batch_counted");
 
     var marked = await _build(ctx).IntegrityMarkHealedBatchAsync(_originId, [_key()]);
 

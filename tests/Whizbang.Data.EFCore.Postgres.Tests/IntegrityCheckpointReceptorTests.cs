@@ -628,9 +628,13 @@ public class IntegrityCheckpointReceptorTests {
       Task.FromResult<IntegrityGapTrackerState?>(new IntegrityGapTrackerState(
         [.. KeptOrigins.Values], [.. KeptPending.Values.SelectMany(p => p)]));
 
+    /// <summary>#2261: the latest commit sequence each origin's checkpoints announced.</summary>
+    public Dictionary<Guid, long?> KeptLatest { get; } = [];
+
     public Task IntegrityRecordOriginCheckpointAsync(
         Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
-        CancellationToken cancellationToken = default) {
+        long? latestCommitSequence = null, CancellationToken cancellationToken = default) {
+      KeptLatest[originServiceId] = latestCommitSequence;
       KeptOrigins[originServiceId] = new IntegrityKnownOrigin(
         originServiceId, originServiceName,
         requestTopic ?? (KeptOrigins.TryGetValue(originServiceId, out var prior) ? prior.RequestTopic : null), checkpointAt);
@@ -1111,6 +1115,16 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(kept.RequestTopic).IsEqualTo("origin.requests");
     await Assert.That(fx.Coordinator.PendingWrites).IsEqualTo(0)
       .Because("a checkpoint that neither finds nor clears a gap writes no pending state");
+  }
+
+  [Test]
+  public async Task Checkpoint_KeepsTheOriginsWatermark_ForTheVerifiedPercentAsync() {
+    var fx = _fixture();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 840, count: 0, emptyBuckets: true));
+
+    await Assert.That(fx.Coordinator.KeptLatest[fx.OriginId]).IsEqualTo(840L)
+      .Because("the verified percent divides the seal by the latest commit sequence the origin announced (#2261)");
   }
 
   [Test]

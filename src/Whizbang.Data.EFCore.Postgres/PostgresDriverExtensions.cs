@@ -318,7 +318,8 @@ public static class PostgresDriverExtensions {
           new PostgresStreamPurger(
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
-            logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+            logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+            integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
         // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
         // writes through it; a blob store package registers its own IArchiveStore first and wins.
         // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>

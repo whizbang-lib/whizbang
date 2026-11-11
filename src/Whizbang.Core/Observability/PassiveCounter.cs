@@ -54,6 +54,17 @@ public sealed class PassiveCounter<T> where T : struct, INumberBase<T> {
   /// <summary>The observable instrument registered on the meter.</summary>
   public Instrument Instrument { get; }
 
+  /// <summary>Every series' count, summed: what the counter has counted, whatever the tags (#2261).</summary>
+  internal T Total {
+    get {
+      var total = _untagged.Value;
+      foreach (var cell in _series.Values) {
+        total += cell.Value;
+      }
+      return total;
+    }
+  }
+
   /// <summary>Adds to the untagged count.</summary>
   /// <param name="delta">The amount to add.</param>
   public void Add(T delta) => _untagged.Add(delta);

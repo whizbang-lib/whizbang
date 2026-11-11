@@ -865,4 +865,37 @@ public sealed class StreamIntegrityOptions {
   /// <docs>resilience/stream-integrity#re-attribution</docs>
   public int MaxReattributionBatchesPerPass { get; set; } = 20;
 
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.verified_percent</c> and <c>verified_percent_all_origins</c> (default true;
+  /// #2261): each origin's verified watermark as a percentage of the latest commit sequence its checkpoints announced, and
+  /// all origins weighted by what each committed. Derived from <c>sealed_through</c> and the checkpoints; a team that
+  /// computes it from those itself can switch it off.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public bool VerifiedPercentGaugeEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.repair_progress_percent</c> (default true; #2261): ledger buckets closed as a
+  /// percentage of buckets opened over <see cref="RepairProgressWindowMinutes"/>, per service. Derived from
+  /// <c>ledger_buckets_opened</c> and <c>ledger_buckets_closed</c>; a team that computes it from those itself can switch
+  /// it off.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public bool RepairProgressGaugeEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.backlog_eta_seconds</c> (default true; #2261): the repairable open buckets
+  /// divided by the net close rate over <see cref="RepairProgressWindowMinutes"/>, and no measurement while the backlog
+  /// is flat or growing. Derived from <c>ledger_open_buckets</c> and the opened and closed counters; a team that computes
+  /// it from those itself can switch it off.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public bool BacklogEtaGaugeEnabled { get; set; } = true;
+
+  /// <summary>
+  /// The rolling window <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> are computed over, in minutes
+  /// (default 60; #2261). At least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public int RepairProgressWindowMinutes { get; set; } = 60;
 }

@@ -133,6 +133,57 @@ public class StreamPurgeTests : EFCoreTestBase {
     await Assert.That(report.Format()).Contains("Dry run: would purge 1 stream(s)");
   }
 
+  /// <summary>
+  /// #2256: a purge removes the purged streams' integrity ledger rows, so the repair backlog's open gauge falls; the
+  /// rows count as buckets closed without a heal, or the closed counter would fall behind the gauge. A dry run removes
+  /// nothing and counts nothing.
+  /// </summary>
+  [Test]
+  public async Task Purge_CountsTheLedgerRowsItRemoves_AsForgottenBucketsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var doomed = Guid.CreateVersion7();
+    foreach (var type in new[] { EVENT_TYPE, EVENT_TYPE + "Too" }) {
+      await _executeAsync(conn, """
+        INSERT INTO wh_integrity_ledger (origin_service_id, event_type, stream_id, origin_lo, origin_hi, local_lo, local_hi)
+        VALUES (gen_random_uuid(), $1, $2, 1, 1, 1, 1)
+        """, type, doomed);
+    }
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var purger = new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, integrityMetrics: metrics);
+
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [doomed], RequestedBy = "operator-1", Reason = "rehearsal", DryRun = true });
+    await Assert.That(_forgotten(metrics)).IsEqualTo(0L).Because("a dry run removes nothing");
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [Guid.CreateVersion7()], RequestedBy = "operator-1", Reason = "no ledger rows" });
+    await Assert.That(_forgotten(metrics)).IsEqualTo(0L).Because("a stream with no ledger rows closes no bucket");
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [doomed], RequestedBy = "operator-1", Reason = "retired" });
+
+    await Assert.That(_forgotten(metrics)).IsEqualTo(2L)
+      .Because("each ledger row the purge removed is a bucket closed without a heal");
+  }
+
+  private static long _forgotten(StreamIntegrityMetrics metrics) {
+    long total = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.LedgerBucketsClosed.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      foreach (var tag in tags) {
+        if (tag.Key == "how" && Equals(tag.Value, "forgotten")) {
+          total += value;
+        }
+      }
+    });
+    listener.Start();
+    listener.RecordObservableInstruments();
+    return total;
+  }
+
   [Test]
   public async Task Purge_OfTheEmptyStreamId_IsRefusedAsync() {
     await using var ctx = CreateDbContext();
