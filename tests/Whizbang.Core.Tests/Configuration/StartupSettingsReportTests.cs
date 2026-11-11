@@ -85,6 +85,42 @@ public class StartupSettingsReportTests {
   }
 
   [Test]
+  public async Task AnUnsetKeyWithADefault_ShowsTheDefaultValue_MarkedDefault_AndASensitiveOneRedactedAsync() {
+    var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+      ["Whizbang:A:Two"] = "8",
+      ["Whizbang:C:Plain"] = "Host=db;Password=hunter2",
+    };
+
+    var entries = StartupSettingsReport.Build(_config(), _manifest, _sensitive, [], defaults).SelectMany(s => s.Settings).ToList();
+
+    var two = entries.Single(e => e.Key == "Whizbang:A:Two");
+    await Assert.That(two.Source).IsEqualTo(SettingSource.Default);
+    await Assert.That(two.Value).IsEqualTo("8");
+    await Assert.That(two.ToString()).IsEqualTo("Two=8 (default)");
+    await Assert.That(entries.Single(e => e.Key == "Whizbang:C:Plain").Value).IsEqualTo("Host=db;" + SensitiveString.REDACTED);
+    await Assert.That(entries.Single(e => e.Key == "Whizbang:A:One").ToString()).IsEqualTo("One (default)")
+      .Because("a key with no recorded default still says it is the default");
+  }
+
+  [Test]
+  public async Task TheLibraryDefaults_AreTheCodeDefaultsAsync() {
+    await Assert.That(ConfigurationKeyDefaults.Library["Whizbang:Workers:CoalescingOutbox:Partitions"]).IsEqualTo("4");
+    await Assert.That(ConfigurationKeyDefaults.Library["Whizbang:BatchBuffer:MaxBufferedMessages"]).IsEqualTo("10000");
+    await Assert.That(ConfigurationKeyDefaults.Library["Whizbang:Startup:LogSettings"]).IsEqualTo("true");
+  }
+
+  [Test]
+  public async Task DefaultsText_IsOneKeyEqualsValuePerLine_ValuesMayHoldEqualsSignsAsync() {
+    var parsed = ConfigurationKeyDefaults.Parse("# comment\n\nWhizbang:A:B=x=y\r\nnot a default\n=orphan\nWhizbang:A:C=\n");
+
+    await Assert.That(parsed["Whizbang:A:B"]).IsEqualTo("x=y");
+    await Assert.That(parsed["whizbang:a:c"]).IsEqualTo("");
+    await Assert.That(parsed.Count).IsEqualTo(2);
+    await Assert.That(() => ConfigurationKeyDefaults.FromResource(typeof(ConfigurationKeyDefaults).Assembly, "no-such-resource.txt"))
+      .Throws<InvalidOperationException>();
+  }
+
+  [Test]
   public async Task WithNoConfiguration_EveryKeyIsTheDefaultAsync() {
     var entries = _entries(null);
 

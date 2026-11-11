@@ -95,12 +95,15 @@ internal static class StartupSettingsReport {
   /// <param name="manifest">The keys to report.</param>
   /// <param name="sensitive">The keys bound to a <see cref="SensitiveString"/>.</param>
   /// <param name="derived">Every derived setting.</param>
+  /// <param name="defaults">Each key's value when nothing sets it; null shows no default values.</param>
   /// <returns>One section per settings section, ordered by name.</returns>
   public static IReadOnlyList<SettingsSection> Build(
       IConfigurationRoot? configuration,
       KnownConfigurationKeys manifest,
       KnownConfigurationKeys sensitive,
-      IEnumerable<IDerivedSetting> derived) {
+      IEnumerable<IDerivedSetting> derived,
+      IReadOnlyDictionary<string, string>? defaults = null) {
+    _ = defaults;
     ArgumentNullException.ThrowIfNull(manifest);
     ArgumentNullException.ThrowIfNull(sensitive);
     ArgumentNullException.ThrowIfNull(derived);

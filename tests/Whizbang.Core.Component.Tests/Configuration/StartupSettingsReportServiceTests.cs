@@ -81,7 +81,7 @@ public partial class StartupSettingsReportServiceTests {
     await Assert.That(records.All(r => r.Level == LogLevel.Information)).IsTrue();
     await Assert.That(sections.Count).IsEqualTo(sections.Distinct().Count()).Because("one entry per section");
     var startup = records.Single(r => r.Message.StartsWith("Settings Whizbang:Startup: ", StringComparison.Ordinal));
-    await Assert.That(startup.Message).Contains("LogSettings (default)");
+    await Assert.That(startup.Message).Contains("LogSettings=true (default)");
     await Assert.That(startup.Message).Contains("RegistrationCollisions=Warn (configured: MemoryConfigurationProvider");
     await Assert.That(records.Single(r => r.Message.StartsWith("Settings Whizbang:Workers: ", StringComparison.Ordinal)).Message)
       .Contains("ThreadPoolFloor=12 (derived: ProcessorCount; ProcessorCount=12)");
