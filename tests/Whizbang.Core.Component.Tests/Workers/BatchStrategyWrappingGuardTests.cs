@@ -41,6 +41,29 @@ public partial class BatchStrategyWrappingGuardTests {
         + string.Join("; ", unwrapped.Select(u => u.Path + ": " + u.Factory.Trim())));
   }
 
+  [GeneratedRegex(@"\bGet(?:Required)?Service<\s*I(?:Outbox|Inbox)BatchStrategy\s*>")]
+  private static partial Regex _strategyResolution();
+
+  [Test]
+  public async Task OnlyTheResolutionHelper_ResolvesABatchStrategyToAppendToAsync() {
+    var root = _findRepoRoot();
+    var resolving = new List<string>();
+    foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)) {
+      if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)) {
+        continue;
+      }
+      if (_strategyResolution().IsMatch(await File.ReadAllTextAsync(file))) {
+        resolving.Add(Path.GetRelativePath(root, file).Replace('\\', '/'));
+      }
+    }
+
+    await Assert.That(resolving).Contains("src/Whizbang.Core/Workers/BatchStrategyResolution.cs")
+      .Because("the scan must find the helper itself, or it is not reading the source tree");
+    await Assert.That(resolving.Where(p => p != "src/Whizbang.Core/Workers/BatchStrategyResolution.cs")).IsEmpty()
+      .Because("resolve the strategy through BatchStrategyResolution, which bounds a directly registered one: "
+        + string.Join(", ", resolving));
+  }
+
   private static string _findRepoRoot() {
     var dir = new DirectoryInfo(AppContext.BaseDirectory);
     while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Whizbang.slnx"))) {
