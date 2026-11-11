@@ -730,6 +730,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var key = new IntegrityRepairLedger.DivergenceKey(Guid.Empty, null, "Contracts.A", Guid.Empty);
+
+    var withdrawn = await coordinator.IntegrityWithdrawAnswerPendingAsync(Guid.Empty, [key], DateTimeOffset.MinValue, TimeSpan.FromMinutes(1));
+
+    await Assert.That(withdrawn).IsEqualTo(0).Because("#2223: an engine without the ledger recorded no answer to withdraw");
+  }
+
+  [Test]
   public async Task ComputeStreamDigestsWindowedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
