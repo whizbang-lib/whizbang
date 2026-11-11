@@ -88,6 +88,83 @@ public class CompositeChildIdentityCanonicalTests {
     await Assert.That(fromBareName).IsEqualTo(fromType);
   }
 
+  // ===== generic and nested child types (#2266 hardening) =====
+
+  /// <summary>A child nested in another type, whose CLR name carries a '+'.</summary>
+  public sealed record NestedChild(string Id) : IEvent;
+
+  /// <summary>A generic child; its type arguments carry assembly-qualified names of their own.</summary>
+  public sealed record GenericChild<T>(T Value) : IEvent;
+
+  private const string OTHER_BUILD = ", Version=9.8.7.6, Culture=neutral, PublicKeyToken=0123456789abcdef";
+
+  /// <summary>
+  /// The type's assembly-qualified name as a publisher on another build of EVERY assembly involved writes it: the
+  /// decoration of the outer type and of each type argument, at any depth, is that build's.
+  /// </summary>
+  private static string _asAnotherBuildWritesIt(Type type) =>
+    System.Text.RegularExpressions.Regex.Replace(
+      type.AssemblyQualifiedName!, @", Version=[^,\]]+, Culture=[^,\]]+, PublicKeyToken=[^,\]]+", OTHER_BUILD);
+
+  private static IEnumerable<Type> _shapes() => [
+    typeof(ChildEvent),
+    typeof(NestedChild),
+    typeof(GenericChild<string>),                                     // a type argument from the core library
+    typeof(GenericChild<ChildEvent>),                                 // a type argument from this assembly
+    typeof(GenericChild<GenericChild<NestedChild>>),                  // nested generic arguments, nested type inside
+    typeof(GenericChild<Dictionary<string, List<NestedChild>>>),      // several arguments from several assemblies
+  ];
+
+  [Test]
+  public async Task ForChild_GenericAndNestedTypes_DeriveOneIdFromTheTypeAndFromAnotherBuildsWireNameAsync() {
+    var composite = TrackedGuid.New().Value;
+    foreach (var type in _shapes()) {
+      var wire = _asAnotherBuildWritesIt(type);
+      await Assert.That(wire).IsNotEqualTo(type.AssemblyQualifiedName!).Because($"precondition: {type} is renamed");
+      await Assert.That(CompositeChildIdentity.ForChild(composite, 1, wire))
+        .IsEqualTo(CompositeChildIdentity.ForChild(composite, 1, type))
+        .Because($"{type}: no assembly's version, at any depth of the name, says which child this is");
+      await Assert.That(CompositeChildIdentity.ForChild(composite, 1, type.AssemblyQualifiedName!))
+        .IsEqualTo(CompositeChildIdentity.ForChild(composite, 1, type));
+    }
+  }
+
+  [Test]
+  public async Task HashedTypeName_IsOneDefinition_ForTheTypeAndForEveryRenderingOfItsNameAsync() {
+    foreach (var type in _shapes()) {
+      var hashed = CompositeChildIdentity.HashedTypeName(type);
+      await Assert.That(CompositeChildIdentity.HashedTypeName(type.AssemblyQualifiedName!)).IsEqualTo(hashed);
+      await Assert.That(CompositeChildIdentity.HashedTypeName(_asAnotherBuildWritesIt(type))).IsEqualTo(hashed);
+      await Assert.That(hashed.Contains("Version=", StringComparison.Ordinal)).IsFalse()
+        .Because($"{type}: the hashed name carries no version at any depth ({hashed})");
+      await Assert.That(hashed).IsEqualTo(EventTypeMatchingHelper.NormalizeTypeName(type.AssemblyQualifiedName!))
+        .Because("the hashed name is the framework's version-free wire form, the one the SQL normalizer agrees with");
+    }
+  }
+
+  [Test]
+  public async Task HashedTypeName_ForATypeWithoutTypeArguments_IsTheCanonicalWireFormAsync() {
+    // TypeNameFormatter.Format is the canonical "Namespace.Type, Assembly" form for a name with no type arguments.
+    await Assert.That(CompositeChildIdentity.HashedTypeName(typeof(ChildEvent))).IsEqualTo(TypeNameFormatter.Format(typeof(ChildEvent)));
+    await Assert.That(CompositeChildIdentity.HashedTypeName(typeof(NestedChild))).IsEqualTo(TypeNameFormatter.Format(typeof(NestedChild)));
+    await Assert.That(CompositeChildIdentity.HashedTypeName(typeof(NestedChild)).Contains('+')).IsTrue()
+      .Because("a nested type keeps the CLR '+' separator");
+  }
+
+  [Test]
+  public async Task TryExpand_AGenericChild_FromAnotherBuild_DerivesTheTypedPathsIdAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var compositeId = TrackedGuid.New().Value;
+    var childType = typeof(GenericChild<GenericChild<NestedChild>>);
+    var typed = new Composite(new GenericChild<GenericChild<NestedChild>>(new GenericChild<NestedChild>(new NestedChild("a"))));
+    var raw = new RawBundle((_asAnotherBuildWritesIt(childType), "{}"));
+
+    var viaTyped = CompositeInboxFanout.TryExpand(typed, _source(streamId, compositeId), _scope());
+    var viaRaw = CompositeInboxFanout.TryExpand(raw, _source(streamId, compositeId), _scope());
+
+    await Assert.That(viaRaw.Children.Single().MessageId).IsEqualTo(viaTyped.Children.Single().MessageId);
+  }
+
   [Test]
   public async Task ForChild_DifferentTypes_StillDeriveDifferentIdsAsync() {
     var composite = TrackedGuid.New().Value;
