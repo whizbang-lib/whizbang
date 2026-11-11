@@ -34,9 +34,9 @@ internal static class MixedStreamOptIn {
   /// carry the property's value, so it is matched by its type's name alone.
   /// </summary>
   public static bool AllowsStreams(INamedTypeSymbol perspective) =>
-    perspective.GetAttributes()
-      .Where(a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) == ATTRIBUTE)
-      .Any(a => a.NamedArguments.FirstOrDefault(argument => argument.Key == STREAMS).Value.Value is ALLOW);
+    perspective.GetAttributes().Any(a =>
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) == ATTRIBUTE
+      && a.NamedArguments.FirstOrDefault(argument => argument.Key == STREAMS).Value.Value is ALLOW);
 
   /// <summary>
   /// Every (ephemeral, Sourced) pair among the read model's applied events, each ephemeral event with each Sourced one,
