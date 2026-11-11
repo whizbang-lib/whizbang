@@ -153,6 +153,7 @@ WHIZ602 | active | Directory.Build.targets | A test project declares a WhizbangT
 WHIZ603 | active | Whizbang.TestAnalyzers | IsNotNull() on a Nullable<T> subject cannot fail
 WHIZ604 | active | Whizbang.RepoAnalyzers | A JsonDocument is created and dropped without being disposed
 WHIZ605 | active | Whizbang.TestAnalyzers | A test class in a sharded project must carry exactly one Shard category
+WHIZ606 | active | Whizbang.RepoAnalyzers | A credential-named settings property is a plain string
 WHIZ701 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Perspective Discovery
 WHIZ702 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Migration Files Discovery
 WHIZ703 | active | Whizbang.Data.EFCore.Postgres.Generators | No DbContext Found

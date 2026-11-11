@@ -182,7 +182,7 @@ public class AzureBlobArchiveRegistrationTests {
     AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["ContainerName"] = " " }), defaults);
 
     await Assert.That(bound.ServiceUri).IsEqualTo(new Uri("https://account.blob.core.windows.net"));
-    await Assert.That(bound.ConnectionString).IsEqualTo(EMULATOR);
+    await Assert.That(bound.ConnectionString?.Reveal()).IsEqualTo(EMULATOR);
     await Assert.That(bound.ContainerName).IsEqualTo("archive-a");
     await Assert.That(bound.CompressionLevel).IsEqualTo(9);
     await Assert.That(bound.MaxEventsPerChunk).IsEqualTo(500);

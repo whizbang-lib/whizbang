@@ -76,9 +76,10 @@ public sealed class WhizbangPinnedPoolOptions {
   /// Must point at the underlying PostgreSQL server directly (typically port
   /// <c>5432</c>), not the pgbouncer fronting port (typically <c>6432</c>).
   /// Otherwise pinning gives no benefit and may confuse pgbouncer's pool math.
-  /// Prefer <see cref="ConnectionStringName"/> instead — see remarks there.
+  /// Prefer <see cref="ConnectionStringName"/> instead — see remarks there. Held as a
+  /// <see cref="Whizbang.Core.Configuration.SensitiveString"/>, so writing the options out writes its redaction.
   /// </remarks>
-  public string? ConnectionString { get; set; }
+  public Whizbang.Core.Configuration.SensitiveString? ConnectionString { get; set; }
 
   /// <summary>
   /// Master switch. When <c>false</c> (default), the pinned pool is not used

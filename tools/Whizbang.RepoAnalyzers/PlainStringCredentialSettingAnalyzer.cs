@@ -1,7 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 
@@ -36,9 +38,33 @@ public sealed class PlainStringCredentialSettingAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc />
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [_rule];
 
+  // A property ending in one of these words holds the credential itself; one ending in Name, Id or Path refers to it.
+  private static readonly string[] _credentialWords =
+    ["ConnectionString", "Password", "Secret", "Token", "Key", "Credential", "Credentials"];
+
   /// <inheritdoc />
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
+    context.RegisterSymbolAction(_analyzeProperty, SymbolKind.Property);
   }
+
+  private static void _analyzeProperty(SymbolAnalysisContext context) {
+    var property = (IPropertySymbol)context.Symbol;
+    if (property.Type.SpecialType != SpecialType.System_String
+        || property.IsStatic
+        || property.DeclaredAccessibility != Accessibility.Public
+        || property.SetMethod?.DeclaredAccessibility != Accessibility.Public
+        || !_isSettingsType(property.ContainingType.Name)
+        || !_isCredentialName(property.Name)) {
+      return;
+    }
+    context.ReportDiagnostic(Diagnostic.Create(_rule, property.Locations[0], property.ContainingType.Name, property.Name));
+  }
+
+  private static bool _isSettingsType(string name) =>
+    name.EndsWith("Options", StringComparison.Ordinal) || name.EndsWith("Settings", StringComparison.Ordinal);
+
+  private static bool _isCredentialName(string name) =>
+    _credentialWords.Any(word => name.EndsWith(word, StringComparison.OrdinalIgnoreCase));
 }

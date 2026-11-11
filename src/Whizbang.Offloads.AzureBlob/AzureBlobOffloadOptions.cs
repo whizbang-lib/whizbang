@@ -18,9 +18,10 @@ public sealed class AzureBlobOffloadOptions {
   /// explicit emulator endpoint (Azurite default
   /// <c>http://127.0.0.1:10000/devstoreaccount1</c>) targets the emulator;
   /// a real <c>DefaultEndpointsProtocol=https;AccountName=...</c> targets
-  /// the live service. The provider behaves identically against either.
+  /// the live service. The provider behaves identically against either. Held as a
+  /// <see cref="Whizbang.Core.Configuration.SensitiveString"/>, so writing the options out writes its redaction.
   /// </summary>
-  public string? ConnectionString { get; set; }
+  public Whizbang.Core.Configuration.SensitiveString? ConnectionString { get; set; }
 
   /// <summary>
   /// Container that holds the offloaded bodies. The provider lazily

@@ -530,10 +530,7 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
       options.ConnectionStringKey = key;
     }
 
-    var direct = section["DirectConnectionString"];
-    if (!string.IsNullOrWhiteSpace(direct)) {
-      options.DirectConnectionString = direct;
-    }
+    Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(section, "DirectConnectionString", value => options.DirectConnectionString = value);
 
     if (bool.TryParse(section["DisableNotifications"], out var disable)) {
       options.DisableNotifications = disable;
