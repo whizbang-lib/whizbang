@@ -125,8 +125,16 @@ public sealed partial class IntegrityLedgerRecheckWorker(
     var metrics = services.GetService<StreamIntegrityMetrics>();
     var byOrigin = origins.ToDictionary(o => o.OriginServiceId, o => (o.OriginServiceName, o.RequestTopic!));
     // One stream-level answer covers every tenant and stream of a type over a window, so rows that share them share one ask.
+    // #2262: a re-check's answer passes the generation guard too, so each ask names the generation recorded for its origin
+    // (read once per origin: it is the origin's, not the row's).
+    var knownGenerations = new Dictionary<Guid, long?>();
     foreach (var group in claimed.GroupBy(c => (c.OriginServiceId, c.EventType, c.WindowFrom, c.WindowUntil))) {
       var (originName, requestTopic) = byOrigin[group.Key.OriginServiceId];
+      if (!knownGenerations.TryGetValue(group.Key.OriginServiceId, out var knownGeneration)) {
+        knownGeneration = await coordinator.GetIntegritySealGenerationAsync(group.Key.OriginServiceId, cancellationToken)
+          .ConfigureAwait(false);
+        knownGenerations[group.Key.OriginServiceId] = knownGeneration;
+      }
       // #2208: a row with no window was compared over the whole history, so it is answered over the whole history: an
       // unwindowed answer from the origin's recompute (a window opened from the start would be cut at the origin's cap and
       // prove only its slice), compared against this service's own whole-history fold of the answered streams.
@@ -145,6 +153,7 @@ public sealed partial class IntegrityLedgerRecheckWorker(
           UntilSequence = group.Key.WindowUntil,
           MaxDigests = windowed ? _options.MaxDigestsPerManifest : null,
           Recheck = true,
+          KnownOriginGeneration = knownGeneration,
         },
         Hops = [ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },

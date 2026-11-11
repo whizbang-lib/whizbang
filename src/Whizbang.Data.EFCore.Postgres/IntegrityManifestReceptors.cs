@@ -229,6 +229,11 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // #80-F: every answer carries the history generation — how a consumer distinguishes a
     // deliberate mutation of folded history (reset + re-verify) from damage (alarm).
     var originGeneration = await coordinator.GetIntegrityOriginGenerationAsync(cancellationToken).ConfigureAwait(false);
+    // #2262: how far history was rewritten since the generation the asker recorded. Read AFTER the generation, so a rewrite
+    // committed between the two reads is counted in the floor: the floor may then be lower than needed, never higher.
+    var rewrite = message.KnownOriginGeneration is long knownGeneration
+      ? await coordinator.GetIntegrityHistoryRewriteAsync(knownGeneration, cancellationToken).ConfigureAwait(false)
+      : null;
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -259,6 +264,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
           ResumeAfterStreamId = resumeAfter,
           ChunkCount = totalChunks,
           OriginGeneration = originGeneration,
+          RewrittenSinceGeneration = rewrite?.SinceGeneration,
+          RewrittenFrom = rewrite?.RewrittenFrom,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
@@ -433,8 +440,12 @@ public sealed partial class IntegrityManifestReceptor(
     // and folds were aligned to the OLD world, and comparing them would alarm on deliberate
     // change. The guard resets the seal once; the next audit re-verifies from the beginning.
     if (message.OriginGeneration is long carriedGeneration) {
+      // #2262: with the origin's rewrite floor, the guard lowers the seal only as far as the rewrite reached.
+      var rewrite = message.RewrittenSinceGeneration is long rewrittenSince
+        ? new IntegrityHistoryRewrite(rewrittenSince, message.RewrittenFrom)
+        : null;
       var coherent = await coordinator.EnsureIntegritySealGenerationAsync(
-        message.OriginServiceId, carriedGeneration, cancellationToken).ConfigureAwait(false);
+        message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
         return;
@@ -943,6 +954,8 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = cursor,
         // #2115: the rest of a re-check's window is a re-check too.
         Recheck = message.Recheck,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)
@@ -1180,6 +1193,8 @@ public sealed partial class IntegrityManifestReceptor(
         UntilSequence = message.ComputedThrough,
         MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
         ResumeAfterStreamId = resumeAfter,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1272,6 +1287,8 @@ public sealed partial class IntegrityManifestReceptor(
         Windowed = true,
         SinceSequence = through,
         WindowNumber = window,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1485,7 +1502,8 @@ public sealed partial class IntegrityManifestReceptor(
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Information,
     Message = "Origin '{OriginServiceName}' history generation changed to {Generation} — a legitimate " +
-              "mutation (close/reclassify); seal reset, this comparison round skipped, re-verifying from the beginning next audit")]
+              "rewrite of its history below the seal; the seal fell to the rewrite point (or to the start when the origin " +
+              "could not say how far the rewrite reached), this comparison round skipped, re-verifying from there next audit")]
   static partial void LogGenerationChanged(ILogger logger, string originServiceName, long generation);
 
   [LoggerMessage(EventId = 62, Level = LogLevel.Debug,

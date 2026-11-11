@@ -2750,10 +2750,11 @@ public interface IWorkCoordinator {
     Task.FromResult(new EpochVerificationResult(0, 0));
 
   /// <summary>
-  /// #80-F: this origin's history generation — bumped by the two legitimate fold-mutation sites
-  /// (close-the-books truncation, reclassification) and stamped on every manifest answer so
-  /// consumers can distinguish deliberate change from damage. Default 0 for engines without the
-  /// generation store.
+  /// #80-F: this origin's history generation, stamped on every manifest answer so consumers can
+  /// distinguish deliberate change from damage. #2262: it moves only after a rewrite of this
+  /// origin's own lane, and each move records the lowest position the rewrite touched
+  /// (<see cref="GetIntegrityHistoryRewriteAsync"/>). Default 0 for engines without the generation
+  /// store.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity</docs>
@@ -2774,6 +2775,47 @@ public interface IWorkCoordinator {
   Task<bool> EnsureIntegritySealGenerationAsync(
     Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
     Task.FromResult(true);
+
+  /// <summary>
+  /// #2262: the generation guard with the origin's rewrite floor. The carried generation matches the stored one (or
+  /// first contact): true. A newer generation whose <paramref name="rewrite"/> counts from the stored generation or an
+  /// earlier one: the generation is recorded, a seal at or below the floor is kept (true, compare away), and a seal
+  /// above it falls to the floor (false: the round in flight was asked from the old seal). Otherwise (no floor, a floor
+  /// from a later generation, a generation that went back) the seal resets to zero as before (false). Default: the
+  /// generation-only guard.
+  /// </summary>
+  /// <param name="originServiceId">The origin whose generation the manifest carried.</param>
+  /// <param name="generation">The carried generation.</param>
+  /// <param name="rewrite">How far the origin's history was rewritten since a generation; null when it cannot say.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs</tests>
+  Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, IntegrityHistoryRewrite? rewrite, CancellationToken cancellationToken = default) =>
+    EnsureIntegritySealGenerationAsync(originServiceId, generation, cancellationToken);
+
+  /// <summary>
+  /// #2262: the origin generation this consumer recorded beside its seal for an origin, named on every ask so the
+  /// origin can answer how far its history was rewritten since. Null before first contact. Default null (no store).
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:SealGeneration_IsNullBeforeFirstContactAsync</tests>
+  Task<long?> GetIntegritySealGenerationAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// #2262: the origin side: the lowest position of this origin's own lane that any rewrite after
+  /// <paramref name="sinceGeneration"/> touched. Null when the origin cannot vouch (its rewrite log does not reach back
+  /// that far, or the engine keeps none, the default).
+  /// </summary>
+  /// <param name="sinceGeneration">The generation the asker recorded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:HistoryRewrite_SinceAGenerationTheLogReaches_IsTheLowestFloorAfterItAsync</tests>
+  Task<IntegrityHistoryRewrite?> GetIntegrityHistoryRewriteAsync(long sinceGeneration, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityHistoryRewrite?>(null);
 
   /// <summary>
   /// A1 (Archival &amp; Compaction): the gated prefix truncate of a durable Sourced stream: remove the detail at
