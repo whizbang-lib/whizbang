@@ -4624,6 +4624,18 @@ public record PerspectiveCursorCompletion {
   public bool RowChanged { get; init; }
 
   /// <summary>
+  /// Why a run that folded events left the row untouched (<see cref="RowChanged"/> false): no event produced a model,
+  /// the row's ordering guard refused the write, or the refused write's fold equals the stored row (#2252). A rebuild
+  /// counts the last as rebuilt and verified, since the read model was already right.
+  /// <see cref="Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported"/> when the run wrote the row,
+  /// folded nothing, or does not say.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RebuildAlreadyCorrectRowTests.cs:RebuildStreamsAsync_AFoldEqualToTheStoredRowTheGuardRefused_IsRebuiltAndVerifiedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RebuildAlreadyCorrectRowTests.cs:RebuildStreamsAsync_AFoldThatDiffersFromTheStoredRowTheGuardRefused_FailsAsRefusedAsync</tests>
+  public Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason UnchangedReason { get; init; }
+
+  /// <summary>
   /// Processing status (e.g., Completed, CatchingUp).
   /// </summary>
   public required PerspectiveProcessingStatus Status { get; init; }
