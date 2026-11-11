@@ -118,6 +118,7 @@ WHIZ135 | active | Whizbang.Generators | Event type is both ephemeral and supers
 WHIZ136 | active | Whizbang.Generators | Superseding event type has more than one key
 WHIZ137 | active | Whizbang.Generators | Destruction value has not shipped
 WHIZ138 | active | Whizbang.Generators | Superseding group's types disagree on their key
+WHIZ139 | active | Whizbang.Generators | Read model keeps an allowed mixed-stream pair refused
 WHIZ140 | active | Whizbang.Generators | Perspective shares stream event types with a group but joins none
 WHIZ141 | active | Whizbang.Generators | Stream group has no announcing member with a row evictor
 WHIZ142 | active | Whizbang.Generators | Bridge on a sole stream-group membership
