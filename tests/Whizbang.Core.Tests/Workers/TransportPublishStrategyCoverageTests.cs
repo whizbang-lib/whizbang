@@ -422,6 +422,43 @@ public class TransportPublishStrategyCoverageTests {
       .Because("an event row goes to the topic the dispatcher chose, whatever its type name looks like");
   }
 
+  // The subject an event is published under is what the excluded-event-types rule filters on (#2175). Both come from
+  // EventSubject, and this pins the publish side to it on a nested type, the shape a local rendering gets wrong.
+  [Test]
+  [Arguments("Coverage.Events.Outer+OrderPlaced, Coverage")]
+  [Arguments("Coverage.Events.OrderPlaced, Coverage, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null")]
+  [Arguments("Unqualified, Coverage")]
+  public async Task ResolveEntityDestination_EventRow_IsPublishedUnderItsEventSubjectAsync(string messageType) {
+    var strategy = new TransportPublishStrategy(
+      transport: new CaptureTransport(),
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: new LoggerFactoryReturning(new CapturingLogger()),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
+
+    var work = _work() with { Destination = "coverage.events", MessageType = messageType, IsEvent = true };
+
+    var resolved = strategy.ResolveEntityDestination(work);
+
+    await Assert.That(resolved.RoutingKey).IsEqualTo(Whizbang.Core.Routing.EventSubject.For(messageType));
+  }
+
+  [Test]
+  public async Task ResolveEntityDestination_EventRowWithoutAType_HasAnEmptySubjectAsync() {
+    var strategy = new TransportPublishStrategy(
+      transport: new CaptureTransport(),
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: new LoggerFactoryReturning(new CapturingLogger()),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
+
+    var work = _work() with { Destination = "coverage.events", MessageType = "", IsEvent = true };
+
+    await Assert.That(strategy.ResolveEntityDestination(work).RoutingKey).IsEqualTo("");
+  }
+
   [Test]
   public async Task ResolveEntityDestination_EventWithNoDestination_ThrowsNamingTheMessageAsync() {
     var strategy = new TransportPublishStrategy(

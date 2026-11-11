@@ -89,7 +89,7 @@ public class IEventStoreRegistrationTests {
   private int _getRegistrarCount() {
     // Use reflection to access private static field for diagnostic purposes
     var registryType = typeof(ModelRegistrationRegistry);
-    var registrarsField = registryType.GetField("_registrars",
+    var registrarsField = registryType.GetField("_entries",
       System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
     if (registrarsField != null) {
       var registrars = registrarsField.GetValue(null) as System.Collections.IList;

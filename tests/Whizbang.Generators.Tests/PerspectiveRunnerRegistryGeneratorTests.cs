@@ -614,7 +614,7 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_RegistersIEventTypeProviderInDIAsync() {
+  public async Task Generator_ContributesTheRegistryAndItsEventTypes_NeverRegistersEitherServiceAsync() {
     // Arrange
     const string source = @"
 using Whizbang.Core;
@@ -640,13 +640,15 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
 
-    // Assert - the registry is a contribution to the served IEventTypeProvider, never the provider itself:
-    // with several perspective assemblies, a plain AddSingleton let the last one displace the others (#2146).
+    // Assert - the registry is a contribution to the served IPerspectiveRunnerRegistry and, through it, to the served
+    // IEventTypeProvider, never either service itself: with several perspective assemblies, a plain AddSingleton let
+    // the last one displace the others' event types (#2146) and runners (#2191).
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
     await Assert.That(registrySource).Contains(
-      "global::Whizbang.Core.Messaging.EventTypeProviderServiceCollectionExtensions.AddEventTypeProviderContribution<PerspectiveRunnerRegistry>(services);");
+      "global::Whizbang.Core.Perspectives.PerspectiveRunnerRegistryServiceCollectionExtensions.AddPerspectiveRunnerRegistryContribution<PerspectiveRunnerRegistry>(services);");
     await Assert.That(registrySource).DoesNotContain("services.AddSingleton<IEventTypeProvider>");
+    await Assert.That(registrySource).DoesNotContain("services.AddSingleton<IPerspectiveRunnerRegistry>");
     await Assert.That(registrySource).Contains("using Whizbang.Core.Messaging;");
   }
 

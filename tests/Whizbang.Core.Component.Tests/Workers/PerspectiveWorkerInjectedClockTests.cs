@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <summary>
 /// Every wait and every timestamp <see cref="PerspectiveWorker"/> takes runs on the clock it was given, not on the
 /// machine's (#1861). A test that hands the worker a <see cref="FakeTimeProvider"/> decides when its idle poll, its
-/// blocking startup re-poll and its lock keepalive come round, and how old its affinity gates and sent completions
+/// blocking startup barrier's re-read and its lock keepalive come round, and how old its affinity gates and sent completions
 /// are, so none of them can move on its own while the test is looking.
 /// </summary>
 /// <remarks>
@@ -90,12 +90,15 @@ public class PerspectiveWorkerInjectedClockTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task BlockingRewindScan_RepollsOnTheInjectedClock_AndReportsTheWaitItMeasuredAsync(CancellationToken cancellationToken) {
+  public async Task BlockingRewindScan_RereadsOnTheInjectedClock_AndReportsTheWaitItMeasuredAsync(CancellationToken cancellationToken) {
+    // #2214: the Blocking scan reads the whole cursor table once, and the read-model barrier then re-reads only the
+    // scan-time cursors' streams, by key, once per polling interval on the worker's clock until they clear.
     var pollInterval = TimeSpan.FromMilliseconds(150);
     var clock = new ArmingClock();
+    var stream = Guid.CreateVersion7();
     var coordinator = new ClockCoordinator();
     coordinator.RewindResults.Enqueue([
-      new RewindCursorInfo(Guid.CreateVersion7(), PERSPECTIVE, null, Guid.CreateVersion7())
+      new RewindCursorInfo(stream, PERSPECTIVE, null, Guid.CreateVersion7())
     ]);
     var logs = new CapturingLoggerProvider();
     var fx = _build(clock, new PerspectiveWorkerOptions {
@@ -107,21 +110,29 @@ public class PerspectiveWorkerInjectedClockTests {
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await fx.Worker.StartAsync(cts.Token);
 
+    // The barrier's wait is armed before the consumer loops start, so it is the first wait of this interval. Either it
+    // armed on the injected clock, or a wait on the machine's clock elapsed and the re-read ran without the test.
     var firstArm = clock.Armed(pollInterval, 1);
-    await Task.WhenAny(firstArm, coordinator.RewindQueries(2)).WaitAsync(cancellationToken);
+    await Task.WhenAny(firstArm, coordinator.CursorRereads(1)).WaitAsync(cancellationToken);
     await Assert.That(firstArm.IsCompleted).IsTrue()
-      .Because("the blocking scan's re-poll must wait on the worker's injected clock");
-    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
-      .Because("nothing but the injected clock may end the re-poll wait");
+      .Because("the barrier's re-read must wait on the worker's injected clock");
+    await Assert.That(coordinator.CursorRereadCount).IsEqualTo(0)
+      .Because("nothing but the injected clock may end the re-read wait");
+    await Assert.That(fx.Worker.StartupScanComplete.IsCompleted).IsFalse()
+      .Because("the scan-time cursor has not been found cleared yet");
 
     clock.Advance(pollInterval);
     await fx.Worker.StartupScanComplete.WaitAsync(cancellationToken);
 
-    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(2)
-      .Because("one elapsed interval is one re-poll, which found nothing left to rewind");
+    await Assert.That(coordinator.CursorRereadCount).IsEqualTo(1)
+      .Because("one elapsed interval is one keyed re-read, which found the scan-time cursor cleared");
+    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
+      .Because("the whole cursor table is read once, at the scan, never by the wait");
     var completed = logs.Entries.Single(e => e.EventId == 55);
     await Assert.That(completed.State["DurationMs"]).IsEqualTo((long)pollInterval.TotalMilliseconds)
       .Because("the scan reports the time it waited as the injected clock measured it");
+    await Assert.That(completed.State["ClearedCount"]).IsEqualTo(1)
+      .Because("the completion line says how many scan-time cursors cleared");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);
@@ -580,7 +591,6 @@ public class PerspectiveWorkerInjectedClockTests {
     private readonly Counter _rewindQueries = new();
     public Queue<IReadOnlyList<RewindCursorInfo>> RewindResults { get; } = new();
     public int RewindQueryCount => _rewindQueries.Count;
-    public Task RewindQueries(int count) => _rewindQueries.Reached(count);
 
     public Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(CancellationToken cancellationToken = default) {
       IReadOnlyList<RewindCursorInfo> result;
@@ -589,6 +599,16 @@ public class PerspectiveWorkerInjectedClockTests {
       }
       _rewindQueries.Increment();
       return Task.FromResult(result);
+    }
+
+    // The keyed re-read the Blocking barrier makes; answers with no cursors, so every scan-time cursor reads as cleared.
+    private readonly Counter _cursorRereads = new();
+    public int CursorRereadCount => _cursorRereads.Count;
+    public Task CursorRereads(int count) => _cursorRereads.Reached(count);
+
+    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(Guid[] streamIds, CancellationToken cancellationToken = default) {
+      _cursorRereads.Increment();
+      return Task.FromResult(new List<PerspectiveCursorInfo>());
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>

@@ -64,6 +64,14 @@ public sealed class StandbyWatcherOptions {
 /// library version in the ledger, which keeps them down.
 /// </para>
 /// <para>
+/// <b>A verdict that owes a rollback never resumes in place (#2122).</b> When every change a newer version applied can be
+/// reversed, the verdict is Migrate with a rollback owed, and the rollback runs in schema initialization, on the elected
+/// migrator. Resuming re-runs neither (the schema gate is sticky-open), so an instance whose verdict owes one, stood down,
+/// standing by or serving, exits through the one exit path as an intended <see cref="ExitCause.UpgradeStandDown"/>: its
+/// restart runs startup, which rolls the schema back before anything serves over it. Once it has asked to exit, the
+/// watcher decides nothing more.
+/// </para>
+/// <para>
 /// Once this instance serves (AcceptingCommands or Running), it announces itself once with a durable
 /// <see cref="NewerVersionOnlineSignal"/> when the one rule finds an older instance online, and again after each resume,
 /// so an older instance that resumed meanwhile hears it.
@@ -71,6 +79,8 @@ public sealed class StandbyWatcherOptions {
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/StandbyWatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StandbyWatcherTests.cs:StoodDownAsObsolete_ThenAVerdictThatOwesARollback_ExitsInsteadOfResumingAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StandbyWatcherTests.cs:AWithdrawnRequest_WithARollbackOwed_ExitsInsteadOfRevivingAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
@@ -86,6 +96,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
   private bool _standingByForHandshake;
   private bool _standingDownAsObsolete;
+  private bool _exiting;
   private bool _announced;
   private int _askNow;
   private ISignalSubscription[]? _subscriptions;
@@ -186,6 +197,9 @@ public sealed partial class StandbyWatcher : BackgroundService {
   /// <summary>Test hook: one watcher decision cycle without the loop — the loop is cadence,
   /// this is behaviour.</summary>
   public async Task TickForTestsAsync(CancellationToken cancellationToken) {
+    if (_exiting) {
+      return;   // #2122: asked to exit for a rollback; the restart decides the rest
+    }
     _subscribeOnce();
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
@@ -239,6 +253,9 @@ public sealed partial class StandbyWatcher : BackgroundService {
     }
     _lastObsolescenceCheck = _time.GetUtcNow();
     var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
+    if (_exitForTheRollback(assessment)) {
+      return;
+    }
     var standDown = assessment.Verdict == StartupVerdict.StandDown;
     if (standDown == _standingDownAsObsolete) {
       return;   // nothing changed: no churn, and each transition is logged once
@@ -317,6 +334,9 @@ public sealed partial class StandbyWatcher : BackgroundService {
     string reason = "no assessor registered — treating the withdrawn request as a rollback";
     if (_assessor.IsConfigured) {
       var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
+      if (_exitForTheRollback(assessment)) {
+        return;
+      }
       verdict = assessment.Verdict;
       reason = assessment.Reason;
     }
@@ -338,6 +358,23 @@ public sealed partial class StandbyWatcher : BackgroundService {
     LogReviving(_logger, reason);
     await _reviveAsync(cancellationToken).ConfigureAwait(false);
     _standingByForHandshake = false;
+  }
+
+  /// <summary>
+  /// #2122: a verdict that owes a rollback exits the instance through the one exit path, as an intended exit, so the
+  /// restart runs startup and its migrator rolls the schema back; resuming in place would serve over the newer schema.
+  /// </summary>
+  /// <returns><see langword="true"/> when the instance is exiting.</returns>
+  private bool _exitForTheRollback(StartupAssessment assessment) {
+    if (assessment.Rollback is null) {
+      return false;
+    }
+    _exiting = true;
+    LogExitingForRollback(_logger, assessment.Reason);
+    _instanceExit.RequestExit(new InstanceExitRequest(ExitCause.UpgradeStandDown,
+      "a newer version's changes must be rolled back before this version serves, and the rollback runs at startup, so this "
+      + "instance exits for its restart to run it: " + assessment.Reason));
+    return true;
   }
 
   /// <summary>Re-enters the startup pipeline at Assess, then lifts the stand-down through the one run-control path.</summary>
@@ -365,6 +402,10 @@ public sealed partial class StandbyWatcher : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Standby outcome: reviving — re-entering the pipeline at Assess ({Reason})")]
   static partial void LogReviving(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Warning,
+    Message = "Exiting so the restart rolls the schema back: {Reason}")]
+  static partial void LogExitingForRollback(ILogger logger, string reason);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
     Message = "Resuming after standing down: nothing newer is recorded or online any more ({Reason})")]

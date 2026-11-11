@@ -161,6 +161,66 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
     Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
   [SuppressMessage("Style", "IDE0060:Remove unused parameter",
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task ADrillCursorTake_CanceledDuringShutdown_PropagatesInsteadOfRestartingTheWalkAsync(
+      CancellationToken cancellationToken) {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await coordinator.IntegrityTakeDrillCursorAsync(
+        Guid.CreateVersion7(), windowSince: 100, stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("null means 'no cursor, start from the first stream', so a shutdown swallowed here "
+             + "reads as a walk that never stopped part way");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task ADrillCursorSave_CanceledDuringShutdown_PropagatesInsteadOfReadingAsKeptAsync(
+      CancellationToken cancellationToken) {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await coordinator.IntegritySaveDrillCursorAsync(
+        Guid.CreateVersion7(), windowSince: 100, Guid.CreateVersion7(), new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("a save that returns normally reads as kept, and a shutdown kept nothing");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task ATypesHealedMark_CanceledDuringShutdown_PropagatesInsteadOfFallingBackToTheTypeLanesAsync(
+      CancellationToken cancellationToken) {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = Guid.CreateVersion7();
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await coordinator.IntegrityMarkTypesHealedWithAgesAsync(
+        origin, [_key(origin)], stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("null sends the ledger to the batch heal of the type lanes, a second round of calls "
+             + "against a database this pod is leaving");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ALedgerSummaryRead_CanceledDuringShutdown_PropagatesInsteadOfPublishingAGaugeAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();

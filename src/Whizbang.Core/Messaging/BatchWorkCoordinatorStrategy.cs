@@ -47,6 +47,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private readonly IWorkChannelWriter _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The process-wide deferred outbox channel this strategy drains at the start of every flush (#2228).
+  private readonly IDeferredOutboxChannel _deferredChannel;
   // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
   // stages this strategy's flushes start are tracked there (#1721).
   private readonly DetachedLifecycleWork _detachedWork;
@@ -95,6 +97,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     IOptionsMonitor<TracingOptions> tracingOptions,
     IWorkChannelWriter workChannelWriter,
     DetachedLifecycleWork detachedWork,
+    IDeferredOutboxChannel deferredChannel,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -112,6 +115,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    ArgumentNullException.ThrowIfNull(deferredChannel);
+    _deferredChannel = deferredChannel;
 
     // Debounce timer: fires once after quiet period, not repeating. Created with the flow suppressed: the strategy is
     // often resolved lazily inside some caller, and a tick must not run in that caller's context (#1868).
@@ -300,6 +305,11 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       MessageFailure[] inboxFailures;
 
       lock (_lock) {
+        // #2228: what was queued on the deferred channel is written by this flush, before the empty check.
+        var drained = DeferredOutboxDrain.PrependTo(_deferredChannel, _queuedOutboxMessages);
+        if (drained > 0) {
+          LogDeferredChannelDrained(_logger, drained);
+        }
         if (_queuedOutboxMessages.Count == 0 &&
             _queuedInboxMessages.Count == 0 &&
             _queuedOutboxCompletions.Count == 0 &&
@@ -591,6 +601,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     Message = "Batch work coordinator strategy disposed"
   )]
   static partial void LogStrategyDisposed(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Debug,
+    Message = "Batch strategy: Drained {Count} deferred messages from channel into this flush"
+  )]
+  static partial void LogDeferredChannelDrained(ILogger logger, int count);
 }
 
 /// <summary>

@@ -140,7 +140,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     Console.WriteLine($"[SANITY] Sending command for InventoryWorker perspective test: {testProductId}");
     // InitialStock=10 fires 3 inventory perspective events (ProductCreated×2 perspectives + InventoryRestocked×1)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -188,7 +188,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     Console.WriteLine($"[SANITY] Sending command for BFF perspective test: {testProductId}");
     Console.WriteLine("[SANITY] This tests that ServiceBusConsumerWorker receives messages from topics");
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -234,7 +234,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // InitialStock>0 fires 3 inventory perspective events (ProductCreated×2 perspectives + InventoryRestocked×1)
     Console.WriteLine($"[SANITY-DATA] Sending command with InitialStock={expectedStock}");
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -308,7 +308,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // InitialStock>0 fires 3 inventory perspective events (ProductCreated×2 perspectives + InventoryRestocked×1)
     Console.WriteLine($"[SANITY-PROPAGATION] Sending command: Stock={expectedStock}, Price={expectedPrice}");
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 

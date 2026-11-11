@@ -332,6 +332,20 @@ public class ServiceBusAdminClientWrapperTests {
       .Throws<ServiceBusException>();
   }
 
+  [Test]
+  public async Task UpdateRuleAsync_PassesTheRuleThroughAsync() {
+    var (wrapper, fake) = _createWrapper();
+    var rule = ServiceBusModelFactory.RuleProperties("ExcludedEventTypes", new SqlRuleFilter("1=1"));
+    using var cts = new CancellationTokenSource();
+
+    await wrapper.UpdateRuleAsync("orders-topic", "billing-sub", rule, cts.Token);
+
+    await Assert.That(fake.LastTopicName).IsEqualTo("orders-topic");
+    await Assert.That(fake.LastSubscriptionName).IsEqualTo("billing-sub");
+    await Assert.That(ReferenceEquals(fake.LastUpdatedRule, rule)).IsTrue();
+    await Assert.That(fake.LastCancellationToken).IsEqualTo(cts.Token);
+  }
+
   // ===== Helpers =====
 
   private static (ServiceBusAdminClientWrapper Wrapper, FakeAdminClient Fake) _createWrapper() {
@@ -492,6 +506,18 @@ public class ServiceBusAdminClientWrapperTests {
       LastCancellationToken = cancellationToken;
       var created = ServiceBusModelFactory.RuleProperties(options.Name, new TrueRuleFilter());
       return Task.FromResult(Response.FromValue(created, _rawResponse));
+    }
+
+    public RuleProperties? LastUpdatedRule { get; private set; }
+
+    public override Task<Response<RuleProperties>> UpdateRuleAsync(
+      string topicName, string subscriptionName, RuleProperties rule, CancellationToken cancellationToken = default) {
+      _throwIfConfigured();
+      LastTopicName = topicName;
+      LastSubscriptionName = subscriptionName;
+      LastUpdatedRule = rule;
+      LastCancellationToken = cancellationToken;
+      return Task.FromResult(Response.FromValue(rule, _rawResponse));
     }
 
     private void _throwIfConfigured() {

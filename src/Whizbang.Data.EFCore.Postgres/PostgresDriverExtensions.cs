@@ -228,11 +228,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
-        // so a built-in receptor shipped from this assembly needs runtime registration.
-        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
-        // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
-        selector.Services.TryAddSingleton<RebuildBackgroundQueue>();
-        selector.Services.AddHostedService<RebuildBackgroundWorker>();
+        // so a built-in receptor needs runtime registration. #1353: a whole-perspective blue-green rebuild runs on the
+        // background rebuild worker, off the inbox handler's budget. Shared with the Dapper driver.
+        selector.Services.AddRebuildCommandHandling();
 
         // TURNKEY: scheduled prefix truncate (#1760): runtime-register ScheduledPrefixTruncateReceptor so a fired
         // schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above. Shared with the
@@ -359,6 +357,11 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
           SupersedingHistoryReconcileStep.FromServices));
+        // TURNKEY: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration
+        // (#2206), in bounded batches under the maintainer duty, when Whizbang:Ephemeral:ReconcileHistoricalOnStartup opts in.
+        // <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
+          EphemeralHistoryReclassifyStep.FromServices));
         // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
         // type to their owner (#2116), under the maintainer duty, idle-gated.
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
@@ -575,5 +578,6 @@ public static class PostgresDriverExtensions {
     sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
     sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
     sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+    Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 }

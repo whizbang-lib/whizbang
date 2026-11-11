@@ -399,19 +399,20 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("public static class PerspectiveRunnerRegistryExtensions {");
     source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine($"  /// Registers all {perspectives.Length} perspective runner(s) as scoped services.");
-    source.AppendLine("  /// Also registers PerspectiveRunnerRegistry as the IPerspectiveRunnerRegistry singleton and as a contribution to IEventTypeProvider.");
+    source.AppendLine("  /// Also contributes PerspectiveRunnerRegistry to the IPerspectiveRunnerRegistry and IEventTypeProvider the host serves.");
     source.AppendLine("  /// Call this method in your service registration (e.g., Startup.cs or Program.cs).");
     source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public static IServiceCollection AddPerspectiveRunners(");
     source.AppendLine("      this IServiceCollection services) {");
     source.AppendLine();
-    source.AppendLine("    // Register the registry as singleton (implements both IPerspectiveRunnerRegistry and IEventTypeProvider)");
+    source.AppendLine("    // The registry itself, resolved by its contribution (implements both IPerspectiveRunnerRegistry and IEventTypeProvider)");
     source.AppendLine("    services.AddSingleton<PerspectiveRunnerRegistry>();");
-    source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
-    // #2146: a contribution to the served provider, never the provider itself. Every perspective assembly generates
-    // this registration, and a plain AddSingleton<IEventTypeProvider> let the last assembly displace the others' types.
-    source.AppendLine("    // Contributes this assembly's event types to the one IEventTypeProvider the host serves (#2146)");
-    source.AppendLine("    global::Whizbang.Core.Messaging.EventTypeProviderServiceCollectionExtensions.AddEventTypeProviderContribution<PerspectiveRunnerRegistry>(services);");
+    // #2146, #2191: a contribution to the served registry and provider, never either service itself. Every perspective
+    // assembly generates this registration, and a plain AddSingleton let the last assembly displace the others' event
+    // types and runners. The one call contributes both.
+    source.AppendLine("    // Contributes this assembly's runners and event types to the one IPerspectiveRunnerRegistry and");
+    source.AppendLine("    // IEventTypeProvider the host serves (#2146, #2191)");
+    source.AppendLine("    global::Whizbang.Core.Perspectives.PerspectiveRunnerRegistryServiceCollectionExtensions.AddPerspectiveRunnerRegistryContribution<PerspectiveRunnerRegistry>(services);");
     source.AppendLine();
 
     foreach (var perspective in perspectives.OrderBy(p => p.SimpleName)) {

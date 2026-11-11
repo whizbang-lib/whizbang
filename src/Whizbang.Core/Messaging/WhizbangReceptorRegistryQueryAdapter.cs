@@ -56,4 +56,9 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runti
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:Adapter_FindConsumedMessage_ReadsTheGeneratedRegistryAsync</tests>
   public ConsumedMessageInfo? FindConsumedMessage(string messageType)
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.FindConsumedMessage(messageType);
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:Adapter_GetHandledCollectiveEventTypes_ReadsTheGeneratedRegistryAsync</tests>
+  public IReadOnlyList<string>? GetHandledCollectiveEventTypes()
+    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes();
 }

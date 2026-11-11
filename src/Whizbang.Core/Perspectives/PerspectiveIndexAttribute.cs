@@ -22,6 +22,13 @@ namespace Whizbang.Core.Perspectives;
 /// lives.
 /// </para>
 /// <para>
+/// <strong>A row's own columns are named through <see cref="PerspectiveRowColumns"/>.</strong>
+/// <c>[PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]</c> indexes the row's <c>updated_at</c>, alone,
+/// beside a property in a composite, or with a <see cref="Where"/> predicate. No index on
+/// <c>updated_at</c> is built otherwise unless the table declares row retention, so a query that sorts
+/// or filters on it declares it here.
+/// </para>
+/// <para>
 /// A name that matches no property, or one whose type cannot carry an index, means the index is not
 /// created. It is not yet reported as a build diagnostic, so check the declaration when an index
 /// you expected is absent.
@@ -50,6 +57,7 @@ namespace Whizbang.Core.Perspectives;
 /// </example>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveIndexAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/UpdatedAtIndexGenerationTests.cs</tests>
 /// <param name="properties">
 /// The model properties the index covers, leading property first. One is allowed: an index over a
 /// single property with a <see cref="Where"/> predicate is a partial index, which

@@ -26,7 +26,9 @@
 
   <ItemGroup>
     <!-- Embed PostgreSQL migration scripts as resources -->
-    <EmbeddedResource Include="Migrations\*.sql" />
+    <EmbeddedResource Include="Migrations\*.sql" Exclude="Migrations\*.down.sql" />
+    <!-- #2122: a migration's reverse script, embedded where no forward-migration reader looks (MigrationReversal). -->
+    <EmbeddedResource Include="Migrations\*.down.sql" LogicalName="Whizbang.Data.Postgres.MigrationReversals.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Migrations\constants.txt" />
   </ItemGroup>
 
