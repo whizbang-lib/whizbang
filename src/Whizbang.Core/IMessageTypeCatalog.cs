@@ -31,6 +31,18 @@ public sealed record MessageTypeCatalogEntry(
   public IReadOnlyList<string> FormerNames { get; init; } = [];
 
   /// <summary>
+  /// The bare CLR names of <see cref="FormerNames"/>, for the lookups keyed by the bare name (the registry reconcile, the
+  /// marker resolver, the declared-kind lookup). The ledger records a former name with its assembly when the type moved
+  /// from another assembly (#2264); the history walks and the rewind grace keep that assembly through
+  /// <see cref="TypeNameFormatter.FormatFormerName"/>, and these lookups read only its name part.
+  /// </summary>
+  /// <returns>Each distinct bare former name, blank names skipped.</returns>
+  /// <docs>fundamentals/identity/pinned-type-ledger#a-type-that-moves-to-another-assembly</docs>
+  /// <tests>tests/Whizbang.Core.Tests/FormerNameFromAnotherAssemblyTests.cs:TheRegistryReconcile_IsGivenTheBareFormerName_ItsRowsAreKeyedByAsync</tests>
+  internal IEnumerable<string> FormerClrTypeNames() =>
+    FormerNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(TypeNameFormatter.GetFullName).Distinct(StringComparer.Ordinal);
+
+  /// <summary>
   /// The type's resolved ephemeral mode, or <c>null</c> when it is Sourced (the durable default). The
   /// generator resolves this from <c>[Ephemeral]</c> at compile time — whether declared directly, on a
   /// base record, or on a marker interface — so no reflection is needed to know how a message wants to

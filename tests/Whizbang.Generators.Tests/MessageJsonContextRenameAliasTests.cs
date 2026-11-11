@@ -137,8 +137,8 @@ public class MessageJsonContextRenameAliasTests {
 
     await Assert.That(generated).IsNotNull();
     // The living OrderCreatedEvent must map to ITSELF, never be redirected to OrderPlacedEvent by the alias.
-    await Assert.That(generated).DoesNotContain(
-      "\"TestApp.OrderCreatedEvent, TestAssembly\",\n    typeof(global::TestApp.OrderPlacedEvent)");
+    // The generated file is reindented, so the registration is matched across any whitespace.
+    await Assert.That(_registers(generated, "TestApp.OrderCreatedEvent, TestAssembly", "TestApp.OrderPlacedEvent")).IsFalse();
   }
 
   /// <summary>
@@ -160,7 +160,7 @@ public class MessageJsonContextRenameAliasTests {
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(EVENT_SOURCE, [(LEDGER_PATH, ledger)]);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
 
-    await Assert.That(generated).Contains("\"TestApp.OrderPlacedEvent, Former.Contracts\",\n    typeof(global::TestApp.OrderPlacedEvent)")
+    await Assert.That(_registers(generated, "TestApp.OrderPlacedEvent, Former.Contracts", "TestApp.OrderPlacedEvent")).IsTrue()
       .Because("the moved type's own bare name is a living name, but under its old assembly it is not, so it is aliased");
     await Assert.That(generated).Contains(
       "\"Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.OrderPlacedEvent, Former.Contracts]], Whizbang.Core\"");
@@ -193,7 +193,16 @@ public class MessageJsonContextRenameAliasTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated).DoesNotContain(
-      "\"TestApp.OrderCreatedEvent, TestAssembly\",\n    typeof(global::TestApp.OrderPlacedEvent)");
+    // The generated file is reindented, so the registration is matched across any whitespace.
+    await Assert.That(_registers(generated, "TestApp.OrderCreatedEvent, TestAssembly", "TestApp.OrderPlacedEvent")).IsFalse();
+  }
+
+  /// <summary>
+  /// Whether the generated file registers <paramref name="name"/> for <paramref name="type"/>. The file is reindented
+  /// after generation, so the registration is compared with every whitespace character removed.
+  /// </summary>
+  private static bool _registers(string? generated, string name, string type) {
+    static string squeeze(string text) => string.Concat(text.Where(c => !char.IsWhiteSpace(c)));
+    return squeeze(generated ?? "").Contains(squeeze($"\"{name}\", typeof(global::{type})"), StringComparison.Ordinal);
   }
 }
