@@ -386,7 +386,7 @@ public static partial class CompositeInboxFanout {
         // the composite, the ordinal and the wire type, so a repeated expansion is a repeat at the key.
         MessageId = identityIds is not null
           ? new MessageId(identityIds[i])
-          : new MessageId(CompositeChildIdentity.Derive(source.MessageId.Value, i, wireTypeName)),
+          : new MessageId(CompositeChildIdentity.ForChild(source.MessageId.Value, i, wireTypeName)),
         Payload = payloads[i],
         Hops = childHops,
         SourceServiceId = sourceServiceId,
@@ -464,10 +464,8 @@ public static partial class CompositeInboxFanout {
     // must recount under the identity the live delivery would have carried.
     var sourceServiceId = originOverride != Guid.Empty ? originOverride : source.SourceServiceId;
     var sourceCommitSequence = sequenceOverride ?? source.SourceCommitSequence;
-    // The child's type, rendered the way the serializer renders MessageType (the same helper), so the
-    // derived id and the stored message_type agree.
+    // The child's type; its id is derived from it the one canonical way every path uses (#2266).
     var innerType = inner.GetType();
-    var childTypeName = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(innerType);
     var childEnvelope = new MessageEnvelope<IMessage> {
       Version = source.Version,
       DispatchContext = source.DispatchContext,
@@ -477,7 +475,7 @@ public static partial class CompositeInboxFanout {
       // and the inbox primary key absorbs the repeat instead of storing a second copy.
       MessageId = originalId is { } oid
         ? new MessageId(oid)
-        : new MessageId(CompositeChildIdentity.Derive(source.MessageId.Value, ordinal, childTypeName)),
+        : new MessageId(CompositeChildIdentity.ForChild(source.MessageId.Value, ordinal, innerType)),
       Payload = inner,
       // Composite-lineage hop chain (shared by reference across the batch): the creation hop traces
       // each child back to the parent composite; the composite's own journey follows for audit.

@@ -4678,7 +4678,7 @@ public abstract partial class Dispatcher(
       }
       var childId = carriedIds is not null
         ? carriedIds[ordinal]
-        : CompositeChildIdentity.Derive(messageId.Value, ordinal, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(inner.GetType()));
+        : CompositeChildIdentity.ForChild(messageId.Value, ordinal, inner.GetType());
       try {
         await _cascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local, childId, CancellationToken.None).ConfigureAwait(false);
       } catch (Exception ex) when (!atomic) {
