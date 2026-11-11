@@ -115,6 +115,29 @@ public class TypeDefinitionReconcilerCoverageTests {
     await Assert.That(coordinator.Recorded.Value.To).IsEqualTo(2);
   }
 
+  // #2254: the reaper joins the per-type rewind grace to wh_event_store.event_type, which holds the stored form
+  // (Ns.Type, Assembly). Synced under the bare CLR name, the override matched no event and every type fell back to the
+  // global grace. Former names are the same type's events, so they carry the grace too, in the stored form.
+  [Test]
+  public async Task ReconcileAsync_RewindGraceOverrides_AreKeyedByTheStoredName_TheEventStoreHoldsAsync() {
+    var type = typeof(TypeDefinitionReconcilerCoverageTests);
+    var catalog = new FakeCatalog(
+      new MessageTypeCatalogEntry(type, TypeNameFormatter.FormatClrTypeName(type), "event", null) {
+        Ephemeral = new EphemeralInfo(default, default, RewindGraceSeconds: 30),
+        FormerNames = ["Old.Contracts.Pinged", " "],
+      },
+      new MessageTypeCatalogEntry(typeof(string), "System.String", "event", null) {
+        Ephemeral = new EphemeralInfo(default, default),
+      });
+    var coordinator = new GraceCapturingCoordinator();
+
+    await _reconciler(coordinator, catalog).ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Graces.Select(g => (g.EventTypeName, g.GraceSeconds)))
+      .IsEquivalentTo([(TypeNameFormatter.Format(type), 30), ("Old.Contracts.Pinged, Whizbang.Core.Tests", 30)])
+      .Because("each override names the type as the append path stores it; a blank ledger name and a type with no override send none");
+  }
+
   // #2206: startup reclassifies nothing, whatever the flag says; the maintenance cycle's ephemeral-history-reclassify
   // step does it in bounded batches, on every cycle with the flag on (which keeps #1578: a type that turned ephemeral
   // on an earlier boot with the flag off is still reclassified once the flag is on).
@@ -237,6 +260,15 @@ public class TypeDefinitionReconcilerCoverageTests {
         IReadOnlyList<string> eventTypeNames, CancellationToken cancellationToken = default) {
       Reclassified.Add([.. eventTypeNames]);
       return Task.FromResult(new EphemeralReclassificationResult(EventsReclassified: 3, StreamsReclassified: 1, StreamsBlocked: 0));
+    }
+  }
+
+  private sealed class GraceCapturingCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+    public List<EphemeralTypeGrace> Graces { get; } = [];
+
+    public Task SyncEphemeralTypeGraceAsync(IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
+      Graces.AddRange(graceOverrides);
+      return Task.CompletedTask;
     }
   }
 
