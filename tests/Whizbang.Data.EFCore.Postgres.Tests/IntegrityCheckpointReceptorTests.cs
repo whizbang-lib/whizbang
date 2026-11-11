@@ -169,6 +169,8 @@ public class IntegrityCheckpointReceptorTests {
       ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
     await Assert.That(command.FromCommitSequence).IsEqualTo(10L);
+    await Assert.That(command.AcceptsStreamSpanningBundles).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
     await Assert.That(command.ToCommitSequence).IsEqualTo(20L)
       .Because("the repair is scoped to EXACTLY the confirmed window.");
     await Assert.That(command.EventTypes).IsEquivalentTo([_verifiedType]);

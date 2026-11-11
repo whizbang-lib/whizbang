@@ -829,6 +829,8 @@ public partial class IntegrityManifestReceptorTests {
                "per-stream commands multiplied every storm by the stream count.");
     var command = _deserializeRedelivery(transport.Published[0].Envelope);
     await Assert.That(command.StreamIds).IsEquivalentTo([s1, s2, s3]);
+    await Assert.That(command.AcceptsStreamSpanningBundles).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
     await Assert.That(transport.Published[0].Destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never anywhere else.");
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
@@ -2430,6 +2432,8 @@ public partial class IntegrityManifestReceptorTests {
       .Because("the whole type's window backfills — a stream list is exactly the drip this path skips");
     await Assert.That(bulk.FromCommitSequence).IsEqualTo(99L);
     await Assert.That(bulk.ToCommitSequence).IsEqualTo(299L);
+    await Assert.That(bulk.AcceptsStreamSpanningBundles).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
 
     await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestIntegrityManifest") == true)).IsFalse()
       .Because("the bulk path REPLACES the stream drill-down for that type — both would double-ship");

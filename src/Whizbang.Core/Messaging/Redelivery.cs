@@ -192,6 +192,9 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
   /// </summary>
   public bool OperatorRequested { get; init; }
 
+  /// <summary>RED stub (#2268).</summary>
+  public bool AcceptsStreamSpanningBundles { get; init; }
+
   /// <summary>
   /// Set by a paced backfill (#2092): the request is one WINDOW of that backfill. The origin selects in commit-sequence
   /// order from <see cref="FromCommitSequence"/>, up to <see cref="MaxEvents"/> (clamped by its own cap), ships the

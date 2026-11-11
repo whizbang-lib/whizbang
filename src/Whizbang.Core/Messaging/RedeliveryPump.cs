@@ -131,6 +131,13 @@ public sealed class RedeliveryPump(
   /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
   public Guid? BundleStreamId { get; init; }
 
+  /// <summary>RED stub (#2268).</summary>
+  public bool BundleAcrossStreams { get; init; }
+
+  /// <summary>RED stub (#2268).</summary>
+  public static Guid AnswerSessionFor(Guid originServiceId, string topic, string? target, string? scope) =>
+    throw new NotImplementedException();
+
   /// <summary>
   /// Publishes a backfill window's answer to <paramref name="target"/> on <paramref name="topic"/>, on the backfill's
   /// session so it follows the window's bundles (#2092), with the same time to live and send retry as a bundle.
