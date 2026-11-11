@@ -116,7 +116,8 @@ public class EFCoreWorkCoordinatorNoRowResultTests : EFCoreTestBase {
       RETURNS TABLE(unhealed_buckets BIGINT, repair_exhausted BIGINT, oldest_unhealed_secs DOUBLE PRECISION,
                     answer_pending_buckets BIGINT, answered_buckets BIGINT, deliveries_pending BIGINT,
                     oldest_delivery_secs DOUBLE PRECISION, unhealed_deficit_events BIGINT,
-                    unhealable_buckets BIGINT)
+                    unhealable_buckets BIGINT, deficit_buckets BIGINT, surplus_buckets BIGINT,
+                    digest_mismatch_buckets BIGINT, unknown_kind_buckets BIGINT)
       AS $$ BEGIN RETURN; END; $$ LANGUAGE plpgsql;
       """);
 

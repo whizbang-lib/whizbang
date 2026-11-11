@@ -473,7 +473,11 @@ public sealed class StreamIntegrityMetrics {
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.unhealed_buckets",
       () => _ledger.UnhealedBuckets,
-      description: "Divergent buckets currently unhealed (ledger rows). Falls as repair works — a heal deletes the row");
+      description: "Divergent buckets currently unhealed (ledger rows), every kind; unhealed_buckets_by_kind splits it. Falls as repair works: a heal deletes the row");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unhealed_buckets_by_kind",
+      () => _kindMeasurements(_ledger),
+      description: "Unhealed buckets by kind (deficit | surplus | digest_mismatch | unknown), adding up to unhealed_buckets; only a deficit is one repair heals");
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.repair_exhausted_buckets",
       () => _ledger.RepairExhausted,
@@ -527,6 +531,14 @@ public sealed class StreamIntegrityMetrics {
     BackfillsEnded.Touch("outcome", _backfillOutcomes);
     RedeliveryAnswersCapped.Touch("kind", _cappedKinds);
   }
+
+  // #2260: one measurement per kind, each always present (zero when none), so a healed kind falls to zero.
+  private static Measurement<long>[] _kindMeasurements(LedgerGaugeSnapshot reading) => [
+    new(reading.DeficitBuckets, new KeyValuePair<string, object?>(LedgerBucketKinds.TAG, LedgerBucketKinds.DEFICIT)),
+    new(reading.SurplusBuckets, new KeyValuePair<string, object?>(LedgerBucketKinds.TAG, LedgerBucketKinds.SURPLUS)),
+    new(reading.DigestMismatchBuckets, new KeyValuePair<string, object?>(LedgerBucketKinds.TAG, LedgerBucketKinds.DIGEST_MISMATCH)),
+    new(reading.UnknownKindBuckets, new KeyValuePair<string, object?>(LedgerBucketKinds.TAG, LedgerBucketKinds.UNKNOWN)),
+  ];
 
   private static readonly string[] _openedHows = [OPENED_NEW, OPENED_REOPENED];
   private static readonly string[] _closedHows = [CLOSED_HEALED, CLOSED_FORGOTTEN, CLOSED_UNHEALABLE];
