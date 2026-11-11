@@ -285,6 +285,33 @@ public class ArchiveAwareEventStoreDecoratorTests {
     }
   }
 
+  /// <summary>
+  /// A set-based batch reads its pairs' streams with one read of the hot store (#2246). A stream it reads from the start
+  /// whose hot events show a gap needs the archive, so the batch is told to read per pair; a stream that resumes, or
+  /// starts with no gap, leaves the batched read as the store returned it.
+  /// </summary>
+  [Test]
+  public async Task ABatchedRead_ThatAStreamsGapNeedsTheArchiveFor_LeavesEachPairToItsOwnReadAsync() {
+    var (gapped, _, throughGap) = _archivedPrefix(archivedThrough: 3, hotThrough: 5);
+    var whole = new HotStore();
+    whole.Add(_stream, 1, 2);
+    var noGap = new ArchiveAwareEventStoreDecorator(whole, new ArchiveFake(), readThrough: true);
+    var off = new ArchiveAwareEventStoreDecorator(gapped, new ArchiveFake(), readThrough: false);
+    var missing = new ArchiveAwareEventStoreDecorator(new HotStore { Answers = [] }, new ArchiveFake(), readThrough: true);
+    var unbatched = new ArchiveAwareEventStoreDecorator(new HotStore { Batches = false }, new ArchiveFake(), readThrough: true);
+    var resumeAt = gapped.Hot[0].MessageId.Value;
+
+    await Assert.That(await throughGap.ReadPolymorphicManyAsync([(_stream, null)], _types)).IsNull()
+      .Because("the stream's first events are archived, and only its own read reads through");
+    await Assert.That((await throughGap.ReadPolymorphicManyAsync([(_stream, resumeAt)], _types))![_stream].Select(_n))
+      .IsEquivalentTo([5]);
+    await Assert.That((await noGap.ReadPolymorphicManyAsync([(_stream, null)], _types))![_stream].Select(_n)).IsEquivalentTo([1, 2]);
+    await Assert.That((await off.ReadPolymorphicManyAsync([(_stream, null)], _types))![_stream].Select(_n)).IsEquivalentTo([4, 5]);
+    await Assert.That(await missing.ReadPolymorphicManyAsync([(_stream, null)], _types)).IsNull()
+      .Because("a stream the read did not answer for is read per pair, as an empty one is");
+    await Assert.That(await unbatched.ReadPolymorphicManyAsync([(_stream, null)], _types)).IsNull();
+  }
+
   [Test]
   public async Task ReadThroughOff_ReturnsOnlyTheHotEvents_AndNeverReadsTheArchiveAsync() {
     var hot = new HotStore();
@@ -538,6 +565,20 @@ public class ArchiveAwareEventStoreDecoratorTests {
       Task.FromResult(_after(afterEventId, upToEventId).ToList());
 
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
+
+    /// <summary>Whether the store reads streams in batches.</summary>
+    public bool Batches { get; init; } = true;
+
+    /// <summary>The streams a batched read answers for; null for every stream asked.</summary>
+    public Guid[]? Answers { get; init; }
+
+    public Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+        IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(Batches
+        ? streams.Where(s => Answers?.Contains(s.StreamId) != false)
+            .ToDictionary(s => s.StreamId, s => (IReadOnlyList<MessageEnvelope<IEvent>>)[.. _after(s.FromEventId)])
+        : null);
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       Decodes++;

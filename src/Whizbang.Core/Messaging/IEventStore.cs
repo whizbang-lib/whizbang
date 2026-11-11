@@ -133,6 +133,24 @@ public interface IEventStore {
     Task.FromResult<long?>(null);
 
   /// <summary>
+  /// <see cref="ReadPolymorphicAsync"/> for many streams at once: the events of every stream of a set-based batch, read
+  /// with one round trip instead of one per pair (#2246). A stream asked from several positions is read from the
+  /// earliest; each stream's events come in its own order, and a stream with none maps to an empty list. The default
+  /// returns null, and each pair reads its own events.
+  /// </summary>
+  /// <param name="streams">Each stream, with the event its read starts after (null for its start).</param>
+  /// <param name="eventTypes">The event types to read.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Each stream's events, or null when the store does not read streams in batches.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:ReadPolymorphicManyAsync_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync</tests>
+  Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(null);
+
+  /// <summary>
   /// <see cref="GetCommitSequenceAsync"/> for many events at once: the commit sequences a set-based batch records for
   /// the last event of each of its pairs (<see cref="Perspectives.IPerspectiveStateSource"/>). An event that is not
   /// stored is left out; one not yet stamped maps to null. The default asks each event on its own.

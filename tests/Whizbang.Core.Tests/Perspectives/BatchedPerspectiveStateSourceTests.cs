@@ -233,6 +233,14 @@ public class BatchedPerspectiveStateSourceTests {
   }
 
   [Test]
+  public async Task ReadPolymorphicManyAsync_Default_ReturnsNullAsync() {
+    // A store that does not read streams in batches says so, and each pair of a claimed batch reads its own events.
+    IEventStore events = new SingleHistory(Guid.Empty);
+
+    await Assert.That(await events.ReadPolymorphicManyAsync([(Guid.NewGuid(), null)], [typeof(string)])).IsNull();
+  }
+
+  [Test]
   public async Task PurgedAmongAsync_Default_AsksEachStreamAsync() {
     var purged = Guid.NewGuid();
     IPerspectivePurgeMarkerStore markers = new SingleMarkers(purged);

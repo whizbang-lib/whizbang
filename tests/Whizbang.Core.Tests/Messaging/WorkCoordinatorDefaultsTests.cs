@@ -495,6 +495,14 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(coordinator.ReadsCursorsInBatches).IsFalse()
+      .Because("the default batched cursor read returns nothing, which a batch must not take for 'no cursor' (#2246)");
+  }
+
+  [Test]
   public async Task RecordsInstanceTransitions_WithoutProviderSupport_IsFalseAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

@@ -1872,4 +1872,87 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
 
     await Assert.That(thrown!.Message).Contains(eventId.ToString());
   }
+
+  /// <summary>
+  /// The batched read of a claimed set-based batch (#2246): every stream's events read with at most two statements (one
+  /// for the streams read from their start, one for the rest), each stream answered exactly as its own polymorphic read
+  /// answers it, from the earliest position it is asked from.
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync() {
+    await using var context = CreateDbContext();
+    IEventStore eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    async Task<List<Guid>> appendAsync(Guid stream, params bool[] created) {
+      var ids = new List<Guid>();
+      foreach (var isCreated in created) {
+        var id = MessageId.New();
+        if (isCreated) {
+          await eventStore.AppendAsync(stream, new MessageEnvelope<OrderCreatedEvent> {
+            MessageId = id,
+            Payload = new OrderCreatedEvent { OrderId = stream, CustomerName = "c" },
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+            Hops = [CreateTestHop()],
+          });
+        } else {
+          await eventStore.AppendAsync(stream, new MessageEnvelope<OrderShippedEvent> {
+            MessageId = id,
+            Payload = new OrderShippedEvent { OrderId = stream, TrackingNumber = "t" },
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+            Hops = [CreateTestHop()],
+          });
+        }
+        ids.Add(id.Value);
+      }
+      return ids;
+    }
+    var (whole, laterFirst, earlierFirst, nullLast, empty) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+    var wholeIds = await appendAsync(whole, true, false, true);
+    var laterIds = await appendAsync(laterFirst, true, true, true);
+    var earlierIds = await appendAsync(earlierFirst, true, true, true);
+    var nullIds = await appendAsync(nullLast, true, true);
+    (Guid StreamId, Guid? FromEventId)[] asked = [
+      (whole, null), (whole, wholeIds[0]),
+      (laterFirst, laterIds[1]), (laterFirst, laterIds[0]),
+      (earlierFirst, earlierIds[0]), (earlierFirst, earlierIds[1]),
+      (nullLast, nullIds[0]), (nullLast, null),
+      (empty, null),
+    ];
+    // Each stream from the earliest position it is asked from; a type not asked for is left out, as the per-stream read
+    // leaves it out.
+    var earliest = new Dictionary<Guid, Guid?> {
+      [whole] = null,
+      [laterFirst] = laterIds[0],
+      [earlierFirst] = earlierIds[0],
+      [nullLast] = null,
+      [empty] = null,
+    };
+    Type[] types = [typeof(OrderCreatedEvent)];
+    var perStream = new Dictionary<Guid, List<Guid>>();
+    foreach (var (stream, from) in earliest) {
+      var ids = new List<Guid>();
+      await foreach (var envelope in eventStore.ReadPolymorphicAsync(stream, from, types)) {
+        ids.Add(envelope.MessageId.Value);
+      }
+      perStream[stream] = ids;
+    }
+
+    using var statements = new Perspectives.NpgsqlStatementLog(ConnectionString);
+    var read = await eventStore.ReadPolymorphicManyAsync(asked, types);
+
+    await Assert.That(read!.Keys).IsEquivalentTo(earliest.Keys);
+    foreach (var (stream, ids) in perStream) {
+      await Assert.That(read[stream].Select(e => e.MessageId.Value)).IsEquivalentTo(ids, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+        .Because("each stream is answered as its own read answers it, in its order");
+    }
+    await Assert.That(read[whole].Select(e => e.MessageId.Value)).IsEquivalentTo(new[] { wholeIds[0], wholeIds[2] });
+    await Assert.That(read[laterFirst].Select(e => e.MessageId.Value)).IsEquivalentTo(laterIds.Skip(1));
+    await Assert.That(read[empty]).IsEmpty();
+    await Assert.That(read[whole][0].IsFirstInLocalStream).IsTrue();
+    await Assert.That(statements.Matching("wh_event_store").Count).IsEqualTo(2)
+      .Because("the streams read from their start take one statement and the rest one more");
+    await Assert.That(await eventStore.ReadPolymorphicManyAsync([(empty, null)], types)).IsNotNull();
+    await Assert.That(async () => await eventStore.ReadPolymorphicManyAsync(null!, types)).Throws<ArgumentNullException>();
+    await Assert.That(async () => await eventStore.ReadPolymorphicManyAsync(asked, null!)).Throws<ArgumentNullException>();
+  }
+
 }

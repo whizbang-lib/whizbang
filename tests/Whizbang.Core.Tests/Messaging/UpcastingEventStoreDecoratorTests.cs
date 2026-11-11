@@ -50,6 +50,30 @@ public class UpcastingEventStoreDecoratorTests {
   }
 
   [Test]
+  public async Task ReadPolymorphicManyAsync_UpcastsEveryStreamsEventsAsync() {
+    // A set-based batch's one read of its pairs' streams is upcast exactly as each stream's own read is (#2246).
+    var sut = new UpcastingEventStoreDecorator(new StubStore(), _makePipeline());
+    var (first, second) = (Guid.NewGuid(), Guid.NewGuid());
+
+    var read = await sut.ReadPolymorphicManyAsync([(first, null), (second, Guid.NewGuid())], [typeof(OldEvent)]);
+
+    await Assert.That(read!.Keys).IsEquivalentTo(new[] { first, second });
+    await Assert.That(read[first].Single().Payload).IsTypeOf<NewEvent>();
+    await Assert.That(read[second].Single().Payload).IsTypeOf<NewEvent>();
+  }
+
+  [Test]
+  public async Task ReadPolymorphicManyAsync_WhenATypeChangeWidensTheRead_LeavesEachPairToItsOwnReadAsync() {
+    // The widened read and its filter back are the per-stream read's: the batch is told to read per pair, and the inner
+    // store is not read at all; an inner store that does not read in batches says so too.
+    var widening = new UpcastingEventStoreDecorator(new StubStore(), new EventUpcasterPipeline([new ForeignToNewUpcaster()]));
+    var unbatched = new UpcastingEventStoreDecorator(new RecordingStore(yield: new OldEvent()), _makePipeline());
+
+    await Assert.That(await widening.ReadPolymorphicManyAsync([(Guid.NewGuid(), null)], [typeof(NewEvent)])).IsNull();
+    await Assert.That(await unbatched.ReadPolymorphicManyAsync([(Guid.NewGuid(), null)], [typeof(OldEvent)])).IsNull();
+  }
+
+  [Test]
   public async Task PolymorphicReads_WithNoUpcasters_LeavePayloadUntouchedAsync() {
     var sut = new UpcastingEventStoreDecorator(new StubStore(), new EventUpcasterPipeline([]));
 
@@ -373,6 +397,12 @@ public class UpcastingEventStoreDecoratorTests {
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
         IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
       [_makeEnvelope(new OldEvent())];
+
+    public Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+        IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(streams.ToDictionary(
+        s => s.StreamId, s => (IReadOnlyList<MessageEnvelope<IEvent>>)[_makeEnvelope(new OldEvent { StreamId = s.StreamId })]));
 
     // Unused by these tests.
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;

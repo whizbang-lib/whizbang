@@ -838,6 +838,16 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
 
   /// <summary>
+  /// Whether <see cref="GetPerspectiveCursorsBatchAsync"/> reads the cursors (#2246). Only then does a pair the read left
+  /// out have no cursor, so a batch may skip that pair's own cursor read. False (the default) is a coordinator whose
+  /// batched read is the interface default, which returns nothing: a batch then reads each pair's cursor itself, since
+  /// taking "nothing" for "no cursor" would apply every pair's stream again from its start.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync</tests>
+  bool ReadsCursorsInBatches => false;
+
+  /// <summary>
   /// Records that PostLifecycle completed for an event.
   /// Used as a durable marker for crash recovery reconciliation.
   /// Idempotent — duplicate event IDs are silently ignored.

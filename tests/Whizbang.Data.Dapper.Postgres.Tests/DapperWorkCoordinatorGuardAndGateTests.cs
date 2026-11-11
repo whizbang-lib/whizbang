@@ -244,6 +244,8 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
       "1.0.0"))).IsTrue();
     await Assert.That(c.RecordsInstanceTransitions).IsTrue()
       .Because("the Dapper driver keeps instance rows, so the data plane waits for the row to record Accept commands");
+    await Assert.That(c.ReadsCursorsInBatches).IsTrue()
+      .Because("the Dapper driver reads cursors in batches, so a batch may skip a pair its read found no cursor for");
 
     // Queues empty here — ClaimWorkAsync's gate branch plus the empty-batch path.
     var emptyBatch = await c.ClaimWorkAsync(new ClaimWorkRequest(

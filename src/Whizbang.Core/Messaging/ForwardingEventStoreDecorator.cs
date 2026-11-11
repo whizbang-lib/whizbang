@@ -82,6 +82,12 @@ public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventS
     Inner.GetCommitSequenceAsync(eventId, cancellationToken);
 
   /// <inheritdoc />
+  public virtual Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+    Inner.ReadPolymorphicManyAsync(streams, eventTypes, cancellationToken);
+
+  /// <inheritdoc />
   public virtual Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
       IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) =>
     Inner.GetCommitSequencesAsync(eventIds, cancellationToken);

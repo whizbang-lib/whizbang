@@ -124,6 +124,14 @@ public class IPerspectiveRunnerDefaultsTests {
   }
 
   [Test]
+  public async Task SelectEvents_Default_ReturnsNullAsync() {
+    // A hand-written runner does not select from a batch's shared read: its claimed pair reads its own events.
+    IPerspectiveRunner runner = new MinimalRunner();
+
+    await Assert.That(runner.SelectEvents([])).IsNull();
+  }
+
+  [Test]
   public async Task CompleteAsync_Default_RunsAPerPairPairThroughRunWithEventsAsync() {
     var runner = new RecordingRunner();
     var streamId = Guid.NewGuid();

@@ -55,6 +55,18 @@ public interface IPerspectiveRunner {
   ) => Task.FromResult<IReadOnlyList<MessageEnvelope<IEvent>>?>(null);
 
   /// <summary>
+  /// Selects, from a stream's events read once for every perspective of a set-based batch, the ones
+  /// <see cref="ReadEventsAsync"/> would have read: the events of the types this perspective folds, in the order they
+  /// came. A claimed batch reads its pairs' events with one read and hands each runner its stream's (#2246).
+  /// </summary>
+  /// <remarks>The default returns null, and the pair reads its own events with <see cref="ReadEventsAsync"/>.</remarks>
+  /// <param name="streamEvents">The stream's events after the pair's cursor, of every type the batch read.</param>
+  /// <returns>The events this perspective applies, or null when the runner does not select from a shared read.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:SelectEvents_Default_ReturnsNullAsync</tests>
+  IReadOnlyList<MessageEnvelope<IEvent>>? SelectEvents(IReadOnlyList<MessageEnvelope<IEvent>> streamEvents) => null;
+
+  /// <summary>
   /// Processes perspective checkpoint using pre-fetched events (drain mode optimization).
   /// Same as RunAsync but skips ReadPolymorphicAsync — uses supplied events directly.
   /// Eliminates redundant DB reads when events are already fetched by get_stream_events.

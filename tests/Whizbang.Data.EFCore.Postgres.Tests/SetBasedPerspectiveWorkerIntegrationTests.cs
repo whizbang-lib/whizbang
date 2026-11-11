@@ -45,7 +45,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveApplyBatch.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
-public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
+public partial class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_order";
   private const int STREAMS = 12;
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
@@ -71,15 +71,62 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(touching).Count().IsEqualTo(1)
       .Because("every stream of the batch is new, so none is read, and their rows are written with one statement");
     await Assert.That(touching[0]).Contains("INSERT INTO");
-    var sequenceReads = statements.Matching("commit_sequence", "wh_event_store").Where(s => s.Contains("event_id", StringComparison.Ordinal)).ToList();
+    var sequenceReads = _commitSequenceReads(statements);
     await Assert.That(sequenceReads.Count(s => s.Contains("ANY", StringComparison.Ordinal))).IsEqualTo(1)
       .Because("the commit sequences the rows record are read with one statement for the batch");
-    await Assert.That(sequenceReads.Count(s => s.Contains("LIMIT", StringComparison.Ordinal))).IsEqualTo(0)
+    await Assert.That(sequenceReads.Where(s => s.Contains("LIMIT", StringComparison.Ordinal)).ToList()).IsEmpty()
       .Because("no pair reads its own commit sequence");
+    await Assert.That(statements.Matching("resume_cursors").Where(s => s.Contains("LIMIT", StringComparison.Ordinal)).ToList()).IsEmpty()
+      .Because("the batch read every stream's cursors and found none, so no new pair reads its own");
     for (var i = 0; i < streams.Count; i++) {
       await Assert.That(await _amountAsync(conn, streams[i], ct)).IsEqualTo(i + 1m);
     }
   }
+
+  [Test]
+  public async Task NewStreams_OnTheClaimedPath_CostOneEventRead_OneSequenceRead_AndOneInsertAsync() {
+    // #2246: a claimed batch of new streams reads its pairs' cursors with one statement, their events with one, and the
+    // commit sequences its rows record with one; no row is read, and the rows are written with one statement.
+    var ct = CancellationToken.None;
+    await using var conn = await _openAsync(ct);
+    await using var pipeline = _composePipeline(PerspectiveWriteMode.SetBased);
+    await pipeline.RegisterAsync(conn, ct);
+    var perspective = TypeNameFormatter.GetPerspectiveName(typeof(OrderPerspective));
+    var streams = Enumerable.Range(0, STREAMS).Select(_ => (Guid)TrackedGuid.New()).ToList();
+    var work = new List<Guid>();
+    for (var i = 0; i < streams.Count; i++) {
+      work.Add(await pipeline.CommitAsync(conn, streams[i], amount: i + 1, ct));
+    }
+    // Claimed work, queued before the worker starts, so its first batch holds every pair.
+    for (var i = 0; i < streams.Count; i++) {
+      await pipeline.WorkChannel.WriteAsync(new PerspectiveWork { WorkId = work[i], StreamId = streams[i], PerspectiveName = perspective }, ct);
+    }
+
+    using var statements = new NpgsqlStatementLog(ConnectionString);
+    await pipeline.StartWorkerAsync(ct);
+    await pipeline.Completion.WaitForAllAsync(work);
+
+    var all = string.Join("\n", statements.Statements);
+    var touching = statements.Matching(TABLE);
+    await Assert.That(touching).Count().IsEqualTo(1).Because($"one insert and no row read; statements:\n{all}");
+    await Assert.That(touching[0]).Contains("INSERT INTO");
+    await Assert.That(statements.Matching("wh_event_store").Where(s => s.Contains("event_type", StringComparison.Ordinal)).ToList())
+      .Count().IsEqualTo(1).Because($"every pair's events are read with one read; statements:\n{all}");
+    await Assert.That(_commitSequenceReads(statements)).Count().IsEqualTo(1)
+      .Because("the commit sequences the rows record are read with one statement for the batch");
+    await Assert.That(statements.Matching("resume_cursors")).Count().IsEqualTo(1)
+      .Because($"every pair's cursor is read with one statement; statements:\n{all}");
+    for (var i = 0; i < streams.Count; i++) {
+      await Assert.That(await _amountAsync(conn, streams[i], ct)).IsEqualTo(i + 1m);
+    }
+  }
+
+  /// <summary>The reads of the commit sequences rows record: of the event store's sequences, not a cursor read's join.</summary>
+  private static List<string> _commitSequenceReads(NpgsqlStatementLog statements) =>
+    [.. statements.Matching("commit_sequence", "wh_event_store")
+      .Where(s => s.Contains("event_id", StringComparison.Ordinal)
+        && !s.Contains("resume_cursors", StringComparison.Ordinal)
+        && !s.Contains("event_type", StringComparison.Ordinal))];
 
   [Test]
   public async Task AMixedBatch_ReadsTheTableOnce_AndWritesEachShapeWithOneStatementAsync() {
@@ -191,7 +238,9 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
 
   // ===== Harness =====
 
-  private Pipeline _composePipeline(PerspectiveWriteMode mode, ServiceInstanceProvider? instance = null) {
+  private Pipeline _composePipeline(
+      PerspectiveWriteMode mode, ServiceInstanceProvider? instance = null, IPerspectiveCompletionChannel? completionOverride = null,
+      int consumers = 1, int claimBatch = 100) {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     var services = new ServiceCollection();
@@ -232,7 +281,7 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
         PollingMaxIntervalMilliseconds = 200,
         AdaptiveClaimWindow = false,
         AdaptiveOutstandingBudget = false,
-        MaxStreamsPerBatch = 100,
+        MaxStreamsPerBatch = claimBatch,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -246,7 +295,7 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
       signalBus: NullSignalBus.Instance);
 
     // One consumer loop, so the first batch the worker reads is everything the claim loop handed it.
-    var workerOptions = new PerspectiveWorkerOptions { MaxConcurrentDrainConsumers = 1, WriteMode = mode };
+    var workerOptions = new PerspectiveWorkerOptions { MaxConcurrentDrainConsumers = consumers, WriteMode = mode };
     var perspectiveWorker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
@@ -265,7 +314,7 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: completion,
+      perspectiveCompletionChannel: completionOverride ?? completion,
       failureChannel: failures,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
@@ -284,6 +333,7 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
       Completion = completion,
       Failures = failures,
       HandedOff = handedOff,
+      WorkChannel = harness.ChannelWriter,
     };
   }
 
@@ -295,6 +345,7 @@ public class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase {
     public required SignalingCompletionChannel Completion { get; init; }
     public required RecordingFailureChannel Failures { get; init; }
     public required HandedOffStreams HandedOff { get; init; }
+    public required IPerspectiveChannelWriter WorkChannel { get; init; }
     private bool _claiming;
     private bool _working;
 

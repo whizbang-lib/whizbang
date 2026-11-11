@@ -1,11 +1,13 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -160,7 +162,70 @@ public partial class PerspectivePrepareCompleteIntegrationTests {
     await Assert.That(await ((IPerspectiveStore<InitOnlySplitModel>)store).ReadForApplyManyAsync([])).IsEmpty();
   }
 
+  [Test]
+  public async Task ABatchedRead_DeclinesWhileABlueGreenRebuildRedirectsTheTable_AndOnAnotherProviderAsync() {
+    await using var context = CreateDbContext();
+    IPerspectiveStore<ActionTestModel> store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, ACTION_TABLE);
+    using (PerspectiveTableRedirect.Begin(ACTION_TABLE, ACTION_TABLE + "_shadow")) {
+      await Assert.That(await store.ReadForApplyManyAsync([Guid.CreateVersion7()])).IsNull()
+        .Because("a redirected flow reads its shadow table row by row, as the per-stream read does");
+    }
+
+    var options = new DbContextOptionsBuilder<InMemoryRowContext>()
+      .UseInMemoryDatabase($"state-source-{Guid.NewGuid():N}").Options;
+    await using var inMemory = new InMemoryRowContext(options);
+    IPerspectiveStore<ActionTestModel> other = new EFCorePostgresPerspectiveStore<ActionTestModel>(inMemory, ACTION_TABLE);
+    await Assert.That(await other.ReadForApplyManyAsync([Guid.CreateVersion7()])).IsNull()
+      .Because("a provider without row versions has no batched read");
+  }
+
+  [Test]
+  public async Task ABatchedRead_OnAnOpenConnection_LeavesItOpen_AndKeepsARowHeldWithAPendingChangeAsync() {
+    var eventStore = new InMemoryEventStore();
+    var unchanged = Guid.CreateVersion7();
+    var pending = Guid.CreateVersion7();
+    foreach (var stream in new[] { unchanged, pending }) {
+      var set = await _appendAsync(eventStore, stream, new InitOnlyFieldsSetEvent { StreamId = stream, Status = "stored", Priority = 1 }, 1);
+      await _perPairAsync(_splitRecordRunner, eventStore, stream, "init_only_split", null, [set]);
+    }
+    await using var context = CreateDbContext();
+    var rows = context.Set<PerspectiveRow<InitOnlySplitModel>>();
+    // Held by the context: one unchanged, one with a change it has not saved.
+    _ = await rows.SingleAsync(r => r.Id == unchanged);
+    var held = await rows.SingleAsync(r => r.Id == pending);
+    held.Data = held.Data with { Note = "pending" };
+    await context.Database.OpenConnectionAsync();
+    IPerspectiveStore<InitOnlySplitModel> store = new EFCorePostgresPerspectiveStore<InitOnlySplitModel>(context, SPLIT_RECORD_TABLE);
+
+    var batched = await store.ReadForApplyManyAsync([unchanged, pending]);
+
+    await Assert.That(context.Database.GetDbConnection().State).IsEqualTo(System.Data.ConnectionState.Open)
+      .Because("a connection the read found open is left as it was");
+    await Assert.That(batched![unchanged].Model!.Status).IsEqualTo("stored")
+      .Because("a row held unchanged is let go and read afresh, with its promoted columns");
+    await Assert.That(batched[pending].Model!.Note).IsEqualTo("pending")
+      .Because("a row held with a pending change is returned as it is, as the per-stream read returns it");
+    await context.Database.CloseConnectionAsync();
+  }
+
   // ---------------------------------------------------------------------------------------------------------------
+
+  /// <summary>A context on a provider other than Npgsql, mapping the one row type the test reads.</summary>
+  private sealed class InMemoryRowContext(DbContextOptions<InMemoryRowContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      base.OnModelCreating(modelBuilder);
+      modelBuilder.Entity<PerspectiveRow<ActionTestModel>>(entity => {
+        entity.ToTable(ACTION_TABLE);
+        entity.HasKey(e => e.Id);
+        entity.OwnsOne(e => e.Data, d => d.WithOwner());
+        entity.OwnsOne(e => e.Metadata, m => m.WithOwner());
+        entity.Property(e => e.Scope)
+          .HasConversion(
+            v => System.Text.Json.JsonSerializer.Serialize(v, System.Text.Json.JsonSerializerOptions.Default),
+            v => System.Text.Json.JsonSerializer.Deserialize<PerspectiveScope>(v, System.Text.Json.JsonSerializerOptions.Default)!);
+      });
+    }
+  }
 
   /// <summary>A batch prepared pair by pair, each on a runner and context of its own as the worker gives them.</summary>
   private sealed class PreparedBatch(
