@@ -317,6 +317,27 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
+  /// The commit sequences of many events in one statement (#2246): what a set-based batch records for the last event of
+  /// each of its pairs, read once for the batch instead of once per pair.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:GetCommitSequencesAsync_AnswersEveryEventInOneQueryAsync</tests>
+  public async Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return new Dictionary<Guid, long?>();
+    }
+    var ids = eventIds.ToArray();
+    var records = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .Where(e => ids.Contains(e.Id))
+      .Select(e => new { e.Id, e.CommitSequence })
+      .ToListAsync(cancellationToken);
+    return records.ToDictionary(r => r.Id, r => r.CommitSequence);
+  }
+
+  /// <summary>
   /// Perspective row retention — the resurrection-on-wake history probe: does this stream hold
   /// any event ordered before the given id? An indexed EXISTS over the stream's pointer rows;
   /// UUIDv7 ordering is safe at this granularity (a reaped row's history predates the waking

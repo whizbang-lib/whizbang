@@ -44,10 +44,14 @@ public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspec
   private sealed class Batch : IPerspectiveBatchState {
     private readonly ILogger _logger;
     private readonly Dictionary<string, Perspective> _perspectives = new(StringComparer.Ordinal);
+    private readonly HashSet<Guid> _events = [];
+    private readonly object _gate = new();
+    private Task<IReadOnlyDictionary<Guid, long?>?>? _commitSequences;
 
     public Batch(IReadOnlyList<PerspectiveStateRequest> pairs, ILogger logger) {
       _logger = logger;
       foreach (var pair in pairs) {
+        _events.UnionWith(pair.EventIds ?? []);
         if (!_perspectives.TryGetValue(pair.PerspectiveName, out var perspective)) {
           perspective = new Perspective(pair.PerspectiveName);
           _perspectives.Add(pair.PerspectiveName, perspective);
@@ -116,9 +120,29 @@ public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspec
       return withHistory?.Contains(streamId);
     }
 
-    public Task<PerspectiveCommitSequence?> CommitSequenceOfAsync(
-        IEventStore eventStore, Guid eventId, CancellationToken cancellationToken = default) =>
-      throw new NotImplementedException();
+    public async Task<PerspectiveCommitSequence?> CommitSequenceOfAsync(
+        IEventStore eventStore, Guid eventId, CancellationToken cancellationToken = default) {
+      ArgumentNullException.ThrowIfNull(eventStore);
+      if (!_events.Contains(eventId)) {
+        return null;
+      }
+      Task<IReadOnlyDictionary<Guid, long?>?> read;
+      lock (_gate) {
+        read = _commitSequences ??= _readCommitSequencesAsync(eventStore, cancellationToken);
+      }
+      var sequences = await read.ConfigureAwait(false);
+      return sequences is null ? null : new PerspectiveCommitSequence(sequences.GetValueOrDefault(eventId));
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, long?>?> _readCommitSequencesAsync(
+        IEventStore eventStore, CancellationToken cancellationToken) {
+      try {
+        return await eventStore.GetCommitSequencesAsync(_events, cancellationToken).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogBatchedReadFailed(_logger, ex, "commit-sequence read", "every perspective", _events.Count);
+        return null;
+      }
+    }
 
     private PerspectiveStateRequest? _pair(Guid streamId, string perspectiveName) =>
       _perspectives.TryGetValue(perspectiveName, out var perspective) && perspective.Pairs.TryGetValue(streamId, out var pair)

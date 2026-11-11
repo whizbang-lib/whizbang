@@ -143,9 +143,15 @@ public interface IEventStore {
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:GetCommitSequencesAsync_Default_AsksEachEventAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:GetCommitSequencesAsync_AnswersEveryEventInOneQueryAsync</tests>
-  Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
-      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+  async Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    var sequences = new Dictionary<Guid, long?>();
+    foreach (var eventId in eventIds) {
+      sequences[eventId] = await GetCommitSequenceAsync(eventId, cancellationToken).ConfigureAwait(false);
+    }
+    return sequences;
+  }
 
   /// <summary>
   /// Perspective row retention (resurrection-on-wake): true when the stream holds any event

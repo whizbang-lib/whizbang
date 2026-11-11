@@ -672,6 +672,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public IReadOnlyList<MessageEnvelope<IEvent>> Events = Array.Empty<MessageEnvelope<IEvent>>();
     public List<Task> BackgroundTasks = new();
     public __PERSPECTIVE_CLASS_NAME__ Perspective = null!;
+    // The batch a prepare reads from (#2246), or null on the per-pair path.
+    public global::Whizbang.Core.Perspectives.IPerspectiveBatchState? BatchState;
 
     // The read.
     public CollectiveFenceRead? CollectiveFence;
@@ -1028,6 +1030,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       LastProcessedEventId = lastProcessedEventId,
       Events = events,
       BackgroundTasks = backgroundTasks,
+      BatchState = batchState,
       Perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>(),
       CollectiveFence = collectiveFence,
       ApplyRead = applyRead,
@@ -1386,7 +1389,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           state.RowWrite = state.PurgeEventId.HasValue ? RowWriteKind.Purge : RowWriteKind.None;
         } else if (updatedModel != null && hasWrittenUpdate) {
           state.CheckpointCommitSequence = _recordedCommitSequence(
-              await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId!.Value, cancellationToken),
+              await _commitSequenceOfAsync(lastSuccessfulEventId!.Value, state.BatchState, cancellationToken),
               state.ProcessedEvents,
               state.Rebuilding);
           // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
@@ -1847,6 +1850,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
     }
     return await _eventStore.HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken);
+  }
+
+  /// <summary>
+  /// The commit sequence the row's write records for its last applied event: the batch's one read for all its pairs
+  /// where it planned this event (#2246), otherwise the event's own read.
+  /// </summary>
+  private async Task<long?> _commitSequenceOfAsync(
+      Guid eventId, global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState, CancellationToken cancellationToken) {
+    if (batchState is not null
+        && await batchState.CommitSequenceOfAsync(_eventStore, eventId, cancellationToken) is { } batched) {
+      return batched.Value;
+    }
+    return await _eventStore.GetCommitSequenceAsync(eventId, cancellationToken);
   }
 
   private async Task<bool> _isPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) {

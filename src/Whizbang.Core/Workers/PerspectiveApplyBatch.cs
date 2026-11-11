@@ -82,7 +82,7 @@ internal static partial class PerspectiveApplyBatch {
 
     var batchState = services.StateSource?.BeginBatch([.. pairs.Select(p => new PerspectiveStateRequest(
       p.StreamId, p.PerspectiveName, p.Events[0].MessageId.Value,
-      PerspectiveStateRequest.IsKnownNew(p.LastProcessedEventId, p.Events)))]);
+      PerspectiveStateRequest.IsKnownNew(p.LastProcessedEventId, p.Events), [.. p.Events.Select(e => e.MessageId.Value)]))]);
     var parallel = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, services.Width), CancellationToken = cancellationToken };
 
     await Parallel.ForEachAsync(pairs, parallel, async (pair, ct) => {
