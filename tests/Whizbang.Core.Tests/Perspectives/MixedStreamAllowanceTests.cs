@@ -16,13 +16,13 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Perspectives/MixedStreamAllowance.cs</code-under-test>
 public class MixedStreamAllowanceTests {
   // Real types, by the name the append path stores them under.
-  private static readonly string PING = TypeNameFormatter.Format(typeof(AllowancePinged));
-  private static readonly string OPENED = TypeNameFormatter.Format(typeof(AllowanceOpened));
-  private static readonly string CLOSED = TypeNameFormatter.Format(typeof(AllowanceClosed));
+  private static readonly string _ping = TypeNameFormatter.Format(typeof(AllowancePinged));
+  private static readonly string _opened = TypeNameFormatter.Format(typeof(AllowanceOpened));
+  private static readonly string _closed = TypeNameFormatter.Format(typeof(AllowanceClosed));
 
   [Test]
   public async Task Allowed_TheDefaultRefuse_AllowsNothingAsync() {
-    var mixed = _perspective("App.Mixed", MixedStreams.Refuse, [PING, OPENED], new MixedStreamPair(PING, OPENED));
+    var mixed = _perspective("App.Mixed", MixedStreams.Refuse, [_ping, _opened], new MixedStreamPair(_ping, _opened));
 
     var allowed = MixedStreamAllowance.Allowed([mixed]);
 
@@ -32,43 +32,43 @@ public class MixedStreamAllowanceTests {
 
   [Test]
   public async Task Allowed_AnAllowingReadModel_AllowsItsPairsAsync() {
-    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [PING, OPENED, CLOSED],
-      new MixedStreamPair(PING, OPENED), new MixedStreamPair(PING, CLOSED));
-    var plain = _perspective("App.Plain", MixedStreams.Refuse, [OPENED]);
+    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [_ping, _opened, _closed],
+      new MixedStreamPair(_ping, _opened), new MixedStreamPair(_ping, _closed));
+    var plain = _perspective("App.Plain", MixedStreams.Refuse, [_opened]);
 
     var allowed = MixedStreamAllowance.Allowed([mixed, plain]);
 
-    await Assert.That(allowed).IsEquivalentTo([new MixedStreamPair(PING, CLOSED), new MixedStreamPair(PING, OPENED)]);
-    await Assert.That(allowed[0]).IsEqualTo(new MixedStreamPair(PING, CLOSED)).Because("ordered, so the answer is stable");
+    await Assert.That(allowed).IsEquivalentTo([new MixedStreamPair(_ping, _closed), new MixedStreamPair(_ping, _opened)]);
+    await Assert.That(allowed[0]).IsEqualTo(new MixedStreamPair(_ping, _closed)).Because("ordered, so the answer is stable");
   }
 
   [Test]
   public async Task Allowed_ASecondReadModelWithoutTheOptIn_KeepsThePairRefusedAsync() {
-    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [PING, OPENED, CLOSED],
-      new MixedStreamPair(PING, OPENED), new MixedStreamPair(PING, CLOSED));
-    var other = _perspective("App.Other", MixedStreams.Refuse, [PING, OPENED], new MixedStreamPair(PING, OPENED));
+    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [_ping, _opened, _closed],
+      new MixedStreamPair(_ping, _opened), new MixedStreamPair(_ping, _closed));
+    var other = _perspective("App.Other", MixedStreams.Refuse, [_ping, _opened], new MixedStreamPair(_ping, _opened));
 
     var allowed = MixedStreamAllowance.Allowed([mixed, other]);
 
-    await Assert.That(allowed).IsEquivalentTo([new MixedStreamPair(PING, CLOSED)])
+    await Assert.That(allowed).IsEquivalentTo([new MixedStreamPair(_ping, _closed)])
       .Because("App.Other applies both types without the opt-in, so their streams must stay homogeneous for its rebuild");
   }
 
   [Test]
   public async Task Allowed_NamesWithAVersion_AreNormalizedAsync() {
-    var versioned = OPENED + ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
-    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [PING, versioned], new MixedStreamPair(PING, versioned));
+    var versioned = _opened + ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [_ping, versioned], new MixedStreamPair(_ping, versioned));
 
     var allowed = MixedStreamAllowance.Allowed([mixed]);
 
-    await Assert.That(allowed).IsEquivalentTo([new MixedStreamPair(PING, OPENED)]);
+    await Assert.That(allowed).IsEquivalentTo([new MixedStreamPair(_ping, _opened)]);
   }
 
   [Test]
   public async Task Allowed_WithoutARegistry_IsEmptyAsync() {
     await Assert.That(MixedStreamAllowance.Allowed((IPerspectiveRunnerRegistry?)null)).IsEmpty();
-    var registry = new Registry(_perspective("App.Mixed", MixedStreams.Allow, [PING, OPENED], new MixedStreamPair(PING, OPENED)));
-    await Assert.That(MixedStreamAllowance.Allowed(registry)).IsEquivalentTo([new MixedStreamPair(PING, OPENED)]);
+    var registry = new Registry(_perspective("App.Mixed", MixedStreams.Allow, [_ping, _opened], new MixedStreamPair(_ping, _opened)));
+    await Assert.That(MixedStreamAllowance.Allowed(registry)).IsEquivalentTo([new MixedStreamPair(_ping, _opened)]);
     await Assert.That(() => MixedStreamAllowance.Allowed((IEnumerable<PerspectiveRegistrationInfo>)null!)).Throws<ArgumentNullException>();
   }
 
@@ -76,27 +76,27 @@ public class MixedStreamAllowanceTests {
   public async Task Stored_AddsEachTypesFormerNames_FromTheCatalogAsync() {
     var catalog = new Catalog(
       new MessageTypeCatalogEntry(typeof(AllowancePinged), TypeNameFormatter.FormatClrTypeName(typeof(AllowancePinged)), "event", null) {
-        FormerNames = ["Old.Pinged", " "],
+        FormerNames = ["Old.Pinged", " ", "Old.Pinged"],
       },
       new MessageTypeCatalogEntry(typeof(AllowanceOpened), TypeNameFormatter.FormatClrTypeName(typeof(AllowanceOpened)), "event", null));
     var assembly = typeof(AllowancePinged).Assembly.GetName().Name;
 
-    var stored = MixedStreamAllowance.Stored([new MixedStreamPair(PING, OPENED)], catalog);
+    var stored = MixedStreamAllowance.Stored([new MixedStreamPair(_ping, _opened)], catalog);
 
-    await Assert.That(stored).IsEquivalentTo([new MixedStreamPair($"Old.Pinged, {assembly}", OPENED), new MixedStreamPair(PING, OPENED)])
-      .Because("events stored under a former name hold the stream as the type does");
-    await Assert.That(MixedStreamAllowance.StoredNames(OPENED, null)).IsEquivalentTo([OPENED]);
-    await Assert.That(MixedStreamAllowance.StoredNames(OPENED, new Unavailable())).IsEquivalentTo([OPENED]);
+    await Assert.That(stored).IsEquivalentTo([new MixedStreamPair($"Old.Pinged, {assembly}", _opened), new MixedStreamPair(_ping, _opened)])
+      .Because("events stored under a former name hold the stream as the type does; a blank or repeated former name adds none");
+    await Assert.That(MixedStreamAllowance.StoredNames(_opened, null)).IsEquivalentTo([_opened]);
+    await Assert.That(MixedStreamAllowance.StoredNames(_opened, new Unavailable())).IsEquivalentTo([_opened]);
     await Assert.That(() => MixedStreamAllowance.Stored(null!, catalog)).Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task IgnoredByRebuild_IsTheEphemeralSide_OfPairsTheReadModelDoesNotApplyAsync() {
-    IReadOnlyList<MixedStreamPair> allowed = [new MixedStreamPair(PING, OPENED)];
-    var durableOnly = _perspective("App.Durable", MixedStreams.Refuse, [OPENED]);
-    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [PING, OPENED], new MixedStreamPair(PING, OPENED));
+    IReadOnlyList<MixedStreamPair> allowed = [new MixedStreamPair(_ping, _opened)];
+    var durableOnly = _perspective("App.Durable", MixedStreams.Refuse, [_opened]);
+    var mixed = _perspective("App.Mixed", MixedStreams.Allow, [_ping, _opened], new MixedStreamPair(_ping, _opened));
 
-    await Assert.That(MixedStreamAllowance.IgnoredByRebuild(durableOnly, allowed)).IsEquivalentTo([PING])
+    await Assert.That(MixedStreamAllowance.IgnoredByRebuild(durableOnly, allowed)).IsEquivalentTo([_ping])
       .Because("a read model applying only the Sourced type rebuilds a mixed stream from its Sourced events");
     await Assert.That(MixedStreamAllowance.IgnoredByRebuild(mixed, allowed)).IsEmpty()
       .Because("the opted-in read model applies the ephemeral type, so its full rebuild of the stream stays refused");
