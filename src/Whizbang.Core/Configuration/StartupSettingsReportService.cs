@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -32,12 +33,29 @@ internal sealed partial class StartupSettingsReportService(
 
   /// <inheritdoc />
   public Task StartAsync(CancellationToken cancellationToken) {
-    _ = (options, configuration, derivedSources, logger);
+    if (!options.Value.LogSettings) {
+      LogReportOff(logger, LOG_SETTINGS_KEY);
+      return Task.CompletedTask;
+    }
+    var report = StartupSettingsReport.Build(
+      configuration as IConfigurationRoot,
+      KnownConfigurationKeys.Library,
+      KnownConfigurationKeys.Sensitive,
+      derivedSources.SelectMany(static source => source.DerivedSettings));
+    foreach (var section in report) {
+      LogSection(logger, section.Name, section);
+    }
     return Task.CompletedTask;
   }
 
   /// <inheritdoc />
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+  [LoggerMessage(Level = LogLevel.Information, Message = "Settings {Section}: {Settings}")]
+  static partial void LogSection(ILogger logger, string section, SettingsSection settings);
+
+  [LoggerMessage(Level = LogLevel.Information, Message = "The startup settings report is off ({Key} = false)")]
+  static partial void LogReportOff(ILogger logger, string key);
 }
 
 /// <summary>Registers the startup settings report (#2251).</summary>
@@ -50,5 +68,15 @@ internal static class StartupSettingsReportServiceCollectionExtensions {
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <returns>The same collection.</returns>
-  internal static IServiceCollection AddWhizbangStartupSettingsReport(this IServiceCollection services) => services;
+  internal static IServiceCollection AddWhizbangStartupSettingsReport(this IServiceCollection services) {
+    services.AddOptions<WhizbangStartupOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangStartupOptions>, ConfigureWhizbangStartupOptions>(
+      sp => new ConfigureWhizbangStartupOptions(sp.GetService<IConfiguration>())));
+    services.TryAddSingleton(sp => new StartupSettingsReportService(
+      sp.GetRequiredService<IOptions<WhizbangStartupOptions>>(),
+      sp.GetService<IConfiguration>(),
+      sp.GetServices<IDerivedSettingSource>(),
+      sp.GetRequiredService<ILogger<StartupSettingsReportService>>()));
+    return services.AddHostedServiceAtStage(StartupStage.Running, static sp => sp.GetRequiredService<StartupSettingsReportService>());
+  }
 }

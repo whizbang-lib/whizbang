@@ -80,6 +80,11 @@ internal static class WhizbangVersionInfo
     <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/configuration-keys.txt"
                       LogicalName="Whizbang.Core.Configuration.configuration-keys.txt"
                       Link="Configuration/configuration-keys.txt" />
+    <!-- #2251: the keys bound to a SensitiveString, recorded by the same test, so the startup settings report redacts
+         by type. -->
+    <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/sensitive-configuration-keys.txt"
+                      LogicalName="Whizbang.Core.Configuration.sensitive-configuration-keys.txt"
+                      Link="Configuration/sensitive-configuration-keys.txt" />
   </ItemGroup>
   <ItemGroup>
     <!-- Testing support: test assemblies that access internal members. The strong-name

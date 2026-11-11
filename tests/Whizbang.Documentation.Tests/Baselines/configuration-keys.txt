@@ -280,6 +280,7 @@ Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
 Whizbang:Startup:AllowLossyRollback
+Whizbang:Startup:LogSettings
 Whizbang:Startup:OverrideIncompatibility
 Whizbang:Startup:RegistrationCollisions
 Whizbang:StartupStatusGraph:IncludeReasons

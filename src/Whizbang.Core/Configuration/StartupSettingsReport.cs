@@ -37,7 +37,14 @@ public sealed record SettingEntry(
     IDerivedSetting? Derivation) {
   /// <summary>The entry as the report writes it, named by the last segment of its key.</summary>
   /// <returns>For example <c>MaxBufferedMessages=10000 (configured: JsonConfigurationProvider ...)</c>.</returns>
-  public override string ToString() => Key[..0];
+  public override string ToString() {
+    var name = Key[(Key.LastIndexOf(':') + 1)..];
+    return Source switch {
+      SettingSource.Configured => name + "=" + Value + " (configured: " + Provider + ")",
+      SettingSource.Derived => name + "=" + Derivation!.DisplayValue + " (derived: " + DerivedSetting.Describe(Derivation) + ")",
+      _ => name + " (default)",
+    };
+  }
 }
 
 /// <summary>The settings of one section of the report, written as one log entry.</summary>
@@ -45,7 +52,11 @@ public sealed record SettingEntry(
 /// <param name="Settings">Its settings, in manifest order.</param>
 /// <docs>operations/configuration/startup-settings-report</docs>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/StartupSettingsReportTests.cs</tests>
-public sealed record SettingsSection(string Name, IReadOnlyList<SettingEntry> Settings);
+public sealed record SettingsSection(string Name, IReadOnlyList<SettingEntry> Settings) {
+  /// <summary>The section's settings as the report writes them, separated by semicolons.</summary>
+  /// <returns>For example <c>One=42 (configured: ...); Two (default)</c>.</returns>
+  public override string ToString() => string.Join("; ", Settings);
+}
 
 /// <summary>
 /// Supplies derived settings to the startup settings report. Register one for each component that computes a value
@@ -76,6 +87,9 @@ public interface IDerivedSettingSource {
 /// <docs>operations/configuration/startup-settings-report</docs>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/StartupSettingsReportTests.cs</tests>
 internal static class StartupSettingsReport {
+  private static readonly string[] _credentialWords =
+    ["ConnectionString", "Password", "Secret", "Token", "Key", "Credential", "Credentials"];
+
   /// <summary>Builds the report.</summary>
   /// <param name="configuration">The host's configuration, or null when it has none (or is not a root, so its providers cannot be named).</param>
   /// <param name="manifest">The keys to report.</param>
@@ -87,13 +101,73 @@ internal static class StartupSettingsReport {
       KnownConfigurationKeys manifest,
       KnownConfigurationKeys sensitive,
       IEnumerable<IDerivedSetting> derived) {
-    _ = (configuration, manifest, sensitive, derived);
-    return [];
+    ArgumentNullException.ThrowIfNull(manifest);
+    ArgumentNullException.ThrowIfNull(sensitive);
+    ArgumentNullException.ThrowIfNull(derived);
+    var derivations = new Dictionary<string, IDerivedSetting>(StringComparer.OrdinalIgnoreCase);
+    foreach (var setting in derived) {
+      derivations[setting.Name] = setting;
+    }
+    var configured = configuration?.AsEnumerable()
+      .Where(static pair => pair.Value is not null)
+      .Select(static pair => pair.Key)
+      .ToList() ?? [];
+    // The last provider that has a key is the one whose value wins, so the search runs from the last.
+    var providers = configuration?.Providers.Reverse().ToList() ?? [];
+
+    var entries = new List<SettingEntry>();
+    foreach (var manifestKey in manifest.Keys) {
+      var keys = KnownConfigurationKeys.IsPattern(manifestKey)
+        ? configured.Where(key => KnownConfigurationKeys.Matches(manifestKey, key)).Order(StringComparer.OrdinalIgnoreCase).ToList()
+        : [];
+      if (keys.Count == 0) {
+        keys.Add(manifestKey);
+      }
+      foreach (var key in keys) {
+        entries.Add(_entry(manifestKey, key, configuration, providers, sensitive, derivations));
+        derivations.Remove(key);
+      }
+    }
+    // A derived value no key sets (the thread-pool floor) is reported under its own name.
+    entries.AddRange(derivations.Values.Select(static d => new SettingEntry(d.Name, d.Name, SettingSource.Derived, null, null, d)));
+
+    return [.. entries
+      .GroupBy(static e => _section(e.Key), StringComparer.OrdinalIgnoreCase)
+      .OrderBy(static g => g.Key, StringComparer.OrdinalIgnoreCase)
+      .Select(static g => new SettingsSection(g.Key, [.. g]))];
   }
 
   /// <summary>Whether a key's value is shown redacted: bound to a sensitive value, a connection string, or credential-named.</summary>
   internal static bool IsSensitive(string key, KnownConfigurationKeys sensitive) {
-    _ = (key, sensitive);
-    return false;
+    if (sensitive.IsKnown(key) || key.StartsWith("ConnectionStrings:", StringComparison.OrdinalIgnoreCase)) {
+      return true;
+    }
+    var name = key[(key.LastIndexOf(':') + 1)..];
+    return _credentialWords.Any(word => name.EndsWith(word, StringComparison.OrdinalIgnoreCase));
+  }
+
+  private static SettingEntry _entry(
+      string manifestKey,
+      string key,
+      IConfigurationRoot? configuration,
+      List<IConfigurationProvider> providers,
+      KnownConfigurationKeys sensitive,
+      Dictionary<string, IDerivedSetting> derivations) {
+    if (derivations.TryGetValue(key, out var derivation)) {
+      return new SettingEntry(manifestKey, key, SettingSource.Derived, null, null, derivation);
+    }
+    var raw = configuration?[key];
+    if (raw is null) {
+      return new SettingEntry(manifestKey, key, SettingSource.Default, null, null, null);
+    }
+    var value = IsSensitive(key, sensitive) ? new SensitiveString(raw).ToString() : raw;
+    // A value came from a provider, so one of them has the key.
+    var provider = providers.First(p => p.TryGet(key, out _)).ToString();
+    return new SettingEntry(manifestKey, key, SettingSource.Configured, value, provider, null);
+  }
+
+  private static string _section(string key) {
+    var last = key.LastIndexOf(':');
+    return last < 0 ? "(root)" : key[..last];
   }
 }
