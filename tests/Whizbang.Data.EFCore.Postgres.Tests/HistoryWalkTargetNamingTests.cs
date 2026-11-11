@@ -43,8 +43,8 @@ public class HistoryWalkTargetNamingTests : EFCoreTestBase {
   public async Task EveryHistoryWalkStep_IsCoveredByThisGuardAsync() {
     var root = _findRepoRoot();
     var walkers = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
-      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-      .Where(f => File.ReadAllText(f).Contains("new TypeHistoryWalker(", StringComparison.Ordinal))
+      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+        && File.ReadAllText(f).Contains("new TypeHistoryWalker(", StringComparison.Ordinal))
       .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
       .ToList();
 
