@@ -693,7 +693,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>The array sibling of <c>_integrityLedgerOutcomeAsync</c>: one batch function call answering the per-key
   /// flags (<c>granted</c>), the rows it recorded (<c>opened</c>) and, for the report batch, the unhealable marks it
-  /// lifted (<c>reopened</c>), which are counted (#2256, migration 393). Null on ANY failure — the caller then loops the
+  /// lifted (<c>reopened</c>), which are counted (#2256, migration 393). Null on ANY failure: the caller then loops the
   /// single-key path, whose per-operation fail-open/fail-closed semantics remain the authority.</summary>
   private async Task<IReadOnlyList<bool>?> _integrityLedgerBoolArrayAsync(
       string fn, Action<Npgsql.NpgsqlCommand> bind, CancellationToken ct) {
