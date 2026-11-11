@@ -125,7 +125,10 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     }
     var database = services.GetRequiredService<PostgresArchiveConnection>();
     var report = options.BlockerReport.Enabled;
-    var targets = _targets(services.GetService<IMessageTypeCatalog>(), options.ReleaseBlockers, report);
+    var catalog = services.GetService<IMessageTypeCatalog>();
+    // #2255: the pairs allowed to share a stream, under every stored name: their Sourced types do not block the walk.
+    var allowed = MixedStreamAllowance.Stored(MixedStreamAllowance.Allowed(services.GetService<IPerspectiveRunnerRegistry>()), catalog);
+    var targets = _targets(catalog, options.ReleaseBlockers, report, allowed);
     long released = 0;
     var walk = await new TypeHistoryWalker(OPERATION, _scanSize, _maxBatches)
       .WalkAsync(database, targets, async (transaction, prefix, target, window, ct) => {
@@ -168,7 +171,8 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     string entries(IEnumerable<EphemeralBlocker> blockers) {
       var text = new System.Text.StringBuilder();
       foreach (var blocker in blockers) {
-        EphemeralBlockerReportText.AppendEntry(text, blocker, releaseIndex.GetValueOrDefault(TypeNameFormatter.GetFullName(blocker.EphemeralType)), _readModels(registry, blocker.BlockingType));
+        EphemeralBlockerReportText.AppendEntry(text, blocker, releaseIndex.GetValueOrDefault(TypeNameFormatter.GetFullName(blocker.EphemeralType)),
+          _readModels(registry, blocker.BlockingType), _readModels(registry, blocker.BlockingType, blocker.EphemeralType));
       }
       return text.ToString();
     }
@@ -231,13 +235,14 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     return inputs;
   }
 
-  // The read models that apply the blocking type: they lose their rebuild from its events once a release reaps them.
-  private static List<string> _readModels(IPerspectiveRunnerRegistry? registry, string blockingType) {
-    var name = EventTypeMatchingHelper.NormalizeTypeName(blockingType);
+  // The read models that apply every given type: the blocking type alone names those that lose their rebuild from its
+  // events once a release reaps them; with the ephemeral type too, those that must opt in for the pair to mix (#2255).
+  private static List<string> _readModels(IPerspectiveRunnerRegistry? registry, params string[] types) {
+    var names = types.Select(EventTypeMatchingHelper.NormalizeTypeName).ToList();
     return registry is null
       ? []
       : [.. registry.GetRegisteredPerspectives()
-          .Where(p => p.EventTypes.Any(e => string.Equals(EventTypeMatchingHelper.NormalizeTypeName(e), name, StringComparison.Ordinal)))
+          .Where(p => names.TrueForAll(name => p.EventTypes.Any(e => string.Equals(EventTypeMatchingHelper.NormalizeTypeName(e), name, StringComparison.Ordinal))))
           .Select(p => p.ClrTypeName)
           .Distinct(StringComparer.Ordinal)
           .Order(StringComparer.Ordinal)];
@@ -269,14 +274,17 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
   /// events through the type's index by that name. The catalog's <see cref="MessageTypeCatalogEntry.ClrTypeName"/> is the
   /// bare CLR name: it matches no stored event, and a walk under it read nothing and completed (#2254). The bare name is
   /// kept for the one thing keyed by it, the type-definition registry.
-  /// The report switch and the type's release list are the walk's variant: a change walks the type again, so a
-  /// release reaches history a completed walk passed, and the report's counts describe one walk. Off with nothing released
-  /// is no variant, as before the report.
+  /// The report switch, the type's release list and the Sourced types allowed to share its streams (#2255) are the walk's
+  /// variant: a change walks the type again, so a release or an allowance reaches history a completed walk passed, and the
+  /// report's counts describe one walk. Off with nothing released or allowed is no variant, as before the report.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralHistoryReclassifySqlTests.cs:TheWalk_NamesTheTypeAsTheAppendPathStoredIt_AndItsDefinitionByTheBareNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HistoryWalkTargetNamingTests.cs:EveryHistoryWalkStep_NamesItsTargetsAsTheAppendPathStoresThem_AndReadsThemAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Reclassify_AnAllowedPair_ReclassifiesTheEphemeralEvents_KeepsTheDurable_AndTheDigestsEqualARecountAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Reclassify_WithNoAllowingReadModel_TheAllowedPairStillBlocksAsync</tests>
   private static List<EphemeralTarget> _targets(
-      IMessageTypeCatalog? catalog, IReadOnlyDictionary<string, List<string>> releaseBlockers, bool report) {
+      IMessageTypeCatalog? catalog, IReadOnlyDictionary<string, List<string>> releaseBlockers, bool report,
+      IReadOnlyList<MixedStreamPair> allowed) {
     var targets = new List<EphemeralTarget>();
     if (catalog is not { IsAvailable: true }) {
       return targets;
@@ -291,19 +299,25 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
         .. entry.FormerNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => TypeNameFormatter.FormatFormerName(entry.Type, n)),
       ];
       var release = EphemeralReleaseList.Resolve(releaseBlockers, entry, all);
-      var variant = _variant(report, release.Names);
-      targets.AddRange(names.Select(name => new EphemeralTarget(name, entry.ClrTypeName, names, release, report, variant)));
+      string[] mixing = [.. allowed.Where(p => names.Contains(p.EphemeralType, StringComparer.Ordinal))
+        .Select(p => p.DurableType).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+      var variant = _variant(report, release.Names, mixing);
+      targets.AddRange(names.Select(name => new EphemeralTarget(name, entry.ClrTypeName, names, release, report, variant) { Allowed = mixing }));
     }
     return targets;
   }
 
-  private static string? _variant(bool report, string[] released) {
-    var parts = new List<string>(2);
+  private static string? _variant(bool report, string[] released, string[] allowed) {
+    var parts = new List<string>(3);
     if (report) {
       parts.Add("blocker-report");
     }
     if (released.Length > 0) {
       parts.Add("release=" + string.Join('|', released));
+    }
+    // #2255: a pair newly allowed walks the type again, so history a completed walk left blocked is reclassified.
+    if (allowed.Length > 0) {
+      parts.Add("allow=" + string.Join('|', allowed));
     }
     return parts.Count == 0 ? null : string.Join(';', parts);
   }
@@ -312,7 +326,7 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
       NpgsqlTransaction transaction, string prefix, EphemeralTarget target, TypeHistoryWindow window, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
       "SELECT status, events_reclassified, events_blocked, events_total, events_matched, events_released " +
-      $"FROM {prefix}wh_ephemeral_history_apply($1, $2, $3, $4, $5, $6, $7, $8)", transaction.Connection, transaction);
+      $"FROM {prefix}wh_ephemeral_history_apply($1, $2, $3, $4, $5, $6, $7, $8, $9)", transaction.Connection, transaction);
     command.Parameters.AddWithValue(target.EventType);
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Names });
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)window.After ?? DBNull.Value });
@@ -321,6 +335,7 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     command.Parameters.AddWithValue(window.Scanned);
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Release.Names });
     command.Parameters.AddWithValue(target.Report);
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Allowed });
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return (new TypeHistoryBatch(reader.GetString(0), reader.GetInt64(1), 0, reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4)),
@@ -328,10 +343,13 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
   }
 
   // A walk of one stored name; Names are every name the type is stored under, which the mixed-stream guard treats as one.
-  // Release is the type's release list, Report whether its batches record their blockers; both make up the Variant.
+  // Release is the type's release list, Report whether its batches record their blockers, Allowed the Sourced types allowed
+  // to share its streams (#2255); all three make up the Variant.
   private sealed record EphemeralTarget(
       string EventType, string DefinitionName, string[] Names, EphemeralReleaseList Release, bool Report, string? Variant)
-    : TypeHistoryTarget(EventType, DefinitionName, Variant);
+    : TypeHistoryTarget(EventType, DefinitionName, Variant) {
+    public string[] Allowed { get; init; } = [];
+  }
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Ephemeral history of {EventType}: {Reclassified} reclassified, {Blocked} left Sourced in mixed streams this cycle; {Left} of {Total} left to read")]

@@ -33,25 +33,34 @@ internal sealed record EphemeralBlocker(
 internal sealed record EphemeralMixedInput(string EventType, long Events, long Streams, long MixedStreams);
 
 /// <summary>
-/// The text of the blocker report: per blocking type its counts, a sample stream, its route and the three things an
-/// operator can do about it, the second with the exact setting line that releases it and the read models that would lose
-/// their rebuild from the released events.
+/// The text of the blocker report: per blocking type its counts, a sample stream, its route and the four things an
+/// operator can do about it: mark it ephemeral, release it (with the exact setting line and the read models that would lose
+/// their rebuild from the released events), keep it, or allow mixing (with the exact attribute line and the read models that
+/// must carry it, #2255).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events#what-holds-ephemeral-history-back</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Report_AMixedStream_NamesTheBlockingType_ItsCounts_ASampleStream_AndItsRouteAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Report_ARouteWithOnlySomeParts_NamesWhatItHasAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Report_WithoutARoute_OrAReadModel_SaysSoAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Report_NamesTheReadModelsThatApplyTheBlockingType_NextToTheReleaseLineAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Report_AnAllowedPair_IsNoBlocker_AndAnUnallowedOneOffersAllowMixingAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Report_WhenNoReadModelAppliesBoth_SaysAllowMixingNeedsOneAsync</tests>
 internal static class EphemeralBlockerReportText {
   /// <summary>The setting section a release is written under.</summary>
   internal const string RELEASE_SECTION = "Whizbang:Ephemeral:ReleaseBlockers";
+
+  /// <summary>The attribute line that allows a pair to share a stream (#2255).</summary>
+  internal const string ALLOW_MIXING_ATTRIBUTE = "[DangerouslyAllowMixedEphemeralAndSourcedEvents(Streams = MixedStreams.Allow)]";
 
   /// <summary>Appends one blocker's entry.</summary>
   /// <param name="text">The report being built.</param>
   /// <param name="blocker">The blocker.</param>
   /// <param name="releaseIndex">The index the setting line takes in the ephemeral type's release list.</param>
   /// <param name="readModels">The read models that apply the blocking type.</param>
-  public static void AppendEntry(StringBuilder text, EphemeralBlocker blocker, int releaseIndex, IReadOnlyList<string> readModels) {
+  /// <param name="mixingReadModels">The read models that apply both the ephemeral and the blocking type: each must carry
+  /// the allow-mixing attribute for the pair to share a stream.</param>
+  public static void AppendEntry(
+      StringBuilder text, EphemeralBlocker blocker, int releaseIndex, IReadOnlyList<string> readModels, IReadOnlyList<string> mixingReadModels) {
     var culture = CultureInfo.InvariantCulture;
     text.Append(culture, $"\n  {blocker.BlockingType}: {blocker.Events} event(s) in {blocker.Streams} stream(s), ")
       .Append(culture, $"about {blocker.Bytes:N0} bytes; sample stream {blocker.SampleStream}")
@@ -62,7 +71,12 @@ internal static class EphemeralBlockerReportText {
       .Append(readModels.Count == 0
         ? "(no registered read model applies it)"
         : "(read models that apply it lose their rebuild from the reaped events: " + string.Join(", ", readModels) + ")")
-      .Append("; (3) keep it: these events and streams stay stored.");
+      .Append("; (3) keep it: these events and streams stay stored; ")
+      .Append("(4) allow mixing, which keeps these durable events and lets the ephemeral ones go: put ")
+      .Append(ALLOW_MIXING_ATTRIBUTE)
+      .Append(mixingReadModels.Count == 0
+        ? " on a read model that applies both types (no registered read model applies both, so there is none to opt in yet)."
+        : " on every read model that applies both types: " + string.Join(", ", mixingReadModels) + ".");
   }
 
   /// <summary>

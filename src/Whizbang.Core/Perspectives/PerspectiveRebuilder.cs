@@ -270,7 +270,7 @@ public sealed partial class PerspectiveRebuilder(
       var eventTypes = _effectiveEventTypes(sp, registry, perspectiveName);
       streamIds ??= await _resolveStreamIdsToReplayAsync(sp, perspectiveName, eventTypes, ct);
       var resolved = streamIds.Count;
-      streamIds = await _withoutStateBasedStreamsAsync(sp, perspectiveName, streamIds, ct);
+      streamIds = await _withoutStateBasedStreamsAsync(sp, registry, perspectiveName, streamIds, ct);
       run.StreamsRefused = resolved - streamIds.Count;
 
       // Blue-green needs a driver that can build and swap a shadow table. Without one the rebuild
@@ -383,13 +383,25 @@ public sealed partial class PerspectiveRebuilder(
   /// backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
   /// so engines without the flags are unaffected.
   /// </summary>
+  /// <remarks>
+  /// A stream an allowed pair mixed (#2255) is not refused for a read model that applies only the pair's Sourced type: the
+  /// pair's ephemeral type, under every stored name, is passed over for it (<see cref="MixedStreamAllowance.IgnoredByRebuild"/>).
+  /// The opted-in read model applies the ephemeral type, so its full rebuild of the stream stays refused.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_AnAllowedMixedStream_RebuildsForADurableOnlyReadModel_AndStaysRefusedForTheOptedInOneAsync</tests>
   private async Task<List<Guid>> _withoutStateBasedStreamsAsync(
-      IServiceProvider sp, string perspectiveName, List<Guid> streamIds, CancellationToken ct) {
+      IServiceProvider sp, IPerspectiveRunnerRegistry registry, string perspectiveName, List<Guid> streamIds, CancellationToken ct) {
     var stateBasedGuard = sp.GetService<IWorkCoordinator>();
     if (stateBasedGuard is null || streamIds.Count == 0) {
       return streamIds;
     }
-    var stateBased = await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct);
+    var catalog = sp.GetService<IMessageTypeCatalog>();
+    var perspective = registry.GetRegisteredPerspectives().FirstOrDefault(p => p.ClrTypeName == perspectiveName);
+    List<string> ignored = [.. MixedStreamAllowance.IgnoredByRebuild(perspective, MixedStreamAllowance.Allowed(registry))
+      .SelectMany(e => MixedStreamAllowance.StoredNames(e, catalog))];
+    var stateBased = ignored.Count == 0
+      ? await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct)
+      : await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ignored, ct);
     if (stateBased.Count == 0) {
       return streamIds;
     }

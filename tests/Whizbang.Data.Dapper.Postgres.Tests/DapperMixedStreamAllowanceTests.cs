@@ -41,8 +41,9 @@ public class DapperMixedStreamAllowanceTests : PostgresTestBase {
     await ((IWorkCoordinator)coordinator).SyncMixedStreamAllowancesAsync([]);
 
     await Assert.That(await _countAsync(conn, stream)).IsEqualTo(2L).Because("the allowed pair shared the stream");
-    var refusal = await Assert.That(() => _appendAsync(conn, stream, _pinged, EPHEMERAL)).Throws<PostgresException>();
-    await Assert.That(refusal!.SqlState).IsEqualTo("WH133").Because("an empty sync clears the allowance, and mixing is refused again");
+    var refusal = await Assert.That(() => _appendAsync(conn, stream, _opened, 0)).Throws<PostgresException>();
+    await Assert.That(refusal!.SqlState).IsEqualTo("WH133")
+      .Because("an empty sync clears the allowance: the stream's newest event is ephemeral, so a Sourced one is refused again");
   }
 
   [Test]
