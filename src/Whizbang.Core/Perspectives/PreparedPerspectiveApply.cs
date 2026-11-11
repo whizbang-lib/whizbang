@@ -74,6 +74,12 @@ public class PreparedPerspectiveApply {
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       PendingPerspectiveWrite? write,
       PerspectivePerPairReason perPairReason) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(perspectiveName);
+    ArgumentNullException.ThrowIfNull(events);
+    if (write is not null && perPairReason != PerspectivePerPairReason.None) {
+      throw new ArgumentException(
+        $"A pair that runs the per-pair path ({perPairReason}) has no write for the batch.", nameof(write));
+    }
     StreamId = streamId;
     PerspectiveName = perspectiveName;
     LastProcessedEventId = lastProcessedEventId;
@@ -116,6 +122,9 @@ public class PreparedPerspectiveApply {
       Guid? lastProcessedEventId,
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       PerspectivePerPairReason reason) {
+    if (reason == PerspectivePerPairReason.None) {
+      throw new ArgumentOutOfRangeException(nameof(reason), reason, "A pair handed to the per-pair path needs a reason.");
+    }
     return new PreparedPerspectiveApply(streamId, perspectiveName, lastProcessedEventId, events, write: null, reason);
   }
 }

@@ -348,16 +348,30 @@ public class PerspectiveRunnerTemplateInvariantTests {
   public async Task SaveModelAndCheckpoint_DatesARowItInsertsAtTheStreamsStart_BeforeTheUpsertAsync() {
     // #2152 regression lock: the one write method resolves the stream's start for the row and begins it before the
     // upsert, so every write (live, partial, rewind and rebuild) dates a row it inserts at the stream's start once the
-    // stream's first event is gone. The behavior is pinned end to end by RebuildCreatedAtIntegrationTests.
+    // stream's first event is gone. The behavior is pinned end to end by RebuildCreatedAtIntegrationTests. The start is
+    // resolved by _rowWriteStartAsync, which the set-based write's preparation shares (#2246), so both begin the same
+    // start before the store sees the row.
     var template = _loadTemplate();
     var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
-    var resolve = template.IndexOf("PerspectiveRowStart.ResolveAsync(", method, StringComparison.Ordinal);
+    var start = template.IndexOf("await _rowWriteStartAsync(", method, StringComparison.Ordinal);
     var begin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", method, StringComparison.Ordinal);
     var upsert = template.IndexOf("#region UPSERT_CALL", method, StringComparison.Ordinal);
+    var helper = template.IndexOf("_rowWriteStartAsync(\n      Guid streamId,", StringComparison.Ordinal);
+    var resolve = template.IndexOf("PerspectiveRowStart.ResolveAsync(", helper, StringComparison.Ordinal);
+    var helperEnd = template.IndexOf("\n  }\n", helper, StringComparison.Ordinal);
+    var prepare = template.IndexOf("private async Task<global::Whizbang.Core.Perspectives.PendingPerspectiveWrite?> _prepareRowWriteAsync(", StringComparison.Ordinal);
+    var prepareStart = template.IndexOf("await _rowWriteStartAsync(", prepare, StringComparison.Ordinal);
+    var prepareBegin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", prepare, StringComparison.Ordinal);
+    var prepareCall = template.IndexOf("return PrepareRowWrite(", prepare, StringComparison.Ordinal);
 
-    await Assert.That(resolve).IsGreaterThan(method).Because("the start is resolved inside the write method");
-    await Assert.That(begin).IsGreaterThan(resolve).Because("the resolved start is begun for the row being written");
+    await Assert.That(start).IsGreaterThan(method).Because("the start is resolved inside the write method");
+    await Assert.That(begin).IsGreaterThan(start).Because("the resolved start is begun for the row being written");
     await Assert.That(upsert).IsGreaterThan(begin).Because("the start is in force when the store inserts the row");
+    await Assert.That(resolve).IsGreaterThan(helper).Because("the shared start resolves the stream's start");
+    await Assert.That(resolve).IsLessThan(helperEnd);
+    await Assert.That(prepareStart).IsGreaterThan(prepare).Because("the set-based write's preparation dates the row the same way");
+    await Assert.That(prepareBegin).IsGreaterThan(prepareStart);
+    await Assert.That(prepareCall).IsGreaterThan(prepareBegin).Because("the start is in force when the store prepares the row");
     var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
     var rowFacts = template.Split("modelLoadedFromDb,\n              processedEvents,").Length - 1
       + template.Split("modelLoadedFromDb,\n                processedEvents,").Length - 1

@@ -545,6 +545,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
+    var prepareWriteCode = _generatePrepareWriteCode(perspective);
 
     // Generate scope event handling code
     var scopeEventCode = _generateScopeEventHandlingCode(perspective);
@@ -562,6 +563,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
+    result = TemplateUtilities.ReplaceRegion(result, "PREPARE_WRITE_CALL", prepareWriteCode);
     result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
     result = TemplateUtilities.ReplaceRegion(
         result,
@@ -850,6 +852,38 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     } else {
       _appendPhysicalFieldsUpsertCode(sb, perspective);
     }
+
+    return sb.ToString().TrimEnd('\r', '\n');
+  }
+
+  /// <summary>
+  /// Generates the body of the runner's PrepareRowWrite, the set-based twin of the upsert (#2246): the same physical
+  /// values and Split stripping the upsert code emits, from the same helpers, handed to the store's PrepareWrite.
+  /// </summary>
+  private static string _generatePrepareWriteCode(PerspectiveInfo perspective) {
+    var sb = new StringBuilder();
+    var hasPhysicalFields = perspective.PhysicalFields is { Length: > 0 };
+
+    if (hasPhysicalFields) {
+      _appendPhysicalFieldValuesDictionary(sb, perspective);
+      if (perspective.StorageMode == 2) {
+        _appendSplitModePhysicalFieldStripping(sb, perspective);
+      }
+    }
+
+    sb.AppendLine("    // Prepare the row write the upsert would make, with the same document, physical values and scope;");
+    sb.AppendLine("    // the batch's write sink writes it with the rest of the batch.");
+    sb.AppendLine("    return _perspectiveStore.PrepareWrite(");
+    sb.AppendLine("        streamId,");
+    sb.AppendLine("        model,");
+    sb.AppendLine("        scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope(),");
+    // The upsert without physical fields writes a null scope as an empty one that forces no update; the one with
+    // physical fields passes the flag through. Each prepared write does what its upsert does.
+    sb.AppendLine(hasPhysicalFields ? "        forceUpdateScope," : "        scope != null && forceUpdateScope,");
+    sb.AppendLine("        metadata,");
+    sb.AppendLine("        expectedVersion,");
+    sb.AppendLine(hasPhysicalFields ? "        physicalFieldValues" : "        null");
+    sb.AppendLine("    );");
 
     return sb.ToString().TrimEnd('\r', '\n');
   }

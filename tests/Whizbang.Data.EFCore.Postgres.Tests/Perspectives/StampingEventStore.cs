@@ -9,7 +9,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
 /// The in-memory store with the commit sequences a settled database answers with: the checkpoint reads them through
-/// <c>GetCommitSequenceAsync</c> and the replay read carries them on each envelope.
+/// <c>GetCommitSequenceAsync</c> and the replay read carries them on each envelope. It also answers the history probe
+/// a missing row is checked with, from the stream it holds, which the in-memory store leaves unanswered.
 /// </summary>
 internal sealed class StampingEventStore(InMemoryEventStore inner, IReadOnlyDictionary<Guid, long?> stamps) : IEventStore {
   public long? StampOf(Guid eventId) => stamps.TryGetValue(eventId, out var seq) ? seq : null;
@@ -30,6 +31,15 @@ internal sealed class StampingEventStore(InMemoryEventStore inner, IReadOnlyDict
       envelope.LocalCommitSequence = StampOf(envelope.MessageId.Value);
       yield return envelope;
     }
+  }
+  public async Task<bool> HasStreamEventsBeforeAsync(
+      Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+    await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, null, eventTypes, cancellationToken)) {
+      if (string.CompareOrdinal(envelope.MessageId.Value.ToString("D"), beforeEventId.ToString("D")) < 0) {
+        return true;
+      }
+    }
+    return false;
   }
   public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
     inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);

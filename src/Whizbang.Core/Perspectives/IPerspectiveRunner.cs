@@ -91,7 +91,8 @@ public interface IPerspectiveRunner {
     Guid? lastProcessedEventId,
     IReadOnlyList<MessageEnvelope<IEvent>> events,
     CancellationToken cancellationToken = default
-  ) => throw new NotImplementedException();
+  ) => Task.FromResult(PreparedPerspectiveApply.PerPair(
+    streamId, perspectiveName, lastProcessedEventId, events, PerspectivePerPairReason.RunnerDoesNotPrepare));
 
   /// <summary>
   /// The second half of a set-based write: given the outcome of the prepared write, does what
@@ -122,7 +123,15 @@ public interface IPerspectiveRunner {
     PreparedPerspectiveApply prepared,
     PerspectiveWriteOutcome? outcome,
     CancellationToken cancellationToken = default
-  ) => throw new NotImplementedException();
+  ) {
+    ArgumentNullException.ThrowIfNull(prepared);
+    if (!prepared.RunsPerPair) {
+      throw new ArgumentException(
+        $"{GetType().Name} prepares no writes, so it completes only a pair it handed to the per-pair path.", nameof(prepared));
+    }
+    return RunWithEventsAsync(
+      prepared.StreamId, prepared.PerspectiveName, prepared.LastProcessedEventId, prepared.Events, cancellationToken);
+  }
 
   /// <summary>
   /// Replays a physical stream during a perspective REBUILD, honouring event upcasters that

@@ -342,7 +342,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
       PerspectiveMetadata metadata,
       PerspectiveRowVersion expectedVersion,
       IDictionary<string, object?>? physicalFieldValues)
-    => throw new NotImplementedException();
+    => null;
 
   /// <summary>
   /// Prepares the delete <see cref="PurgeAsync"/> would make, for an <see cref="IPerspectiveWriteSink"/> to write with
@@ -353,7 +353,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:PreparePurge_Default_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
-  PendingPerspectiveWrite? PreparePurge(Guid streamId) => throw new NotImplementedException();
+  PendingPerspectiveWrite? PreparePurge(Guid streamId) => null;
 
   /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).

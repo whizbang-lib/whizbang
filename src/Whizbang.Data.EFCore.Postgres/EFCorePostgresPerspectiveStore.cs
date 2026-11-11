@@ -452,6 +452,43 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         physicalFieldValues, forceUpdateScope, expectedVersion, cancellationToken);
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// Prepared by the upsert strategy's own preparation (<see cref="BaseUpsertStrategy"/>), the one the per-stream
+  /// atomic upsert writes from, so both paths store the same bytes. Null for a strategy that is not one, and wherever
+  /// that preparation declines (a provider other than Npgsql, a name that is not a plain identifier, a model the
+  /// persistence profile cannot serialize).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStorePrepareTests.cs</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the preparing IPerspectiveStore member, whose shape is fixed by the interface.")]
+  public PendingPerspectiveWrite? PrepareWrite(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      IDictionary<string, object?>? physicalFieldValues) =>
+    _upsertStrategy is BaseUpsertStrategy strategy
+      ? strategy.PreparePendingWrite(
+          _context, _tableName, streamId, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion)
+      : null;
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The row's mapped table, or the shadow table a blue-green rebuild redirected this flow to, as
+  /// <see cref="PurgeAsync"/> deletes from. Null for a provider other than Npgsql.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStorePrepareTests.cs</tests>
+  public PendingPerspectiveWrite? PreparePurge(Guid streamId) =>
+    PerspectiveRowVersionSql.Supports(_context)
+      ? PendingPerspectiveWrite.Purge(PerspectiveRowVersionSql.QualifiedTable<TModel>(_context), streamId)
+      : null;
+
+  /// <inheritdoc/>
   public async Task FlushAsync(CancellationToken cancellationToken = default) {
     // For EF Core, ensure all tracked changes are committed to the database
     // This is critical for PostPerspectiveInline lifecycle stage which guarantees

@@ -225,9 +225,12 @@ public class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase {
   public async Task AMissingRowWhoseStreamHasHistory_IsHandedToThePerPairPath_WhichRebuildsItAsync() {
     PerspectiveRowCapRegistry.Register(typeof(PreparedApplyCappedItem), 1000, null);
     var streamId = Guid.CreateVersion7();
-    var eventStore = new InMemoryEventStore();
-    await _appendAsync(eventStore, streamId, new PreparedApplyCappedItemAddedEvent { StreamId = streamId }, 1);
-    var second = await _appendAsync(eventStore, streamId, new PreparedApplyCappedItemAddedEvent { StreamId = streamId }, 2);
+    var inner = new InMemoryEventStore();
+    // Ids in the order the stream holds the events: two ids minted in one millisecond are not ordered.
+    await _appendAsync(inner, streamId, new PreparedApplyCappedItemAddedEvent { StreamId = streamId }, 1, Guid.Parse("019f0000-0000-7aaa-8000-000000000401"));
+    var second = await _appendAsync(inner, streamId, new PreparedApplyCappedItemAddedEvent { StreamId = streamId }, 2, Guid.Parse("019f0001-0000-7aaa-8000-000000000401"));
+    // A store that answers the history probe: the row is missing and the stream holds an earlier event.
+    var eventStore = _stamped(inner);
 
     var setBased = await _setBasedAsync(_cappedRunner, eventStore, streamId, "prepared_apply_capped_item", null, [second]);
 
@@ -477,7 +480,9 @@ public class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase {
   private static async Task<MessageEnvelope<IEvent>> _appendAsync<TEvent>(
       InMemoryEventStore eventStore, Guid streamId, TEvent payload, int second, Guid? messageId = null) where TEvent : IEvent {
     var envelope = new MessageEnvelope<IEvent> {
-      MessageId = MessageId.From(messageId ?? Guid.CreateVersion7()),
+      // Ids ordered by the event's place in the stream: two UUIDv7 ids minted in one millisecond are not, and the
+      // idempotency filter and the history probe compare them.
+      MessageId = MessageId.From(messageId ?? Guid.Parse($"019f{second:x4}-0000-7aaa-8000-{streamId.ToString("N")[20..]}")),
       Payload = payload,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {

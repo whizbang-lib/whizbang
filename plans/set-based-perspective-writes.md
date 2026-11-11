@@ -94,6 +94,13 @@ are the starting inventory.
    runner prepares through, and which DbContext the sink writes when a service has more than one.
 3. State source: batched load and known-new detection.
 4. Runner template: prepare and complete, generated for every perspective, with generator tests.
+   **Done** (local commits): `IPerspectiveRunner.PrepareAsync` / `CompleteAsync` (defaults hand every pair to the
+   per-pair path), `PreparedPerspectiveApply` + `PerspectivePerPairReason`, `IPerspectiveStore.PrepareWrite` /
+   `PreparePurge` (EF Core store through `BaseUpsertStrategy.PreparePendingWrite`), and the lock seam
+   `PerspectiveApplyLockSet` (stream id, then perspective name, ordinal; released in reverse). The per-pair attempt is
+   built from the same pieces as the split: `_readBatchAsync` (row load through `_loadRowForApplyAsync`, the seam step
+   3 replaces), `_foldAsync`, `_beginRowWriteAsync`, then `_writeRowAsync` (per-pair) or the store's prepare, and
+   `_finishApplyAsync`. Complete reruns a hand-back, a conflict or a rejected row through the lock-free per-pair core.
 5. Worker: the set-based batch path behind the mode, with locks taken as a set.
 6. Registration and mode selection, and the resolution test.
 7. Conformance suite across both modes.
