@@ -126,9 +126,21 @@ public sealed record ServiceBacklog {
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
-  public bool IsQuiescentApartFromIntegrity => NonIntegrityWorkRows is { } work
-    ? work == 0 && PendingPerspectiveRows == 0 && PendingIdleRows == 0
-    : IsQuiescent;
+  public bool IsQuiescentApartFromIntegrity => IsSettledApartFromIntegrity && PendingIdleRows == 0;
+
+  /// <summary>
+  /// <see cref="IsSettled"/> with the framework's steady-state integrity traffic not counted as work: what admits the idle
+  /// drain (#2263). Falls back to <see cref="IsSettled"/> when <see cref="NonIntegrityWorkRows"/> was not measured.
+  /// </summary>
+  /// <remarks>Settled, not quiescent: the idle band is admitted BECAUSE it still holds rows, so its rows are not counted
+  /// (see <see cref="PendingIdleRows"/>).</remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToSettledAsync</tests>
+  public bool IsSettledApartFromIntegrity => NonIntegrityWorkRows is { } work
+    ? work == 0 && PendingPerspectiveRows == 0
+    : IsSettled;
 }
 
 
@@ -2277,6 +2289,29 @@ public interface IWorkCoordinator {
   Task<int> IntegrityMarkAnswerPendingAsync(
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
     DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
+  /// #2223: takes back the answer-pending record of repair requests whose send failed. The paced drain records a request's
+  /// buckets as awaiting their answer before it sends the request, so an origin that answers before the send returns
+  /// finds them awaiting it; when the send then fails, the request never left, and this clears the wait and returns the
+  /// attempt the drain's claim stamped at <paramref name="now"/>, so a failed send costs no attempt. Applies only to a
+  /// bucket still awaiting the answer that mark recorded (<see cref="IntegrityMarkAnswerPendingAsync"/> with the same
+  /// <paramref name="now"/> and <paramref name="timeout"/>) and claimed at that instant: an answer that landed meanwhile,
+  /// or a later request, stands. Best-effort: 0 = nothing withdrawn or unsupported. Default: 0.
+  /// </summary>
+  /// <param name="originServiceId">The origin the request was for.</param>
+  /// <param name="keys">The buckets the request covered.</param>
+  /// <param name="now">The drain's instant: when the buckets were claimed and marked.</param>
+  /// <param name="timeout">The answer timeout the mark recorded.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows withdrawn.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RepairDrainRecordsBeforeSendingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync</tests>
+  Task<int> IntegrityWithdrawAnswerPendingAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+    CancellationToken cancellationToken = default) =>
     Task.FromResult(0);
 
   /// <summary>

@@ -1446,6 +1446,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>One call to <c>wh_integrity_withdraw_answer_pending</c> (migration 395). Best-effort: a withdrawal that
+  /// cannot reach the ledger is logged and answers 0, and the buckets wait out their answer timeout with the attempt
+  /// spent.</remarks>
+  public async Task<int> IntegrityWithdrawAnswerPendingAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    if (keys.Count == 0) {
+      return 0;
+    }
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_withdraw_answer_pending");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.AddWithValue(P_NOW, now);
+      cmd.Parameters.AddWithValue("p_timeout_secs", _wholeSeconds(timeout));
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now,@p_timeout_secs)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the buckets wait out their answer timeout instead.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_withdraw_answer_pending failed for origin {OriginServiceId}; the buckets whose send failed wait out their answer timeout, with the attempt spent.",
+        originServiceId);
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
   /// <remarks>Null on any failure (logged): the reconcile then judges the bundle as it did before, and its buckets wait
   /// out their answer timeout. The returned keys speak the caller's form, an absent tenant as null.</remarks>
   public Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(

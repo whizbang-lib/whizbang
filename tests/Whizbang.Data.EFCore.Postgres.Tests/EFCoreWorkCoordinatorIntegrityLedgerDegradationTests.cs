@@ -217,6 +217,41 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   }
 
   [Test]
+  public async Task IntegrityWithdrawAnswerPending_WithTheLedgerUnavailable_WithdrawsNothing_AndDoesNotThrowAsync() {
+    await using var ctx = CreateDbContext();
+    await _dropFunctionAsync("wh_integrity_withdraw_answer_pending");
+
+    // #2223: the send already failed and the drain moves on to its next group. Not withdrawn, the bucket waits out its
+    // answer timeout instead of its backoff, and the attempt stays spent.
+    var withdrawn = await ((IWorkCoordinator)_build(ctx)).IntegrityWithdrawAnswerPendingAsync(_originId, [_key()], _fixedNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(withdrawn).IsEqualTo(0);
+    await _assertDegradedLoudlyAsync();
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPending_CanceledByShutdown_ThrowsAsync() {
+    await using var ctx = CreateDbContext();
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await ((IWorkCoordinator)_build(ctx)).IntegrityWithdrawAnswerPendingAsync(
+        _originId, [_key()], _fixedNow, TimeSpan.FromMinutes(5), stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("a stopping host is not a ledger failure, so it is not logged as one");
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPending_NoKeys_IsANoOpAsync() {
+    await using var ctx = CreateDbContext();
+
+    var withdrawn = await ((IWorkCoordinator)_build(ctx)).IntegrityWithdrawAnswerPendingAsync(_originId, [], _fixedNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(withdrawn).IsEqualTo(0);
+    await Assert.That(_log.MessagesFor(LogLevel.Warning)).IsEmpty().Because("nothing to withdraw is not a failure");
+  }
+
+  [Test]
   public async Task IntegrityRecordBundleAnswer_WithTheLedgerUnavailable_ReturnsNullAsync() {
     await using var ctx = CreateDbContext();
     await _dropFunctionAsync("wh_integrity_record_bundle_answer");
