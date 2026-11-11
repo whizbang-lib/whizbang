@@ -140,4 +140,60 @@ public class MessageJsonContextRenameAliasTests {
     await Assert.That(generated).DoesNotContain(
       "\"TestApp.OrderCreatedEvent, TestAssembly\",\n    typeof(global::TestApp.OrderPlacedEvent)");
   }
+
+  /// <summary>
+  /// #2264: a former name the ledger records with an assembly (the type moved from another assembly) is the name the
+  /// type's old events and envelopes carry, so the alias is that name as recorded, not the name with this assembly added.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_FormerNameRecordedWithAnotherAssembly_AliasesItAsRecordedAsync() {
+    const string ledger = """
+      { "version": 1, "types": [
+        { "pinnedId": "11111111-2222-3333-4444-555555555555",
+          "clrTypeName": "TestApp.OrderPlacedEvent",
+          "kind": "event", "assembly": "TestAssembly",
+          "formerNames": ["TestApp.OrderPlacedEvent, Former.Contracts"] }
+      ] }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(EVENT_SOURCE, [(LEDGER_PATH, ledger)]);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+
+    await Assert.That(generated).Contains("\"TestApp.OrderPlacedEvent, Former.Contracts\",\n    typeof(global::TestApp.OrderPlacedEvent)")
+      .Because("the moved type's own bare name is a living name, but under its old assembly it is not, so it is aliased");
+    await Assert.That(generated).Contains(
+      "\"Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.OrderPlacedEvent, Former.Contracts]], Whizbang.Core\"");
+    await Assert.That(generated).DoesNotContain("Former.Contracts, TestAssembly");
+  }
+
+  /// <summary>A former name recorded with this assembly that a living type carries is still never aliased.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_FormerNameRecordedWithThisAssembly_ThatALivingTypeCarries_SkipsAliasAsync() {
+    const string twoTypes = """
+        using Whizbang.Core;
+        using Whizbang.Core.Attributes;
+        namespace TestApp;
+        [PinnedId("11111111-2222-3333-4444-555555555555")]
+        public record OrderPlacedEvent : IEvent;
+        [PinnedId("22222222-3333-4444-5555-666666666666")]
+        public record OrderCreatedEvent : IEvent;
+        """;
+    const string ledger = """
+      { "version": 1, "types": [
+        { "pinnedId": "11111111-2222-3333-4444-555555555555",
+          "clrTypeName": "TestApp.OrderPlacedEvent",
+          "kind": "event",
+          "formerNames": ["TestApp.OrderCreatedEvent, TestAssembly"] }
+      ] }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(twoTypes, [(LEDGER_PATH, ledger)]);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).DoesNotContain(
+      "\"TestApp.OrderCreatedEvent, TestAssembly\",\n    typeof(global::TestApp.OrderPlacedEvent)");
+  }
 }
