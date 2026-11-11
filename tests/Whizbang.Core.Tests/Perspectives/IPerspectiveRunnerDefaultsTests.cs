@@ -85,6 +85,97 @@ public class IPerspectiveRunnerDefaultsTests {
     // 3-arg overload — that's the whole point of the legacy fallback contract.
   }
 
+  [Test]
+  public async Task PrepareAsync_Default_HandsThePairToThePerPairPathAsync() {
+    IPerspectiveRunner runner = new MinimalRunner();
+    var streamId = Guid.NewGuid();
+    var lastEventId = Guid.NewGuid();
+    IReadOnlyList<MessageEnvelope<IEvent>> events = [];
+
+    var prepared = await runner.PrepareAsync(streamId, "MyPerspective", lastEventId, events, CancellationToken.None);
+
+    await Assert.That(prepared.RunsPerPair).IsTrue()
+      .Because("a hand-written runner prepares no write, so the set-based path must hand it back whole");
+    await Assert.That(prepared.PerPairReason).IsEqualTo(PerspectivePerPairReason.RunnerDoesNotPrepare);
+    await Assert.That(prepared.Write).IsNull();
+    await Assert.That(prepared.StreamId).IsEqualTo(streamId);
+    await Assert.That(prepared.PerspectiveName).IsEqualTo("MyPerspective");
+    await Assert.That(prepared.LastProcessedEventId).IsEqualTo(lastEventId);
+    await Assert.That(prepared.Events).IsSameReferenceAs(events);
+  }
+
+  [Test]
+  public async Task CompleteAsync_Default_RunsAPerPairPairThroughRunWithEventsAsync() {
+    var runner = new RecordingRunner();
+    var streamId = Guid.NewGuid();
+    var lastEventId = Guid.NewGuid();
+    IReadOnlyList<MessageEnvelope<IEvent>> events = [];
+    var prepared = await ((IPerspectiveRunner)runner).PrepareAsync(streamId, "P", lastEventId, events);
+
+    var completion = await ((IPerspectiveRunner)runner).CompleteAsync(prepared, outcome: null);
+
+    await Assert.That(runner.Runs).IsEqualTo(1);
+    await Assert.That(runner.LastRun).IsEqualTo((streamId, "P", (Guid?)lastEventId, events));
+    await Assert.That(completion).IsSameReferenceAs(runner.Completion);
+  }
+
+  [Test]
+  public async Task CompleteAsync_Default_RefusesAPairThatCarriesAWriteAsync() {
+    IPerspectiveRunner runner = new RecordingRunner();
+    var prepared = new WritingPair(PendingPerspectiveWrite.Purge("\"wh_per_x\"", Guid.NewGuid()));
+
+    await Assert.That(async () => await runner.CompleteAsync(prepared, PerspectiveWriteOutcome.Written))
+      .Throws<ArgumentException>()
+      .Because("a runner that prepares no write cannot complete one; writing it per-pair would write it twice");
+  }
+
+  [Test]
+  public async Task CompleteAsync_Default_NullPrepared_ThrowsAsync() {
+    IPerspectiveRunner runner = new RecordingRunner();
+
+    await Assert.That(async () => await runner.CompleteAsync(null!, outcome: null)).Throws<ArgumentNullException>();
+  }
+
+  private sealed class WritingPair(PendingPerspectiveWrite write)
+    : PreparedPerspectiveApply(Guid.NewGuid(), "P", null, [], write, PerspectivePerPairReason.None);
+
+  private sealed class RecordingRunner : IPerspectiveRunner {
+    public int Runs { get; private set; }
+    public (Guid StreamId, string PerspectiveName, Guid? LastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> Events) LastRun { get; private set; }
+    public PerspectiveCursorCompletion Completion { get; } = new() {
+      StreamId = Guid.NewGuid(),
+      PerspectiveName = "P",
+      LastEventId = Guid.NewGuid(),
+      Status = PerspectiveProcessingStatus.Completed,
+      RowChanged = true,
+    };
+
+    public Type PerspectiveType => typeof(RecordingRunner);
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default)
+      => throw new NotSupportedException();
+
+    public Task<PerspectiveCursorCompletion> RunWithEventsAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      CancellationToken cancellationToken = default) {
+      Runs++;
+      LastRun = (streamId, perspectiveName, lastProcessedEventId, events);
+      return Task.FromResult(Completion);
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+      Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default)
+      => throw new NotSupportedException();
+
+    public Task BootstrapSnapshotAsync(
+      Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default)
+      => throw new NotSupportedException();
+  }
+
   private sealed class MinimalRunner : IPerspectiveRunner {
     public int RewindCalls { get; private set; }
     public Guid? LastTriggerEventId { get; private set; }

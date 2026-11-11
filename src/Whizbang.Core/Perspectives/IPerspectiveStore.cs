@@ -306,6 +306,56 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   }
 
   /// <summary>
+  /// Prepares the row write <see cref="TryUpsertAsync"/> (or, with physical field values,
+  /// <see cref="TryUpsertWithPhysicalFieldsAsync"/>) would make, for an <see cref="IPerspectiveWriteSink"/> to write
+  /// together with the rest of its batch, without writing anything.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The prepared write holds the same document, metadata, scope, physical columns, version check and ordering guard
+  /// the per-stream write stores, decided by the same code, so whichever path writes a row writes the same bytes. The
+  /// apply hooks run here, as they run in the per-stream write.
+  /// </para>
+  /// <para>
+  /// Null means the set-based write cannot take this row (a provider other than PostgreSQL, a model or column it
+  /// cannot write set-based), and the runner writes it through the per-stream write instead. The default returns null,
+  /// so a store written before this member keeps its behavior.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event</param>
+  /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
+  /// <param name="physicalFieldValues">The physical column values, or null for a model with none.</param>
+  /// <returns>The prepared write, or null.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:PrepareWrite_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the preparing twin of the reporting upsert, with the same write concerns plus the physical values.")]
+  PendingPerspectiveWrite? PrepareWrite(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      IDictionary<string, object?>? physicalFieldValues)
+    => throw new NotImplementedException();
+
+  /// <summary>
+  /// Prepares the delete <see cref="PurgeAsync"/> would make, for an <see cref="IPerspectiveWriteSink"/> to write with
+  /// the rest of its batch. Null when the set-based write cannot take it; the default returns null.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID) of the model to purge</param>
+  /// <returns>The prepared purge, or null.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:PreparePurge_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  PendingPerspectiveWrite? PreparePurge(Guid streamId) => throw new NotImplementedException();
+
+  /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).
   /// Returns null if the model doesn't exist yet.
   /// </summary>
