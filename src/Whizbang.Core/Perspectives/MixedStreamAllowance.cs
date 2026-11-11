@@ -42,9 +42,10 @@ public static class MixedStreamAllowance {
     var allowed = new SortedSet<(string Ephemeral, string Durable)>();
     var refused = new HashSet<(string Ephemeral, string Durable)>();
     foreach (var perspective in perspectives) {
-      var target = perspective.MixedStreams == MixedStreams.Allow ? (ISet<(string, string)>)allowed : refused;
+      var allows = perspective.MixedStreams == MixedStreams.Allow;
       foreach (var pair in perspective.MixedStreamPairs) {
-        _ = target.Add((EventTypeMatchingHelper.NormalizeTypeName(pair.EphemeralType), EventTypeMatchingHelper.NormalizeTypeName(pair.DurableType)));
+        var normalized = (EventTypeMatchingHelper.NormalizeTypeName(pair.EphemeralType), EventTypeMatchingHelper.NormalizeTypeName(pair.DurableType));
+        _ = allows ? allowed.Add(normalized) : refused.Add(normalized);
       }
     }
     allowed.ExceptWith(refused);

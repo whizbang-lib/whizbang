@@ -38,5 +38,6 @@ public sealed class DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute : At
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
   /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:Registry_AnAllowingReadModel_CarriesItsPairs_AndTheDefaultCarriesNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Attributes/DangerouslyAllowMixedEphemeralAndSourcedEventsAttributeTests.cs</tests>
   public MixedStreams Streams { get; set; } = MixedStreams.Refuse;
 }
