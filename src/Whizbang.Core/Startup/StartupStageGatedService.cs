@@ -98,6 +98,8 @@ public static class StartupStageGatedServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, StartupStageGatedService<TService>>(sp =>
       new StartupStageGatedService<TService>(
         factory(sp), stage, sp.GetService<IStartupStageGate>(), SchemaReadyGateOf(sp))));
+    // #1899: a hosted worker that queues work-table writes is watched by the landed signal.
+    QueuedWritesLandedSignal.RegisterIfFlusher(services, factory);
     return services;
   }
 

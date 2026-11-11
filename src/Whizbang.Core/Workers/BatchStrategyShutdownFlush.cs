@@ -78,10 +78,10 @@ public sealed partial class BatchStrategyShutdownFlush(
   }
 
   private async Task _flushAllAsync(CancellationToken cancellationToken) {
-    if (services.GetService<IInboxBatchStrategy>() is { } inbox) {
+    if (BatchStrategyResolution.Inbox(services) is { } inbox) {
       await _flushAsync("inbox", inbox.FlushAndStopAsync, cancellationToken).ConfigureAwait(false);
     }
-    if (services.GetService<IOutboxBatchStrategy>() is { } outbox) {
+    if (BatchStrategyResolution.Outbox(services) is { } outbox) {
       await _flushAsync("outbox", outbox.FlushAndStopAsync, cancellationToken).ConfigureAwait(false);
     }
     // The flushes start their detached lifecycle stages in the background; once this returns the host disposes the

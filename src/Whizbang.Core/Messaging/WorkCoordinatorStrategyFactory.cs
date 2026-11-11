@@ -56,7 +56,8 @@ public static class WorkCoordinatorStrategyFactory {
   public static IWorkCoordinatorStrategy WrapWithStreamAffinity(IWorkCoordinatorStrategy inner, IServiceProvider sp) {
     ArgumentNullException.ThrowIfNull(inner);
     ArgumentNullException.ThrowIfNull(sp);
-    var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
+    // A strategy registered directly is bounded here too (#2220).
+    var outboxBatch = Whizbang.Core.Workers.BatchStrategyResolution.Outbox(sp);
     if (outboxBatch is null) {
       return inner;
     }
@@ -69,7 +70,9 @@ public static class WorkCoordinatorStrategyFactory {
       auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
       systemEventOptions: sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
-      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>());
+      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      // #2220: the scope is the publisher's, so its open transaction is the one the publish runs inside.
+      holdsOpenTransaction: () => OpenTransactionProbe.HoldsOpenTransaction(sp));
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
@@ -85,7 +88,8 @@ public static class WorkCoordinatorStrategyFactory {
       SystemEventOptions = sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       AuditDecisionHook = sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
-      AuditEventTypes = sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>()
+      AuditEventTypes = sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      DeferredChannel = sp.GetRequiredService<IDeferredOutboxChannel>()
     };
     return new ScopedWorkCoordinatorStrategy(
       coordinator,
@@ -140,6 +144,7 @@ public static class WorkCoordinatorStrategyFactory {
       workChannelWriter: channelWriter,
       inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
@@ -161,6 +166,7 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );

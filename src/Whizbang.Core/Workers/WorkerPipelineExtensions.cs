@@ -108,6 +108,12 @@ public static class WorkerPipelineExtensions {
     // whose probe timeout then kills a pod that is merely busy, discarding the progress that
     // would have ended the burst. Raises only; never lowers.
     WorkerThreadPoolFloor.Apply();
+    // #2251: the floor, the perspective drain width and the inbox dispatch fan-out are reported with their inputs.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Configuration.IDerivedSettingSource, WorkerDerivedSettings>(
+      sp => new WorkerDerivedSettings(
+        sp.GetRequiredService<IOptions<PerspectiveWorkerOptions>>(),
+        sp.GetRequiredService<IOptions<InboxDispatchWorkerOptions>>(),
+        sp.GetRequiredService<WorkCoordinatorGate>())));
 
     // Schema-ready gate — workers await this before issuing any SQL. The driver's
     // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
@@ -654,6 +660,11 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
+    // The safety net for in-process tracker entries whose one removal path was not taken (#2228). In-process
+    // state only, so it starts with the host; a tracker the host does not register is skipped.
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
+    services.TryAddSingleton<Whizbang.Core.Perspectives.Sync.ISyncEventTracker, Whizbang.Core.Perspectives.Sync.SyncEventTracker>();
+    services.AddHostedService<InProcessTrackerSweepWorker>();
     services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
 
     // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
@@ -670,6 +681,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IFailureChannel>(sp => sp.GetRequiredService<FailureFlushWorker>());
     services.TryAddSingleton<ILeaseRenewalChannel>(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.TryAddSingleton<IInboxHandlerCommitChannel>(sp => sp.GetRequiredService<InboxHandlerWorker>());
+    // #1899: when every queued work-table write has landed. Hosting a worker with its start point registers it as a
+    // flusher when it reports queued writes, so a new flush worker is covered by being hosted; they are resolved on first
+    // use, not here.
+    services.TryAddSingleton<IQueuedWritesLandedSignal>(sp => new QueuedWritesLandedSignal(QueuedWritesLandedSignal.RegisteredIn(sp)));
 
     // Perspective work-distribution channel: ClaimWorker writes here, PerspectiveWorker reads.
     // Singleton so producer + consumer share the same Channel<T>.
@@ -981,6 +996,17 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.CoalescingOutboxOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.CoalescingOutboxOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:CoalescingOutbox"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>(options => {
@@ -1087,6 +1113,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxDeserializeCacheOptions>();
     services.AddOptions<LeaseHandleOptions>();
     services.AddOptions<SlidingWindowOutboxOptions>();
+    services.AddOptions<CoalescingOutboxOptions>();
     services.AddOptions<SlidingWindowInboxOptions>();
 
     // Producer-side stream-affinity batcher — half B of pump-then-process. Singleton; the
@@ -1094,10 +1121,15 @@ public static class WorkerPipelineExtensions {
     // strategy itself can outlive any one request scope. Default is the sliding-window
     // batcher; override via the AddWhizbangOutboxStrategy generic extension — see
     // ImmediateOutboxBatchStrategy for the no-batching alternative.
-    services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
+    // #2220: one bound on what the outbox and inbox batchers hold in memory. A stored batch gives its room back through
+    // the store callback, a failed one through the failure callback, so the room follows each message out of the buffer.
+    _addBatchBuffer(services);
+    services.TryAddSingleton<OutboxBulkFlushCallback>(sp =>
+      sp.GetRequiredService<BatchBuffer>().ReleasingOnStore(_buildOutboxFlushCallback(sp)));
     // A batch the batcher cannot store is written to the dead-letter table, counted and reported to every
     // IOutboxFlushFailureObserver, never dropped (#1871).
-    services.TryAddSingleton<OutboxFlushFailureCallback>(sp => sp.GetRequiredService<OutboxFlushFailureRecorder>().RecordAsync);
+    services.TryAddSingleton<OutboxFlushFailureCallback>(sp =>
+      sp.GetRequiredService<BatchBuffer>().ReleasingOnFailure(sp.GetRequiredService<OutboxFlushFailureRecorder>().RecordAsync));
     services.TryAddSingleton(sp => new OutboxFlushFailureRecorder(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetService<WorkCoordinatorGate>(),
@@ -1114,19 +1146,30 @@ public static class WorkerPipelineExtensions {
       timeProvider: sp.GetService<TimeProvider>(),
       onFlushFailed: sp.GetRequiredService<OutboxFlushFailureCallback>(),
       metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
+    // #2220 Part 2: the default coalesces writes from many streams into one flush, keeping each stream in order.
+    services.TryAddSingleton<CoalescingOutboxBatchStrategy>(sp => new CoalescingOutboxBatchStrategy(
+      flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
+      logger: sp.GetRequiredService<ILogger<CoalescingOutboxBatchStrategy>>(),
+      options: sp.GetRequiredService<IOptions<CoalescingOutboxOptions>>().Value,
+      timeProvider: sp.GetService<TimeProvider>(),
+      onFlushFailed: sp.GetRequiredService<OutboxFlushFailureCallback>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
-    services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
+    services.TryAddSingleton<IOutboxBatchStrategy>(sp =>
+      new BoundedOutboxBatchStrategy(sp.GetRequiredService<CoalescingOutboxBatchStrategy>(), sp.GetRequiredService<BatchBuffer>()));
 
     // Receive-boundary inbox batcher — half A of pump-then-process. Mirror of the outbox
     // registration above. Flush callback resolves IWorkCoordinator from a fresh DI scope
     // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher —
     // override via the AddWhizbangInboxStrategy generic extension for the immediate
     // passthrough or a custom implementation.
-    services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
+    services.TryAddSingleton<InboxBulkFlushCallback>(sp =>
+      sp.GetRequiredService<BatchBuffer>().ReleasingOnStore(_buildInboxFlushCallback(sp)));
     // A batch the inbox batcher cannot store is written to the dead-letter table, counted and reported to every
     // IInboxFlushFailureObserver, never dropped (#1885).
-    services.TryAddSingleton<InboxFlushFailureCallback>(sp => sp.GetRequiredService<InboxFlushFailureRecorder>().RecordAsync);
+    services.TryAddSingleton<InboxFlushFailureCallback>(sp =>
+      sp.GetRequiredService<BatchBuffer>().ReleasingOnFailure(sp.GetRequiredService<InboxFlushFailureRecorder>().RecordAsync));
     services.TryAddSingleton(sp => new InboxFlushFailureRecorder(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetService<WorkCoordinatorGate>(),
@@ -1145,7 +1188,8 @@ public static class WorkerPipelineExtensions {
       metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
-    services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
+    services.TryAddSingleton<IInboxBatchStrategy>(sp =>
+      new BoundedInboxBatchStrategy(sp.GetRequiredService<SlidingWindowInboxBatchStrategy>(), sp.GetRequiredService<BatchBuffer>()));
     // Both batchers flush while the host stops, after every hosted service and before the container is disposed:
     // flushed only at disposal, their last batch ran against a service provider that was already gone (#1333).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, BatchStrategyShutdownFlush>());
@@ -1177,6 +1221,12 @@ public static class WorkerPipelineExtensions {
   /// low-throughput tenants who opt to <see cref="ImmediateOutboxBatchStrategy"/> for
   /// strict-ordering / no-batching semantics, or for users plugging in a custom strategy.
   /// </summary>
+  /// <remarks>
+  /// The strategy is registered wrapped in <see cref="BoundedOutboxBatchStrategy"/>, so the process-wide bound on buffered
+  /// messages applies to it too (#2220). A custom strategy flushes through the registered
+  /// <see cref="OutboxBulkFlushCallback"/> and reports failures through the registered
+  /// <see cref="OutboxFlushFailureCallback"/>: those give the room back.
+  /// </remarks>
   /// <typeparam name="TStrategy">Strategy type. Must be DI-resolvable as a singleton.</typeparam>
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
@@ -1187,7 +1237,9 @@ public static class WorkerPipelineExtensions {
     if (existing is not null) {
       services.Remove(existing);
     }
-    services.AddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<TStrategy>());
+    _addBatchBuffer(services);
+    services.AddSingleton<IOutboxBatchStrategy>(sp =>
+      new BoundedOutboxBatchStrategy(sp.GetRequiredService<TStrategy>(), sp.GetRequiredService<BatchBuffer>()));
     return services;
   }
 
@@ -1196,6 +1248,9 @@ public static class WorkerPipelineExtensions {
   /// <see cref="AddWhizbangOutboxStrategy{TStrategy}"/> — used to opt into
   /// <see cref="ImmediateInboxBatchStrategy"/> or a custom implementation.
   /// </summary>
+  /// <remarks>
+  /// The strategy is registered wrapped in <see cref="BoundedInboxBatchStrategy"/>, sharing the outbox's bound (#2220).
+  /// </remarks>
   /// <typeparam name="TStrategy">Strategy type. Must be DI-resolvable as a singleton.</typeparam>
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
@@ -1206,8 +1261,40 @@ public static class WorkerPipelineExtensions {
     if (existing is not null) {
       services.Remove(existing);
     }
-    services.AddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<TStrategy>());
+    _addBatchBuffer(services);
+    services.AddSingleton<IInboxBatchStrategy>(sp =>
+      new BoundedInboxBatchStrategy(sp.GetRequiredService<TStrategy>(), sp.GetRequiredService<BatchBuffer>()));
     return services;
+  }
+
+  /// <summary>
+  /// The batch buffer (#2220) and what it is built from: <c>Whizbang:BatchBuffer</c>, the process memory limit and the
+  /// work coordinator gate's reserve. Its limits are a derived-setting source for the startup settings report. Every
+  /// call after the first changes nothing.
+  /// </summary>
+  private static void _addBatchBuffer(IServiceCollection services) {
+    services.AddOptions<BatchBufferOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<BatchBufferOptions>, ConfigureBatchBufferOptions>(
+      sp => new ConfigureBatchBufferOptions(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+    services.TryAddSingleton(TimeProvider.System);
+    services.TryAddSingleton(sp => {
+      // AddWhizbangWorkers registers the gate (or keeps the consumer's), and the strategy overrides follow it.
+      var gate = sp.GetRequiredService<WorkCoordinatorGate>();
+      return BatchBufferLimits.Resolve(
+        sp.GetRequiredService<IOptions<BatchBufferOptions>>().Value,
+        GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
+        gate.MaxConcurrent,
+        gate.InteractiveReserve);
+    });
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Configuration.IDerivedSettingSource, BatchBufferLimits>(
+      sp => sp.GetRequiredService<BatchBufferLimits>()));
+    services.TryAddSingleton(sp => new BatchBuffer(
+      sp.GetRequiredService<BatchBufferLimits>(),
+      sp.GetRequiredService<ILogger<BatchBuffer>>(),
+      sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+      sp.GetRequiredService<TimeProvider>()));
+    // A strategy a consumer registers directly is wrapped where the framework resolves it, once per instance.
+    services.TryAddSingleton(sp => new BoundedStrategyWrappers(sp.GetRequiredService<BatchBuffer>()));
   }
 
   // The caller names the batch flushes record on the gate's hold-duration metric and its saturation warning.
@@ -1326,6 +1413,9 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    // #2251: the gate's interactive reserve (and a pool-sized gate's permits) are reported with their inputs.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Configuration.IDerivedSettingSource, WorkCoordinatorGate>(
+      sp => sp.GetRequiredService<WorkCoordinatorGate>()));
     services.TryAddSingleton(sp => {
       var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
       return new WorkCoordinatorGate(

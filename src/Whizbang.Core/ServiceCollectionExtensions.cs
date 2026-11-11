@@ -167,6 +167,9 @@ public static class ServiceCollectionExtensions {
     // Every per-assembly registration adds the check too; registering it here gives every host its setting.
     services.AddRegistrationCollisionCheck();
 
+    // #2251: once the service is running, every setting it reads is logged with its value and where it came from.
+    services.AddWhizbangStartupSettingsReport();
+
     // Inert-concurrency report: ParallelizeStreams defaults to false on BOTH WorkCoordinatorOptions
     // and OrderedStreamProcessorOptions, while the width options default to 16 and 8 — so the
     // shipped default advertises concurrency the runtime will not use, and every deployment

@@ -82,6 +82,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     "global::System.Int128",
     "global::System.UInt128",
     "global::System.Globalization.CultureInfo",
+    // A credential: one string, bound by ConfigurationValueBinder.BindSensitive (#2251).
+    "global::Whizbang.Core.Configuration.SensitiveString",
   };
 
   private static readonly HashSet<string> _dictionaries = new(StringComparer.Ordinal) {

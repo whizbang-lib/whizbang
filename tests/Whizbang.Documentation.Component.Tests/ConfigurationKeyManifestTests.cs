@@ -46,18 +46,35 @@ namespace Whizbang.Documentation.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference</docs>
+[NotInParallel(nameof(ConfigurationKeyManifestTests))]
 public class ConfigurationKeyManifestTests {
   private const string FAKE_SERVICE_BUS =
     "Endpoint=sb://manifest.servicebus.windows.net/;SharedAccessKeyName=k;SharedAccessKey=bWFuaWZlc3Q=";
 
-  internal static async Task<IReadOnlyCollection<string>> RecordKeysTheLibraryReadsAsync() {
+  internal static Task<IReadOnlyCollection<string>> RecordKeysTheLibraryReadsAsync() => _composeLibraryAsync(null, null);
+
+  /// <summary>Each options instance the composition resolves, with the keys its resolution read first.</summary>
+  private static Action<object, IReadOnlyCollection<string>>? _resolvedOptions;
+
+  /// <summary>
+  /// Composes every package the way a host does over a configuration that records what it is asked for, resolves every
+  /// options type it configures, and returns the keys read.
+  /// </summary>
+  /// <param name="values">Values to answer with, beside the gate seeds; null for none.</param>
+  /// <param name="inspect">Runs against the composed services before the provider is disposed; null for nothing.</param>
+  private static async Task<IReadOnlyCollection<string>> _composeLibraryAsync(
+      IReadOnlyDictionary<string, string>? values, Action<IServiceProvider, IServiceCollection>? inspect) {
     // Keys whose value decides whether more keys are read. Each seed opens one gate.
-    var recorder = new ConfigurationKeyRecorder(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+    var seeds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
       // A named cipher makes the cipher's key settings required, so they are read.
       ["Whizbang:BodyOffload:CipherName"] = "aes-gcm",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "manifest-key",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(new byte[32]),
-    });
+    };
+    foreach (var (key, value) in values ?? new Dictionary<string, string>()) {
+      seeds[key] = value;
+    }
+    var recorder = new ConfigurationKeyRecorder(seeds);
     var configuration = new ConfigurationBuilder().Add(recorder).Build();
 
     var services = new ServiceCollection();
@@ -96,10 +113,16 @@ public class ConfigurationKeyManifestTests {
 
     await using var provider = services.BuildServiceProvider();
     foreach (var optionsType in _configuredOptionsTypes(services)) {
+      var readBefore = new HashSet<string>(recorder.Keys, StringComparer.OrdinalIgnoreCase);
+      object? resolved = null;
       _tryResolve(() => {
         var accessor = provider.GetService(typeof(IOptions<>).MakeGenericType(optionsType));
-        return accessor?.GetType().GetProperty("Value")?.GetValue(accessor);
+        resolved = accessor?.GetType().GetProperty("Value")?.GetValue(accessor);
+        return resolved;
       }, optionsType.Name);
+      if (resolved is not null) {
+        _resolvedOptions?.Invoke(resolved, [.. recorder.Keys.Where(k => !readBefore.Contains(k))]);
+      }
       // Named options bind a section per name: a consumer-chosen name records as '*'.
       _tryResolve(() => {
         var monitor = provider.GetService(typeof(IOptionsMonitor<>).MakeGenericType(optionsType));
@@ -131,6 +154,7 @@ public class ConfigurationKeyManifestTests {
     // The managed-object reconcile reads its settings by hand at schema initialization and in its maintenance step.
     _tryResolve(() => Whizbang.Data.Postgres.Schema.ManagedSchemaSettings.Read(configuration), "ManagedSchemaSettings");
 
+    inspect?.Invoke(provider, services);
     return recorder.Keys;
   }
 
@@ -138,7 +162,8 @@ public class ConfigurationKeyManifestTests {
     try {
       _ = resolve();
     } catch (Exception ex) when (ex is InvalidOperationException or System.Reflection.TargetInvocationException
-                                   or ArgumentException or FormatException or AggregateException) {
+                                   or ArgumentException or FormatException or AggregateException
+                                   or OptionsValidationException) {
       // Whatever it read before failing is already recorded.
       Console.WriteLine($"{what}: {ex.GetBaseException().Message}");
     }
@@ -187,7 +212,193 @@ public class ConfigurationKeyManifestTests {
     // The incompatibility override (#2022), read when a Postgres driver builds its Assess verdict's assessor, which the
     // harness never resolves; UpgradeOrderTests reads it.
     "Whizbang:Startup:OverrideIncompatibility",
+    // The lossy-rollback switch (#2122), read beside the override when a Postgres driver builds its assessor;
+    // UpgradeOrderTests reads it.
+    "Whizbang:Startup:AllowLossyRollback",
   ];
+
+  /// <summary>
+  /// Sensitive keys read where the harness cannot see a <see cref="Whizbang.Core.Configuration.SensitiveString"/>
+  /// property: every connection string, and the body cipher's key-encryption keys, read by hand and decoded to bytes.
+  /// </summary>
+  private static readonly string[] _sensitiveKeysReadOutsideTheHarness = [
+    "ConnectionStrings:*",
+    "Whizbang:BodyOffload:Cipher:KeyEncryptionKey",
+    "Whizbang:BodyOffload:Cipher:PreviousKeyEncryptionKey",
+  ];
+
+  private const string SENTINEL = "sentinel:";
+
+  private const string SENSITIVE_HEADER =
+    "# Every configuration key whose value is a credential: bound to a SensitiveString, a connection string, or a key read\n"
+    + "# by hand. The startup settings report redacts each by its type.\n"
+    + "# Generated by ConfigurationKeyManifestTests (WHIZBANG_UPDATE_CONFIGURATION_KEYS=1); do not edit by hand.";
+
+  [Test]
+  public async Task EverySensitiveSetting_BindsFromConfiguration_AndIsInTheSensitiveKeyListAsync() {
+    var keys = await RecordKeysTheLibraryReadsAsync();
+    var sensitiveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    await _composeLibraryAsync(null, (_, services) => {
+      foreach (var type in _configuredOptionsTypes(services)) {
+        sensitiveNames.UnionWith(_sensitiveProperties(type).Select(p => p.Name));
+      }
+    });
+
+    // Answer every key that may feed a SensitiveString property with a value naming the key, then read the values back.
+    var values = keys
+      .Where(key => sensitiveNames.Contains(key[(key.LastIndexOf(':') + 1)..]))
+      .ToDictionary(
+        key => key.Replace("*", ConfigurationKeyRecorder.PLACEHOLDER, StringComparison.Ordinal),
+        key => SENTINEL + key,
+        StringComparer.OrdinalIgnoreCase);
+    var bound = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+    var unbound = new List<string>();
+    await _composeLibraryAsync(values, (provider, services) => {
+      foreach (var type in _configuredOptionsTypes(services)) {
+        var properties = _sensitiveProperties(type).ToList();
+        if (properties.Count == 0) {
+          continue;
+        }
+        var instances = new[] { Options.DefaultName, ConfigurationKeyRecorder.PLACEHOLDER }
+          .Select(name => _configure(provider, type, name)).OfType<object>().ToList();
+        foreach (var property in properties) {
+          var read = instances.Select(i => property.GetValue(i)).OfType<Whizbang.Core.Configuration.SensitiveString>()
+            .Select(s => s.Reveal()).Where(v => v.StartsWith(SENTINEL, StringComparison.Ordinal)).ToList();
+          if (read.Count == 0) {
+            unbound.Add(type.Name + "." + property.Name);
+          }
+          bound.UnionWith(read.Select(v => v[SENTINEL.Length..]));
+        }
+      }
+    });
+
+    await Assert.That(unbound).IsEmpty()
+      .Because("a SensitiveString setting the configuration binder source generator skips must be bound with "
+        + "ConfigurationValueBinder.BindSensitive: " + string.Join(", ", unbound));
+
+    var sensitive = bound.Concat(_sensitiveKeysReadOutsideTheHarness)
+      .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+    var path = Path.Combine(Path.GetDirectoryName(_manifestPath())!, "sensitive-configuration-keys.txt");
+    if (Environment.GetEnvironmentVariable("WHIZBANG_UPDATE_CONFIGURATION_KEYS") == "1") {
+      await File.WriteAllTextAsync(path, SENSITIVE_HEADER + "\n" + string.Join("\n", sensitive) + "\n");
+    }
+    var listed = (await File.ReadAllLinesAsync(path)).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+
+    await Assert.That(listed).IsEquivalentTo(sensitive)
+      .Because("the settings bound to a SensitiveString changed; regenerate Baselines/sensitive-configuration-keys.txt "
+        + "with WHIZBANG_UPDATE_CONFIGURATION_KEYS=1");
+    await Assert.That(sensitive).Contains("Whizbang:Archive:AzureBlob:ConnectionString");
+  }
+
+  private const string DEFAULTS_HEADER =
+    "# The value each configuration key takes when nothing sets it, read from a freshly constructed instance of the options\n"
+    + "# type its section binds. The startup settings report shows it, marked (default).\n"
+    + "# Generated by ConfigurationKeyManifestTests (WHIZBANG_UPDATE_CONFIGURATION_KEYS=1); do not edit by hand.";
+
+  [Test]
+  public async Task TheReportedDefaults_AreTheDefaultsInCodeAsync() {
+    var manifested = new HashSet<string>(
+      (await File.ReadAllLinesAsync(_manifestPath())).Where(l => l.Length > 0 && !l.StartsWith('#')), StringComparer.OrdinalIgnoreCase);
+    var defaults = await _recordDefaultsAsync(manifested);
+    var path = Path.Combine(Path.GetDirectoryName(_manifestPath())!, "configuration-defaults.txt");
+    var expected = defaults.Select(d => d.Key + "=" + d.Value).ToList();
+    if (Environment.GetEnvironmentVariable("WHIZBANG_UPDATE_CONFIGURATION_KEYS") == "1") {
+      await File.WriteAllTextAsync(path, DEFAULTS_HEADER + "\n" + string.Join("\n", expected) + "\n");
+    }
+    var listed = (await File.ReadAllLinesAsync(path)).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+
+    await Assert.That(expected.Count).IsGreaterThan(100).Because("the defaults must be read, or the comparison proves nothing");
+    await Assert.That(expected).Contains("Whizbang:Workers:CoalescingOutbox:Partitions=4");
+    await Assert.That(listed).IsEquivalentTo(expected)
+      .Because("a default in code changed; regenerate Baselines/configuration-defaults.txt with WHIZBANG_UPDATE_CONFIGURATION_KEYS=1");
+  }
+
+  /// <summary>Composes the library and records, for every manifest key it reads, the value its options type holds.</summary>
+  private static async Task<SortedDictionary<string, string>> _recordDefaultsAsync(HashSet<string> manifested) {
+    var defaults = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    // Each options type is resolved over a configuration that holds nothing, so what it holds is what the service runs
+    // with when nothing is set; each key it read is found on it by the longest property path that ends the key.
+    _resolvedOptions = (instance, keys) => {
+      foreach (var key in keys.Where(k => manifested.Contains(k) && !k.Contains('*', StringComparison.Ordinal))) {
+        var segments = key.Split(':');
+        for (var start = 1; start < segments.Length; start++) {
+          if (_walk(instance, segments[start..], out var value)) {
+            if (_format(value) is { } formatted) {
+              defaults.TryAdd(key, formatted);
+            }
+            break;
+          }
+        }
+      }
+    };
+    try {
+      await RecordKeysTheLibraryReadsAsync();
+    } finally {
+      _resolvedOptions = null;
+    }
+    return defaults;
+  }
+
+  /// <summary>
+  /// Follows <paramref name="segments"/> through public properties (by name or configuration key name); false when a
+  /// segment names no property.
+  /// </summary>
+  private static bool _walk(object? instance, string[] segments, out object? value) {
+    value = instance;
+    foreach (var segment in segments) {
+      if (value is null) {
+        return false;
+      }
+      var property = value.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+        .FirstOrDefault(p => p.GetIndexParameters().Length == 0
+          && string.Equals(
+            (p.GetCustomAttributes(typeof(ConfigurationKeyNameAttribute), true).FirstOrDefault() as ConfigurationKeyNameAttribute)?.Name ?? p.Name,
+            segment, StringComparison.OrdinalIgnoreCase));
+      if (property is null) {
+        return false;
+      }
+      value = property.GetValue(value);
+    }
+    return true;
+  }
+
+  /// <summary>A default as configuration would spell it; null for no value or one that is not a single setting.</summary>
+  private static string? _format(object? value) => value switch {
+    null => null,
+    bool flag => flag ? "true" : "false",
+    string text => text,
+    Enum member => member.ToString(),
+    Whizbang.Core.Configuration.SensitiveString => null,
+    IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+    _ => null,
+  };
+
+  private static IEnumerable<System.Reflection.PropertyInfo> _sensitiveProperties(Type type) =>
+    type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+      .Where(p => p.PropertyType == typeof(Whizbang.Core.Configuration.SensitiveString) && p.CanRead);
+
+  /// <summary>
+  /// A new <paramref name="type"/> with every configure step registered for it applied under <paramref name="name"/>,
+  /// without validation (a validator may refuse what the sentinel values make of it); null when it cannot be created.
+  /// </summary>
+  private static object? _configure(IServiceProvider provider, Type type, string name) {
+    if (type.GetConstructor(Type.EmptyTypes) is null) {
+      return null;
+    }
+    var instance = Activator.CreateInstance(type)!;
+    foreach (var step in provider.GetServices(typeof(IConfigureOptions<>).MakeGenericType(type)).OfType<object>()) {
+      _tryResolve(() => {
+        var named = typeof(IConfigureNamedOptions<>).MakeGenericType(type);
+        if (named.IsInstanceOfType(step)) {
+          named.GetMethod("Configure", [typeof(string), type])!.Invoke(step, [name, instance]);
+        } else if (name == Options.DefaultName) {
+          typeof(IConfigureOptions<>).MakeGenericType(type).GetMethod("Configure")!.Invoke(step, [instance]);
+        }
+        return null;
+      }, type.Name + " configure");
+    }
+    return instance;
+  }
 
   private const string MANIFEST_HEADER =
     "# Every configuration key the Whizbang library reads, one per line. '*' is a name the consumer chooses.\n"

@@ -289,7 +289,7 @@ public class BatcherAmbientContextTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
 
   /// <summary>A coordinator that records what the first outbox store could see of the context it ran in.</summary>
   private sealed class SeeingWorkCoordinator : IWorkCoordinator {

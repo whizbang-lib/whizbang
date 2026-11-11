@@ -242,7 +242,8 @@ public partial class PerspectiveWorker {
       OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
         PerspectiveName = perspectiveName,
         StreamId = streamId,
-        EventCount = processedEvents.Count
+        EventCount = processedEvents.Count,
+        EventIds = processedEvents.ConvertAll(e => e.MessageId.Value)
       });
     }
     _metrics?.StreamsUpdated.Add(1);

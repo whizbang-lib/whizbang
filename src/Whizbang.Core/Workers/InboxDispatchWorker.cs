@@ -176,6 +176,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// documented "disabled gate" state) or <c>null</c> means "no upstream cap"
   /// and the configured value passes through (subject to the floor).
   /// </remarks>
+  /// <summary>The dispatch fan-out as <see cref="ClampPartitionCount"/> caps it, with its inputs, for the startup settings report.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DerivePartitionCount(int configured, int gateMaxConcurrent) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:Workers:InboxDispatch:MaxConcurrentDispatch",
+      ClampPartitionCount(configured, gateMaxConcurrent),
+      "at least 1, at most the gate's permits",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxConcurrentDispatch", configured),
+      Whizbang.Core.Configuration.SettingInput.Of("GateMaxConcurrent", gateMaxConcurrent));
+
   internal static int ClampPartitionCount(int configured, int? gateMaxConcurrent) {
     var floored = Math.Max(1, configured);
     if (gateMaxConcurrent is null or <= 0) {

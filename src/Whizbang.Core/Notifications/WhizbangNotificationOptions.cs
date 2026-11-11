@@ -62,13 +62,16 @@ public sealed class WhizbangNotificationOptions {
   ///   <item><description>Else fall back to <c>ConnectionStrings:{ConnectionStringKey}</c> — the pooled string. Works on direct-Postgres deployments without pgbouncer.</description></item>
   /// </list>
   /// </summary>
+#pragma warning disable WHIZ606 // the name of a ConnectionStrings entry, not a credential
   public string? ConnectionStringKey { get; set; }
+#pragma warning restore WHIZ606
 
   /// <summary>
   /// Explicit direct connection string. Overrides <see cref="ConnectionStringKey"/>-based lookup
-  /// when set. Mostly used for testing or programmatic overrides.
+  /// when set. Mostly used for testing or programmatic overrides. Held as a
+  /// <see cref="Whizbang.Core.Configuration.SensitiveString"/>, so writing the options out writes its redaction.
   /// </summary>
-  public string? DirectConnectionString { get; set; }
+  public Whizbang.Core.Configuration.SensitiveString? DirectConnectionString { get; set; }
 
   /// <summary>
   /// PostgreSQL search path (the service's Whizbang schema) for the notification layer's raw

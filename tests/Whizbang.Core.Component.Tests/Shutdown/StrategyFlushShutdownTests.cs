@@ -69,7 +69,7 @@ public class StrategyFlushShutdownTests {
     tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
     workChannelWriter: new WorkChannelWriter(),
     inboxChannelWriter: new InboxChannelWriter(),
-    detachedWork: sp.GetRequiredService<DetachedLifecycleWork>());
+    detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
 
   private static BatchWorkCoordinatorStrategy _batch(IServiceProvider sp, int batchSize) => new(
     coordinator: null,
@@ -80,7 +80,7 @@ public class StrategyFlushShutdownTests {
     lifecycleMessageDeserializer: new PassThroughLifecycleDeserializer(),
     tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
     workChannelWriter: new WorkChannelWriter(),
-    detachedWork: sp.GetRequiredService<DetachedLifecycleWork>());
+    detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
 
   [Test]
   public async Task AnIntervalTimerFlush_InFlight_HostStopWaitsAndStoresWhatWasQueuedAfterItAsync() {

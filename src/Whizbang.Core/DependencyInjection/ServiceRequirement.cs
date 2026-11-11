@@ -52,6 +52,21 @@ public sealed record ServiceRequirement(Type ImplementationType, IReadOnlyList<T
   /// every registration of which names it directly.
   /// </remarks>
   public IReadOnlyList<Type> FactoryServiceTypes { get; init; } = [];
+
+  /// <summary>
+  /// The service whose registration this requirement depends on, or null when it always applies (#1907).
+  /// </summary>
+  /// <remarks>
+  /// A factory that builds its service only when another service is registered, else a stand-in (the transport
+  /// consumer's worker is built only when a transport is registered, #1876), needs what its building branch resolves
+  /// only in a composition that registers that service. The generator records the requirement under that condition,
+  /// and validation applies it only when a descriptor provides the condition's service, so a host without it is not
+  /// failed for what would never be built, and a host with it is checked for all of it.
+  /// </remarks>
+  /// <docs>operations/dependency-injection/registration-validation#conditional-factory-registrations</docs>
+  /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RegistrationValidationTests.cs:ARequirementUnderAConditionNothingRegisters_IsNotCheckedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithATransport_IsCheckedForWhatItsWorkerNeedsAsync</tests>
+  public Type? Condition { get; init; }
 }
 
 /// <summary>
