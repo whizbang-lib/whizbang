@@ -20,7 +20,23 @@ namespace Whizbang.Core.Attributes;
 /// otherwise be hard-blocked from ever intentionally building a mixed-mode perspective. This attribute is
 /// a first-class escape hatch that survives those policies while keeping the decision explicit and local.
 /// </para>
+/// <para>
+/// By itself it changes nothing at run time: a stream still never holds both kinds (WHIZ133). Set
+/// <see cref="Streams"/> to <see cref="MixedStreams.Allow"/> to let the pairs this read model applies share a stream
+/// (#2255).
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute : Attribute;
+public sealed class DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute : Attribute {
+  /// <summary>
+  /// Whether one stream may hold the ephemeral and the Sourced events this read model applies.
+  /// <see cref="MixedStreams.Refuse"/>, the default, keeps the runtime exactly as without the property. With
+  /// <see cref="MixedStreams.Allow"/>, each (ephemeral type, Sourced type) pair the read model applies is allowed, but
+  /// only when every read model that applies both types opts in the same way; otherwise the pair stays refused and
+  /// WHIZ139 names the read model that did not opt in.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:Registry_AnAllowingReadModel_CarriesItsPairs_AndTheDefaultCarriesNoneAsync</tests>
+  public MixedStreams Streams { get; set; } = MixedStreams.Refuse;
+}

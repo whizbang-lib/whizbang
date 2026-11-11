@@ -81,6 +81,14 @@ public sealed partial class TypeDefinitionReconciler(
     }
     await coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
 
+    // #2255: the (ephemeral, Sourced) pairs allowed to share a stream, from the registered read models, under every stored
+    // name of each type, so the store's mixed-stream refusal lets them mix. A full replace: with no read model allowing
+    // mixing (or no registry) the set is emptied, so a read model that drops the opt-in refuses mixing again.
+    var allowed = Whizbang.Core.Perspectives.MixedStreamAllowance.Stored(
+      Whizbang.Core.Perspectives.MixedStreamAllowance.Allowed(scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>()),
+      _catalog);
+    await coordinator.SyncMixedStreamAllowancesAsync(allowed, cancellationToken).ConfigureAwait(false);
+
     // Carry each perspective's row-retention declaration into the perspective registry, so the reaper
     // resolves enrolment and windows from SQL instead of having them threaded in every cycle.
     //

@@ -62,4 +62,22 @@ public sealed record PerspectiveRegistrationInfo(
   /// <docs>fundamentals/events/ephemeral-events#read-models-opted-into-mixing</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRegistryMixedOptInTests.cs:Registry_MarksAPerspectiveThatAllowsMixing_AndOnlyThatOneAsync</tests>
   public bool AllowsMixedEphemeralAndSourced { get; init; }
+
+  /// <summary>
+  /// The perspective's <c>[DangerouslyAllowMixedEphemeralAndSourcedEvents(Streams = ...)]</c>: whether it lets the
+  /// pairs in <see cref="MixedStreamPairs"/> share a stream. <see cref="Attributes.MixedStreams.Refuse"/> without the
+  /// attribute or the property (#2255).
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:Registry_AnAllowingReadModel_CarriesItsPairs_AndTheDefaultCarriesNoneAsync</tests>
+  public Attributes.MixedStreams MixedStreams { get; init; }
+
+  /// <summary>
+  /// Every (ephemeral type, Sourced type) pair the perspective applies, computed by the generator from its applied
+  /// events; empty unless it applies both kinds. A perspective without <see cref="Attributes.MixedStreams.Allow"/> keeps
+  /// its pairs refused for every read model (<see cref="MixedStreamAllowance"/>), so it carries them too (#2255).
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:Registry_AReadModelWithoutTheOptIn_CarriesItsPairs_SoTheyStayRefusedAsync</tests>
+  public IReadOnlyList<MixedStreamPair> MixedStreamPairs { get; init; } = [];
 }
