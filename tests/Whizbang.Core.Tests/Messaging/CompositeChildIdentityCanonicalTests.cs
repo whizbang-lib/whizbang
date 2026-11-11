@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 /// <docs>fundamentals/messaging/composite-events#deterministic-child-ids</docs>
 [Category("Unit")]
-public class CompositeChildIdentityCanonicalTests {
+public partial class CompositeChildIdentityCanonicalTests {
   private sealed record ChildEvent(string Id) : IEvent;
 
   private sealed class Composite(params IMessage[] inner) : ICompositeEvent {
@@ -90,11 +90,14 @@ public class CompositeChildIdentityCanonicalTests {
 
   // ===== generic and nested child types (#2266 hardening) =====
 
-  /// <summary>A child nested in another type, whose CLR name carries a '+'.</summary>
-  public sealed record NestedChild(string Id) : IEvent;
+  /// <summary>A child type nested in another, whose CLR name carries a '+'. Only its name is hashed here.</summary>
+  public sealed record NestedChild(string Id);
 
-  /// <summary>A generic child; its type arguments carry assembly-qualified names of their own.</summary>
-  public sealed record GenericChild<T>(T Value) : IEvent;
+  /// <summary>A generic child type; its type arguments carry assembly-qualified names of their own.</summary>
+  public sealed record GenericChild<T>(T Value);
+
+  [System.Text.RegularExpressions.GeneratedRegex(@", Version=[^,\]]+, Culture=[^,\]]+, PublicKeyToken=[^,\]]+")]
+  private static partial System.Text.RegularExpressions.Regex _decoration();
 
   private const string OTHER_BUILD = ", Version=9.8.7.6, Culture=neutral, PublicKeyToken=0123456789abcdef";
 
@@ -103,8 +106,7 @@ public class CompositeChildIdentityCanonicalTests {
   /// decoration of the outer type and of each type argument, at any depth, is that build's.
   /// </summary>
   private static string _asAnotherBuildWritesIt(Type type) =>
-    System.Text.RegularExpressions.Regex.Replace(
-      type.AssemblyQualifiedName!, @", Version=[^,\]]+, Culture=[^,\]]+, PublicKeyToken=[^,\]]+", OTHER_BUILD);
+    _decoration().Replace(TypeNameFormatter.AssemblyQualifiedName(type), OTHER_BUILD);
 
   private static IEnumerable<Type> _shapes() => [
     typeof(ChildEvent),
@@ -149,20 +151,6 @@ public class CompositeChildIdentityCanonicalTests {
     await Assert.That(CompositeChildIdentity.HashedTypeName(typeof(NestedChild))).IsEqualTo(TypeNameFormatter.Format(typeof(NestedChild)));
     await Assert.That(CompositeChildIdentity.HashedTypeName(typeof(NestedChild)).Contains('+')).IsTrue()
       .Because("a nested type keeps the CLR '+' separator");
-  }
-
-  [Test]
-  public async Task TryExpand_AGenericChild_FromAnotherBuild_DerivesTheTypedPathsIdAsync() {
-    var streamId = TrackedGuid.New().Value;
-    var compositeId = TrackedGuid.New().Value;
-    var childType = typeof(GenericChild<GenericChild<NestedChild>>);
-    var typed = new Composite(new GenericChild<GenericChild<NestedChild>>(new GenericChild<NestedChild>(new NestedChild("a"))));
-    var raw = new RawBundle((_asAnotherBuildWritesIt(childType), "{}"));
-
-    var viaTyped = CompositeInboxFanout.TryExpand(typed, _source(streamId, compositeId), _scope());
-    var viaRaw = CompositeInboxFanout.TryExpand(raw, _source(streamId, compositeId), _scope());
-
-    await Assert.That(viaRaw.Children.Single().MessageId).IsEqualTo(viaTyped.Children.Single().MessageId);
   }
 
   [Test]

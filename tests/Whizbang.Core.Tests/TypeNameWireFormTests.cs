@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests;
 /// <code-under-test>src/Whizbang.Core/TypeNameFormatter.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/EventTypeMatchingHelper.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations#normalizing-type-names</docs>
-public class TypeNameWireFormTests {
+public partial class TypeNameWireFormTests {
   /// <summary>A type nested in another, whose CLR name carries a '+'.</summary>
   public sealed record Nested(string Id);
 
@@ -37,13 +37,13 @@ public class TypeNameWireFormTests {
     typeof(Dictionary<Nested, List<Box<int>>>),             // an outer type from the core library, arguments from both
   ];
 
+  [System.Text.RegularExpressions.GeneratedRegex(@", Version=[^,\]]+, Culture=[^,\]]+, PublicKeyToken=[^,\]]+")]
+  private static partial System.Text.RegularExpressions.Regex _decoration();
+
   private static IEnumerable<string> _renderingsOf(Type type) {
-#pragma warning disable RS0030 // a test renders the versioned names a store or another build hands the normalizer
-    var versioned = type.AssemblyQualifiedName!;
-#pragma warning restore RS0030
+    var versioned = TypeNameFormatter.AssemblyQualifiedName(type);
     yield return versioned;
-    yield return System.Text.RegularExpressions.Regex.Replace(
-      versioned, @", Version=[^,\]]+, Culture=[^,\]]+, PublicKeyToken=[^,\]]+", OTHER_BUILD);
+    yield return _decoration().Replace(versioned, OTHER_BUILD);
     yield return TypeNameFormatter.Format(type);
   }
 
