@@ -124,7 +124,11 @@ public sealed record ServiceBacklog {
   /// measured.
   /// </summary>
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
-  public bool IsQuiescentApartFromIntegrity => IsQuiescent;
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
+  public bool IsQuiescentApartFromIntegrity => NonIntegrityWorkRows is { } work
+    ? work == 0 && PendingPerspectiveRows == 0 && PendingIdleRows == 0
+    : IsQuiescent;
 }
 
 

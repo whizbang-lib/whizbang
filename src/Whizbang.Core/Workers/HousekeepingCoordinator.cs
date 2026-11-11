@@ -328,7 +328,11 @@ public sealed class HousekeepingCoordinator {
     // backends -- the very pile-up the gate exists to prevent. Maintenance is the one caller that
     // can afford to queue behind the idle band, because the deferral ceiling (MaxDeferral) already
     // bounds how long it will wait before forcing a pass through anyway.
-    if (!backlog.IsQuiescent) {
+    // Apart from the framework's steady-state integrity traffic (#2253): every peer's checkpoint, and the redelivery
+    // chatter it sets off, is a background-band row for a moment whether or not the service has any work, and counted
+    // as work it reset this dwell every half minute, so the sweep only ever ran as the forced pass. Integrity already
+    // outranks maintenance through the slots below, so it need not also hold it back through the reading.
+    if (!backlog.IsQuiescentApartFromIntegrity) {
       _settledSince = null;
       return;
     }
@@ -480,8 +484,9 @@ public sealed class HousekeepingCoordinator {
     Verdict reason;
     // IsQuiescent is what IsSettled meant before 167 -- every count at zero, the idle band
     // included. Sweeps keep that meaning exactly; only the idle drain itself runs on the looser
-    // signal, or it could never be admitted.
-    if (!backlog.IsQuiescent) {
+    // signal, or it could never be admitted. The framework's steady-state integrity traffic is not
+    // counted (#2253; see _trackSettled).
+    if (!backlog.IsQuiescentApartFromIntegrity) {
       reason = Verdict.ServiceBusy;
     } else if (!_cooldownElapsed()) {
       reason = Verdict.ServiceCoolingDown;

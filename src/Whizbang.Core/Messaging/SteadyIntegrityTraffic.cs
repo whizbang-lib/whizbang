@@ -16,9 +16,11 @@ namespace Whizbang.Core.Messaging;
 /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
 public static class SteadyIntegrityTraffic {
   /// <summary>The types, in no particular order.</summary>
-  public static IReadOnlyList<Type> Types { get; } = [];
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:TheTraffic_IsTheCheckpoint_TheRedeliveryRequest_AndItsAnswerAsync</tests>
+  public static IReadOnlyList<Type> Types { get; } =
+    [typeof(IntegrityCheckpoint), typeof(RequestRedeliveryCommand), typeof(Minting.RedeliveryComposite)];
 
   /// <summary>The stored form of each type (<see cref="TypeNameFormatter.Format"/>), which the backlog reading compares
   /// with the normalized <c>message_type</c> of each work row.</summary>
-  public static IReadOnlyList<string> StoredNames { get; } = [];
+  public static IReadOnlyList<string> StoredNames { get; } = [.. Types.Select(TypeNameFormatter.Format)];
 }

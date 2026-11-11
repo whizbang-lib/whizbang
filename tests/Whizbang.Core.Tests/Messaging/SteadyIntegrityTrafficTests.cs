@@ -23,8 +23,10 @@ public class SteadyIntegrityTrafficTests {
 
   [Test]
   public async Task TheTraffic_IsTheCheckpoint_TheRedeliveryRequest_AndItsAnswerAsync() {
-    await Assert.That(SteadyIntegrityTraffic.Types)
-      .IsEquivalentTo([typeof(IntegrityCheckpoint), typeof(RequestRedeliveryCommand), typeof(RedeliveryComposite)]);
+    // Compared as names: an equivalence assertion over Type objects walks their members by reflection.
+    await Assert.That(SteadyIntegrityTraffic.Types.Select(t => t.Name))
+      .IsEquivalentTo([nameof(IntegrityCheckpoint), nameof(RequestRedeliveryCommand), nameof(RedeliveryComposite)]);
+    await Assert.That(SteadyIntegrityTraffic.Types.Contains(typeof(RedeliveryComposite))).IsTrue();
     await Assert.That(SteadyIntegrityTraffic.StoredNames)
       .IsEquivalentTo(SteadyIntegrityTraffic.Types.Select(TypeNameFormatter.Format))
       .Because("the reading compares them with the normalized message_type, which is the stored form");
