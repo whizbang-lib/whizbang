@@ -46,11 +46,15 @@ namespace Whizbang.Documentation.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference</docs>
+[NotInParallel(nameof(ConfigurationKeyManifestTests))]
 public class ConfigurationKeyManifestTests {
   private const string FAKE_SERVICE_BUS =
     "Endpoint=sb://manifest.servicebus.windows.net/;SharedAccessKeyName=k;SharedAccessKey=bWFuaWZlc3Q=";
 
   internal static Task<IReadOnlyCollection<string>> RecordKeysTheLibraryReadsAsync() => _composeLibraryAsync(null, null);
+
+  /// <summary>Each options instance the composition resolves, with the keys its resolution read first.</summary>
+  private static Action<object, IReadOnlyCollection<string>>? _resolvedOptions;
 
   /// <summary>
   /// Composes every package the way a host does over a configuration that records what it is asked for, resolves every
@@ -109,10 +113,16 @@ public class ConfigurationKeyManifestTests {
 
     await using var provider = services.BuildServiceProvider();
     foreach (var optionsType in _configuredOptionsTypes(services)) {
+      var readBefore = new HashSet<string>(recorder.Keys, StringComparer.OrdinalIgnoreCase);
+      object? resolved = null;
       _tryResolve(() => {
         var accessor = provider.GetService(typeof(IOptions<>).MakeGenericType(optionsType));
-        return accessor?.GetType().GetProperty("Value")?.GetValue(accessor);
+        resolved = accessor?.GetType().GetProperty("Value")?.GetValue(accessor);
+        return resolved;
       }, optionsType.Name);
+      if (resolved is not null) {
+        _resolvedOptions?.Invoke(resolved, [.. recorder.Keys.Where(k => !readBefore.Contains(k))]);
+      }
       // Named options bind a section per name: a consumer-chosen name records as '*'.
       _tryResolve(() => {
         var monitor = provider.GetService(typeof(IOptionsMonitor<>).MakeGenericType(optionsType));
@@ -287,23 +297,9 @@ public class ConfigurationKeyManifestTests {
 
   [Test]
   public async Task TheReportedDefaults_AreTheDefaultsInCodeAsync() {
-    // Every package composed, so every assembly's generated binding manifest is registered.
-    await RecordKeysTheLibraryReadsAsync();
     var manifested = new HashSet<string>(
       (await File.ReadAllLinesAsync(_manifestPath())).Where(l => l.Length > 0 && !l.StartsWith('#')), StringComparer.OrdinalIgnoreCase);
-    var defaults = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    foreach (var binding in Whizbang.Core.Configuration.ConfigurationManifestRegistry.Manifests.SelectMany(m => m.Bindings)) {
-      if (binding.OptionsType.IsAbstract || binding.OptionsType.GetConstructor(Type.EmptyTypes) is null) {
-        continue;
-      }
-      var instance = Activator.CreateInstance(binding.OptionsType)!;
-      foreach (var key in binding.Keys.Where(k => manifested.Contains(k) && !k.Contains('*', StringComparison.Ordinal)
-                 && k.StartsWith(binding.Section + ":", StringComparison.OrdinalIgnoreCase))) {
-        if (_format(_walk(instance, key[(binding.Section.Length + 1)..].Split(':'))) is { } value) {
-          defaults.TryAdd(key, value);
-        }
-      }
-    }
+    var defaults = await _recordDefaultsAsync(manifested);
     var path = Path.Combine(Path.GetDirectoryName(_manifestPath())!, "configuration-defaults.txt");
     var expected = defaults.Select(d => d.Key + "=" + d.Value).ToList();
     if (Environment.GetEnvironmentVariable("WHIZBANG_UPDATE_CONFIGURATION_KEYS") == "1") {
@@ -312,27 +308,58 @@ public class ConfigurationKeyManifestTests {
     var listed = (await File.ReadAllLinesAsync(path)).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
 
     await Assert.That(expected.Count).IsGreaterThan(100).Because("the defaults must be read, or the comparison proves nothing");
+    await Assert.That(expected).Contains("Whizbang:Workers:CoalescingOutbox:Partitions=4");
     await Assert.That(listed).IsEquivalentTo(expected)
       .Because("a default in code changed; regenerate Baselines/configuration-defaults.txt with WHIZBANG_UPDATE_CONFIGURATION_KEYS=1");
   }
 
-  /// <summary>The value at a key's path below its section, following properties by name or configuration key name.</summary>
-  private static object? _walk(object? instance, string[] segments) {
-    foreach (var segment in segments) {
-      if (instance is null) {
-        return null;
+  /// <summary>Composes the library and records, for every manifest key it reads, the value its options type holds.</summary>
+  private static async Task<SortedDictionary<string, string>> _recordDefaultsAsync(HashSet<string> manifested) {
+    var defaults = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    // Each options type is resolved over a configuration that holds nothing, so what it holds is what the service runs
+    // with when nothing is set; each key it read is found on it by the longest property path that ends the key.
+    _resolvedOptions = (instance, keys) => {
+      foreach (var key in keys.Where(k => manifested.Contains(k) && !k.Contains('*', StringComparison.Ordinal))) {
+        var segments = key.Split(':');
+        for (var start = 1; start < segments.Length; start++) {
+          if (_walk(instance, segments[start..], out var value)) {
+            if (_format(value) is { } formatted) {
+              defaults.TryAdd(key, formatted);
+            }
+            break;
+          }
+        }
       }
-      var property = instance.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+    };
+    try {
+      await RecordKeysTheLibraryReadsAsync();
+    } finally {
+      _resolvedOptions = null;
+    }
+    return defaults;
+  }
+
+  /// <summary>
+  /// Follows <paramref name="segments"/> through public properties (by name or configuration key name); false when a
+  /// segment names no property.
+  /// </summary>
+  private static bool _walk(object? instance, string[] segments, out object? value) {
+    value = instance;
+    foreach (var segment in segments) {
+      if (value is null) {
+        return false;
+      }
+      var property = value.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
         .FirstOrDefault(p => p.GetIndexParameters().Length == 0
           && string.Equals(
             (p.GetCustomAttributes(typeof(ConfigurationKeyNameAttribute), true).FirstOrDefault() as ConfigurationKeyNameAttribute)?.Name ?? p.Name,
             segment, StringComparison.OrdinalIgnoreCase));
       if (property is null) {
-        return null;
+        return false;
       }
-      instance = property.GetValue(instance);
+      value = property.GetValue(value);
     }
-    return instance;
+    return true;
   }
 
   /// <summary>A default as configuration would spell it; null for no value or one that is not a single setting.</summary>

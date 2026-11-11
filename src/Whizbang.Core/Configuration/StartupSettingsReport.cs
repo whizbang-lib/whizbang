@@ -42,7 +42,7 @@ public sealed record SettingEntry(
     return Source switch {
       SettingSource.Configured => name + "=" + Value + " (configured: " + Provider + ")",
       SettingSource.Derived => name + "=" + Derivation!.DisplayValue + " (derived: " + DerivedSetting.Describe(Derivation) + ")",
-      _ => name + " (default)",
+      _ => Value is null ? name + " (default)" : name + "=" + Value + " (default)",
     };
   }
 }
@@ -103,7 +103,6 @@ internal static class StartupSettingsReport {
       KnownConfigurationKeys sensitive,
       IEnumerable<IDerivedSetting> derived,
       IReadOnlyDictionary<string, string>? defaults = null) {
-    _ = defaults;
     ArgumentNullException.ThrowIfNull(manifest);
     ArgumentNullException.ThrowIfNull(sensitive);
     ArgumentNullException.ThrowIfNull(derived);
@@ -127,7 +126,7 @@ internal static class StartupSettingsReport {
         keys.Add(manifestKey);
       }
       foreach (var key in keys) {
-        entries.Add(_entry(manifestKey, key, configuration, providers, sensitive, derivations));
+        entries.Add(_entry(manifestKey, key, configuration, providers, sensitive, derivations, defaults));
         derivations.Remove(key);
       }
     }
@@ -155,13 +154,17 @@ internal static class StartupSettingsReport {
       IConfigurationRoot? configuration,
       List<IConfigurationProvider> providers,
       KnownConfigurationKeys sensitive,
-      Dictionary<string, IDerivedSetting> derivations) {
+      Dictionary<string, IDerivedSetting> derivations,
+      IReadOnlyDictionary<string, string>? defaults) {
     if (derivations.TryGetValue(key, out var derivation)) {
       return new SettingEntry(manifestKey, key, SettingSource.Derived, null, null, derivation);
     }
     var raw = configuration?[key];
     if (raw is null) {
-      return new SettingEntry(manifestKey, key, SettingSource.Default, null, null, null);
+      // The value the code holds when nothing sets it, redacted like a configured value when it is a credential.
+      var fallback = defaults is not null && defaults.TryGetValue(key, out var recorded) ? recorded : null;
+      var shown = fallback is not null && IsSensitive(key, sensitive) ? new SensitiveString(fallback).ToString() : fallback;
+      return new SettingEntry(manifestKey, key, SettingSource.Default, shown, null, null);
     }
     var value = IsSensitive(key, sensitive) ? new SensitiveString(raw).ToString() : raw;
     // A value came from a provider, so one of them has the key.

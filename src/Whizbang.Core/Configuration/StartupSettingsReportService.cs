@@ -41,7 +41,8 @@ internal sealed partial class StartupSettingsReportService(
       configuration as IConfigurationRoot,
       KnownConfigurationKeys.Library,
       KnownConfigurationKeys.Sensitive,
-      derivedSources.SelectMany(static source => source.DerivedSettings));
+      derivedSources.SelectMany(static source => source.DerivedSettings),
+      ConfigurationKeyDefaults.Library);
     foreach (var section in report) {
       LogSection(logger, section.Name, section);
     }
