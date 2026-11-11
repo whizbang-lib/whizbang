@@ -42,9 +42,10 @@ public class ZeroContributionsTests {
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
   }
 
-  private static ServiceCollection _withRemoved<TImplementation>(Action<IServiceCollection> contribute, ServiceLifetime lifetime)
+  private static ServiceCollection _withRemoved<TImplementation>(Action<IServiceCollection> register, Action<IServiceCollection> contribute)
       where TImplementation : class {
-    ServiceCollection services = [new ServiceDescriptor(typeof(TImplementation), typeof(TImplementation), lifetime)];
+    var services = new ServiceCollection();
+    register(services);
     contribute(services);
     services.Remove(services.Single(d => d.ServiceType == typeof(TImplementation)));
     return services;
@@ -52,7 +53,7 @@ public class ZeroContributionsTests {
 
   [Test]
   public async Task PerspectiveRunnersAndEventTypes_WithNoContribution_AreEmptyAsync() {
-    var services = _withRemoved<OnlyRegistry>(s => s.AddPerspectiveRunnerRegistryContribution<OnlyRegistry>(), ServiceLifetime.Singleton);
+    var services = _withRemoved<OnlyRegistry>(s => s.AddSingleton<OnlyRegistry>(), s => s.AddPerspectiveRunnerRegistryContribution<OnlyRegistry>());
     await using var provider = services.BuildServiceProvider();
 
     var runners = provider.GetRequiredService<IPerspectiveRunnerRegistry>();
@@ -65,7 +66,7 @@ public class ZeroContributionsTests {
 
   [Test]
   public async Task PinnedIdentities_WithNoContribution_AreEmptyAsync() {
-    var services = _withRemoved<OnlyPinnedIds>(s => s.AddPinnedIdRegistryContribution<OnlyPinnedIds>(), ServiceLifetime.Singleton);
+    var services = _withRemoved<OnlyPinnedIds>(s => s.AddSingleton<OnlyPinnedIds>(), s => s.AddPinnedIdRegistryContribution<OnlyPinnedIds>());
     await using var provider = services.BuildServiceProvider();
 
     var pinned = provider.GetRequiredService<IPinnedIdRegistry>();
@@ -76,7 +77,7 @@ public class ZeroContributionsTests {
 
   [Test]
   public async Task ThePerspectiveInvoker_WithNoContribution_QueuesAndInvokesNothingAsync() {
-    var services = _withRemoved<OnlyInvoker>(s => s.AddPerspectiveInvokerContribution<OnlyInvoker>(), ServiceLifetime.Scoped);
+    var services = _withRemoved<OnlyInvoker>(s => s.AddScoped<OnlyInvoker>(), s => s.AddPerspectiveInvokerContribution<OnlyInvoker>());
     await using var provider = services.BuildServiceProvider();
     await using var scope = provider.CreateAsyncScope();
 
@@ -88,7 +89,7 @@ public class ZeroContributionsTests {
 
   [Test]
   public async Task TheCollisionReport_WithNoContribution_FindsNothingAsync() {
-    var services = _withRemoved<OnlyRegistry>(s => s.AddPerspectiveRunnerRegistryContribution<OnlyRegistry>(), ServiceLifetime.Singleton);
+    var services = _withRemoved<OnlyRegistry>(s => s.AddSingleton<OnlyRegistry>(), s => s.AddPerspectiveRunnerRegistryContribution<OnlyRegistry>());
     await using var provider = services.BuildServiceProvider();
 
     var collisions = provider.GetServices<IRegistrationCollisionSource>().SelectMany(source => source.GetCollisions());
