@@ -49,7 +49,7 @@ public class BatcherShutdownTests {
       time)));
     root = host.Services;
     await host.StartAsync();
-    var strategy = (SlidingWindowOutboxBatchStrategy)((BoundedOutboxBatchStrategy)host.Services.GetRequiredService<IOutboxBatchStrategy>()).Inner;
+    var strategy = (SlidingWindowOutboxBatchStrategy)host.Services.GetRequiredService<IOutboxBatchStrategy>();
 
     await strategy.AppendAsync(HostShutdown.OutboxMessage());
     await held.Entered.Task;
@@ -75,7 +75,7 @@ public class BatcherShutdownTests {
       time)));
     root = host.Services;
     await host.StartAsync();
-    var strategy = (SlidingWindowInboxBatchStrategy)((BoundedInboxBatchStrategy)host.Services.GetRequiredService<IInboxBatchStrategy>()).Inner;
+    var strategy = (SlidingWindowInboxBatchStrategy)host.Services.GetRequiredService<IInboxBatchStrategy>();
     var outbox = HostShutdown.OutboxMessage();
 
     await strategy.AppendAsync(new InboxMessage {
