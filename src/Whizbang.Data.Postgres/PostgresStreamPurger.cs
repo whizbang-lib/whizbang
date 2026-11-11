@@ -24,7 +24,11 @@ namespace Whizbang.Data.Postgres;
 public sealed partial class PostgresStreamPurger(
   Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnection,
   string? schema = null,
-  ILogger<PostgresStreamPurger>? logger = null) : IStreamPurger {
+  ILogger<PostgresStreamPurger>? logger = null,
+  Whizbang.Core.Observability.StreamIntegrityMetrics? integrityMetrics = null) : IStreamPurger {
+
+  /// <summary>Stream-integrity metrics, for the ledger rows a purge removes (#2256).</summary>
+  internal Whizbang.Core.Observability.StreamIntegrityMetrics? IntegrityMetrics { get; } = integrityMetrics;
 
   /// <summary>The claim key prefix, so the claim prune and an operator can tell purge claims apart.</summary>
   public const string CLAIM_KEY_PREFIX = "whizbang:stream-purge:";
