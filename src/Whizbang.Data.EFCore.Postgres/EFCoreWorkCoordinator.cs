@@ -38,7 +38,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   WorkCoordinatorMetrics? metrics = null,
   WorkCoordinatorGate? gate = null,
   IServiceInstanceProvider? instanceProvider = null,
-  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null
+  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null,
+  Whizbang.Core.Observability.StreamIntegrityMetrics? integrityMetrics = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -108,6 +109,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   // without one discards them, exactly as the null-conditional calls it replaces did.
   private readonly ILogger _log = (ILogger?)logger ?? NullLogger.Instance;
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
+  // #2256: the ledger functions answer how many buckets each call opened and closed; recorded here, the one place that
+  // calls them, so every caller is counted. Null when stream-integrity metrics are not registered.
+  private readonly Whizbang.Core.Observability.StreamIntegrityMetrics? _integrityMetrics = integrityMetrics;
   private readonly WorkCoordinatorGate? _gate = gate;
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
   // v0.657 slice 2: enforce EmptyStreamIdPolicy at StoreOutboxMessagesAsync /
@@ -1826,6 +1830,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore CA1848
       return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
     }
+  }
+
+  /// <inheritdoc />
+  public Task<Whizbang.Core.Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
+      int maxRepairAttempts, CancellationToken cancellationToken = default) {
+    _ = _integrityMetrics;   // RED (#2256): the counters are not recorded yet
+    return Task.FromResult(Whizbang.Core.Observability.LedgerBacklogSnapshot.NotReported);
   }
 
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {

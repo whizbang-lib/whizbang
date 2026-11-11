@@ -2568,6 +2568,23 @@ public interface IWorkCoordinator {
     Task.FromResult(Observability.LedgerGaugeSnapshot.Empty);
 
   /// <summary>
+  /// Reads the open repair backlog for its gauges (#2256): the ledger's buckets counted once per origin and state, and
+  /// the depth of the integrity delivery queue, in one grouped read. Only the instance whose turn it is to do the
+  /// maintainer's work asks (<see cref="Startup.MaintainerDuty"/>), so N instances do not each count the same shared
+  /// ledger. Defaults to <see cref="Observability.LedgerBacklogSnapshot.NotReported"/> for engines with no ledger: no
+  /// series, never a zero that reads as a healed service.
+  /// </summary>
+  /// <param name="maxRepairAttempts">The repair budget, so a bucket that has spent it reads as exhausted.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The reading, or the not-reported reading.</returns>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  Task<Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
+    int maxRepairAttempts, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.LedgerBacklogSnapshot.NotReported);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is

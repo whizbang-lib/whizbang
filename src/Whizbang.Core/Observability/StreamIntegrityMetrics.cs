@@ -244,6 +244,23 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#re-attribution</docs>
   public PassiveCounter<long> ReattributionHopDisagreements { get; }
 
+  /// <summary>
+  /// #2256: ledger buckets opened. Tagged by how: <c>new</c> (a row recorded for a bucket the ledger did not hold) or
+  /// <c>reopened</c> (a bucket marked unhealable whose local side or deficit changed, so repair can act on it again).
+  /// Completion over a window is <c>closed / opened</c>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  public PassiveCounter<long> LedgerBucketsOpened { get; }
+
+  /// <summary>
+  /// #2256: ledger buckets closed, each counted once. Tagged by how: <c>healed</c> (a comparison removed the row: it
+  /// matches, or can no longer be confirmed), <c>forgotten</c> (removed without a heal: an unconsumed type, a type its
+  /// origin does not own, the row cap, a purged stream) or <c>unhealable</c> (marked as a bucket repair cannot change; a
+  /// later removal of that row is not counted again). ETA is <c>ledger_open_buckets / rate(closed)</c>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  public PassiveCounter<long> LedgerBucketsClosed { get; }
+
   private static readonly string[] _deferralReasons = ["per_audit_cap", "backlog_cap"];
   private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
@@ -386,6 +403,13 @@ public sealed class StreamIntegrityMetrics {
       "whizbang.stream_integrity.reattribution_hop_disagreements",
       description: "Stored events re-attribution left because their first hop names a service other than the owner");
 
+    LedgerBucketsOpened = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ledger_buckets_opened",
+      description: "Integrity ledger buckets opened; tagged by how (new | reopened)");
+    LedgerBucketsClosed = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.ledger_buckets_closed",
+      description: "Integrity ledger buckets closed, each once; tagged by how (healed | forgotten | unhealable)");
+
     BackfillWindowsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.backfill_windows_requested",
       description: "Paced backfill windows requested of owners, retries included; tagged by event_type");
@@ -490,6 +514,30 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>The backfill reading the gauges would currently report.</summary>
   internal BackfillGaugeSnapshot CurrentBackfillGaugesForTest => _backfill;
 
+  private volatile LedgerBacklogSnapshot _backlog = LedgerBacklogSnapshot.NotReported;
+
+  /// <summary>
+  /// Publishes the open repair backlog to its gauges (#2256), or withdraws it: the not-reported reading (or null) makes
+  /// both gauges report no series at all, which is what an instance that does not hold the maintainer duty reports.
+  /// </summary>
+  /// <param name="snapshot">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityBacklogMetricsTests.cs</tests>
+  public void UpdateLedgerBacklog(LedgerBacklogSnapshot? snapshot) =>
+    _backlog = snapshot is { Reported: false } ? snapshot : LedgerBacklogSnapshot.NotReported;
+
+  /// <summary>The backlog reading the gauges would currently report.</summary>
+  internal LedgerBacklogSnapshot CurrentLedgerBacklogForTest => _backlog;
+
+  /// <summary>
+  /// Records buckets newly marked unhealable (each once): <see cref="RepairsUnhealable"/>, and the same buckets as
+  /// closed (<c>how=unhealable</c>) on <see cref="LedgerBucketsClosed"/>, so the two cannot disagree (#2256).
+  /// </summary>
+  /// <param name="buckets">Buckets the mark changed.</param>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityBacklogMetricsTests.cs</tests>
+  public void RecordBucketsMarkedUnhealable(long buckets) => RepairsUnhealable.Add(buckets);
+
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
   /// <summary>
@@ -581,3 +629,52 @@ public sealed record BackfillGaugeSnapshot {
 /// <param name="Events">Events estimated to remain.</param>
 /// <docs>resilience/stream-integrity#paced-backfill</docs>
 public sealed record BackfillRemaining(string EventType, long Events);
+
+/// <summary>
+/// An atomically swappable reading of the open repair backlog (#2256), for the <c>ledger_open_buckets</c> and
+/// <c>outbound_deliveries</c> gauges. Read only by the instance whose turn it is to do the maintainer's work.
+/// </summary>
+/// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+public sealed record LedgerBacklogSnapshot {
+  /// <summary>No reading: this instance does not report the backlog (another holds the duty, the read failed, or the
+  /// engine keeps no ledger). The gauges report no series, never a zero.</summary>
+  public static LedgerBacklogSnapshot NotReported { get; } = new();
+
+  /// <summary>Whether this reading is reported at all.</summary>
+  public bool Reported { get; init; }
+
+  /// <summary>The open buckets, one entry per origin and state.</summary>
+  public IReadOnlyList<LedgerBacklogCount> Buckets { get; init; } = [];
+
+  /// <summary>Integrity deliveries waiting in the queue the maintainer drains.</summary>
+  public long OutboundDeliveries { get; init; }
+}
+
+/// <summary>The open buckets of one origin in one state, for the <c>ledger_open_buckets</c> gauge (#2256).</summary>
+/// <param name="Origin">The origin's service name, or its id when its name is not known.</param>
+/// <param name="State">One of <see cref="LedgerBacklogStates"/>.</param>
+/// <param name="Buckets">Buckets in that state.</param>
+/// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+public sealed record LedgerBacklogCount(string Origin, string State, long Buckets);
+
+/// <summary>
+/// The <c>state</c> tag values of the <c>ledger_open_buckets</c> gauge (#2256). Each bucket is in exactly one, decided in
+/// this order: unhealable, exhausted, waiting, answered, open.
+/// </summary>
+/// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+public static class LedgerBacklogStates {
+  /// <summary>Marked as a bucket repair cannot change.</summary>
+  public const string UNHEALABLE = "unhealable";
+
+  /// <summary>Spent its repair budget; repair asks no more.</summary>
+  public const string EXHAUSTED = "exhausted";
+
+  /// <summary>A repair request is out and its answer has not landed.</summary>
+  public const string WAITING = "waiting";
+
+  /// <summary>Answered, waiting for the next comparison to decide healed or still divergent.</summary>
+  public const string ANSWERED = "answered";
+
+  /// <summary>Everything else: divergent and waiting its turn in the repair drain or the next comparison.</summary>
+  public const string OPEN = "open";
+}

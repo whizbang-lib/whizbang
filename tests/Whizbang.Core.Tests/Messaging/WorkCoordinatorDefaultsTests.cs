@@ -685,6 +685,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegrityLedgerBacklogAsync(0);
+
+    await Assert.That(result.Reported).IsFalse()
+      .Because("an engine with no ledger has no backlog to report, and a zero would read as a healed service");
+  }
+
+  [Test]
   public async Task GetIntegritySettledMaxAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
