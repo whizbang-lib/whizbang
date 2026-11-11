@@ -198,6 +198,25 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion), cancellationToken);
 
   /// <summary>
+  /// Prepares a row write for a set-based write of a batch (<see cref="IPerspectiveWriteSink"/>).
+  /// </summary>
+  internal PendingPerspectiveWrite? PreparePendingWrite<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?>? physicalFieldValues,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion)
+      where TModel : class =>
+    UsesAtomicUpsert
+      ? throw new NotImplementedException(
+        $"{context.GetType().Name} {tableName} {id} {model} {metadata.EventId} {scope.TenantId} {physicalFieldValues?.Count} {forceUpdateScope} {expectedVersion}")
+      : null;
+
+  /// <summary>
   /// Maximum number of retries for TOCTOU duplicate-key races.
   /// With drain-mode concurrent perspective processing, 3+ threads can race on the same row.
   /// A single retry is insufficient — the retry itself can hit 23505 if yet another thread
