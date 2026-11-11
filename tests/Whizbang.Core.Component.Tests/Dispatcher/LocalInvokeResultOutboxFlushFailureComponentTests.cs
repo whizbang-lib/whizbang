@@ -128,6 +128,8 @@ public class LocalInvokeResultOutboxFlushFailureComponentTests {
     });
     // The real batcher and its real flush callback, behind the stream-affinity strategy the drivers register.
     services.AddWhizbangWorkers();
+    // These tests drive the per-stream sliding window's failure path; the default coalesces streams (#2220).
+    services.AddWhizbangOutboxStrategy<SlidingWindowOutboxBatchStrategy>();
     services.AddScoped<IWorkCoordinatorStrategy>(sp =>
       WorkCoordinatorStrategyFactory.WrapWithStreamAffinity(new PolicyRecordingOutbox(), sp));
     services.AddReceptors();

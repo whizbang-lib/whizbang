@@ -108,6 +108,12 @@ public static class WorkerPipelineExtensions {
     // whose probe timeout then kills a pod that is merely busy, discarding the progress that
     // would have ended the burst. Raises only; never lowers.
     WorkerThreadPoolFloor.Apply();
+    // #2251: the floor, the perspective drain width and the inbox dispatch fan-out are reported with their inputs.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Configuration.IDerivedSettingSource, WorkerDerivedSettings>(
+      sp => new WorkerDerivedSettings(
+        sp.GetRequiredService<IOptions<PerspectiveWorkerOptions>>(),
+        sp.GetRequiredService<IOptions<InboxDispatchWorkerOptions>>(),
+        sp.GetRequiredService<WorkCoordinatorGate>())));
 
     // Schema-ready gate — workers await this before issuing any SQL. The driver's
     // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
@@ -986,6 +992,17 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.CoalescingOutboxOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.CoalescingOutboxOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:CoalescingOutbox"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>(options => {
@@ -1092,6 +1109,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxDeserializeCacheOptions>();
     services.AddOptions<LeaseHandleOptions>();
     services.AddOptions<SlidingWindowOutboxOptions>();
+    services.AddOptions<CoalescingOutboxOptions>();
     services.AddOptions<SlidingWindowInboxOptions>();
 
     // Producer-side stream-affinity batcher — half B of pump-then-process. Singleton; the
@@ -1124,10 +1142,18 @@ public static class WorkerPipelineExtensions {
       timeProvider: sp.GetService<TimeProvider>(),
       onFlushFailed: sp.GetRequiredService<OutboxFlushFailureCallback>(),
       metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
+    // #2220 Part 2: the default coalesces writes from many streams into one flush, keeping each stream in order.
+    services.TryAddSingleton<CoalescingOutboxBatchStrategy>(sp => new CoalescingOutboxBatchStrategy(
+      flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
+      logger: sp.GetRequiredService<ILogger<CoalescingOutboxBatchStrategy>>(),
+      options: sp.GetRequiredService<IOptions<CoalescingOutboxOptions>>().Value,
+      timeProvider: sp.GetService<TimeProvider>(),
+      onFlushFailed: sp.GetRequiredService<OutboxFlushFailureCallback>(),
+      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp =>
-      new BoundedOutboxBatchStrategy(sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>(), sp.GetRequiredService<BatchBuffer>()));
+      new BoundedOutboxBatchStrategy(sp.GetRequiredService<CoalescingOutboxBatchStrategy>(), sp.GetRequiredService<BatchBuffer>()));
 
     // Receive-boundary inbox batcher — half A of pump-then-process. Mirror of the outbox
     // registration above. Flush callback resolves IWorkCoordinator from a fresh DI scope
@@ -1263,6 +1289,8 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<ILogger<BatchBuffer>>(),
       sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
       sp.GetRequiredService<TimeProvider>()));
+    // A strategy a consumer registers directly is wrapped where the framework resolves it, once per instance.
+    services.TryAddSingleton(sp => new BoundedStrategyWrappers(sp.GetRequiredService<BatchBuffer>()));
   }
 
   // The caller names the batch flushes record on the gate's hold-duration metric and its saturation warning.
@@ -1381,6 +1409,9 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    // #2251: the gate's interactive reserve (and a pool-sized gate's permits) are reported with their inputs.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Configuration.IDerivedSettingSource, WorkCoordinatorGate>(
+      sp => sp.GetRequiredService<WorkCoordinatorGate>()));
     services.TryAddSingleton(sp => {
       var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
       return new WorkCoordinatorGate(

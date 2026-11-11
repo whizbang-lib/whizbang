@@ -522,6 +522,13 @@ Whizbang:Workers:Claim:PartitionCount
 Whizbang:Workers:Claim:PerspectiveOnly
 Whizbang:Workers:Claim:PollingIntervalMilliseconds
 Whizbang:Workers:Claim:PollingMaxIntervalMilliseconds
+Whizbang:Workers:CoalescingOutbox:FlushRetryBackoff
+Whizbang:Workers:CoalescingOutbox:FlushRetryMaxBackoff
+Whizbang:Workers:CoalescingOutbox:MaxFlushAttempts
+Whizbang:Workers:CoalescingOutbox:MaxSize
+Whizbang:Workers:CoalescingOutbox:MaxWait
+Whizbang:Workers:CoalescingOutbox:Partitions
+Whizbang:Workers:CoalescingOutbox:SlidingWindow
 Whizbang:Workers:FailureFlush:Enabled
 Whizbang:Workers:FailureFlush:Flusher:ChannelCapacity
 Whizbang:Workers:FailureFlush:Flusher:CoalesceWindowMs
