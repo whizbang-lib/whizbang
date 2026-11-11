@@ -907,7 +907,7 @@ public sealed partial class PerspectiveRebuilder(
   private static partial void LogRebuildNothingRebuilt(ILogger logger, RebuildMode mode, string perspective, int requested, int refused);
 
   [LoggerMessage(Level = LogLevel.Information,
-      Message = "Completed {Mode} rebuild of perspective {Perspective} — {Streams} streams in {ElapsedMs}ms: {Rewritten} rewritten, {AlreadyCorrect} already correct, {WriteRefused} write refused, {WithoutModel} without a model, {WithoutEvents} without events")]
+      Message = "Completed {Mode} rebuild of perspective {Perspective}: {Streams} streams in {ElapsedMs}ms ({Rewritten} rewritten, {AlreadyCorrect} already correct, {WriteRefused} write refused, {WithoutModel} without a model, {WithoutEvents} without events)")]
   private static partial void LogRebuildCompleted(ILogger logger, RebuildMode mode, string perspective, int streams, long elapsedMs,
       int rewritten, int alreadyCorrect, int writeRefused, int withoutModel, int withoutEvents);
 
