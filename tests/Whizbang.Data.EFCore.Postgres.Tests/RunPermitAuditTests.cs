@@ -82,6 +82,8 @@ public sealed class RunPermitAuditTests {
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     // Reports items two assemblies both register, from what the registrations already hold (#2201).
     "RegistrationCollisionStartupValidator",
+    // The startup settings report (#2251) writes one log entry per settings section when the host is up, and nothing else.
+    "StartupSettingsReportService",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer", "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar",
