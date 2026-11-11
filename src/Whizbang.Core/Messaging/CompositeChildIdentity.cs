@@ -57,6 +57,18 @@ public static class CompositeChildIdentity {
     _derive(compositeMessageId, ordinal, HashedTypeName(childType));
 
   /// <summary>
+  /// The child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>, from the
+  /// child's type name as a bundle carries it on the wire: the raw expansion (#2266).
+  /// </summary>
+  /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
+  /// <param name="ordinal">Zero-based position of the child within the composite.</param>
+  /// <param name="wireTypeName">The child's type name, with or without the assembly version decoration.</param>
+  /// <returns>The id every path derives for this child.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:TryExpand_TheTypedAndTheRawPath_DeriveTheSameIds_WhenThePublisherRanAnotherBuildAsync</tests>
+  public static Guid ForChild(Guid compositeMessageId, int ordinal, string wireTypeName) =>
+    _derive(compositeMessageId, ordinal, wireTypeName);
+
+  /// <summary>
   /// The type name a child id hashes (#2266): the canonical wire form, <see cref="TypeNameFormatter.Format"/>
   /// (<c>Namespace.Type, Assembly</c>, nested types with <c>+</c>, version-free at every depth). A name read off the wire
   /// goes through the one string normalizer, <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>, which turns any
@@ -77,18 +89,6 @@ public static class CompositeChildIdentity {
   /// <param name="typeName">The type name, with or without version decorations at any depth.</param>
   /// <returns>The name the child id is derived from.</returns>
   internal static string HashedTypeName(string typeName) => EventTypeMatchingHelper.NormalizeTypeName(typeName);
-
-  /// <summary>
-  /// The child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>, from the
-  /// child's type name as a bundle carries it on the wire: the raw expansion (#2266).
-  /// </summary>
-  /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
-  /// <param name="ordinal">Zero-based position of the child within the composite.</param>
-  /// <param name="wireTypeName">The child's type name, with or without the assembly version decoration.</param>
-  /// <returns>The id every path derives for this child.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:TryExpand_TheTypedAndTheRawPath_DeriveTheSameIds_WhenThePublisherRanAnotherBuildAsync</tests>
-  public static Guid ForChild(Guid compositeMessageId, int ordinal, string wireTypeName) =>
-    _derive(compositeMessageId, ordinal, wireTypeName);
 
   /// <summary>
   /// Derives the child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>. The

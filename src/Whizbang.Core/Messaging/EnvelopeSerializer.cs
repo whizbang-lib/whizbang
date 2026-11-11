@@ -50,9 +50,9 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     // won't have JsonTypeInfo for MessageEnvelope<IEvent>, only for concrete types.
     // FIX: Always use the payload's runtime type to construct the envelope type name.
     // A payload's runtime type is always closed, so it always has an assembly-qualified name.
-    #pragma warning disable RS0030 // versioned on purpose: the serialized envelope's message type, which a receiver resolves the payload from (#2267)
+#pragma warning disable RS0030 // versioned on purpose: the serialized envelope's message type, which a receiver resolves the payload from (#2267)
     var messageTypeName = TypeNameFormatter.AssemblyQualifiedName(payloadType);
-    #pragma warning restore RS0030
+#pragma warning restore RS0030
     var envelopeTypeName = EnvelopeTypeNameHelper.Format(messageTypeName);
 
     // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage

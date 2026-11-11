@@ -171,18 +171,18 @@ public static partial class AuditOutboxMessageBuilder {
         MessageId = auditEnvelope.MessageId,
         Hops = auditEnvelope.CopyHops()
       },
-      #pragma warning disable RS0030 // versioned on purpose: an envelope type a receiver resolves the envelope from (#2267)
+#pragma warning disable RS0030 // versioned on purpose: an envelope type a receiver resolves the envelope from (#2267)
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(auditEventType)),
-      #pragma warning restore RS0030
+#pragma warning restore RS0030
       Priority = options.AuditPriority,
       // The tenant's audit ledger: one deterministic stream per tenant, so a tenant's records are one
       // orderable ledger and a fold of them inherits it (see AuditLedger).
       StreamId = AuditLedger.StreamFor(auditEvent.TenantId),
       IsEvent = false, // Audit events are NOT stored in event store — only published to transport
       Scope = scope,
-      #pragma warning disable RS0030 // versioned on purpose: the message type a receiver resolves the payload from (#2267)
+#pragma warning disable RS0030 // versioned on purpose: the message type a receiver resolves the payload from (#2267)
       MessageType = TypeNameFormatter.AssemblyQualifiedName(auditEventType)
-      #pragma warning restore RS0030
+#pragma warning restore RS0030
     };
   }
 
