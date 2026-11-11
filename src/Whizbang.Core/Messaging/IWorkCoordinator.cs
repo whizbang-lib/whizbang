@@ -102,6 +102,29 @@ public sealed record ServiceBacklog {
   /// can afford to wait, because its own deferral budget already bounds how long it will.
   /// </remarks>
   public bool IsQuiescent => IsSettled && PendingIdleRows == 0;
+
+  /// <summary>
+  /// Rows of the inbox, lease and outbox figures above that are NOT the framework's steady-state integrity traffic
+  /// (<see cref="SteadyIntegrityTraffic"/>): answered only as zero or not (a bound of one), or null when the backend
+  /// does not measure it.
+  /// </summary>
+  /// <remarks>
+  /// Every peer publishes an integrity checkpoint on its own cadence, and the redelivery requests and answers it sets off
+  /// arrive as background-band rows, so a service with no application work at all still reads a row or two every half
+  /// minute. Those are work for the figures above, and stay so: the integrity receptors read them to tell a row in flight
+  /// from a row missing. The housekeeping dwell reads this one instead (<see cref="IsQuiescentApartFromIntegrity"/>), so
+  /// the framework's own chatter never keeps an idle service from reading idle (#2253).
+  /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  public long? NonIntegrityWorkRows { get; init; }
+
+  /// <summary>
+  /// <see cref="IsQuiescent"/> with the framework's steady-state integrity traffic not counted as work: what the
+  /// housekeeping dwell waits for. Falls back to <see cref="IsQuiescent"/> when <see cref="NonIntegrityWorkRows"/> was not
+  /// measured.
+  /// </summary>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  public bool IsQuiescentApartFromIntegrity => IsQuiescent;
 }
 
 
