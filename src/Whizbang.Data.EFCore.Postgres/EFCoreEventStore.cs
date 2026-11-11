@@ -58,6 +58,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   private sealed class EventRow {
     public Guid Id { get; init; }
+    public Guid StreamId { get; init; }
     public string EventType { get; init; } = string.Empty;
     public int Version { get; init; }
     public bool IsFirstInStream { get; init; }
@@ -85,6 +86,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     from b in bodies.DefaultIfEmpty()
     select new EventRow {
       Id = e.Id,
+      StreamId = e.StreamId,
       EventType = e.EventType,
       Version = e.Version,
       // The first event in its stream (#1878): version 0, or version 1 when the stream holds no version 0. The
@@ -508,45 +510,113 @@ public sealed class EFCoreEventStore<TDbContext>(
       .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
-      // Look up the concrete type from the EventType column (canonical resolver — skip unknowns)
-      if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
+      if (_envelopeOf(record, typeMap) is { } envelope) {
+        yield return envelope;
+      }
+    }
+  }
+
+  /// <summary>
+  /// <see cref="ReadPolymorphicAsync"/> for many streams with at most two statements (#2246): one for the streams read
+  /// from their start, one for the rest, read after the earliest of their positions and cut to each stream's own here.
+  /// Each stream's events come in its own order, as the per-stream read returns them.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync</tests>
+  public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streams);
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    // Each stream from the earliest position it is asked from (null, its start, is the earliest of all).
+    var from = new Dictionary<Guid, Guid?>();
+    foreach (var (streamId, fromEventId) in streams) {
+      if (!from.TryGetValue(streamId, out var known)) {
+        from[streamId] = fromEventId;
+      } else if (known is null || fromEventId is null) {
+        from[streamId] = null;
+      } else if (fromEventId.Value.CompareTo(known.Value) < 0) {
+        from[streamId] = fromEventId;
+      }
+    }
+    var read = new Dictionary<Guid, List<MessageEnvelope<IEvent>>>();
+    foreach (var stream in from.Keys) {
+      read[stream] = [];
+    }
+    var whole = from.Where(f => f.Value is null).Select(f => f.Key).ToArray();
+    var after = from.Where(f => f.Value is not null).ToDictionary(f => f.Key, f => f.Value!.Value);
+    if (whole.Length > 0) {
+      await _readManyIntoAsync(_context.Set<EventStoreRecord>().AsNoTracking().Where(e => whole.Contains(e.StreamId)),
+        typeMap, read, null, cancellationToken);
+    }
+    if (after.Count > 0) {
+      var ids = after.Keys.ToArray();
+      var floor = after.Values.Min();
+      await _readManyIntoAsync(
+        _context.Set<EventStoreRecord>().AsNoTracking().Where(e => ids.Contains(e.StreamId) && e.Id.CompareTo(floor) > 0),
+        typeMap, read, after, cancellationToken);
+    }
+    return read.ToDictionary(r => r.Key, r => (IReadOnlyList<MessageEnvelope<IEvent>>)r.Value);
+  }
+
+  private async Task _readManyIntoAsync(
+      IQueryable<EventStoreRecord> pointers, Dictionary<string, Type> typeMap, Dictionary<Guid, List<MessageEnvelope<IEvent>>> read,
+      Dictionary<Guid, Guid>? after, CancellationToken cancellationToken) {
+    var rows = _bodyAwareRows(pointers.OrderBy(e => e.StreamId).ThenBy(e => e.Version).ThenBy(e => e.Id));
+    await foreach (var record in rows.AsAsyncEnumerable().WithCancellation(cancellationToken)) {
+      if (after is not null && record.Id.CompareTo(after[record.StreamId]) <= 0) {
         continue;
       }
-      if (record.EventData is null || record.Metadata is null) {
-        continue;   // reaped ephemeral body — consumed, snapshot-covered history
+      if (_envelopeOf(record, typeMap) is { } envelope) {
+        read[record.StreamId].Add(envelope);
       }
-
-      // Deserialize the event payload to the concrete type
-      var eventData = _deserializePayload(record, record.EventData.Value, concreteType);
-
-      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
-
-      // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
-      // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
-      // perspective runner's idempotency filter can compare against
-      // metadata.CommitSequence — required to keep UUIDv7 generation-time inversions
-      // from silently dropping late events (production forensic G5).
-      var envelope = new MessageEnvelope<IEvent> {
-        MessageId = record.Metadata.MessageId,
-        Payload = (IEvent)eventData,
-        Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
-        LocalCommitSequence = record.CommitSequence,
-        // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
-        // can run backward against the order the stream was written in.
-        LocalStreamVersion = record.Version,
-        // Decided by the query from the event's position, whatever the read starts after (#1878).
-        IsFirstInLocalStream = record.IsFirstInStream,
-        // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
-        // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
-        // its true position in the stream). Dropping it demotes single-origin streams to
-        // local-commit order and re-applies stragglers last.
-        SourceServiceId = record.OriginServiceId ?? Guid.Empty,
-        SourceCommitSequence = record.OriginCommitSequence ?? 0,
-      };
-
-      yield return envelope;
     }
+  }
+
+  /// <summary>
+  /// The envelope of one stored event as the polymorphic read builds it, or null for an event of a type not asked for, or
+  /// whose body was reaped. The one mapping <see cref="ReadPolymorphicAsync"/> and its batched form share.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _envelopeOf(EventRow record, Dictionary<string, Type> typeMap) {
+    // Look up the concrete type from the EventType column (canonical resolver — skip unknowns)
+    if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
+      return null;
+    }
+    if (record.EventData is null || record.Metadata is null) {
+      return null;   // reaped ephemeral body — consumed, snapshot-covered history
+    }
+
+    // Deserialize the event payload to the concrete type
+    var eventData = _deserializePayload(record, record.EventData.Value, concreteType);
+
+    var hops = _restoreScopeInHops(record.Metadata, record.Scope);
+
+    // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
+    // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
+    // perspective runner's idempotency filter can compare against
+    // metadata.CommitSequence — required to keep UUIDv7 generation-time inversions
+    // from silently dropping late events (production forensic G5).
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = record.Metadata.MessageId,
+      Payload = (IEvent)eventData,
+      Hops = hops,
+      DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      LocalCommitSequence = record.CommitSequence,
+      // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
+      // can run backward against the order the stream was written in.
+      LocalStreamVersion = record.Version,
+      // Decided by the query from the event's position, whatever the read starts after (#1878).
+      IsFirstInLocalStream = record.IsFirstInStream,
+      // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
+      // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
+      // its true position in the stream). Dropping it demotes single-origin streams to
+      // local-commit order and re-applies stragglers last.
+      SourceServiceId = record.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = record.OriginCommitSequence ?? 0,
+    };
+
+    return envelope;
   }
 
   /// <summary>

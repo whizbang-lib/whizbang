@@ -233,6 +233,10 @@ public partial class PerspectiveWorker {
       if (eventIdInCache && commitSeqInCache) {
         pair.LastProcessedEventId = cachedEventId;
         pair.LastProcessedCommitSequence = cachedCommitSeq;
+      } else if (!eventIdInCache && batchContext.CursorsReadFor.Contains(streamId)) {
+        // The batch read this stream's cursors and found none for the pair: a new pair has no cursor to read (#2246).
+        pair.LastProcessedEventId = null;
+        pair.LastProcessedCommitSequence = null;
       } else {
         var persisted = await pair.WorkCoordinator
           .GetPerspectiveCursorAsync(streamId, perspectiveName, ct)
@@ -566,7 +570,7 @@ public partial class PerspectiveWorker {
     if (pairs.Count == 0) {
       return;
     }
-    var gates = await _acquireAffinityGatesInOrderAsync(pairs.Select(p => (p.StreamId, p.PerspectiveName)), "drain", cancellationToken).ConfigureAwait(false);
+    var gates = await AcquireAffinityGatesInOrderAsync(pairs.Select(p => (p.StreamId, p.PerspectiveName)), "drain", cancellationToken).ConfigureAwait(false);
     var candidates = new ConcurrentQueue<DrainPair>();
     try {
       try {
@@ -633,7 +637,7 @@ public partial class PerspectiveWorker {
         }
       }
     } finally {
-      _releaseAffinityGates(gates);
+      gates.Dispose();
     }
   }
 }

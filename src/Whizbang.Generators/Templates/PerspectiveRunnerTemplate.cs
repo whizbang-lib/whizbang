@@ -228,6 +228,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
+  /// The events <see cref="ReadEventsAsync"/> would read, selected from a stream's events a claimed set-based batch read
+  /// once for all its pairs (#2246): the ones of the types this perspective folds, in the order they came.
+  /// </summary>
+  public global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>? SelectEvents(
+      global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> streamEvents) {
+    var selected = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(streamEvents.Count);
+    foreach (var envelope in streamEvents) {
+      if (global::System.Array.IndexOf(_handledEventTypes, envelope.Payload.GetType()) >= 0) {
+        selected.Add(envelope);
+      }
+    }
+    return selected;
+  }
+
+  /// <summary>
   /// Rebuild-only replay that honors re-key upcasters. Reads the physical stream's events
   /// (upcasted on the polymorphic read seam), partitions them by the row each folds onto
   /// (<see cref="global::Whizbang.Core.Perspectives.RebuildRowRouting"/>), and applies each partition onto its own

@@ -27,6 +27,15 @@ public partial class PerspectiveWorker {
       ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> ProcessedEvents,
       ConcurrentDictionary<Guid, bool> IsNewByEventId);
 
+  /// <summary>
+  /// What a claimed set-based batch read for one of its pairs with one read for every pair (#2246): the pair's cursor and
+  /// its stream's events after it, of every event type, in the stream's order.
+  /// </summary>
+  private sealed record ClaimedPrefetch(PerspectiveCursorInfo? Checkpoint, IReadOnlyList<MessageEnvelope<IEvent>> StreamEvents) {
+    /// <summary>The events in the order the per-pair path loads them (by id), for the lifecycle stages and the trace.</summary>
+    public List<MessageEnvelope<IEvent>> Upcoming { get; } = [.. StreamEvents.OrderByMessageId()];
+  }
+
   /// <summary>One claimed group between its phases: its scope, what it resolved, and its span.</summary>
   private sealed class ClaimedGroup(
       IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork> work, AsyncServiceScope scope) : IAsyncDisposable {
@@ -45,6 +54,9 @@ public partial class PerspectiveWorker {
     public bool EnablePerspectiveSpans { get; set; }
     public bool EnableLifecycleSpans { get; set; }
     public PerspectiveStreamContext StreamContext { get; set; }
+
+    /// <summary>What the batch read for this group, when it read its pairs together.</summary>
+    public ClaimedPrefetch? Prefetched { get; init; }
 
     /// <summary>The pair this group applies in a set-based batch.</summary>
     public PerspectiveApplyBatch.Pair? BatchPair { get; set; }
@@ -96,7 +108,8 @@ public partial class PerspectiveWorker {
   private async Task<ClaimedGroup?> _beginClaimedGroupAsync(
       ClaimedBatchContext batch,
       IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork> work,
-      CancellationToken ct) {
+      CancellationToken ct,
+      ClaimedPrefetch? prefetched = null) {
     var streamId = work.Key.StreamId;
     var perspectiveName = work.Key.PerspectiveName;
     var scope = _scopeFactory.CreateAsyncScope();
@@ -105,6 +118,7 @@ public partial class PerspectiveWorker {
       WorkCoordinator = groupWorkCoordinator,
       ReceptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>(),
       LifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>(),
+      Prefetched = prefetched,
     };
     var begun = false;
     try {
@@ -124,7 +138,7 @@ public partial class PerspectiveWorker {
       var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
         await _resolveDependenciesAndLoadEventsAsync(
           scope, groupWorkCoordinator, group.ReceptorInvoker, streamId, perspectiveName,
-          batch.BatchActivity, batch.EffectiveParent, ct).ConfigureAwait(false);
+          batch.BatchActivity, batch.EffectiveParent, ct, prefetched).ConfigureAwait(false);
       if (runner is null) {
         return null;
       }
@@ -183,7 +197,7 @@ public partial class PerspectiveWorker {
     _markAffinityPhase(streamId, perspectiveName, "load-processed");
     var processedEvents = await _loadAndLogProcessedEventsAsync(
       group.ReceptorInvoker, group.EventStore, result, streamId, perspectiveName,
-      lastProcessedEventId, ct).ConfigureAwait(false);
+      lastProcessedEventId, ct, group.Prefetched).ConfigureAwait(false);
 
     // Rewind path: the range-based load above covers events above the pre-rewind
     // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
@@ -293,16 +307,20 @@ public partial class PerspectiveWorker {
       ClaimedBatchContext batch,
       CancellationToken cancellationToken) {
     var parallel = new ParallelOptions { MaxDegreeOfParallelism = _effectiveWidth(), CancellationToken = cancellationToken };
-    var gates = await _acquireAffinityGatesInOrderAsync(groupedWork.Select(g => g.Key), "standard", cancellationToken).ConfigureAwait(false);
+    var gates = await AcquireAffinityGatesInOrderAsync(groupedWork.Select(g => g.Key), "standard", cancellationToken).ConfigureAwait(false);
     var candidates = new ConcurrentQueue<ClaimedGroup>();
     try {
       try {
+        // Under the gates, as each pair's own reads would be: one cursor read and one event read for every set-based pair.
+        var prefetched = await _prefetchClaimedAsync(
+          [.. groupedWork.Select(g => g.Key).Where(k => _writeModeOf(k.PerspectiveName) == PerspectiveWriteMode.SetBased)],
+          cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(groupedWork, parallel, async (work, ct) => {
           if (_writeModeOf(work.Key.PerspectiveName) != PerspectiveWriteMode.SetBased) {
             await _runClaimedGroupAsync(batch, work, ct).ConfigureAwait(false);
             return;
           }
-          var group = await _beginClaimedGroupAsync(batch, work, ct).ConfigureAwait(false);
+          var group = await _beginClaimedGroupAsync(batch, work, ct, prefetched?.GetValueOrDefault(work.Key)).ConfigureAwait(false);
           if (group is null) {
             return;
           }
@@ -344,7 +362,7 @@ public partial class PerspectiveWorker {
         }
       }
     } finally {
-      _releaseAffinityGates(gates);
+      gates.Dispose();
     }
   }
 
@@ -370,7 +388,9 @@ public partial class PerspectiveWorker {
 
     await _bootstrapSnapshotIfNeededAsync(
       group.Runner!, group.StreamId, group.PerspectiveName, group.StreamContext.LastProcessedEventId, ct).ConfigureAwait(false);
-    var events = await group.Runner!.ReadEventsAsync(group.StreamId, group.StreamContext.LastProcessedEventId, ct).ConfigureAwait(false);
+    var events = group.Prefetched is { } prefetched && group.Runner!.SelectEvents(prefetched.StreamEvents) is { } selected
+      ? selected
+      : await group.Runner!.ReadEventsAsync(group.StreamId, group.StreamContext.LastProcessedEventId, ct).ConfigureAwait(false);
     if (events is not { Count: > 0 }) {
       _markAffinityPhase(group.StreamId, group.PerspectiveName, "apply");
       var result = await _executeNormalPathAsync(
@@ -383,6 +403,53 @@ public partial class PerspectiveWorker {
       group.StreamId, group.PerspectiveName, group.Runner, group.StreamContext.LastProcessedEventId, events);
     return true;
   }
+
+  /// <summary>
+  /// Reads the cursors of a claimed batch's set-based pairs with one statement, and their streams' events after them with
+  /// one read (#2246), so each pair begins with what its own two reads would have returned. Null, and each pair reads its
+  /// own, when there are no event types to read, the coordinator does not read cursors in batches, there is no event store
+  /// or it does not read streams in batches, or a read fails (logged).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.SetBased.cs:SetBasedClaimed_ReadsEveryPairsCursorAndEvents_WithOneReadEachAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.SetBased.cs:SetBasedClaimed_ABatchedReadThatFails_LeavesEachPairToItsOwnReadsAsync</tests>
+  private async Task<Dictionary<(Guid StreamId, string PerspectiveName), ClaimedPrefetch>?> _prefetchClaimedAsync(
+      List<(Guid StreamId, string PerspectiveName)> pairs, CancellationToken ct) {
+    var eventTypes = _eventTypeProvider.GetEventTypes();
+    if (eventTypes.Count == 0) {
+      return null;
+    }
+    var scope = _scopeFactory.CreateAsyncScope();
+    await using (scope.ConfigureAwait(false)) {
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      if (!coordinator.ReadsCursorsInBatches || scope.ServiceProvider.GetService<IEventStore>() is not { } eventStore) {
+        return null;
+      }
+      try {
+        var cursors = (await coordinator.GetPerspectiveCursorsBatchAsync([.. pairs.Select(p => p.StreamId).Distinct()], ct).ConfigureAwait(false))
+          .ToDictionary(c => (c.StreamId, c.PerspectiveName));
+        var read = await eventStore.ReadPolymorphicManyAsync(
+          [.. pairs.Select(p => (p.StreamId, cursors.GetValueOrDefault(p)?.LastEventId))], eventTypes, ct).ConfigureAwait(false);
+        if (read is null) {
+          return null;
+        }
+        var prefetched = new Dictionary<(Guid StreamId, string PerspectiveName), ClaimedPrefetch>();
+        foreach (var pair in pairs) {
+          var checkpoint = cursors.GetValueOrDefault(pair);
+          // The stream was read from its pairs' earliest cursor: each pair takes the events after its own.
+          prefetched[pair] = new ClaimedPrefetch(checkpoint, [.. read.GetValueOrDefault(pair.StreamId, [])
+            .Where(e => checkpoint?.LastEventId is not { } last || e.MessageId.Value.CompareTo(last) > 0)]);
+        }
+        return prefetched;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogClaimedBatchReadFailed(_logger, ex, pairs.Count);
+        return null;
+      }
+    }
+  }
+
+  [LoggerMessage(EventId = 82, Level = LogLevel.Warning,
+    Message = "The claimed batch's one read of its {PairCount} set-based pair(s) failed; each pair reads its own cursor and events")]
+  static partial void LogClaimedBatchReadFailed(ILogger logger, Exception exception, int pairCount);
 
   /// <summary>The services a set-based batch runs with, resolved for this batch.</summary>
   private PerspectiveApplyBatch.Services _batchServices() {
@@ -405,31 +472,41 @@ public partial class PerspectiveWorker {
 
   /// <summary>
   /// Takes the affinity gates of a batch's pairs in <see cref="PerspectiveApplyLockSet.Order"/>, each pair once, so two
-  /// batches that share pairs wait on the first pair they share and never each hold a gate the other needs. When one
-  /// cannot be taken (the worker is stopping), the ones already held are released before the cancellation is thrown.
+  /// batches that share pairs wait on the first pair they share and never each hold a gate the other needs. Disposing
+  /// the result releases them in the reverse order. When one cannot be taken (the worker is stopping), the ones already
+  /// held are released before the cancellation is thrown.
   /// </summary>
-  private async Task<List<(Guid StreamId, string PerspectiveName, StreamAffinityGateEntry Entry)>> _acquireAffinityGatesInOrderAsync(
+  /// <remarks>Internal so a test can hold it to its release on cancellation.</remarks>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.SetBased.cs:AffinityGates_TakenForABatch_AreReleased_WhenTakingOneIsCanceledAsync</tests>
+  internal async Task<IDisposable> AcquireAffinityGatesInOrderAsync(
       IEnumerable<(Guid StreamId, string PerspectiveName)> pairs, string path, CancellationToken ct) {
     _ensureCursorCacheEvictionSubscribed();
-    var held = new List<(Guid StreamId, string PerspectiveName, StreamAffinityGateEntry Entry)>();
+    var held = new HeldAffinityGates(this);
     try {
       foreach (var (streamId, perspectiveName) in new SortedSet<(Guid StreamId, string PerspectiveName)>(pairs, PerspectiveApplyLockSet.Order)) {
         var entry = _getStreamAffinityGate(streamId, perspectiveName);
         await entry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         _markAffinityHeld(entry, path);
-        held.Add((streamId, perspectiveName, entry));
+        held.Add(streamId, perspectiveName, entry);
       }
     } catch {
-      _releaseAffinityGates(held);
+      held.Dispose();
       throw;
     }
     return held;
   }
 
-  /// <summary>Releases gates taken by <see cref="_acquireAffinityGatesInOrderAsync"/>, in the reverse order.</summary>
-  private void _releaseAffinityGates(List<(Guid StreamId, string PerspectiveName, StreamAffinityGateEntry Entry)> held) {
-    for (var i = held.Count - 1; i >= 0; i--) {
-      _releaseStreamAffinityGate(held[i].StreamId, held[i].PerspectiveName, held[i].Entry, abandoned: false);
+  /// <summary>Gates taken by <see cref="AcquireAffinityGatesInOrderAsync"/>, released in the reverse order.</summary>
+  private sealed class HeldAffinityGates(PerspectiveWorker worker) : IDisposable {
+    private readonly List<(Guid StreamId, string PerspectiveName, StreamAffinityGateEntry Entry)> _held = [];
+
+    public void Add(Guid streamId, string perspectiveName, StreamAffinityGateEntry entry) => _held.Add((streamId, perspectiveName, entry));
+
+    // Disposed once: by the batch that took the gates, or by a failed acquisition before it is handed out.
+    public void Dispose() {
+      for (var i = _held.Count - 1; i >= 0; i--) {
+        worker._releaseStreamAffinityGate(_held[i].StreamId, _held[i].PerspectiveName, _held[i].Entry, abandoned: false);
+      }
     }
   }
 }

@@ -435,7 +435,8 @@ public partial class PerspectiveWorker(
     ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> BatchProcessedEvents,
     ConcurrentDictionary<Guid, bool> BatchIsNewByEventId,
     ILifecycleCoordinator? LifecycleCoordinator,
-    ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> AppliedGroups);
+    ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> AppliedGroups,
+    IReadOnlySet<Guid> CursorsReadFor);
 
   // Metrics tracking
   private int _consecutiveEmptyPolls;
@@ -1885,10 +1886,10 @@ public partial class PerspectiveWorker(
     var typeNameCache = _buildDrainModeTypeNameCache(typedEvents);
     var eventsByStream = _groupAndDedupeDrainModeEventsByStream(typedEvents, rawByEventId);
 
-    await _prefetchMissingDrainModeCursorsAsync(scope, eventsByStream.Keys, cancellationToken);
+    var cursorsReadFor = await _prefetchMissingDrainModeCursorsAsync(scope, eventsByStream.Keys, cancellationToken);
 
     var drainBatchContext = new DrainBatchContext(
-      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups);
+      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups, cursorsReadFor);
     if (eventsByStream.Any(stream => _collectDrainModePerspectiveNames(stream.Value, typeNameCache)
           .Any(name => _writeModeOf(name) == PerspectiveWriteMode.SetBased))) {
       // #2246: the first lap of every stream is applied as one set-based batch; later laps run per pair.
@@ -2286,21 +2287,28 @@ public partial class PerspectiveWorker(
         g => g.DistinctBy(e => e.MessageId.Value).OrderByMessageId().ToList());
   }
 
-  /// <summary>Batch-fetches cursors for any streams not already in the local cache.</summary>
-  private async Task _prefetchMissingDrainModeCursorsAsync(
+  /// <summary>
+  /// Batch-fetches cursors for any streams not already in the local cache. Returns the streams it read: a pair of one of
+  /// them that the read left out of the cache has no cursor, so its own read can be skipped (#2246).
+  /// </summary>
+  private async Task<IReadOnlySet<Guid>> _prefetchMissingDrainModeCursorsAsync(
       AsyncServiceScope scope,
       IEnumerable<Guid> streamIds,
       CancellationToken cancellationToken) {
     var cursorsNotCached = streamIds.Where(sid => !_cursorCache.HasStream(sid)).ToArray();
     if (cursorsNotCached.Length == 0) {
-      return;
+      return _noStreams;
     }
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var batchCursors = await workCoordinator.GetPerspectiveCursorsBatchAsync(cursorsNotCached, cancellationToken);
     foreach (var cursor in batchCursors) {
       _hydrateCursorCacheEntry(_cursorCache, cursor);
     }
+    // Only a coordinator that reads the cursors makes a pair it left out one with no cursor.
+    return workCoordinator.ReadsCursorsInBatches ? cursorsNotCached.ToHashSet() : _noStreams;
   }
+
+  private static readonly IReadOnlySet<Guid> _noStreams = new HashSet<Guid>();
 
   /// <summary>
   /// Slice 26.13 — hydrates both halves of the cursor cache from a single
@@ -2443,7 +2451,9 @@ public partial class PerspectiveWorker(
       sharedContext.BatchProcessedEvents,
       sharedContext.BatchIsNewByEventId,
       sharedContext.LifecycleCoordinator,
-      sharedContext.AppliedGroups);
+      sharedContext.AppliedGroups,
+      // A refetch lap reads its cursors itself: the batch's read is older than the lap before it.
+      _noStreams);
     return (eventsForStream, nextContext);
   }
 
@@ -3294,13 +3304,20 @@ public partial class PerspectiveWorker(
       string perspectiveName,
       Activity? batchActivity,
       ActivityContext effectiveParent,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      ClaimedPrefetch? prefetched = null) {
 
-    // Look up the checkpoint to get the LastProcessedEventId
-    var checkpointSw = System.Diagnostics.Stopwatch.StartNew();
-    var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
-      streamId, perspectiveName, cancellationToken);
-    _metrics?.CheckpointDuration.Record(checkpointSw.Elapsed.TotalMilliseconds);
+    // Look up the checkpoint to get the LastProcessedEventId: a set-based batch read every group's with one statement
+    // (#2246); otherwise the group's own read.
+    PerspectiveCursorInfo? checkpoint;
+    if (prefetched is { } batchRead) {
+      checkpoint = batchRead.Checkpoint;
+    } else {
+      var checkpointSw = System.Diagnostics.Stopwatch.StartNew();
+      checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
+        streamId, perspectiveName, cancellationToken);
+      _metrics?.CheckpointDuration.Record(checkpointSw.Elapsed.TotalMilliseconds);
+    }
 
     var lastProcessedEventId = checkpoint?.LastEventId;
 
@@ -3342,9 +3359,12 @@ public partial class PerspectiveWorker(
       perspectiveName, streamId,
       receptorInvoker is not null, eventStore is not null, _eventTypeProvider.IsAvailable);
 
-    // Load events early to extract trace context for distributed tracing
-    var (upcomingEvents, perspectiveParentContext) = await _loadUpcomingEventsAndExtractTraceContextAsync(
-      eventStore, streamId, lastProcessedEventId, batchActivity, effectiveParent, cancellationToken);
+    // Load events early to extract trace context for distributed tracing; a set-based batch read every group's events
+    // with one read (#2246).
+    var (upcomingEvents, perspectiveParentContext) = prefetched is { } batchEvents
+      ? (batchEvents.Upcoming, _traceContextOf(batchEvents.Upcoming, batchActivity, effectiveParent))
+      : await _loadUpcomingEventsAndExtractTraceContextAsync(
+          eventStore, streamId, lastProcessedEventId, batchActivity, effectiveParent, cancellationToken);
 
     return (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext);
   }
@@ -4076,22 +4096,29 @@ public partial class PerspectiveWorker(
         _metrics?.EventLoadDuration.Record(eventLoadSw.Elapsed.TotalMilliseconds);
         _metrics?.BatchEventCount.Record(upcomingEvents.Count);
 
-        // Extract trace context from the first event's hops
-        if (upcomingEvents.Count > 0) {
-          var firstEvent = upcomingEvents[0];
-          var traceParent = firstEvent.Hops
-            .Where(h => h.Type == HopType.Current)
-            .Select(h => h.TraceParent)
-            .LastOrDefault(tp => tp is not null);
-
-          if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var extractedContext)) {
-            perspectiveParentContext = extractedContext;
-          }
-        }
+        perspectiveParentContext = _traceContextOf(upcomingEvents, batchActivity, effectiveParent);
       }
     }
 
     return (upcomingEvents, perspectiveParentContext);
+  }
+
+  /// <summary>
+  /// The trace context a perspective span is parented under: the first event's current hop, when it carries one (this
+  /// links perspective spans to the request that created the events), else the batch's parent.
+  /// </summary>
+  private static ActivityContext _traceContextOf(
+      List<MessageEnvelope<IEvent>> upcomingEvents, Activity? batchActivity, ActivityContext effectiveParent) {
+    var parent = batchActivity is null ? effectiveParent : default;
+    var traceParent = upcomingEvents.Count == 0
+      ? null
+      : upcomingEvents[0].Hops
+          .Where(h => h.Type == HopType.Current)
+          .Select(h => h.TraceParent)
+          .LastOrDefault(tp => tp is not null);
+    return traceParent is not null && ActivityContext.TryParse(traceParent, null, out var extractedContext)
+      ? extractedContext
+      : parent;
   }
 
   /// <summary>
@@ -4470,7 +4497,8 @@ public partial class PerspectiveWorker(
       Guid streamId,
       string perspectiveName,
       Guid? lastProcessedEventId,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      ClaimedPrefetch? prefetched = null) {
 
     var shouldLoadEvents = receptorInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
     if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -4482,9 +4510,14 @@ public partial class PerspectiveWorker(
       LogDiagnosticLoadingEvents(_logger, perspectiveName, streamId, shouldLoadEvents, hasInvoker, hasStore, statusStr, lastProcessed, current);
     }
 
-    var processedEvents = shouldLoadEvents
-      ? await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
-      : [];
+    // A claimed set-based batch read the pair's events already (#2246): the processed ones are those up to the
+    // completion's last event, as the range read below returns them.
+    List<MessageEnvelope<IEvent>> processedEvents = [];
+    if (shouldLoadEvents && prefetched is { } batchRead) {
+      processedEvents = [.. batchRead.Upcoming.Where(e => e.MessageId.Value.CompareTo(result.LastEventId) <= 0)];
+    } else if (shouldLoadEvents) {
+      processedEvents = await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken);
+    }
 
     if (_logger.IsEnabled(LogLevel.Debug)) {
       var eventsCount = processedEvents.Count;

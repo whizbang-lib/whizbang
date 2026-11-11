@@ -126,6 +126,28 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
     return [.. archived.Where(e => _atOrBefore(e.MessageId.Value, upToEventId)), .. live];
   }
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// A set-based batch's one read of its pairs' streams (#2246) reads the hot store only. When a stream read from its
+  /// start shows a gap there, the archive holds the stream's first events, so null is returned and each pair reads its
+  /// own events, through the archive.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABatchedRead_ThatAStreamsGapNeedsTheArchiveFor_LeavesEachPairToItsOwnReadAsync</tests>
+  public override async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    var read = await Inner.ReadPolymorphicManyAsync(streams, eventTypes, cancellationToken).ConfigureAwait(false);
+    if (read is null || !_readsThrough) {
+      return read;
+    }
+    foreach (var (streamId, fromEventId) in streams) {
+      if (fromEventId is null && (!read.TryGetValue(streamId, out var live) || _showsAGap(live))) {
+        return null;
+      }
+    }
+    return read;
+  }
+
   /// <summary>
   /// The explicit read through the archive: the archived events above <paramref name="afterVersion"/>, then the hot events
   /// after <paramref name="fromEventId"/> that the archive does not hold. Used by a rewind from a snapshot an archive
@@ -176,7 +198,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
     }
   }
 
-  private static bool _showsAGap<T>(List<MessageEnvelope<T>> live) =>
+  private static bool _showsAGap<T>(IReadOnlyList<MessageEnvelope<T>> live) =>
     live.Count == 0 || live[0].LocalStreamVersion > FIRST_ARCHIVED_VERSION;
 
   private static long? _firstVersion<T>(List<MessageEnvelope<T>> live) => live.Count == 0 ? null : live[0].LocalStreamVersion;
