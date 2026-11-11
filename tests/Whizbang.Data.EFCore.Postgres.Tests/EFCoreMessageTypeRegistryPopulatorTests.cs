@@ -45,8 +45,8 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
   public async Task PopulateAsync_InsertsPinnedTypesAsync() {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
-      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.PinnedCommand, Sample", "command", "22222222-2222-2222-2222-222222222222"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.PinnedCommand", "command", "22222222-2222-2222-2222-222222222222"),
     ]);
 
     var populator = new EFCoreMessageTypeRegistryPopulator(catalog, dataSource);
@@ -54,15 +54,15 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
 
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(2);
-    await Assert.That(rows.Any(r => r.PinnedId == new Guid("11111111-1111-1111-1111-111111111111") && r.ClrTypeName == "Sample.PinnedEvent, Sample" && r.Kind == "event")).IsTrue();
-    await Assert.That(rows.Any(r => r.PinnedId == new Guid("22222222-2222-2222-2222-222222222222") && r.ClrTypeName == "Sample.PinnedCommand, Sample" && r.Kind == "command")).IsTrue();
+    await Assert.That(rows.Any(r => r.PinnedId == new Guid("11111111-1111-1111-1111-111111111111") && r.ClrTypeName == "Sample.PinnedEvent" && r.Kind == "event")).IsTrue();
+    await Assert.That(rows.Any(r => r.PinnedId == new Guid("22222222-2222-2222-2222-222222222222") && r.ClrTypeName == "Sample.PinnedCommand" && r.Kind == "command")).IsTrue();
   }
 
   [Test]
   public async Task PopulateAsync_InsertsUnpinnedTypesWithNullPinnedIdAsync() {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.UnpinnedEvent, Sample", "event", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.UnpinnedEvent", "event", null),
     ]);
 
     var populator = new EFCoreMessageTypeRegistryPopulator(catalog, dataSource);
@@ -71,7 +71,7 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
     await Assert.That(rows[0].PinnedId).IsNull();
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Sample.UnpinnedEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Sample.UnpinnedEvent");
     await Assert.That(rows[0].Kind).IsEqualTo("event");
   }
 
@@ -79,7 +79,7 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
   public async Task PopulateAsync_IsIdempotent_ReRunKeepsTypeIdAndDoesNotDuplicateAsync() {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent", "event", "11111111-1111-1111-1111-111111111111"),
     ]);
 
     var populator = new EFCoreMessageTypeRegistryPopulator(catalog, dataSource);
@@ -100,13 +100,13 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
 
     // Initial run: pinned type with CLR name "Old.Namespace.FooEvent"
     var catalog1 = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent", "event", "11111111-1111-1111-1111-111111111111"),
     ]);
     await new EFCoreMessageTypeRegistryPopulator(catalog1, dataSource).PopulateAsync();
 
     // Subsequent run: same pinned_id, different CLR name (namespace was renamed)
     var catalog2 = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent", "event", "11111111-1111-1111-1111-111111111111"),
     ]);
     var logger = new CapturingLogger<EFCoreMessageTypeRegistryPopulator>();
     await new EFCoreMessageTypeRegistryPopulator(catalog2, dataSource, logger).PopulateAsync();
@@ -114,14 +114,14 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
     // Registry row remains pointing at the old CLR name — drift is reported, not reconciled.
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent");
     await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid("11111111-1111-1111-1111-111111111111"));
 
     var driftWarning = logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Warning && e.Message.Contains("Pinned id drift", StringComparison.Ordinal));
     await Assert.That(driftWarning).IsNotNull()
       .Because("The drift_detected branch must warn the operator to run the rename tool.");
-    await Assert.That(driftWarning!.Message).Contains("Old.Namespace.FooEvent, Sample");
-    await Assert.That(driftWarning!.Message).Contains("New.Namespace.FooEvent, Sample");
+    await Assert.That(driftWarning!.Message).Contains("Old.Namespace.FooEvent");
+    await Assert.That(driftWarning!.Message).Contains("New.Namespace.FooEvent");
   }
 
   [Test]
@@ -131,20 +131,20 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
 
     // Initial run: registry holds the OLD CLR name.
     await new EFCoreMessageTypeRegistryPopulator(new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", id),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent", "event", id),
     ]), dataSource).PopulateAsync();
 
     // Re-populate: same pinned_id, NEW name, with the OLD name recorded as a former name (acknowledged rename).
     var logger = new CapturingLogger<EFCoreMessageTypeRegistryPopulator>();
     await new EFCoreMessageTypeRegistryPopulator(new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", id)
-        { FormerNames = ["Old.Namespace.FooEvent, Sample"] },
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent", "event", id)
+        { FormerNames = ["Old.Namespace.FooEvent"] },
     ]), dataSource, logger).PopulateAsync();
 
     // Reconciled in place: row holds the NEW name, same pinned_id; an info log records the rename.
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("New.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("New.Namespace.FooEvent");
     await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid(id));
 
     var renameLog = logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Information && e.Message.Contains("Reconciled acknowledged rename", StringComparison.Ordinal));
@@ -206,9 +206,9 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
   public async Task PopulateAsync_MixedPinnedAndUnpinned_BothInsertedAsync() {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned, Sample", "event", "11111111-1111-1111-1111-111111111111"),
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned, Sample", "event", null),
-      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.Perspective, Sample", "perspective", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned", "event", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.Perspective", "perspective", null),
     ]);
 
     var populator = new EFCoreMessageTypeRegistryPopulator(catalog, dataSource);
@@ -224,9 +224,9 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
   public async Task PopulateAsync_SummaryLog_IncludesPinnedAndUnpinnedCountsAsync() {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned1, Sample", "event", "11111111-1111-1111-1111-111111111111"),
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned2, Sample", "command", "22222222-2222-2222-2222-222222222222"),
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned1, Sample", "event", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned1", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned2", "command", "22222222-2222-2222-2222-222222222222"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned1", "event", null),
     ]);
     var logger = new CapturingLogger<EFCoreMessageTypeRegistryPopulator>();
 
@@ -261,7 +261,7 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
     // Exercises the hand-rolled JSON escaping (_jsonString): quote, backslash,
     // \b \f \n \r \t and a raw control character below 0x20.
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
-    const string weirdName = "A\"B\\C\bD\fE\nF\rG\tH\u0001I, Sample";
+    const string weirdName = "A\"B\\C\bD\fE\nF\rG\tH\u0001I";
     var catalog = new FakeCatalog([
       new MessageTypeCatalogEntry(typeof(SamplePinned), weirdName, "event", null),
     ]);
