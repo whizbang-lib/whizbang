@@ -101,8 +101,11 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     return new Releaser(taken, _holdDurationHistogram, caller, _holders, id);
   }
 
-  /// <summary>Whether the current caller runs inside an interactive handling and may use the reserve.</summary>
-  private static bool _isInteractiveCaller() =>
+  /// <summary>
+  /// Whether the current caller runs inside an interactive handling and may use the reserve. The batch buffer asks the
+  /// same question, so one rule decides who is interactive for both bulkheads.
+  /// </summary>
+  internal static bool IsInteractiveCaller() =>
     Whizbang.Core.Priority.WorkPriority.Bucket(Whizbang.Core.Priority.PriorityContext.CurrentParent) == Whizbang.Core.Priority.WorkBucket.Interactive;
 
   /// <summary>
@@ -248,7 +251,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     }
     var currentCount = _semaphore.CurrentCount;
     LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
-    if (_reserve is not null && _isInteractiveCaller()) {
+    if (_reserve is not null && IsInteractiveCaller()) {
       return await _acquireInteractiveAsync(caller, cancellationToken).ConfigureAwait(false);
     }
     if (AcquireTimeoutMilliseconds <= 0) {

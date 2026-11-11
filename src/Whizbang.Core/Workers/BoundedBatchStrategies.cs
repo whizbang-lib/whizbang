@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -28,10 +29,8 @@ public readonly record struct BatchAppendContext(string Caller, Func<bool>? Hold
 /// <summary>The size an append takes in the batch buffer: the payload's serialized JSON, as it will be written.</summary>
 internal static class BatchMessageSize {
   /// <summary>The byte length of the envelope's payload, read from the element without serializing it again.</summary>
-  public static long Of(IMessageEnvelope<JsonElement> envelope) {
-    _ = envelope;
-    return 0;
-  }
+  public static long Of(IMessageEnvelope<JsonElement> envelope) =>
+    envelope.Payload.ValueKind == JsonValueKind.Undefined ? 0 : JsonMarshal.GetRawUtf8Value(envelope.Payload).Length;
 }
 
 /// <summary>
@@ -67,15 +66,29 @@ public sealed class BoundedOutboxBatchStrategy : IOutboxBatchStrategy {
   /// <param name="cancellationToken">Ends a wait for room.</param>
   /// <returns>Completes when the message is buffered by the inner strategy.</returns>
   public async ValueTask AppendAsync(OutboxMessage message, BatchAppendContext context, CancellationToken cancellationToken = default) {
-    _ = (context, _buffer);
-    await Inner.AppendAsync(message, cancellationToken).ConfigureAwait(false);
+    ArgumentNullException.ThrowIfNull(message);
+    await _buffer.AdmitAsync(message, BatchMessageSize.Of(message.Envelope), WorkCoordinatorGate.IsInteractiveCaller(), context, cancellationToken)
+      .ConfigureAwait(false);
+    try {
+      await Inner.AppendAsync(message, cancellationToken).ConfigureAwait(false);
+    } catch (Exception) {
+      // Refused or not buffered: the room it took is given back now, since no flush will ever release it.
+      _buffer.ReleaseOne(message);
+      throw;
+    }
   }
 
   /// <inheritdoc />
-  public Task FlushAndStopAsync(CancellationToken cancellationToken = default) => Inner.FlushAndStopAsync(cancellationToken);
+  public Task FlushAndStopAsync(CancellationToken cancellationToken = default) {
+    _buffer.Stop();
+    return Inner.FlushAndStopAsync(cancellationToken);
+  }
 
   /// <inheritdoc />
-  public ValueTask DisposeAsync() => Inner.DisposeAsync();
+  public ValueTask DisposeAsync() {
+    _buffer.Stop();
+    return Inner.DisposeAsync();
+  }
 }
 
 /// <summary>
@@ -100,13 +113,26 @@ public sealed class BoundedInboxBatchStrategy : IInboxBatchStrategy {
 
   /// <inheritdoc />
   public async ValueTask AppendAsync(InboxMessage message, CancellationToken cancellationToken = default) {
-    _ = (CALLER, _buffer);
-    await Inner.AppendAsync(message, cancellationToken).ConfigureAwait(false);
+    ArgumentNullException.ThrowIfNull(message);
+    await _buffer.AdmitAsync(message, BatchMessageSize.Of(message.Envelope), WorkCoordinatorGate.IsInteractiveCaller(),
+      BatchAppendContext.Anonymous(CALLER), cancellationToken).ConfigureAwait(false);
+    try {
+      await Inner.AppendAsync(message, cancellationToken).ConfigureAwait(false);
+    } catch (Exception) {
+      _buffer.ReleaseOne(message);
+      throw;
+    }
   }
 
   /// <inheritdoc />
-  public Task FlushAndStopAsync(CancellationToken cancellationToken = default) => Inner.FlushAndStopAsync(cancellationToken);
+  public Task FlushAndStopAsync(CancellationToken cancellationToken = default) {
+    _buffer.Stop();
+    return Inner.FlushAndStopAsync(cancellationToken);
+  }
 
   /// <inheritdoc />
-  public ValueTask DisposeAsync() => Inner.DisposeAsync();
+  public ValueTask DisposeAsync() {
+    _buffer.Stop();
+    return Inner.DisposeAsync();
+  }
 }

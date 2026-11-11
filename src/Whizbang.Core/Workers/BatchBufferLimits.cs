@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 
 namespace Whizbang.Core.Workers;
@@ -54,6 +56,8 @@ public sealed class BatchBufferOptions {
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferLimitsTests.cs</tests>
 public sealed class BatchBufferLimits : IDerivedSettingSource {
+  private const string MAX_BYTES_KEY = BatchBufferOptions.SECTION + ":MaxBufferedBytes";
+  private const string RESERVE_NAME = BatchBufferOptions.SECTION + ":InteractiveReserveFraction";
   private readonly List<IDerivedSetting> _derived = [];
 
   private BatchBufferLimits(long? maxMessages, long? maxBytes, double reserveFraction, double ceilingMultiplier) {
@@ -86,7 +90,46 @@ public sealed class BatchBufferLimits : IDerivedSettingSource {
   /// <returns>The limits.</returns>
   public static BatchBufferLimits Resolve(
       BatchBufferOptions options, long totalAvailableMemoryBytes, int gateMaxConcurrent, int gateInteractiveReserve) {
-    _ = (options, totalAvailableMemoryBytes, gateMaxConcurrent, gateInteractiveReserve);
-    return new BatchBufferLimits(null, null, 0, 1);
+    ArgumentNullException.ThrowIfNull(options);
+    DerivedSetting<long>? derivedBytes = null;
+    long? maxBytes;
+    if (options.MaxBufferedBytes is { } set) {
+      maxBytes = set > 0 ? set : null;
+    } else if (options.MaxBufferedBytesFraction > 0) {
+      derivedBytes = DerivedSetting.FractionOf(MAX_BYTES_KEY, options.MaxBufferedBytesFraction, "TotalAvailableMemoryBytes", totalAvailableMemoryBytes);
+      maxBytes = Math.Max(1, derivedBytes.Value);
+    } else {
+      maxBytes = null;
+    }
+    var reserve = gateMaxConcurrent > 0 ? (double)gateInteractiveReserve / gateMaxConcurrent : 0;
+    var limits = new BatchBufferLimits(
+      options.MaxBufferedMessages > 0 ? options.MaxBufferedMessages : null,
+      maxBytes,
+      reserve,
+      Math.Max(1, options.TransactionCeilingMultiplier));
+    if (derivedBytes is not null) {
+      limits._derived.Add(derivedBytes);
+    }
+    limits._derived.Add(DerivedSetting.Of(RESERVE_NAME, reserve, "WorkCoordinatorGate InteractiveReserve / MaxConcurrent",
+      SettingInput.Of("InteractiveReserve", gateInteractiveReserve), SettingInput.Of("MaxConcurrent", gateMaxConcurrent)));
+    return limits;
+  }
+}
+
+/// <summary>
+/// Binds <see cref="BatchBufferOptions"/> from <c>Whizbang:BatchBuffer</c>. The section is named literally at the call so
+/// the configuration binder source generator compiles the bind to typed assignments. A host without configuration keeps
+/// the code values.
+/// </summary>
+/// <docs>messaging/outbox-pattern#bounded-buffer</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/OutboxBatchStrategyRegistrationTests.cs</tests>
+internal sealed class ConfigureBatchBufferOptions(IConfiguration? configuration) : IConfigureOptions<BatchBufferOptions> {
+  public void Configure(BatchBufferOptions options) {
+    if (configuration is null) {
+      return;
+    }
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+    configuration.GetSection("Whizbang:BatchBuffer").Bind(options);
+#pragma warning restore IL2026, IL3050
   }
 }

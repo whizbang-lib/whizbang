@@ -34,8 +34,6 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     Whizbang.Core.SystemEvents.AuditTypeResolver? auditEventTypes = null,
     Func<bool>? holdsOpenTransaction = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
-  internal Func<bool>? HoldsOpenTransaction => holdsOpenTransaction;
-
   private readonly IWorkCoordinatorStrategy _inner = ArgumentGuard.NotNull(inner);
   private readonly IOutboxBatchStrategy _outboxBatch = ArgumentGuard.NotNull(outboxBatch);
   private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
@@ -74,17 +72,27 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     // wrapper is a mint seam of its own — stamp group + max-delay floor before the append,
     // mirroring the inner path (same rule for the audit companion below).
     message = _coalesceResolver?.ApplyCoalescePolicy(message) ?? message;
-    await _outboxBatch.AppendAsync(message, cancellationToken).ConfigureAwait(false);
+    await _appendAsync(message, cancellationToken).ConfigureAwait(false);
 
     if (message.IsEvent && _systemEventOptions?.EventAuditEnabled == true) {
       var auditMessage = Whizbang.Core.SystemEvents.AuditOutboxMessageBuilder.TryBuildAuditMessage(
         message, _systemEventOptions, _logger, _auditDecisionHook, _auditEventTypes);
       if (auditMessage != null) {
         auditMessage = _coalesceResolver?.ApplyCoalescePolicy(auditMessage) ?? auditMessage;
-        await _outboxBatch.AppendAsync(auditMessage, cancellationToken).ConfigureAwait(false);
+        await _appendAsync(auditMessage, cancellationToken).ConfigureAwait(false);
       }
     }
   }
+
+  /// <summary>
+  /// Appends to the batcher. A bounded batcher (every registered one is) is told who is publishing and how to ask
+  /// whether the publisher's scope holds a database transaction open, so such a publish goes past a full buffer instead
+  /// of waiting while it holds a connection the flushes may need (#2220).
+  /// </summary>
+  private ValueTask _appendAsync(OutboxMessage message, CancellationToken cancellationToken) =>
+    _outboxBatch is BoundedOutboxBatchStrategy bounded
+      ? bounded.AppendAsync(message, new BatchAppendContext("A publish of " + message.MessageType, holdsOpenTransaction), cancellationToken)
+      : _outboxBatch.AppendAsync(message, cancellationToken);
 
   /// <inheritdoc />
   public void QueueInboxMessage(InboxMessage message) => _inner.QueueInboxMessage(message);

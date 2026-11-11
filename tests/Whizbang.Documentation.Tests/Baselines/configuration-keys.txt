@@ -34,6 +34,10 @@ Whizbang:AutoGenerateStreamIds
 Whizbang:BacklogAge:AgeThreshold
 Whizbang:BacklogAge:Enabled
 Whizbang:BacklogAge:Interval
+Whizbang:BatchBuffer:MaxBufferedBytes
+Whizbang:BatchBuffer:MaxBufferedBytesFraction
+Whizbang:BatchBuffer:MaxBufferedMessages
+Whizbang:BatchBuffer:TransactionCeilingMultiplier
 Whizbang:BodyOffload
 Whizbang:BodyOffload:ActiveCleanup
 Whizbang:BodyOffload:Cipher:KeyEncryptionKey
