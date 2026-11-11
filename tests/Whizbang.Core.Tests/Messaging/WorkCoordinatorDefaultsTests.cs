@@ -695,6 +695,24 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var written = await coordinator.IntegrityAddLedgerTallyAsync(DateTimeOffset.UnixEpoch, 1, 1, DateTimeOffset.UnixEpoch);
+
+    await Assert.That(written).IsFalse().Because("an engine with no ledger keeps no tally, and the caller keeps its counts");
+  }
+
+  [Test]
+  public async Task GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var tally = await coordinator.GetIntegrityLedgerTallyAsync(DateTimeOffset.UnixEpoch);
+
+    await Assert.That(tally).IsNull().Because("no tally is no reading, and a zero would read as no progress");
+  }
+
+  [Test]
   public async Task GetIntegritySettledMaxAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

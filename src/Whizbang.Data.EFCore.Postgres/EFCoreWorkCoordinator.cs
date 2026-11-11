@@ -873,6 +873,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<bool> IntegrityAddLedgerTallyAsync(
+      DateTimeOffset at, long opened, long closed, DateTimeOffset keepSince, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <inheritdoc />
+  public Task<IntegrityLedgerTally?> GetIntegrityLedgerTallyAsync(DateTimeOffset since, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <inheritdoc />
   public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync<IntegrityGapTrackerState?>(async (cmd, schema) => {
       // #2104: one read per process start, two primary-key-ordered scans of small tables (one row per origin, one per
@@ -978,7 +987,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public Task IntegrityRecordOriginCheckpointAsync(
       Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
-      CancellationToken cancellationToken = default) =>
+      long? latestCommitSequence = null, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
       // #2104: one row per origin, rewritten in place per checkpoint; no indexed column changes, so the update is
       // heap-only. An origin that announces no address keeps the known one.

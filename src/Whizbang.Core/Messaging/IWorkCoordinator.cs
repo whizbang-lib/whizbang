@@ -2060,12 +2060,15 @@ public interface IWorkCoordinator {
   /// <param name="originServiceName">Its logical name.</param>
   /// <param name="requestTopic">Its announced request address, or null.</param>
   /// <param name="checkpointAt">When the checkpoint was recorded.</param>
+  /// <param name="latestCommitSequence">The checkpoint's watermark, the highest commit sequence the origin announced
+  /// (#2261); the highest one announced is kept, for <c>verified_percent</c>. Null keeps the known one.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs:TheSeals_CarryTheLatestCommitSequenceTheOriginsCheckpointsAnnouncedAsync</tests>
   Task IntegrityRecordOriginCheckpointAsync(
     Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
-    CancellationToken cancellationToken = default) => Task.CompletedTask;
+    long? latestCommitSequence = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
   /// #2104: replaces the kept pending gaps of one origin with <paramref name="pending"/> (empty = none), so a gap seen
@@ -2583,6 +2586,39 @@ public interface IWorkCoordinator {
   Task<Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
     int maxRepairAttempts, CancellationToken cancellationToken = default) =>
     Task.FromResult(Observability.LedgerBacklogSnapshot.NotReported);
+
+  /// <summary>
+  /// Adds the ledger buckets one instance opened and closed to the service's shared per-minute tally (#2261), and prunes
+  /// the minutes before <paramref name="keepSince"/> in the same call. Every instance writes its own counts, so the
+  /// repair progress and ETA read from the tally are per service and outlive a restart. Defaults to false (not written)
+  /// for engines with no ledger; the caller then keeps its counts for the next attempt.
+  /// </summary>
+  /// <param name="at">This instance's clock; the counts land in its minute.</param>
+  /// <param name="opened">Buckets opened since the last write.</param>
+  /// <param name="closed">Buckets closed since the last write.</param>
+  /// <param name="keepSince">Minutes before this are removed.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Whether the counts were written.</returns>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync</tests>
+  Task<bool> IntegrityAddLedgerTallyAsync(
+    DateTimeOffset at, long opened, long closed, DateTimeOffset keepSince, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Reads the service's ledger buckets opened and closed since <paramref name="since"/> from the shared tally (#2261),
+  /// for <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
+  /// ledger: the gauges then report no series, never a zero.
+  /// </summary>
+  /// <param name="since">The window's start.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The window's counts, or null.</returns>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  Task<IntegrityLedgerTally?> GetIntegrityLedgerTallyAsync(DateTimeOffset since, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityLedgerTally?>(null);
 
   /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the

@@ -68,7 +68,8 @@ public sealed partial class IntegrityCheckpointReceptor(
     var checkpointAt = DateTimeOffset.UtcNow;
     tracker.RecordCheckpoint(message.OriginServiceId, message.OriginServiceName, checkpointAt, message.RequestTopic);
     await coordinator.IntegrityRecordOriginCheckpointAsync(
-      message.OriginServiceId, message.OriginServiceName, message.RequestTopic, checkpointAt, cancellationToken).ConfigureAwait(false);
+      message.OriginServiceId, message.OriginServiceName, message.RequestTopic, checkpointAt,
+      cancellationToken: cancellationToken).ConfigureAwait(false);
     var pendingBefore = tracker.PeekPending(message.OriginServiceId);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));

@@ -606,6 +606,53 @@ public sealed class StreamIntegrityMetrics {
     LedgerBucketsClosed.Add(buckets, new KeyValuePair<string, object?>(HOW_TAG, CLOSED_UNHEALABLE));
   }
 
+  private volatile IntegrityVerifiedReading _verified = IntegrityVerifiedReading.NotReported;
+
+  /// <summary>
+  /// Publishes the <c>verified_percent</c> gauges' reading (#2261), or withdraws it (null): both gauges then report no
+  /// series.
+  /// </summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityCompletionMetricsTests.cs</tests>
+  public void UpdateVerifiedPercent(IntegrityVerifiedReading? reading) =>
+    _verified = reading ?? IntegrityVerifiedReading.NotReported;
+
+  /// <summary>The verified reading the gauges would currently report.</summary>
+  internal IntegrityVerifiedReading CurrentVerifiedPercentForTest => _verified;
+
+  private volatile RepairProgressReading _progress = RepairProgressReading.NotReported;
+
+  /// <summary>
+  /// Publishes the <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> reading (#2261), or withdraws it (null):
+  /// both gauges then report no series, which is what an instance that does not report the backlog reports.
+  /// </summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityCompletionMetricsTests.cs</tests>
+  public void UpdateRepairProgress(RepairProgressReading? reading) =>
+    _progress = reading ?? RepairProgressReading.NotReported;
+
+  /// <summary>The repair progress reading the gauges would currently report.</summary>
+  internal RepairProgressReading CurrentRepairProgressForTest => _progress;
+
+  private long _talliedOpened;
+  private long _talliedClosed;
+
+  /// <summary>
+  /// #2261: the buckets the opened and closed counters counted that the shared tally has not been told of yet. The
+  /// counters are the source, whoever adds to them, so the tally and the counters cannot disagree.
+  /// </summary>
+  internal (long Opened, long Closed) PendingLedgerTally() => (_talliedOpened, _talliedClosed);
+
+  /// <summary>#2261: records that the shared tally now holds these buckets.</summary>
+  /// <param name="opened">Buckets opened that were written.</param>
+  /// <param name="closed">Buckets closed that were written.</param>
+  internal void MarkLedgerTallied(long opened, long closed) {
+    _talliedOpened += opened;
+    _talliedClosed += closed;
+  }
+
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
   /// <summary>
@@ -696,8 +743,10 @@ public sealed record LedgerGaugeSnapshot {
 /// <summary>One origin's verified watermark, for the <c>sealed_through</c> gauge.</summary>
 /// <param name="OriginServiceId">The audited origin.</param>
 /// <param name="SealedThrough">Exclusive end of the highest window that audited clean and complete.</param>
+/// <param name="LatestCommitSequence">The highest commit sequence the origin's checkpoints announced (inclusive), for
+/// <c>verified_percent</c> (#2261); null when no checkpoint announced one.</param>
 /// <docs>resilience/stream-integrity</docs>
-public sealed record OriginSeal(Guid OriginServiceId, long SealedThrough);
+public sealed record OriginSeal(Guid OriginServiceId, long SealedThrough, long? LatestCommitSequence = null);
 
 /// <summary>An atomically swappable reading of the paced backfill, for its gauges (#2092).</summary>
 /// <docs>resilience/stream-integrity#paced-backfill</docs>
@@ -787,4 +836,50 @@ public static class LedgerBucketKinds {
 
   /// <summary>No comparison has stated the bucket's kind yet.</summary>
   public const string UNKNOWN = "unknown";
+}
+
+/// <summary>
+/// The <c>verified_percent</c> gauges' reading (#2261), computed by <see cref="IntegrityCompletion.Verified"/> from the
+/// seals the ledger gauges read.
+/// </summary>
+/// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+public sealed record IntegrityVerifiedReading {
+  /// <summary>No reading: the gauge is switched off, or nothing has been read. Both gauges report no series.</summary>
+  public static IntegrityVerifiedReading NotReported { get; } = new();
+
+  /// <summary>Whether this reading is reported at all.</summary>
+  public bool Reported { get; init; }
+
+  /// <summary>Each origin whose latest commit sequence is known, with its verified percentage.</summary>
+  public IReadOnlyList<OriginVerifiedPercent> Origins { get; init; } = [];
+
+  /// <summary>All origins, weighted by the commit sequences each announced; null when none is known.</summary>
+  public double? AllOrigins { get; init; }
+}
+
+/// <summary>One origin's verified percentage, for the <c>verified_percent</c> gauge (#2261).</summary>
+/// <param name="OriginServiceId">The origin.</param>
+/// <param name="Percent">Its verified sequences as a percentage of its latest commit sequence, 0 to 100.</param>
+/// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+public sealed record OriginVerifiedPercent(Guid OriginServiceId, double Percent);
+
+/// <summary>
+/// The <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> gauges' reading (#2261), computed over the rolling
+/// window by the instance that reports the backlog.
+/// </summary>
+/// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+public sealed record RepairProgressReading {
+  /// <summary>No reading: another instance reports it, it is switched off, or the tally could not be read.</summary>
+  public static RepairProgressReading NotReported { get; } = new();
+
+  /// <summary>Whether this reading is reported at all.</summary>
+  public bool Reported { get; init; }
+
+  /// <summary>Buckets closed as a percentage of buckets opened over the window; null when none opened, or switched
+  /// off.</summary>
+  public double? ProgressPercent { get; init; }
+
+  /// <summary>Seconds until the repairable backlog empties at the window's net close rate; null while the backlog is
+  /// flat or growing, when the backlog was not read, or switched off.</summary>
+  public double? EtaSeconds { get; init; }
 }
