@@ -117,9 +117,9 @@ public static class WhizbangIdProviderRegistry {
     lock (_lock) {
       if (!_factories.TryGetValue(typeof(TId), out var factory)) {
         throw new InvalidOperationException(
-          $"No provider factory registered for {typeof(TId).Name}. " +
+          $"No provider factory registered for {TypeNameFormatter.ForLog(typeof(TId))}. " +
           "Ensure the WhizbangIdGenerator has processed this type. " +
-          $"Add the [WhizbangId] attribute to the {typeof(TId).Name} struct declaration.");
+          $"Add the [WhizbangId] attribute to the {TypeNameFormatter.ForLog(typeof(TId))} struct declaration.");
       }
 
       return (IWhizbangIdProvider<TId>)factory(baseProvider);

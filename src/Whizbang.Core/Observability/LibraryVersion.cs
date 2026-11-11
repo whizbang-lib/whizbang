@@ -49,6 +49,6 @@ internal static class AssemblyVersionText {
   /// <tests>tests/Whizbang.Core.Tests/Observability/AssemblyVersionTextTests.cs:NoVersion_UnknownAsync</tests>
   internal static string Of(Assembly assembly) =>
     assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-    ?? assembly.GetName().Version?.ToString()
+    ?? TypeNameFormatter.AssemblyVersion(assembly)?.ToString()
     ?? "unknown";
 }

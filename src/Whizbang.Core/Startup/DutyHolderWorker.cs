@@ -307,7 +307,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
 #pragma warning disable CA1031 // runs again on the next acquisition; logged, not swallowed
       } catch (Exception ex) {
 #pragma warning restore CA1031
-        LogAcquisitionHandlerFailed(_logger, handler.GetType().Name, role, ex);
+        LogAcquisitionHandlerFailed(_logger, TypeNameFormatter.ForLog(handler.GetType()), role, ex);
       }
     }
   }
@@ -374,7 +374,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
 #pragma warning disable CA1031 // recorded against the work as its last error; the work stays owed
     } catch (Exception ex) {
 #pragma warning restore CA1031
-      result = DutyWorkResult.NotDone($"{ex.GetType().Name}: {ex.Message}");
+      result = DutyWorkResult.NotDone($"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}");
     }
     if (result.Status == DutyWorkStatus.Deferred) {
       return true;   // not attempted, so nothing to record; a later pass runs it

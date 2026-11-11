@@ -806,7 +806,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     const MessageFailureReason reason = Whizbang.Core.Messaging.MessageFailureReason.SerializationError;
     var cause = refusal.GetBaseException();
     var detail = $"The payload of inbox message {work.MessageId} ({work.MessageType}) could not be deserialized, "
-      + $"which a retry will not change: {cause.GetType().Name}: {cause.Message}";
+      + $"which a retry will not change: {TypeNameFormatter.ForLog(cause.GetType())}: {cause.Message}";
     LogUndeserializablePayload(_logger, work.MessageId, work.MessageType, refusal);
     await _deadLetterOrFailAsync(work, reason, detail, refusal, ct);
   }
@@ -895,7 +895,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   private async Task _discardRepairBundleAsync(
       InboxWork work, ICompositeEvent composite, IServiceProvider scopeProvider, CancellationToken ct) {
-    LogRepairBundleDiscarded(_logger, work.MessageId, composite.GetType().Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    LogRepairBundleDiscarded(_logger, work.MessageId, TypeNameFormatter.ForLog(composite.GetType()));
+#pragma warning restore CA1873
     scopeProvider.GetService<StreamIntegrityMetrics>()?.RepairTrafficDiscarded.Add(
       1, new KeyValuePair<string, object?>("role", "consumer_bundle"));
     var commitRequest = _buildCommitRequest(

@@ -162,7 +162,7 @@ public sealed class AuditingEventStoreDecorator(
       // Derived from the event it audits, so a record derived again is the same record (#1724).
       Id = AuditLedger.RecordIdFor(envelope.MessageId.Value),
       OriginalEventId = envelope.MessageId.Value,
-      OriginalEventType = typeof(TMessage).Name,
+      OriginalEventType = TypeNameFormatter.SimpleName(typeof(TMessage)),
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,

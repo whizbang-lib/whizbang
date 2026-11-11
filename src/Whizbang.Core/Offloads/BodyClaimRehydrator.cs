@@ -80,7 +80,7 @@ public static class BodyClaimRehydrator {
         // DLQ. Integrity / deserialization / unknown-provider failures below stay terminal dead-letters.
         var reason = downloadCts.IsCancellationRequested
           ? $"exceeded the {downloadTimeout.TotalSeconds:0}s download timeout"
-          : $"{ex.GetType().Name}: {ex.Message}";
+          : $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}";
         throw new BodyClaimDownloadException(
           $"Body store '{claim.ProviderName}' download failed for claim '{claim.StorageKey}' ({reason}) — will retry via redelivery.", ex);
       }

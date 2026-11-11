@@ -135,7 +135,7 @@ public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
       Guid eventId,
       TimeSpan timeout,
       CancellationToken ct = default) =>
-    throw new NotSupportedException($"{GetType().Name} does not implement WaitForAppliedAsync.");
+    throw new NotSupportedException($"{TypeNameFormatter.ForLog(GetType())} does not implement WaitForAppliedAsync.");
 
   /// <summary>
   /// Waits until a local perspective has applied the event at a position in a stream, whoever published it.
@@ -157,5 +157,5 @@ public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
       int streamPosition,
       TimeSpan timeout,
       CancellationToken ct = default) =>
-    throw new NotSupportedException($"{GetType().Name} does not implement WaitForAppliedAsync.");
+    throw new NotSupportedException($"{TypeNameFormatter.ForLog(GetType())} does not implement WaitForAppliedAsync.");
 }

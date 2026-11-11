@@ -307,7 +307,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceEvictionFencingSqlTests.cs</tests>
   Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
   /// Records the beat of an instance that is still starting: from its registration at the end of Preflight until its
@@ -346,7 +346,7 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/work-coordinator/scheduled-retries</docs>
   Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement NotifyScheduledRetryDueAsync. Override in your IWorkCoordinator implementation.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement NotifyScheduledRetryDueAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
   /// Marks the supplied outbox messages as processed (transport publish succeeded).
@@ -376,7 +376,7 @@ public interface IWorkCoordinator {
     bool debugMode,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CompleteOutboxPublishedAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CompleteOutboxPublishedAsync.");
 
   /// <summary>
   /// Advances perspective cursors and deletes processed perspective_event rows in one round-trip.
@@ -409,7 +409,7 @@ public interface IWorkCoordinator {
     bool debugMode,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CompletePerspectiveAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CompletePerspectiveAsync.");
 
   /// <summary>
   /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category that <paramref name="instanceId"/> still
@@ -434,7 +434,7 @@ public interface IWorkCoordinator {
     int leaseSeconds = 300,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement RenewHeldLeasesAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement RenewHeldLeasesAsync.");
 
   /// <summary>
   /// Hands back inbox rows this instance claimed but never dispatched, refunding the attempt the
@@ -473,7 +473,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<Guid> messageIds,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ReleaseUnprocessedInboxAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ReleaseUnprocessedInboxAsync.");
 
   /// <summary>
   /// Releases the rows this instance has leased but NOT started in the given streams, and ends the
@@ -506,7 +506,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<Guid> perspectiveStreamIds,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ReleaseUnstartedLeasesAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ReleaseUnstartedLeasesAsync.");
 
   /// <summary>
   /// Reports failures for the supplied category. Increments retry counters and sets
@@ -522,7 +522,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<MessageFailure> failures,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ReportFailuresAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ReportFailuresAsync.");
 
   /// <summary>
   /// Atomic transactional bundle for one handler's commit. Marks the inbox completion
@@ -537,7 +537,7 @@ public interface IWorkCoordinator {
     HandlerCommitRequest request,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CommitHandlerResultAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CommitHandlerResultAsync.");
 
   /// <summary>
   /// SAVEPOINT-per-handler batched commit. The throughput multiplier: N handler results
@@ -553,7 +553,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<HandlerCommitRequest> requests,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CommitHandlerBatchAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CommitHandlerBatchAsync.");
 
   /// <summary>
   /// Polls for work to claim. The only function the new ClaimWorker polls.
@@ -569,7 +569,7 @@ public interface IWorkCoordinator {
     ClaimWorkRequest request,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ClaimWorkAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ClaimWorkAsync.");
 
   /// <summary>
   /// Composite single-round-trip flusher. Combines outbox completes, perspective completes,
@@ -583,7 +583,7 @@ public interface IWorkCoordinator {
     FlushCompletionsRequest request,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement FlushCompletionsAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement FlushCompletionsAsync.");
 
   /// <summary>
   /// PerspectiveSyncAwaiter read-only path. Returns pending vs processed event counts
@@ -597,7 +597,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<Perspectives.Sync.SyncInquiry> inquiries,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ResolveSyncInquiriesAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ResolveSyncInquiriesAsync.");
 
   /// <summary>
   /// Reads the applied-event ledger: whether a perspective has applied an event, named by its id or by its

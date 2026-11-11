@@ -53,7 +53,7 @@ public sealed class PerspectiveRowConflictException : Exception {
   private static string _describe(
       Type modelType, Guid streamId, PerspectiveRowVersion expectedVersion, PerspectiveRowVersion actualVersion) {
     ArgumentNullException.ThrowIfNull(modelType);
-    return $"The {modelType.Name} perspective row for stream {streamId} changed after it was read for apply "
+    return $"The {TypeNameFormatter.ForLog(modelType)} perspective row for stream {streamId} changed after it was read for apply "
       + $"(version read: {expectedVersion}; version now: {actualVersion}). The write was refused so it cannot "
       + "overwrite the newer row; the apply re-reads the row and re-applies its events.";
   }

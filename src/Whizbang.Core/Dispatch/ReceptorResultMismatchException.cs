@@ -17,7 +17,7 @@ namespace Whizbang.Core.Dispatch;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "RCS1194:Implement exception constructors",
   Justification = "The exception exists to carry a receptor's result; a constructor without one would make an instance the dispatcher cannot act on.")]
 public sealed class ReceptorResultMismatchException(object result, Type requestedType)
-    : InvalidCastException($"The receptor returned {result.GetType().Name}, not the requested {requestedType.Name}.") {
+    : InvalidCastException($"The receptor returned {TypeNameFormatter.ForLog(result.GetType())}, not the requested {TypeNameFormatter.ForLog(requestedType)}.") {
   /// <summary>Everything the receptor returned.</summary>
   public object Result { get; } = result;
 

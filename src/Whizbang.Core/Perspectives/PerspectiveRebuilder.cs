@@ -114,7 +114,7 @@ public sealed partial class PerspectiveRebuilder(
       return (await digester.ComputeAsync(perspectiveName, streamIds, ct), null);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogRowDigestNotComputed(logger, ex, perspectiveName);
-      return (null, $"the row digest failed: {ex.GetType().Name}: {ex.Message}");
+      return (null, $"the row digest failed: {TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}");
     }
   }
 
@@ -235,7 +235,9 @@ public sealed partial class PerspectiveRebuilder(
       // interface and the concrete type's registration would never be consulted.
       await dispatcher.AsSystem().ForAllTenants().PublishAsync(rebuildEvent);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      LogRebuildEventNotPublished(logger, ex, typeof(TEvent).Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      LogRebuildEventNotPublished(logger, ex, TypeNameFormatter.ForLog(typeof(TEvent)));
+#pragma warning restore CA1873
     }
   }
 

@@ -632,7 +632,7 @@ public static class JsonContextRegistry {
   public static void RegisterDerivedType<TBase, TDerived>(string? discriminator = null)
     where TDerived : TBase {
     var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => []);
-    var actualDiscriminator = discriminator ?? typeof(TDerived).Name;
+    var actualDiscriminator = discriminator ?? TypeNameFormatter.SimpleName(typeof(TDerived));
 
     // Avoid duplicate registrations
     if (!bag.Any(x => x.derivedType == typeof(TDerived))) {

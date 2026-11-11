@@ -102,7 +102,7 @@ public class JsonMessageSerializer : IMessageSerializer {
   /// </summary>
   private JsonTypeInfo _typeInfoFor(Type envelopeType) =>
     (_options is not null ? _options.GetTypeInfo(envelopeType) : _context!.GetTypeInfo(envelopeType))
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {TypeNameFormatter.ForLog(envelopeType)}. Ensure the message type is registered in WhizbangJsonContext.");
 
   /// <inheritdoc />
   public Task<byte[]> SerializeAsync(IMessageEnvelope envelope) {
@@ -120,7 +120,7 @@ public class JsonMessageSerializer : IMessageSerializer {
 
     // Get JsonTypeInfo from options or context - fully AOT-compatible
     var typeInfo = _typeInfoFor(envelopeType);
-    var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope ?? throw new InvalidOperationException($"Failed to deserialize envelope for message type {typeof(TMessage).Name}");
+    var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope ?? throw new InvalidOperationException($"Failed to deserialize envelope for message type {TypeNameFormatter.ForLog(typeof(TMessage))}");
     return Task.FromResult(envelope);
   }
 }
