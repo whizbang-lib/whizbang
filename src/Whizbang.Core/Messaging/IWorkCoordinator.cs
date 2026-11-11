@@ -1003,6 +1003,41 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Guid>>([]);
 
   /// <summary>
+  /// <see cref="GetStateBasedStreamIdsAsync(IReadOnlyList{Guid}, CancellationToken)"/> for a rebuild that may pass over
+  /// some ephemeral types: an event of one of <paramref name="ignoredEphemeralTypes"/> does not make its stream
+  /// state-based (a compaction origin always does). The rebuild passes the ephemeral side of each pair allowed to share a
+  /// stream (<see cref="Perspectives.MixedStreamAllowance"/>) that the rebuilt read model does not apply, so a read model
+  /// applying only the Sourced type rebuilds a mixed stream from its Sourced events (#2255). The default ignores
+  /// nothing: an engine that does not implement it refuses every stream holding an ephemeral event, as before.
+  /// </summary>
+  /// <param name="streamIds">Candidate stream ids to classify.</param>
+  /// <param name="ignoredEphemeralTypes">Ephemeral event types, as stored, that do not count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ids among <paramref name="streamIds"/> that are StateBased.</returns>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:StateBased_IgnoringTheAllowedEphemeralType_LeavesTheMixedStreamRebuildableAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync</tests>
+  Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds,
+    IReadOnlyList<string> ignoredEphemeralTypes,
+    CancellationToken cancellationToken = default) => GetStateBasedStreamIdsAsync(streamIds, cancellationToken);
+
+  /// <summary>
+  /// Replaces the (ephemeral type, Sourced type) pairs allowed to share a stream with <paramref name="pairs"/> (#2255):
+  /// the store's mixed-stream refusal (WHIZ133) lets either kind of an allowed pair join a stream holding the other.
+  /// Called once at startup by the type-definition reconciler, from the registered read models
+  /// (<see cref="Perspectives.MixedStreamAllowance"/>); an empty list allows nothing. No-op on engines without the
+  /// refusal.
+  /// </summary>
+  /// <param name="pairs">The allowed pairs, under every stored name of each type.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Sync_ReplacesThePairs_AndAnEmptyListClearsThemAsync</tests>
+  Task SyncMixedStreamAllowancesAsync(
+    IReadOnlyList<Perspectives.MixedStreamPair> pairs,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Replaces the per-type rewind-grace overrides (from <c>[Ephemeral(RewindGraceSeconds = …)]</c>): upserts
   /// the declared set and prunes any override no longer declared. Called once at startup by the reconciler.
   /// The reaper resolves <c>COALESCE(type grace, global default)</c> per event. No-op on engines without the
