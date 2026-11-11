@@ -72,6 +72,16 @@ public static class ConfigurationValueBinder {
     }
   }
 
+  /// <summary>
+  /// Applies <paramref name="key"/> as a <see cref="SensitiveString"/>; a blank value is skipped. The binder source
+  /// generator does not bind <see cref="SensitiveString"/>, so every options type that declares one binds it here.
+  /// </summary>
+  /// <docs>operations/configuration/sensitive-settings#binding</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ConfigurationValueBinderTests.cs:BindSensitive_WrapsTheValue_AndSkipsBlankOrMissingAsync</tests>
+  public static void BindSensitive(IConfiguration section, string key, Action<SensitiveString> apply) {
+    _ = _read(section, key, apply);
+  }
+
   private static string? _read(IConfiguration section, string key, Delegate apply) {
     ArgumentNullException.ThrowIfNull(section);
     ArgumentNullException.ThrowIfNull(apply);
