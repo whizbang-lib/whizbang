@@ -30,8 +30,5 @@ Decisions are recorded on the issues:
   exists without a timer per held message, so none was added.
 - One shared budget per process, 10,000 messages by default: confirmed.
 - The `data/work-coordinator-strategies` Batch advice is corrected with Part 2. Done.
-
-## Follow-ups (not in this PR)
-
-- The startup settings report shows an unset setting as `(default)` without its value; showing the value needs the
-  bound options instances (or generator support).
+- The startup settings report shows an unset setting's default value, marked `(default)` (owner decision, reversing the
+  earlier follow-up): recorded by the key manifest test into `configuration-defaults.txt`. Done.
