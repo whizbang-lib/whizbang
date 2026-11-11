@@ -33,9 +33,18 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Configuration.IDerivedSettingSource {
   /// <inheritdoc />
-  public IEnumerable<Whizbang.Core.Configuration.IDerivedSetting> DerivedSettings => _noDerived;
+  /// <remarks>The interactive reserve, and for a gate sized from the pool, its permits: each with its inputs (#2251).</remarks>
+  public IEnumerable<Whizbang.Core.Configuration.IDerivedSetting> DerivedSettings => _derived;
 
-  private static readonly Whizbang.Core.Configuration.IDerivedSetting[] _noDerived = [];
+  private readonly List<Whizbang.Core.Configuration.IDerivedSetting> _derived = [];
+
+  /// <summary>The interactive reserve as a derived setting: the value <see cref="ComputeInteractiveReserve"/> gives, with its inputs.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DeriveInteractiveReserve(int maxConcurrent, int? configured) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:WorkCoordinatorGate:InteractiveReserve",
+      ComputeInteractiveReserve(maxConcurrent, configured),
+      configured is null ? "MaxConcurrent / 10, leaving at least one shared permit" : "configured, leaving at least one shared permit",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxConcurrent", maxConcurrent));
 
   private readonly SemaphoreSlim? _semaphore;
   // Priority step 4: the permits held back for interactive callers. Null when nothing is reserved.
@@ -177,7 +186,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Con
       WorkCoordinatorMetrics? metrics = null,
       int? interactiveReserve = null) {
     MaxConcurrent = maxConcurrent;
-    InteractiveReserve = ComputeInteractiveReserve(maxConcurrent, interactiveReserve);
+    var reserve = DeriveInteractiveReserve(maxConcurrent, interactiveReserve);
+    _derived.Add(reserve);
+    InteractiveReserve = reserve.Value;
     AcquireTimeoutMilliseconds = acquireTimeoutMilliseconds;
     // The shared permits are what is left after the reserve; the reserve is its own semaphore so a
     // non-interactive caller can never take one of its permits, and a released reserved permit goes
@@ -217,12 +228,16 @@ public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Con
       int reserve = 5,
       int acquireTimeoutMilliseconds = 30000,
       WorkCoordinatorMetrics? metrics = null) {
-    var derived = Math.Max(1, maxPoolSize - reserve);
-    return new WorkCoordinatorGate(
-      maxConcurrent: derived,
+    var derived = Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:WorkCoordinatorGate:MaxConcurrent", Math.Max(1, maxPoolSize - reserve), "MaxPoolSize - reserve, at least 1",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxPoolSize", maxPoolSize), Whizbang.Core.Configuration.SettingInput.Of("Reserve", reserve));
+    var gate = new WorkCoordinatorGate(
+      maxConcurrent: derived.Value,
       logger: logger,
       acquireTimeoutMilliseconds: acquireTimeoutMilliseconds,
       metrics: metrics);
+    gate._derived.Insert(0, derived);
+    return gate;
   }
 
   /// <summary>
