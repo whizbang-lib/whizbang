@@ -16,9 +16,9 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Generators.Shared.Utilities;
-using SchemaRegistry = Whizbang.Generators.Shared.Utilities.PerspectiveRegistryPayload;
 using Whizbang.Testing.Containers;
 using Whizbang.Transports.HotChocolate;
+using SchemaRegistry = Whizbang.Generators.Shared.Utilities.PerspectiveRegistryPayload;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 

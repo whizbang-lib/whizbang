@@ -52,7 +52,7 @@ public class WhizbangIdFilterHandlerTests {
   private static readonly ParameterExpression _documentRow = Expression.Parameter(typeof(PerspectiveRow<OrderDocument>), "w");
 
   private static MemberExpression _documentField(string name) =>
-    Expression.Property(Expression.Property(_documentRow, nameof(PerspectiveRow<OrderDocument>.Data)), name);
+    Expression.Property(Expression.Property(_documentRow, nameof(PerspectiveRow<>.Data)), name);
 
   private static int _depth(Expression expression) =>
     expression is BinaryExpression { NodeType: ExpressionType.OrElse } or
@@ -81,7 +81,7 @@ public class WhizbangIdFilterHandlerTests {
   private static MemberExpression _optionalField() {
     var row = Expression.Parameter(typeof(PerspectiveRow<OptionalIdDocument>), "w");
     return Expression.Property(
-      Expression.Property(row, nameof(PerspectiveRow<OptionalIdDocument>.Data)), nameof(OptionalIdDocument.ParentId));
+      Expression.Property(row, nameof(PerspectiveRow<>.Data)), nameof(OptionalIdDocument.ParentId));
   }
 
   [Test]
@@ -103,7 +103,7 @@ public class WhizbangIdFilterHandlerTests {
     PerspectivePhysicalFieldRegistry.Register(
       typeof(PromotedIdDocument), nameof(PromotedIdDocument.Id), "id_column", FieldStorageMode.Split);
     var row = Expression.Parameter(typeof(PerspectiveRow<PromotedIdDocument>), "w");
-    var property = Expression.Property(Expression.Property(row, nameof(PerspectiveRow<PromotedIdDocument>.Data)), nameof(PromotedIdDocument.Id));
+    var property = Expression.Property(Expression.Property(row, nameof(PerspectiveRow<>.Data)), nameof(PromotedIdDocument.Id));
 
     var comparison = (BinaryExpression)WhizbangIdFilterHandler.IdEquals(property, GraphQLOrderId.New());
 
@@ -118,7 +118,7 @@ public class WhizbangIdFilterHandlerTests {
     var plain = (BinaryExpression)WhizbangIdFilterHandler.IdEquals(
       Expression.Property(Expression.Property(holder, nameof(DataHolder.Data)), nameof(OrderDocument.Id)), GraphQLOrderId.New());
     var ofGeneric = (BinaryExpression)WhizbangIdFilterHandler.IdEquals(
-      Expression.Property(Expression.Property(generic, nameof(GenericDataHolder<OrderDocument>.Data)), nameof(OrderDocument.Id)),
+      Expression.Property(Expression.Property(generic, nameof(GenericDataHolder<>.Data)), nameof(OrderDocument.Id)),
       GraphQLOrderId.New());
 
     await Assert.That(plain.Left.Type).IsEqualTo(typeof(GraphQLOrderId));
