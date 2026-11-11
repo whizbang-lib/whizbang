@@ -2388,14 +2388,52 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public Task<bool> EnsureIntegritySealGenerationAsync(
     Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
+    EnsureIntegritySealGenerationAsync(originServiceId, generation, rewrite: null, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, IntegrityHistoryRewrite? rewrite, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "integrity_seal_generation_guard")}(@p_origin, @p_generation)";
+      cmd.CommandText =
+        $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_seal_guard")}(@p_origin, @p_generation, @p_rewritten_since, @p_rewritten_from)";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_generation", generation));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_rewritten_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = (object?)rewrite?.SinceGeneration ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_rewritten_from", NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = (object?)rewrite?.RewrittenFrom ?? DBNull.Value
+      });
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       return ScalarResult.IsTrue(result);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<long?> GetIntegritySealGenerationAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT origin_generation FROM {schema}.wh_integrity_seals WHERE origin_service_id = @p_origin";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is long generation ? (long?)generation : null;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IntegrityHistoryRewrite?> GetIntegrityHistoryRewriteAsync(long sinceGeneration, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        $"SELECT vouched, rewritten_from FROM {BuildSchemaQualifiedName(schema, "wh_integrity_history_rewrite")}(@p_since)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceGeneration));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      if (!reader.GetBoolean(0)) {
+        return null;   // the rewrite log does not reach back to the asked generation.
+      }
+      long? rewrittenFrom = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+      return new IntegrityHistoryRewrite(sinceGeneration, rewrittenFrom);
     }, cancellationToken);
 
   /// <inheritdoc />

@@ -328,6 +328,41 @@ public class IntegrityAuditWorkerTests {
       .Because("the window starts at the seal — anything below it already proved clean");
   }
 
+  /// <summary>
+  /// #2262: the ask names the origin generation recorded beside the seal, so the origin can answer how far its history
+  /// was rewritten since, and a new generation lowers the seal only that far instead of resetting it.
+  /// </summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task EveryCycle_NamesTheRecordedOriginGenerationAsync(bool sweep) {
+    var coordinator = new AuditCoordinator { SealedThrough = 123, SealGeneration = 41 };
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = sweep ? 1 : 0 }, tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.KnownOriginGeneration).IsEqualTo(41L)
+      .Because("a sweep's answer passes the same generation guard as a windowed one");
+  }
+
+  [Test]
+  public async Task FirstContact_NamesNoOriginGenerationAsync() {
+    var coordinator = new AuditCoordinator();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(_deserializeRequest(transport.Published.Single().Envelope).KnownOriginGeneration).IsNull();
+  }
+
   [Test]
   public async Task SweepCycle_AsksFullHistory_NotWindowedAsync() {
     // The sweep is trust-but-verify: it exists to catch exactly the state the seals assume is
@@ -692,6 +727,12 @@ public class IntegrityAuditWorkerTests {
 
     public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
       Task.FromResult(SealedThrough);
+
+    /// <summary>#2262: the origin generation recorded beside the seal; null = never seen.</summary>
+    public long? SealGeneration { get; init; }
+
+    public Task<long?> GetIntegritySealGenerationAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(SealGeneration);
 
     public int EpochVerifyCalls { get; private set; }
 
