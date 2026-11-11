@@ -1251,6 +1251,7 @@ public sealed partial class MaintenanceWorker(
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Information,
     Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s) and {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}. The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A generated log method: each count is its own structured field, which operators filter and chart on. A parameter object would log as one opaque value.")]
   static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 48, Level = LogLevel.Warning,

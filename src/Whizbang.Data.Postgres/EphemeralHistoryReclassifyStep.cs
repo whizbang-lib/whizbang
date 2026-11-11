@@ -180,28 +180,42 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     // The text is built only for a logger that writes it; the gauge is published either way.
     var logging = _logger.IsEnabled(LogLevel.Information);
     var startup = metrics?.ClaimStartupSummary() == true && logging;
-    if (startup && rows.Count > 0) {
-      var summary = new System.Text.StringBuilder();
-      foreach (var type in rows.GroupBy(r => r.EphemeralType, StringComparer.Ordinal)) {
-        summary.Append('\n').Append(type.Key).Append(type.First().WalkComplete ? " (walk complete):" : " (walk in progress):").Append(entries(type));
-      }
-      var types = rows.Select(r => r.EphemeralType).Distinct(StringComparer.Ordinal).Count();
-      var text = summary.ToString();
-      LogStartupSummary(_logger, rows.Count, types, text);
+    if (startup) {
+      _logStartupSummary(rows, entries);
     }
-    // A finished walk is matched to its rows by the type's name without the assembly, and the block names the type in
-    // the stored form the rows carry, whichever form the catalog gave the walk.
-    foreach (var name in walk.Types.Where(t => logging && t.Finished).Select(t => TypeNameFormatter.GetFullName(t.Target.EventType))) {
+    if (logging) {
+      _logFinishedWalks(walk, rows, entries);
+    }
+    if (startup) {
+      await _reportMixedReadModelsAsync(database, prefix, registry, targets, rows, cancellationToken).ConfigureAwait(false);
+    }
+    metrics?.Publish(rows.Select(r => new EphemeralBlockedCount(r.EphemeralType, r.BlockingType, r.Events)));
+  }
+
+  // The startup summary: every stored blocker, grouped by ephemeral type, once per process.
+  private void _logStartupSummary(List<EphemeralBlocker> rows, Func<IEnumerable<EphemeralBlocker>, string> entries) {
+    if (rows.Count == 0) {
+      return;
+    }
+    var summary = new System.Text.StringBuilder();
+    foreach (var type in rows.GroupBy(r => r.EphemeralType, StringComparer.Ordinal)) {
+      summary.Append('\n').Append(type.Key).Append(type.First().WalkComplete ? " (walk complete):" : " (walk in progress):").Append(entries(type));
+    }
+    var types = rows.Select(r => r.EphemeralType).Distinct(StringComparer.Ordinal).Count();
+    var text = summary.ToString();
+    LogStartupSummary(_logger, rows.Count, types, text);
+  }
+
+  // A block per type whose walk finished this cycle. A finished walk is matched to its rows by the type's name without
+  // the assembly, and the block names the type in the stored form the rows carry, whichever form the catalog gave the walk.
+  private void _logFinishedWalks(TypeHistoryWalkResult walk, List<EphemeralBlocker> rows, Func<IEnumerable<EphemeralBlocker>, string> entries) {
+    foreach (var name in walk.Types.Where(t => t.Finished).Select(t => TypeNameFormatter.GetFullName(t.Target.EventType))) {
       var blockers = rows.Where(r => string.Equals(TypeNameFormatter.GetFullName(r.EphemeralType), name, StringComparison.Ordinal)).ToList();
       if (blockers.Count > 0) {
         var text = entries(blockers);
         LogBlockers(_logger, blockers[0].EphemeralType, blockers.Count, text);
       }
     }
-    if (startup) {
-      await _reportMixedReadModelsAsync(database, prefix, registry, targets, rows, cancellationToken).ConfigureAwait(false);
-    }
-    metrics?.Publish(rows.Select(r => new EphemeralBlockedCount(r.EphemeralType, r.BlockingType, r.Events)));
   }
 
   // Once per process: each read model opted into mixing ephemeral and Sourced events, with its durable inputs' stored
