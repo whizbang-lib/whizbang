@@ -88,4 +88,14 @@ public sealed record PerspectiveEventProcessedEvent {
 
   /// <summary>The number of events processed in this batch.</summary>
   public required int EventCount { get; init; }
+
+  /// <summary>
+  /// The ids of the events this batch reports, <see cref="EventCount"/> of them. A listener that waits for applies
+  /// counts distinct ids per perspective and stream: a batch can name an event an earlier batch already reported (a
+  /// rewind replays its stream), so a sum of <see cref="EventCount"/> can exceed the events actually applied (#2237).
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithReplayReader_PrependsPendingReplayEventsOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.cs:DrainMode_ProcessedHook_NamesOnlyTheEventsTheBatchAppliedAsync</tests>
+  public IReadOnlyList<Guid> EventIds { get; init; } = [];
 }

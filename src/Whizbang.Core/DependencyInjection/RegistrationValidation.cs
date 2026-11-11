@@ -32,6 +32,11 @@ namespace Whizbang.Core.DependencyInjection;
 /// composition makes only some of them: a host that never adds the transport consumer never
 /// registers its worker, and must not be failed for the transport that worker would need.
 /// </para>
+/// <para>
+/// A requirement recorded from a factory that builds its type only when another service is registered applies only
+/// when that service is registered too (<see cref="ServiceRequirement.Condition"/>, #1907): a broker-less host adds the
+/// transport consumer and builds no worker, and a host with a broker is checked for every service the worker needs.
+/// </para>
 /// </remarks>
 /// <docs>operations/dependency-injection/registration-validation</docs>
 /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RegistrationValidationTests.cs</tests>
@@ -61,6 +66,11 @@ public static class RegistrationValidation {
     for (var r = 0; r < requirements.Count; r++) {
       var requirement = requirements[r];
       if (!_isRegistered(services, requirement)) {
+        continue;
+      }
+      // #1907: a requirement made under a condition is skipped when nothing registers the condition's service: the
+      // factory it came from builds its type only when that service is there.
+      if (requirement.Condition is { } condition && !_isSatisfied(services, condition)) {
         continue;
       }
       var dependencies = requirement.Dependencies;

@@ -87,4 +87,26 @@ public class ScopedReceptorRegistryQueryTests {
       .Because("the view is rebuilt when the registry's contribution count changes, as the process-wide one is");
     await Assert.That(query.HasAnyConsumer(ORDERS_EVENT)).IsTrue();
   }
+
+  [Test]
+  public async Task AScopedHost_AnswersForItsOwnServicesCollectiveHandlersOnlyAsync() {
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AssemblyName = "Billing", AnyConsumerTypes = [], InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledCollectiveEventTypes = ["Billing.InvoicesRenamed, Billing"],
+    });
+    var query = new WhizbangReceptorRegistryQueryAdapter(NullReceptorRegistry.Instance, _orders);
+
+    await Assert.That(query.GetHandledCollectiveEventTypes()).IsNull()
+      .Because("with none of its own service's contributions loaded, the host cannot know its handlers (#2145)");
+
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AssemblyName = "Orders", AnyConsumerTypes = [], InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledCollectiveEventTypes = ["Orders.OrdersRenamed, Orders"],
+    });
+
+    await Assert.That(query.GetHandledCollectiveEventTypes()).IsEquivalentTo(["Orders.OrdersRenamed, Orders"])
+      .Because("another service's collective handlers are not this host's");
+  }
 }

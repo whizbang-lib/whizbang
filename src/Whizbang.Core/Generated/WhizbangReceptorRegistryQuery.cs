@@ -96,6 +96,22 @@ public static class WhizbangReceptorRegistryQuery {
     _currentSnapshot().FindConsumed(messageType);
 
   /// <summary>
+  /// The collective event types a <c>[CollectiveApplyFor]</c> handler applies, across every loaded assembly's
+  /// contribution, in the wire form the event store holds: deduplicated and in ordinal order (#2145).
+  /// </summary>
+  /// <remarks>
+  /// <see langword="null"/> means unknown, never "none": no contribution is registered, or one an older generator
+  /// built carries no list, so an assembly may hold handlers nobody can see. A reader that gates work on this answer
+  /// gates nothing when it is unknown.
+  /// </remarks>
+  /// <returns>The handled collective event types, or <see langword="null"/> when they cannot be known.</returns>
+  /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:TwoAssemblies_HandledCollectiveEventTypes_AreTheUnion_DeduplicatedAndSortedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:AContributionThatPredatesTheList_MakesTheAnswerUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:NoContributionAtAll_IsUnknown_NotEmptyAsync</tests>
+  public static IReadOnlyList<string>? GetHandledCollectiveEventTypes() => _currentSnapshot().HandledCollective;
+
+  /// <summary>
   /// Normalizes a CLR type name to match the C# display format used by the source generator.
   /// The generator uses <c>SymbolDisplayFormat.FullyQualifiedFormat</c> which produces dots for
   /// nested types (e.g., <c>"Ns.Outer.Inner"</c>), but at runtime <c>Type.AssemblyQualifiedName</c>
@@ -136,25 +152,22 @@ public static class WhizbangReceptorRegistryQuery {
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
     var handledByName = new Dictionary<string, HandledMessageInfo>(System.StringComparer.Ordinal);
     var consumedByName = new Dictionary<string, ConsumedMessageInfo>(System.StringComparer.Ordinal);
+    var handledCollective = new SortedSet<string>(System.StringComparer.Ordinal);
+    // Unknown until a contribution is counted (#2145); under a host's scope, one of the host's own (#2243).
+    var counted = 0;
+    var everyOneListed = true;
     foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
       if (include is not null && !include(contribution)) {
         continue;
       }
+      counted++;
       foreach (var t in contribution.AnyConsumerTypes) {
         any.Add(t);
       }
       foreach (var t in contribution.InboxHandlerTypes) {
         inbox.Add(t);
       }
-      foreach (var (stage, types) in contribution.StageTypes) {
-        if (!stages.TryGetValue(stage, out var set)) {
-          set = new HashSet<string>(System.StringComparer.Ordinal);
-          stages[stage] = set;
-        }
-        foreach (var t in types) {
-          set.Add(t);
-        }
-      }
+      _addStageTypes(stages, contribution.StageTypes);
       foreach (var handled in contribution.HandledMessages) {
         // Dedupe by type name across assemblies (first contribution wins — the same type
         // handled in two assemblies carries identical namespace/kind metadata anyway).
@@ -163,12 +176,34 @@ public static class WhizbangReceptorRegistryQuery {
       foreach (var consumed in contribution.ConsumedMessages) {
         consumedByName.TryAdd(consumed.TypeName, consumed);
       }
+      if (contribution.HandledCollectiveEventTypes is { } collective) {
+        handledCollective.UnionWith(collective);
+      } else {
+        everyOneListed = false;
+      }
     }
     var handledList = new List<HandledMessageInfo>(handledByName.Values);
     handledList.Sort(static (a, b) => string.CompareOrdinal(a.MessageTypeName, b.MessageTypeName));
     var consumedList = new List<ConsumedMessageInfo>(consumedByName.Values);
     consumedList.Sort(static (a, b) => string.CompareOrdinal(a.TypeName, b.TypeName));
-    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName);
+    return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName) {
+      HandledCollective = counted > 0 && everyOneListed ? [.. handledCollective] : null,
+    };
+  }
+
+  /// <summary>Merges one contribution's types per lifecycle stage into the snapshot's per-stage sets.</summary>
+  private static void _addStageTypes(
+      Dictionary<LifecycleStage, HashSet<string>> stages,
+      IReadOnlyDictionary<LifecycleStage, IReadOnlyCollection<string>> contributed) {
+    foreach (var (stage, types) in contributed) {
+      if (!stages.TryGetValue(stage, out var set)) {
+        set = new HashSet<string>(System.StringComparer.Ordinal);
+        stages[stage] = set;
+      }
+      foreach (var t in types) {
+        set.Add(t);
+      }
+    }
   }
 
   /// <summary>
@@ -221,6 +256,7 @@ public static class WhizbangReceptorRegistryQuery {
     public IReadOnlyList<HandledMessageInfo> HandledMessages { get; } = handledMessages;
     public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; } = consumedMessages;
     public Dictionary<string, ConsumedMessageInfo> ConsumedByName { get; } = consumedByName;
+    public IReadOnlyList<string>? HandledCollective { get; init; }
 
     public bool StageHas(LifecycleStage stage, string normalizedType) =>
       StageTypes.TryGetValue(stage, out var set) && set.Contains(normalizedType);
@@ -254,6 +290,8 @@ internal sealed class ScopedReceptorRegistryQuery(ServiceAssemblyScope scope) {
   public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => _current().ConsumedMessages;
 
   public ConsumedMessageInfo? FindConsumedMessage(string messageType) => _current().FindConsumed(messageType);
+
+  public IReadOnlyList<string>? GetHandledCollectiveEventTypes() => _current().HandledCollective;
 
   private WhizbangReceptorRegistryQuery.Snapshot _current() {
     var currentCount = AssemblyRegistry<ReceptorRegistryContribution>.Count;

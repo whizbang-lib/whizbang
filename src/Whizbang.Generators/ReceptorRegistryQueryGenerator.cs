@@ -77,6 +77,15 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       (node is ClassDeclarationSyntax c && c.AttributeLists.Any()) || (node is RecordDeclarationSyntax r && r.AttributeLists.Any());
 
   /// <summary>
+  /// Syntax predicate: admits a method declaration with at least one attribute, the shape a [CollectiveApplyFor]
+  /// handler has (#2145). It is the collective generator's own predicate, so both bind the same methods.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedMethodCandidate(SyntaxNode node) =>
+      CollectiveApplyDiscoveryGenerator.IsAttributedMethodCandidate(node);
+
+  /// <summary>
   /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
@@ -119,16 +128,25 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractCollectiveEntry(ctx, ct)
     ).Where(static name => name is not null);
 
+    // #2145: the collective event types a [CollectiveApplyFor] handler applies, as distinct from the collective types
+    // merely consumed above. The store gates its __collective__ rows on this list, so it is bound by the same shape the
+    // collective generator binds (CollectiveApplyShape): a method that generator rejects handles nothing.
+    var handledCollectiveTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsAttributedMethodCandidate(node),
+        transform: static (ctx, ct) => _extractHandledCollectiveType(ctx, ct)
+    ).Where(static name => name is not null);
+
     var combined = receptors.Collect()
       .Combine(perspectives.Collect())
       .Combine(taggedTypes.Collect())
       .Combine(compositeTypes.Collect())
       .Combine(collectiveTypes.Collect())
+      .Combine(handledCollectiveTypes.Collect())
       .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
     context.RegisterSourceOutput(combined, static (ctx, all) => {
-      var ((((receptorEntries, perspectiveEntries), taggedEntries), compositeEntries), collectiveEntries) = all.Left;
-      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, all.Right);
+      var (((((receptorEntries, perspectiveEntries), taggedEntries), compositeEntries), collectiveEntries), handledCollectiveEntries) = all.Left;
+      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, handledCollectiveEntries, all.Right);
     });
   }
 
@@ -291,6 +309,24 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     return _consumedType(symbol);
   }
 
+  // ===== Discovery: handled collective events =====
+
+  /// <summary>
+  /// The wire form of the collective event a <c>[CollectiveApplyFor]</c> method applies (#2145), or null for a method
+  /// that is not a collective handler the framework binds.
+  /// </summary>
+  private static string? _extractHandledCollectiveType(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken ct) {
+    var methodDecl = (MethodDeclarationSyntax)context.Node;
+    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, ct) is not IMethodSymbol method
+        || CollectiveApplyShape.Attribute(method) is null
+        || CollectiveApplyShape.BoundModel(method) is null) {
+      return null;
+    }
+    return TypeNameUtilities.FormatTypeNameForRuntime(method.Parameters[0].Type);
+  }
+
   // ===== Emission =====
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Generator emission walks every (receptor, perspective) pair and renders the routing branches inline; splitting would require building intermediate models for each branch shape, which costs incremental-cache parity.")]
@@ -301,6 +337,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       ImmutableArray<ConsumedTypeEntry?> taggedTypes,
       ImmutableArray<ConsumedTypeEntry?> compositeTypes,
       ImmutableArray<ConsumedTypeEntry?> collectiveTypes,
+      ImmutableArray<string?> handledCollectiveTypes,
       string? assemblyName) {
 
     // The wire form of every consumed type, keyed by the display name the predicate sets hold (#2058).
@@ -443,6 +480,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     sb.AppendLine("      HandledMessages = new global::Whizbang.Core.Messaging.HandledMessageInfo[] {");
     foreach (var kvp in handledMessages) {
       sb.AppendLine($"        new global::Whizbang.Core.Messaging.HandledMessageInfo(\"{kvp.Key}\", \"{kvp.Value.ContractNamespace}\", global::Whizbang.Core.Routing.MessageKind.{kvp.Value.Kind}),");
+    }
+    sb.AppendLine(CLOSE_ARRAY_PROPERTY);
+    // HandledCollectiveEventTypes (#2145): always emitted, so an empty list says "no handler here" and only a
+    // contribution an older generator built reads as unknown.
+    sb.AppendLine("      HandledCollectiveEventTypes = new string[] {");
+    foreach (var type in handledCollectiveTypes.OfType<string>().Distinct(System.StringComparer.Ordinal).OrderBy(s => s, System.StringComparer.Ordinal)) {
+      sb.AppendLine($"        \"{type}\",");
     }
     sb.AppendLine(CLOSE_ARRAY_PROPERTY);
     sb.AppendLine("    };");

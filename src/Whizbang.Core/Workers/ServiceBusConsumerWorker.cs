@@ -618,7 +618,7 @@ public partial class ServiceBusConsumerWorker(
       // Not for an event something in this service applies later: the collective sink fires these for a
       // collective event once its apply commits (#1676).
       if (ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, message, scopedProvider)) {
-        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, DetachedWork.Track, ct);
+        await InvokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, DetachedWork.Track, ct);
       }
     }
   }
@@ -626,7 +626,10 @@ public partial class ServiceBusConsumerWorker(
   /// <summary>
   /// Invokes PostLifecycle stages for an event without perspectives.
   /// </summary>
-  private static async Task _invokePostLifecycleForEventAsync(
+  /// <remarks>Internal rather than private so its failure path, which must still end the tracking it began, can be
+  /// driven directly (#2228).</remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsOnFailureTests.cs:ServiceBusConsumer_PostLifecycleStageThrows_EndsItsTrackingAsync</tests>
+  internal static async Task InvokePostLifecycleForEventAsync(
     InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
     LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, Action<Task> trackDetachedTask,
     CancellationToken ct) {
@@ -635,13 +638,17 @@ public partial class ServiceBusConsumerWorker(
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
         LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
-      // Wait for detached tasks to complete before abandoning tracking
-      // This ensures PostLifecycleDetached (which fires in Task.Run) completes
-      // before the worker's DrainDetachedAsync returns.
-      await tracking.DrainDetachedAsync();
-      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
+      try {
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
+        // Wait for detached tasks to complete before abandoning tracking
+        // This ensures PostLifecycleDetached (which fires in Task.Run) completes
+        // before the worker's DrainDetachedAsync returns.
+        await tracking.DrainDetachedAsync();
+      } finally {
+        // #2228: this path began the entry, so it ends it whatever the stages did; nothing else would.
+        coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
+      }
     } else {
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
       var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);

@@ -66,4 +66,13 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:Adapter_FindConsumedMessage_ReadsTheGeneratedRegistryAsync</tests>
   public ConsumedMessageInfo? FindConsumedMessage(string messageType)
     => _scoped is null ? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.FindConsumedMessage(messageType) : _scoped.FindConsumedMessage(messageType);
+
+  /// <inheritdoc />
+  /// <remarks>A scoped host answers for its own service's collective handlers only (#2243).</remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:Adapter_GetHandledCollectiveEventTypes_ReadsTheGeneratedRegistryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/ScopedReceptorRegistryQueryTests.cs:AScopedHost_AnswersForItsOwnServicesCollectiveHandlersOnlyAsync</tests>
+  public IReadOnlyList<string>? GetHandledCollectiveEventTypes()
+    => _scoped is null
+      ? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes()
+      : _scoped.GetHandledCollectiveEventTypes();
 }

@@ -394,6 +394,54 @@ public class RegistrationValidationTests {
     await Assert.That(requirement.FactoryServiceTypes).IsEmpty();
   }
 
+  // #1907: a requirement made under a condition, recorded from a factory that builds its type only when a service is
+  // registered, applies only to a composition that registers that service.
+
+  [Test]
+  public async Task ARequirementUnderAConditionNothingRegisters_IsNotCheckedAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<Consumer>();
+    var requirements = new[] { new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)]) { Condition = typeof(IAlsoAbsent) } };
+
+    var returned = services.ValidateWhizbangRegistrations(requirements);
+
+    await Assert.That(returned).IsSameReferenceAs(services)
+      .Because("the factory builds the consumer only when the condition service is registered, and nothing registers it");
+  }
+
+  [Test]
+  public async Task ARequirementUnderARegisteredCondition_IsCheckedAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<Consumer>();
+    services.AddSingleton<IPresent, Present>();
+    var requirements = new[] { new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)]) { Condition = typeof(IPresent) } };
+
+    var ex = Assert.Throws<WhizbangRegistrationException>(
+      () => services.ValidateWhizbangRegistrations(requirements));
+
+    await Assert.That(ex.Missing).Count().IsEqualTo(1);
+    await Assert.That(ex.Missing[0].NeededBy).IsEqualTo(typeof(Consumer));
+    await Assert.That(ex.Missing[0].MissingService).IsEqualTo(typeof(IAbsent));
+  }
+
+  [Test]
+  public async Task ARequirementUnderAConditionWhoseTypeIsNotRegistered_IsNotCheckedEvenWhenTheConditionIsAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IPresent, Present>();
+    var requirements = new[] { new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)]) { Condition = typeof(IPresent) } };
+
+    var returned = services.ValidateWhizbangRegistrations(requirements);
+
+    await Assert.That(returned).IsSameReferenceAs(services);
+  }
+
+  [Test]
+  public async Task ConditionDefaultsToNoneAsync() {
+    var requirement = new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)], [typeof(IConsumer)]);
+
+    await Assert.That(requirement.Condition).IsNull();
+  }
+
   private interface IPresent;
   private sealed class Present : IPresent;
   private interface IAbsent;
