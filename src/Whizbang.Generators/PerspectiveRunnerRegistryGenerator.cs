@@ -170,9 +170,19 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         RunnerName: $"{simpleName.Replace(".", "")}Runner",
         ModelType: TypeNameUtilities.FullyQualified(modelType),
         EventTypes: [.. eventTypes.Distinct()],
-        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
+        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()],
+        AllowsMixed: _allowsMixedEphemeralAndSourced(classSymbol)
     );
   }
+
+  /// <summary>
+  /// True when the perspective carries <c>[DangerouslyAllowMixedEphemeralAndSourcedEvents]</c> (#2250), matched by the
+  /// attribute's simple name as the ephemeral analyzer matches it, so the registry and WHIZ130 agree on which read models
+  /// opted in. The registry is generated only for a compilation that binds the attribute.
+  /// </summary>
+  private static bool _allowsMixedEphemeralAndSourced(INamedTypeSymbol perspective) =>
+    perspective.GetAttributes().Any(a => string.Equals(
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass), "DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute", StringComparison.Ordinal));
 
   /// <summary>
   /// Checks if the model type has a property with the [StreamId] attribute.
@@ -343,7 +353,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       source.AppendLine($"      \"{perspective.ClassName}\",");
       source.AppendLine($"      \"{perspective.ModelType}\",");
       source.AppendLine($"      [{eventTypesArray}]");
-      source.AppendLine("    ),");
+      source.AppendLine(perspective.AllowsMixed ? "    ) { AllowsMixedEphemeralAndSourced = true }," : "    ),");
     }
     source.AppendLine("  ];");
     source.AppendLine();
@@ -481,6 +491,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 /// <param name="ModelType">Fully qualified model type from IPerspectiveFor&lt;TModel, TEvent&gt;</param>
 /// <param name="EventTypes">Runtime-format event types ("FullName, AssemblyName") for string matching in PerspectiveRegistrationInfo</param>
 /// <param name="EventTypesCodeGen">Code-generation-format event types ("global::FullName") for typeof() in generated code</param>
+/// <param name="AllowsMixed">Whether the perspective carries [DangerouslyAllowMixedEphemeralAndSourcedEvents] (#2250)</param>
 internal sealed record PerspectiveRegistryInfo(
     string ClassName,
     string SimpleName,
@@ -488,5 +499,6 @@ internal sealed record PerspectiveRegistryInfo(
     string RunnerName,
     string ModelType,
     EquatableArray<string> EventTypes,
-    EquatableArray<string> EventTypesCodeGen
+    EquatableArray<string> EventTypesCodeGen,
+    bool AllowsMixed = false
 );
