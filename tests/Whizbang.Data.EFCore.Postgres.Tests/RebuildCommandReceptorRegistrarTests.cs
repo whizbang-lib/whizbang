@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -26,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// only the LocalImmediateInline path. Registering just PostInboxInline would still pass any test
 /// that sends the command over a transport while quietly breaking the in-process case.</para>
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildCommandReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/RebuildCommandReceptorRegistrar.cs</code-under-test>
 [Category("Core")]
 [Category("Shard1")]
 public class RebuildCommandReceptorRegistrarTests {

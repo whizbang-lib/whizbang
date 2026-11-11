@@ -3897,9 +3897,13 @@ public abstract partial class Dispatcher(
       var eventId = envelope.MessageId.Value;
       var tracking = _lifecycleCoordinator.BeginTracking(
         LifecycleTrackingPath.LocalDispatch, eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct).ConfigureAwait(false);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct).ConfigureAwait(false);
-      _lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
+      try {
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct).ConfigureAwait(false);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct).ConfigureAwait(false);
+      } finally {
+        // #2228: this path began the entry, so it ends it whatever the stages did; nothing else would.
+        _lifecycleCoordinator.AbandonTracking(LifecycleTrackingPath.LocalDispatch, eventId);
+      }
       return;
     }
 
@@ -4306,7 +4310,15 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
-  public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
+    _cascadeMessageAsync(message, sourceEnvelope, mode, presetEventId: null, cancellationToken);
+
+  /// <summary>
+  /// Cascades a message; <paramref name="presetEventId"/>, when given, is the id an event is stored under instead of
+  /// one minted here (a composite's child keeps the id every receiver derives for it, #2235).
+  /// </summary>
+  private async Task _cascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode,
+      Guid? presetEventId, CancellationToken cancellationToken) {
     // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)
     await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     // A cascade with a source envelope continues a flow that was already admitted; only a new one is checked
@@ -4335,7 +4347,7 @@ public abstract partial class Dispatcher(
     // Track event for perspective sync - enables cross-scope sync via singleton tracker
     // CRITICAL: This is the primary path for receptor event cascading via DispatcherEventCascader
     if (message is IEvent) {
-      eventId = _mintEmissionId(sourceEnvelope, messageType);
+      eventId = presetEventId ?? _mintEmissionId(sourceEnvelope, messageType);
       var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
       if (_persists(mode)) {
         _trackEventForSync(messageType, eventId.Value, streamId);
@@ -4617,6 +4629,10 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:NonOwnedComposite_DoesNotFanOutAtPublishAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_StoredConstituentIds_AreTheIdsEveryReceiverStoresAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_NullInner_KeepsTheProducersOrdinalsAlignedWithTheReceiversAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedIdentityPreservingComposite_StoresEachConstituentUnderItsCarriedIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedIdentityPreservingComposite_IdCountMismatch_ThrowsAtPublishAsync</tests>
   /// <remarks>
   /// Internal rather than private so the not-a-composite answer can be asserted. Both call sites
   /// test the message first, so the guard cannot fire through a publish — it is what keeps a
@@ -4641,14 +4657,30 @@ public abstract partial class Dispatcher(
     // (CausationId = the composite's MessageId, CausationType = the composite type).
     var sourceEnvelope = _createOutboxEnvelopeWithHop(comp, compositeType, messageId, sourceEnvelope: null, destination: null);
 
+    // Each child is stored under the id every receiver stores it under (#2235): the id the composite carries for it,
+    // else the one derived from the composite's id, the child's position and its type, exactly as the receive-side
+    // fan-out derives it. A bundle whose carried ids do not pair with its children is refused by every receiver,
+    // so it fails here first.
+    var carriedIds = (comp as IIdentityPreservingComposite)?.InnerEventIds;
+    if (carriedIds is not null && carriedIds.Count != innerCount) {
+      throw new InvalidOperationException(
+        $"Identity-preserving composite '{compositeType.Name}' carries {carriedIds.Count} InnerEventIds for {innerCount} inner events.");
+    }
+
     // Atomicity governs child failure: Atomic propagates (the whole publish fails); Independent logs + continues.
     var atomic = comp.Atomicity == FanoutAtomicity.Atomic;
+    var ordinal = -1;
     foreach (var inner in comp.InnerEvents) {
+      // A null holds its position, as it does at the receiver, so the children after it derive the same ids
+      ordinal++;
       if (inner is null) {
         continue;
       }
+      var childId = carriedIds is not null
+        ? carriedIds[ordinal]
+        : CompositeChildIdentity.Derive(messageId.Value, ordinal, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(inner.GetType()));
       try {
-        await CascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local).ConfigureAwait(false);
+        await _cascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local, childId, CancellationToken.None).ConfigureAwait(false);
       } catch (Exception ex) when (!atomic) {
 #pragma warning disable CA1848
         CascadeLogger.LogWarning(ex,

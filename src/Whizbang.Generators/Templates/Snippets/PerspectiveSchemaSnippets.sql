@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS __TABLE_NAME__ (
 
 #region CREATE_INDEXES_SNIPPET
 -- Indexes for __TABLE_NAME__
-CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___updated_at ON __TABLE_NAME__(updated_at);
+-- No updated_at index (#2087): it keeps every update from being HOT. A table that declares row retention gets
+-- it from the managed-object reconcile; a model that queries UpdatedAt declares it with
+-- [PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]. The one an earlier release built here is retired.
 __METADATA_GIN_INDEX__
 
 -- Retrofit any historical broken tenant index. The old snippet keyed on

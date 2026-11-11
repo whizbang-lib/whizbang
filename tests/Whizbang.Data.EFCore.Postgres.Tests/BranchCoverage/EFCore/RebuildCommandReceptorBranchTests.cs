@@ -11,6 +11,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 
@@ -19,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 /// over the real EF Core event-store query enumerates its streams asynchronously, and a failed
 /// rebuild is logged with its error or, when it carries none, with an explicit placeholder.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
 [Category("Shard1")]
 public class RebuildCommandReceptorBranchTests : EFCoreTestBase {
 

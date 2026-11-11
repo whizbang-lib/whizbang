@@ -91,6 +91,9 @@ public partial class InboxDrainWorkerGapTests {
     /// <summary>Payload bytes this writer reports as held (#1793): a starting amount plus each written payload.</summary>
     public long HeldBytes;
     public long HeldPayloadBytes => Interlocked.Read(ref HeldBytes);
+    /// <summary>The held total the drain last said new inbox acquisition waits for (#1853), or null if it never said.</summary>
+    public long? DeferredUntil { get; private set; }
+    public void DeferInboxAcquisitionUntilHeldAtMost(long heldBytes) => DeferredUntil = heldBytes;
     public bool IsInFlight(Guid messageId) => Held?.ContainsKey(messageId) ?? false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
@@ -200,10 +203,10 @@ public partial class InboxDrainWorkerGapTests {
 
   private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(15);
 
-  private static InboxBatchRow _row(Guid messageId, Guid? streamId) {
+  private static InboxBatchRow _row(Guid messageId, Guid? streamId, string payload = "{}") {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonElement.Parse("{}"),
+      Payload = JsonElement.Parse(payload),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -715,6 +718,47 @@ public partial class InboxDrainWorkerGapTests {
     await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids)
       .Because("a row left leased and unqueued would lapse and be charged an attempt it never used");
     await Assert.That(log.Entries.Select(e => e.Message).Any(m => m.Contains("working set", StringComparison.OrdinalIgnoreCase))).IsTrue();
+  }
+
+  // #1853: rows turned away for the byte budget also stop the claim leasing new inbox rows, until the working set has
+  // drained to where the smallest of them fits.
+
+  [Test]
+  public async Task WorkingSetFull_DefersAcquisitionUntilTheSmallestTurnedAwayRowFitsAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var otherStream = (Guid)TrackedGuid.New();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() {
+        // 11 bytes, then 7 bytes waiting behind it in the same stream; 9 bytes in another.
+        [streamId] = [_row((Guid)TrackedGuid.New(), streamId, """{"a":12345}"""), _row((Guid)TrackedGuid.New(), streamId, """{"a":1}""")],
+        [otherStream] = [_row((Guid)TrackedGuid.New(), otherStream, """{"a":123}""")],
+      },
+      budget: 100, alreadyHeld: 100);
+
+    await Assert.That(coord.Releases.Single().Ids.Length).IsEqualTo(3);
+    await Assert.That(writer.DeferredUntil).IsEqualTo(93L)
+      .Because("until 7 bytes are free no turned-away row fits, so leasing more would only hand it back again");
+  }
+
+  [Test]
+  public async Task ARowLargerThanTheBudget_DefersAcquisitionUntilNothingIsHeldAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var (writer, _, _) = await _drainOnceAsync(
+      new() { [streamId] = [_row((Guid)TrackedGuid.New(), streamId, """{"a":12345}""")] }, budget: 5, alreadyHeld: 5);
+
+    await Assert.That(writer.DeferredUntil).IsEqualTo(0L)
+      .Because("a row larger than the budget is admitted only when nothing is held");
+  }
+
+  [Test]
+  public async Task NothingTurnedAway_DefersNothingAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [_row((Guid)TrackedGuid.New(), streamId)] }, budget: 1000, alreadyHeld: 0);
+
+    await Assert.That(writer.Written.Count).IsEqualTo(1);
+    await Assert.That(coord.Releases).IsEmpty();
+    await Assert.That(writer.DeferredUntil).IsNull();
   }
 
   [Test]

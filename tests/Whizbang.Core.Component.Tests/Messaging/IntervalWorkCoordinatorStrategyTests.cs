@@ -57,8 +57,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId = _idProvider.NewGuid();
     var envelope = _createTestEnvelope(messageId);
@@ -109,8 +109,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
@@ -184,8 +184,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId = _idProvider.NewGuid();
     var envelope = _createTestEnvelope(messageId);
@@ -244,8 +244,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId = _idProvider.NewGuid();
     var envelope = _createTestEnvelope(messageId);
@@ -302,8 +302,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var inboxMessageId = _idProvider.NewGuid();
     var inboxEnvelope = _createTestEnvelope(inboxMessageId);
@@ -367,8 +367,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     // Act - Flush with nothing queued
     var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
@@ -404,8 +404,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     await sut.DisposeAsync();
 
@@ -447,8 +447,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     await sut.DisposeAsync();
 
@@ -484,8 +484,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId = _idProvider.NewGuid();
     sut.QueueOutboxMessage(new OutboxMessage {
@@ -536,8 +536,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    )).Throws<ArgumentNullException>();
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+)).Throws<ArgumentNullException>();
   }
 
   [Test]
@@ -556,8 +556,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    )).Throws<ArgumentNullException>();
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+)).Throws<ArgumentNullException>();
   }
 
   // ========================================
@@ -576,7 +576,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     var messageId = _idProvider.NewGuid();
@@ -599,7 +599,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -614,7 +614,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -629,7 +629,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -644,7 +644,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -663,7 +663,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -678,7 +678,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 60000 };
 
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: slowCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: slowCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
 
     // Queue a message so the first flush has work to do
     var messageId = _idProvider.NewGuid();
@@ -751,8 +751,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: channelWriter,
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       var messageId = _idProvider.NewGuid();

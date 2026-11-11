@@ -187,6 +187,9 @@ public class ConfigurationKeyManifestTests {
     // The incompatibility override (#2022), read when a Postgres driver builds its Assess verdict's assessor, which the
     // harness never resolves; UpgradeOrderTests reads it.
     "Whizbang:Startup:OverrideIncompatibility",
+    // The lossy-rollback switch (#2122), read beside the override when a Postgres driver builds its assessor;
+    // UpgradeOrderTests reads it.
+    "Whizbang:Startup:AllowLossyRollback",
   ];
 
   private const string MANIFEST_HEADER =

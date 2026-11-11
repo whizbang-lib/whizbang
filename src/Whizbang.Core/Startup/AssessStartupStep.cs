@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -44,7 +45,22 @@ public sealed record StartupAssessment(StartupVerdict Verdict, string Reason) {
   /// </summary>
   /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
   public string? OverriddenReason { get; init; }
+
+  /// <summary>
+  /// The rollback this instance's start owes (#2122): set with <see cref="StartupVerdict.Migrate"/> when changes were
+  /// applied since this version and every one can be reversed. The elected migrator runs it before the schema pass;
+  /// null when nothing is to be rolled back.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public RollbackPlan? Rollback { get; init; }
 }
+
+/// <summary>A rollback <c>Assess</c> decided on (#2122): the changes applied since this version, and whether the operator
+/// lets it discard data.</summary>
+/// <param name="Changes">The changes to reverse, as the ledger recorded them.</param>
+/// <param name="AllowLossy">Whether a reversal that discards data may run (<see cref="Versioning.UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
+/// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+public sealed record RollbackPlan(IReadOnlyList<Versioning.AppliedSchemaChange> Changes, bool AllowLossy);
 
 /// <summary>
 /// Computes the <c>Assess</c> verdict: this binary's library version against the versions the

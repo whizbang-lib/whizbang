@@ -84,6 +84,11 @@
     <None Update="Performance\baseline.tsv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- #2122: a reverse script the reversal reader finds by its resource name, as it finds the library's own. -->
+  <ItemGroup>
+    <EmbeddedResource Include="MigrationReversals\*.down.sql" LogicalName="Whizbang.Data.EFCore.Postgres.Tests.MigrationReversals.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- The fake clock the outbox batcher's retry waits run on (#1871), shared with the component tests. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Core.Component.Tests/Workers/TimerAdvancingClock.cs" Link="Shared/Workers/TimerAdvancingClock.cs" />

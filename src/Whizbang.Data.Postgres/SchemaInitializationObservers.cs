@@ -29,6 +29,7 @@ public static class SchemaInitializationObservers {
   /// <param name="step">The step that committed.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   public static async Task StepCommittedAsync(IServiceProvider? services, string schema, string step, CancellationToken cancellationToken) {
+    StartupProgress.Note();   // #2165: a committed step is progress, and keeps the migrator's role
     foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
       await observer.OnSchemaStepCommittedAsync(schema, step, cancellationToken).ConfigureAwait(false);
     }
@@ -40,6 +41,7 @@ public static class SchemaInitializationObservers {
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_TellsEveryRegisteredObserverAsync</tests>
   public static async Task PreLockPhasesStartingAsync(IServiceProvider? services, string schema, CancellationToken cancellationToken) {
+    StartupProgress.Note();   // #2165
     foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
       await observer.OnPreLockPhasesStartingAsync(schema, cancellationToken).ConfigureAwait(false);
     }

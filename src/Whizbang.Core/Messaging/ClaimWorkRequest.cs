@@ -88,7 +88,15 @@ namespace Whizbang.Core.Messaging;
 /// alone, as before. The framework's claim loop passes null since #1636: the stage record is the only writer of the
 /// recorded phase and repairs its own lost writes, and a registration no longer overwrites a recorded phase.
 /// </param>
+/// <param name="AcquireInbox">
+/// Whether to lease new inbox rows this cycle (#1853). The claim loop passes false while its inbox working set has turned
+/// rows away for its byte budget and has not drained to where the smallest of them fits
+/// (<see cref="IInboxChannelWriter.InboxAcquisitionDeferred"/>): every row leased then would be fetched, turned away and
+/// released again. Inbox rows this instance already holds are re-offered either way, and outbox, perspective and
+/// receptor acquisition are untouched.
+/// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+/// <docs>fundamentals/work-coordinator/per-stream-drain#working-set-budget</docs>
 public sealed record ClaimWorkRequest(
   Guid InstanceId,
   string ServiceName,
@@ -110,4 +118,5 @@ public sealed record ClaimWorkRequest(
   int? OutboxRunLength = null,
   Whizbang.Core.Workers.PartitionAssignmentVersion? PartitionAssignment = null,
   bool AliveLockHeld = false,
-  string? LifecyclePhase = null);
+  string? LifecyclePhase = null,
+  bool AcquireInbox = true);

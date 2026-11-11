@@ -327,8 +327,8 @@ public class FlushApiTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
   }
 
   // ========================================

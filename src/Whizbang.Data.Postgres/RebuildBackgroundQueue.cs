@@ -7,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Perspectives;
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// Whole-perspective blue-green rebuilds handed off by the rebuild command's handler, so the handler returns at once and

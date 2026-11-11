@@ -1543,6 +1543,32 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Waits until, on every stream in <paramref name="streamIds"/>, each perspective in <paramref name="expectations"/> has
+  /// applied its distinct events (#2237). Prefer it to the summed wait when a test reads every stream's rows afterward:
+  /// reports that are not new applies cannot meet it, and a pair that is never applied fails it by name.
+  /// </summary>
+  /// <param name="streamIds">The streams whose rows the test reads; must not be empty.</param>
+  /// <param name="expectations">What each perspective must apply per stream.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout, scaled by <see cref="Whizbang.Testing.TestTimeouts"/>.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public async Task WaitForPerspectiveAppliesAsync(
+      IReadOnlyCollection<Guid> streamIds,
+      IReadOnlyList<PerspectiveApplyExpectation> expectations,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var sources = new List<IPerspectiveEventProcessedSource?>();
+    if (hostFilter is null or "inventory") {
+      sources.Add(PerspectiveWorkerEventSource.Of(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>()));
+    }
+    if (hostFilter is null or "bff") {
+      sources.Add(PerspectiveWorkerEventSource.Of(BffHost.Services.GetHostedWorker<PerspectiveWorker>()));
+    }
+    using var timeout = new CancellationTokenSource(
+      TimeSpan.FromMilliseconds(Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds)));
+    await PerspectiveProcessingWaiter.WaitForAppliedAsync(sources, streamIds, expectations, timeout.Token);
+  }
+
+  /// <summary>
   /// Waits for all workers on both hosts to become idle using deterministic OnWorkProcessingIdle signals.
   /// </summary>
   public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
