@@ -59,13 +59,23 @@ internal sealed class WhizbangIdTypeDiscoveryHandler : TypeDiscoveryHandler {
     return scalar;
   }
 
-  private static WhizbangIdType? _createScalar(Type idType) {
+  private static WhizbangIdType? _createScalar(Type idType) =>
+    ConversionOf(idType) is { } fromGuid ? new WhizbangIdType(idType, fromGuid) : null;
+
+  /// <summary>
+  /// The Guid conversion of a <c>[WhizbangId]</c> type, or null for a type that is not one or has none recorded.
+  /// </summary>
+  /// <param name="type">A runtime type the schema refers to.</param>
+  /// <returns>The id's <c>From(Guid)</c>, or null.</returns>
+  internal static Func<Guid, object>? ConversionOf(Type type) {
+    if (!typeof(IWhizbangId).IsAssignableFrom(type)) {
+      return null;
+    }
+
     // A module initializer runs the first time its module is used; run it now, so the registry has the id's
     // conversion however little of its assembly has run so far. It runs at most once.
-    RuntimeHelpers.RunModuleConstructor(idType.Module.ModuleHandle);
+    RuntimeHelpers.RunModuleConstructor(type.Module.ModuleHandle);
 
-    return WhizbangIdProviderRegistry.GetGuidConversions().TryGetValue(idType, out var fromGuid)
-      ? new WhizbangIdType(idType, fromGuid)
-      : null;
+    return WhizbangIdProviderRegistry.GetGuidConversions().GetValueOrDefault(type);
   }
 }

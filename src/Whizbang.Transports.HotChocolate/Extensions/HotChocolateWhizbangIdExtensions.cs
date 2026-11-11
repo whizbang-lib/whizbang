@@ -8,7 +8,8 @@ using Whizbang.Transports.HotChocolate.Types;
 namespace Whizbang.Transports.HotChocolate;
 
 /// <summary>
-/// Extension methods that let a <c>[WhizbangId]</c> type be a GraphQL argument, input field or output field.
+/// Extension methods that let a <c>[WhizbangId]</c> type be a GraphQL argument, input field or output field, and a
+/// filter compare it.
 /// </summary>
 /// <docs>apis/graphql/setup</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Ids.Tests/Unit/WhizbangIdGraphQLTests.cs</tests>
@@ -33,7 +34,8 @@ public static class HotChocolateWhizbangIdExtensions {
   /// UUID string, so a resolver can take the id as an argument or an input field and return it. Input goes through
   /// the id's own <c>From(Guid)</c>: a Guid the id refuses (not UUIDv7, or empty for an id declared with
   /// <c>AcceptAnyVersion</c>) is a GraphQL error with the code <c>WHIZBANG_INVALID_ID</c>, not an exception in the
-  /// resolver.
+  /// resolver. A filter on an id field compares the id itself (<c>where: { id: { eq: "..." } }</c>, and <c>neq</c>,
+  /// <c>in</c>, <c>nin</c>), with the id's scalar as the operand, so a filter value is checked the same way.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -57,6 +59,7 @@ public static class HotChocolateWhizbangIdExtensions {
     }
 
     builder.Services.AddSingleton(new WhizbangIdsAdded(builder.Name));
+    builder.TryAddTypeInterceptor<WhizbangIdFilterTypeInterceptor>();
     return builder.AddTypeDiscoveryHandler(_ => new WhizbangIdTypeDiscoveryHandler());
   }
 
