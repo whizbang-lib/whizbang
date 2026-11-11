@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Attributes;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.FastEndpoints;
 
@@ -122,7 +123,7 @@ public static class FieldPermissionJson {
     _ = options.GetTypeInfo(modelType);
     if (!_maskingOptions.TryGetValue(options, out _)) {
       throw new InvalidOperationException(
-        $"{modelType.Name} has [FieldPermission] members, but the JSON options the response is written with do not mask them. " +
+        $"{TypeNameFormatter.ForLog(modelType)} has [FieldPermission] members, but the JSON options the response is written with do not mask them. " +
         "Call services.AddWhizbangLenses() from Whizbang.Transports.FastEndpoints, and when replacing the serializer's " +
         "TypeInfoResolver call AddWhizbangFieldPermissions() on the options afterwards.");
     }

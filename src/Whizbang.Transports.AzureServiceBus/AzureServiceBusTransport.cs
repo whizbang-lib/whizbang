@@ -271,7 +271,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       return;
     }
     _lastPeekFailureLogged[entity] = now;
-    LogBacklogHeadPeekFailed(_logger, exception, entity, exception.GetType().Name, exception.Message, depth);
+    LogBacklogHeadPeekFailed(_logger, exception, entity, TypeNameFormatter.ForLog(exception.GetType()), exception.Message, depth);
   }
 
   [LoggerMessage(Level = LogLevel.Warning, Message = "Backlog head peek failed for {Entity} ({ExceptionType}: {ExceptionMessage}); reporting depth {Depth} with no age")]
@@ -851,7 +851,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
             localResults.Add(new BulkPublishItemResult {
               MessageId = item.MessageId,
               Success = false,
-              Error = $"{ex.GetType().Name}: {ex.Message}",
+              Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
               Reason = TransportFailureClassifier.Classify(ex),
             });
           }
@@ -893,7 +893,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         results.Add(new BulkPublishItemResult {
           MessageId = id,
           Success = false,
-          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
           Reason = reason,
         });
       }
@@ -1976,7 +1976,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         args.Message.MessageId,
         destination.Address,
         _subscriptionOf(destination),
-        ex.GetType().Name,
+        TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
       await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
@@ -1988,7 +1988,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         args.Message.MessageId,
         destination.Address,
         _subscriptionOf(destination),
-        ex.GetType().Name,
+        TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
       await _safeAbandonAsync(args);

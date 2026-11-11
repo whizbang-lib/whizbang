@@ -430,7 +430,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           results.Add(new BulkPublishItemResult {
             MessageId = item.MessageId,
             Success = false,
-            Error = $"{ex.GetType().Name}: {ex.Message}",
+            Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
             Reason = TransportFailureClassifier.Classify(ex),
           });
         }
@@ -438,7 +438,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (AlreadyClosedException ex) {
       _failRemainingItems(items, results, $"AlreadyClosedException: {ex.Message}", TransportFailureClassifier.Classify(ex));
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _failRemainingItems(items, results, $"{ex.GetType().Name}: {ex.Message}", TransportFailureClassifier.Classify(ex));
+      _failRemainingItems(items, results, $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}", TransportFailureClassifier.Classify(ex));
     }
 
     return results;

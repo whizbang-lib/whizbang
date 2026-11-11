@@ -71,7 +71,7 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
 
       if (attribute.RecordAsEvent) {
         var eventTags = new ActivityTagsCollection {
-          { "event.name", context.MessageType.Name }
+          { "event.name", TypeNameFormatter.SimpleName(context.MessageType) }
         };
         activity.AddEvent(new ActivityEvent(attribute.Tag, tags: eventTags));
       }

@@ -85,6 +85,7 @@ public sealed class NullableIsNotNullAnalyzer : DiagnosticAnalyzer {
   private static bool _isNullableValueTypeOverload(IMethodSymbol method) =>
     method.TypeParameters.Length == 1 && method.TypeParameters[0].HasValueTypeConstraint;
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "WHIZ606:A type name is read outside the shared naming code", Justification = "A test-code analyzer, which does not reference the generator naming helpers; the type is named only in the diagnostic message it reports (#2267)")]
   private static void _analyzeInvocation(OperationAnalysisContext context, ImmutableArray<IMethodSymbol> overloads) {
     var invocation = (IInvocationOperation)context.Operation;
     // The operation tree presents an extension call in its static form, receiver first, however the source spells it.
