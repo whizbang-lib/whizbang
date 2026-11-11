@@ -265,6 +265,15 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Registry already has categorized receptors at compile time
     var receptors = _registry.GetReceptorsFor(messageType, stage);
 
+    // #2273: a repaired event this service never handled runs only the receptors declared [RunOnRepair]; for every other
+    // receptor it is state only. Nothing else runs for it either, tag hooks included, since they react like receptors.
+    if (context?.IsRepair == true) {
+      receptors = _onlyRunOnRepair(receptors);
+      if (receptors.Count == 0) {
+        return;
+      }
+    }
+
     // Resolve scope for tag processing — use security context or extracted scope from hops
     var scopeForTags = securityContext ?? extracted.Scope;
 
@@ -643,6 +652,16 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   ///   (<see cref="ReceptorInfo.FireDuringReplay"/>).</item>
   /// </list>
   /// </summary>
+  private static List<ReceptorInfo> _onlyRunOnRepair(IReadOnlyList<ReceptorInfo> receptors) {
+    var opted = new List<ReceptorInfo>(receptors.Count);
+    foreach (var receptor in receptors) {
+      if (receptor.RunOnRepair) {
+        opted.Add(receptor);
+      }
+    }
+    return opted;
+  }
+
   private static IReadOnlyList<ReceptorInfo> _filterForReplayMode(
       IReadOnlyList<ReceptorInfo> receptors,
       ILifecycleContext? context) {

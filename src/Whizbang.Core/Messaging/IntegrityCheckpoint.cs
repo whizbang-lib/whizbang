@@ -898,4 +898,27 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
   public int RepairProgressWindowMinutes { get; set; } = 60;
+
+  /// <summary>
+  /// How far back, from a repaired event's origin time, this service can prove whether it handled the event
+  /// (<c>Whizbang:StreamIntegrity:RepairReceptorLookback</c>, a duration; default seven days). It is also how long the
+  /// handled ledger keeps its records (#2273).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A repaired event runs a receptor only when the receptor is declared <see cref="RunOnRepairAttribute"/>, the event's
+  /// origin time is inside this lookback, and the handled ledger shows this service never handled it. Anything else is
+  /// stored and projected state only. The lookback in effect is clamped to the time the ledger starts covering, so a
+  /// lookback raised past what the ledger holds cannot make an incomplete window look complete: it grows into the new
+  /// value as the ledger fills.
+  /// </para>
+  /// <para>
+  /// Zero turns receptors on repair off: every repaired event is state only. Must not be negative; host start fails
+  /// otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_DefaultsToSevenDays_AndBindsFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_Negative_IsRejectedByNameAsync</tests>
+  public TimeSpan RepairReceptorLookback { get; set; } = TimeSpan.FromDays(7);
 }

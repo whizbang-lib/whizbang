@@ -1148,7 +1148,7 @@ public static class JsonContextRegistry {
   /// interface-typed envelope (<c>MessageEnvelope&lt;IEvent&gt;</c> and kin) wherever a resolver is asked
   /// for one. It names every field the envelope carries, because hand-built metadata silently drops whatever
   /// it does not name on each round trip: the producer's origin and causality (#1029), the version and
-  /// dispatch context, the directed target, the state-only marker and the priority. Fields absent from an
+  /// dispatch context, the directed target, the state-only and repaired markers and the priority. Fields absent from an
   /// older body bind to their unstamped defaults (version 1, the v1 dispatch context, an empty origin).
   /// </remarks>
   /// <tests>tests/Whizbang.Core.Tests/Serialization/PolymorphicEnvelopeOriginTests.cs</tests>
@@ -1165,6 +1165,8 @@ public static class JsonContextRegistry {
       _createProperty<int, MessageEnvelope<TBase>>(_options, "Priority", obj => obj.Priority, (obj, value) => obj.Priority = value),
       _createProperty<string?, MessageEnvelope<TBase>>(_options, "Target", obj => obj.Target, (obj, value) => obj.Target = value),
       _createProperty<bool, MessageEnvelope<TBase>>(_options, "StateOnly", obj => obj.StateOnly, (obj, value) => obj.StateOnly = value),
+      // #2273: a repaired child's receptor restriction, omitted when false like the state-only marker.
+      _createProperty<bool, MessageEnvelope<TBase>>(_options, "Repaired", obj => obj.Repaired, (obj, value) => obj.Repaired = value),
       _createProperty<int, MessageEnvelope<TBase>>(_options, "Version", obj => obj.Version, null),
       _createProperty<MessageDispatchContext, MessageEnvelope<TBase>>(_options, "DispatchContext", obj => obj.DispatchContext, null),
       _createProperty<Guid, MessageEnvelope<TBase>>(_options, "SourceServiceId", obj => obj.SourceServiceId, null),
@@ -1175,6 +1177,7 @@ public static class JsonContextRegistry {
     properties[3].ShouldSerialize = static (_, value) => value is int priority && priority != 0;
     properties[4].ShouldSerialize = static (_, value) => value is not null;
     properties[5].ShouldSerialize = static (_, value) => value is true;
+    properties[6].ShouldSerialize = static (_, value) => value is true;
 
     // Constructor parameters for deserialization. Version and DispatchContext bind through the constructor
     // (which supplies the v1 dispatch context when absent); the origin and causality pairs are init-only

@@ -472,6 +472,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)
@@ -509,6 +511,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)
@@ -585,6 +589,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)
@@ -659,6 +665,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)

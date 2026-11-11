@@ -92,6 +92,23 @@ public partial class DapperWorkCoordinator {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperHandledLedgerTests.cs:Lookup_AndSweep_RunOnTheDapperDriverAsync</tests>
+  public Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return Task.FromResult(new HandledLedgerAnswer(null, new HashSet<Guid>()));
+    }
+    return _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorRetentionSql.LookupHandledEventsAsync(cmd, prefix, eventIds, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperHandledLedgerTests.cs:Lookup_AndSweep_RunOnTheDapperDriverAsync</tests>
+  public Task<long> SweepHandledLedgerAsync(DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) =>
+    _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorRetentionSql.SweepHandledLedgerAsync(cmd, prefix, now, keep, cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
   public async Task<int> CleanupLifecycleCompletionsAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;

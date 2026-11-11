@@ -2500,6 +2500,36 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs:TheLookup_AnswersTheHandledSubset_AndTheCoverageStartAsync</tests>
+  public async Task<HandledLedgerAnswer> LookupHandledEventsAsync(
+    IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return new HandledLedgerAnswer(null, new HashSet<Guid>());
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorRetentionSql.LookupHandledEventsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), eventIds, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs:TheSweep_MovesCoverageUpToTheCutoff_ThenRemovesOlderRecordsAsync</tests>
+  public async Task<long> SweepHandledLedgerAsync(
+    DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorRetentionSql.SweepHandledLedgerAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), now, keep, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<int> CloseDigestEpochsAsync(
     int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

@@ -48,6 +48,10 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
   /// <inheritdoc/>
   public bool IsNewEvent { get; init; } = true;
 
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerRepairTests.cs</tests>
+  public bool IsRepair { get; init; }
+
   /// <summary>
   /// The fields the message changed, when the stage knows them better than the message does: a collective event's
   /// applied specs (#1045). Tag hooks receive it as <see cref="Tags.TagContext{TAttribute}.Changes"/>.

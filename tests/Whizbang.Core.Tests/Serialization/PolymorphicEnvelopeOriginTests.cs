@@ -42,6 +42,7 @@ public class PolymorphicEnvelopeOriginTests {
       CausedByCommitSequence = 8,
       Target = "one-consumer",
       StateOnly = true,
+      Repaired = true,
       Priority = 60,
     };
 
@@ -57,6 +58,7 @@ public class PolymorphicEnvelopeOriginTests {
     await Assert.That(back.DispatchContext.IsDefaultDispatch).IsTrue();
     await Assert.That(back.Target).IsEqualTo("one-consumer");
     await Assert.That(back.StateOnly).IsTrue();
+    await Assert.That(back.Repaired).IsTrue().Because("#2273: a repaired child keeps its receptor restriction");
     await Assert.That(back.Priority).IsEqualTo(60);
   }
 
@@ -81,5 +83,6 @@ public class PolymorphicEnvelopeOriginTests {
     await Assert.That(back.DispatchContext.Mode).IsEqualTo(DispatchModes.Outbox);
     await Assert.That(back.Target).IsNull();
     await Assert.That(back.StateOnly).IsFalse();
+    await Assert.That(back.Repaired).IsFalse();
   }
 }

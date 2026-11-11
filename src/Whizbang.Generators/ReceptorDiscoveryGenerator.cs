@@ -65,6 +65,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_FIRE_DURING_REPLAY = "__FIRE_DURING_REPLAY__";
   private const string PLACEHOLDER_IS_IDEMPOTENT = "__IS_IDEMPOTENT__";
   private const string PLACEHOLDER_IS_ONCE_ACROSS_SERVICES = "__IS_ONCE_ACROSS_SERVICES__";
+  private const string PLACEHOLDER_RUN_ON_REPAIR = "__RUN_ON_REPAIR__";
   private const string PLACEHOLDER_DEFAULT_ROUTING = "__DEFAULT_ROUTING__";
   private const string PLACEHOLDER_RECEPTOR_INVOCATIONS = "__RECEPTOR_INVOCATIONS__";
   private const string REGION_NAMESPACE = "NAMESPACE";
@@ -348,7 +349,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LikelyNotInjectableParameter: notInjectable?.Description,
           IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol),
           Priority: _receptorPriority(classSymbol),
-          NotInjectableLocation: notInjectable?.Location
+          NotInjectableLocation: notInjectable?.Location,
+          RunsOnRepair: _hasRunOnRepairAttribute(classSymbol)
       );
     }
 
@@ -747,6 +749,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string RECEPTOR_PRIORITY_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorPriorityAttribute";
     var attribute = classSymbol.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, RECEPTOR_PRIORITY_ATTRIBUTE));
     return attribute?.ConstructorArguments is [{ Value: int priority }] ? priority : ReceptorInfo.DEFAULT_PRIORITY;
+  }
+
+  // #2273: [RunOnRepair] opts the receptor in to repaired events this service can prove it never handled.
+  private static bool _hasRunOnRepairAttribute(INamedTypeSymbol classSymbol) {
+    const string RUN_ON_REPAIR_ATTRIBUTE = "Whizbang.Core.Messaging.RunOnRepairAttribute";
+    return classSymbol.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, RUN_ON_REPAIR_ATTRIBUTE));
   }
 
   private static bool _hasReceptorOnceAcrossServicesAttribute(INamedTypeSymbol classSymbol) {
@@ -2052,6 +2060,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
         .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
         .Replace(PLACEHOLDER_IS_ONCE_ACROSS_SERVICES, receptor.IsOnceAcrossServices ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
+        .Replace(PLACEHOLDER_RUN_ON_REPAIR, receptor.RunsOnRepair ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
         // The receptor's [DefaultRouting], so a cascade from a worker stage routes its result as a local call does
         .Replace(PLACEHOLDER_DEFAULT_ROUTING, receptor.HasDefaultRouting ? $"({receptor.DefaultRouting})" : "null");
 

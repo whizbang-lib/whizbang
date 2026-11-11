@@ -2430,6 +2430,36 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<IntegrityDomainClaim>>([]);
 
   /// <summary>
+  /// Which of <paramref name="eventIds"/> the handled ledger records as handled here, and when the ledger's coverage
+  /// starts (#2273). A repaired event inside the coverage that the ledger does not hold was never handled here.
+  /// </summary>
+  /// <param name="eventIds">The repaired events' ids.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The handled subset and the coverage start; <see cref="HandledLedgerAnswer.NoLedger"/> (no coverage, so
+  /// nothing can be proven never handled) for a store that keeps no ledger.</returns>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:LookupHandledEvents_Default_HasNoLedgerAsync</tests>
+  Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) =>
+    Task.FromResult(HandledLedgerAnswer.NoLedger);
+
+  /// <summary>
+  /// Keeps the handled ledger to <paramref name="keep"/> (#2273): first moves the ledger's coverage start up to
+  /// <paramref name="now"/> minus <paramref name="keep"/>, then removes the records of events older than that from the
+  /// rows a partition drop does not remove. Coverage moves before anything is removed, so no reader ever sees a window
+  /// with records missing as complete.
+  /// </summary>
+  /// <param name="now">The moment the sweep runs at.</param>
+  /// <param name="keep">How long records are kept: the configured repair receptor lookback.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The records removed; zero for a store that keeps no ledger.</returns>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:SweepHandledLedger_Default_RemovesNothingAsync</tests>
+  Task<long> SweepHandledLedgerAsync(DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
+
+  /// <summary>
   /// The next batch of the re-attribution walk (#2008): the rows after the walk's durable cursor by commit sequence, at
   /// most <paramref name="maxEvents"/> of them, and the distinct types among them that carry no origin. A fingerprint
   /// other than the one the walk last ran under restarts the walk from the beginning.

@@ -75,6 +75,8 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       // State-only delivery survives the conversion too — losing it would re-fire triggers on
       // backfilled history (stream-integrity Phase S).
       StateOnly = envelope.StateOnly,
+      // A repaired child keeps its receptor restriction through the conversion (#2273).
+      Repaired = envelope.Repaired,
       Priority = envelope.Priority,   // priority step 1: the storage form carries the declaration
       Version = envelope.Version,
       // The producer's origin and the causality pair survive the conversion (#1029). A received typed
