@@ -179,7 +179,7 @@ ai-docs/                        # Focused topic documentation (12 files)
 
 ## Technology Stack
 
-- **.NET 10.0.1** (LTS) - Target framework
+- **.NET 11 SDK** - Development targets `net11.0`; release builds target `net10.0` (LTS) and `net11.0` (see `docs/RELEASING.md`, "Target frameworks")
 - **TUnit 1.2.11+** - Source-generated testing with Microsoft.Testing.Platform
 - **TUnit.Assertions** - Native fluent assertions
 - **Rocks 9.3.0+** - Source-generated mocking for AOT compatibility

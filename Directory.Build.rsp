@@ -1,0 +1,8 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+#
+# MSBuild reads this file on every dotnet build/test/pack in the repo.
+# -mt: build projects on threads in one MSBuild process instead of separate worker processes.
+# .NET 11 ships it but does not turn it on by default, so it is opted into here (#2135).
+# Its thread count follows -maxcpucount, so CI build steps that pass -maxcpucount:1 stay single-threaded.
+-mt

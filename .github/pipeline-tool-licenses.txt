@@ -29,7 +29,6 @@ action       actions/create-github-app-token    MIT   # the release app's instal
 action       actions/dependency-review-action   MIT   # Gate · Dependency review
 action       actions/download-artifact          MIT   # artifacts between jobs
 action       actions/github-script              MIT   # small API calls from workflows
-action       actions/setup-dotnet               MIT   # .NET SDK setup
 action       actions/upload-artifact            MIT   # artifacts between jobs
 action       github/codeql-action               MIT   # CodeQL analysis and SARIF upload
 

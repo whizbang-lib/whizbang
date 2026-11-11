@@ -166,6 +166,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The GitVersion tool installs with `dotnet tool`, which honors global.json's SDK (.NET 11, #2135).
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
         with:

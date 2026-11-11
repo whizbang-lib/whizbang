@@ -241,21 +241,17 @@ jobs:
 
   queue-validated:
     name: Plan · Reuse already-tested results
-    # Two pushes carry a tree another run already tested, and skip the suites and Quality here:
-    #   DEVELOP: the merge queue fast-forwards develop to the exact SHA its run just validated.
-    #   RELEASE CUT: release/vX.Y.Z is the develop commit it was cut from, plus main's version file
-    #     and the new version, all in Directory.Build.props, which the build does not read (the
-    #     version is stamped from the branch name), and the changelog the cut gathered (CHANGELOG.md
-    #     and the deleted changelog.d/ fragments, #2168), which nothing builds or tests. Reused only
-    #     when those are the ONLY differences; a stabilization fix, or a hotfix cut from a tag, runs
-    #     the full matrix.
-    # Either way the evidence comes from find-tested-run (the queue run, or on a fast-forward the PR
-    # run), and validated is true only when both its coverage and its build manifest are still
-    # available. Anything less runs the full matrix: this job never fails the run.
+    # A develop push carries a tree another run already tested, and skips the suites and Quality here:
+    # the merge queue fast-forwards develop to the exact SHA its run just validated.
+    # A RELEASE CUT never reuses develop's results (#2135): develop builds and tests net11.0 only, while a
+    # release branch builds, tests and packs net10.0 and net11.0 (Directory.Build.props detects the
+    # branch), so develop's run never tested or built what the release ships. The cut runs the full matrix.
+    # The evidence comes from find-tested-run (the queue run, or on a fast-forward the PR run), and
+    # validated is true only when both its coverage and its build manifest are still available.
+    # Anything less runs the full matrix: this job never fails the run.
     if: >-
       github.event_name == 'push' &&
-      ((github.ref == 'refs/heads/develop' && vars.PUSH_RUN_FULL_MATRIX != 'true') ||
-       (startsWith(github.ref, 'refs/heads/release/v') && vars.RELEASE_CUT_FULL_MATRIX != 'true'))
+      github.ref == 'refs/heads/develop' && vars.PUSH_RUN_FULL_MATRIX != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -269,28 +265,8 @@ jobs:
       - name: Which tested develop commit does this push stand on?
         id: target
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          REF: ${{ github.ref }}
-        run: |
-          set -uo pipefail
-          none() { echo "Full matrix: $1"; echo "Reuse: **false** -- $1" >> "$GITHUB_STEP_SUMMARY"; echo "sha=" >> "$GITHUB_OUTPUT"; exit 0; }
-          if [ "$REF" = refs/heads/develop ]; then
-            echo "sha=$SHA" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # A release cut: the compare endpoint gives the merge base with develop (the commit the
-          # branch was cut from) and every file that differs from it.
-          CMP=$(gh api "repos/$REPO/compare/develop...$SHA" 2>/dev/null) || none "cannot compare with develop"
-          BASE=$(jq -r '.merge_base_commit.sha // ""' <<< "$CMP")
-          OTHER=$(jq -r '[.files[].filename | select(. != "Directory.Build.props" and . != "CHANGELOG.md" and (startswith("changelog.d/") | not))] | join(", ")' <<< "$CMP")
-          [ -n "$BASE" ] || none "no merge base with develop"
-          [ -z "$OTHER" ] || none "the branch changes more than Directory.Build.props and the changelog relative to develop ($OTHER)"
-          # The evidence is the run that TESTED $BASE (its queue run, or PR run on a fast-forward),
-          # which find-tested-run requires next. Its develop push run adds nothing: it reused that
-          # same evidence, and may have been canceled by a later push without anything being wrong.
-          echo "Release cut from develop $BASE; only Directory.Build.props and the changelog differ."
-          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the resolver action
         if: steps.target.outputs.sha != ''
@@ -480,7 +456,7 @@ jobs:
           ART_ID=$(gh api "repos/$REPO/actions/runs/$MANIFEST_RUN_ID/artifacts?per_page=100" \
             --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))][0].id // ""')
           if [ -z "$ART_ID" ]; then
-            echo "::error::Run $MANIFEST_RUN_ID no longer holds a determinism manifest (it expired after the reuse decision). Set repo variable PUSH_RUN_FULL_MATRIX=true (or RELEASE_CUT_FULL_MATRIX=true on a release branch) and re-run all jobs."
+            echo "::error::Run $MANIFEST_RUN_ID no longer holds a determinism manifest (it expired after the reuse decision). Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs."
             exit 1
           fi
           gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > manifest.zip
@@ -511,7 +487,7 @@ jobs:
           QUEUE_SDK=$(cat queue-manifest/sdk.txt)
           LOCAL_SDK=$(cat this-manifest/sdk.txt)
           if [ "$QUEUE_SDK" != "$LOCAL_SDK" ]; then
-            echo "::error::SDK drift between the tested run ($QUEUE_SDK) and this run's Compile ($LOCAL_SDK): the build cannot be verified. Set repo variable PUSH_RUN_FULL_MATRIX=true (or RELEASE_CUT_FULL_MATRIX=true on a release branch) and re-run all jobs to run the full matrix instead."
+            echo "::error::SDK drift between the tested run ($QUEUE_SDK) and this run's Compile ($LOCAL_SDK): the build cannot be verified. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
             exit 1
           fi
           echo "SDK matches the tested run: $LOCAL_SDK"
@@ -561,7 +537,7 @@ jobs:
           gh api "repos/$REPO/actions/runs/$REPORTS_RUN_ID/artifacts?per_page=100" \
             --jq '.artifacts[] | select(.expired | not) | select((.name | startswith("coverage-")) or (.name | startswith("trx-"))) | "\(.id) \(.name)"' > artifacts.list
           if ! grep -q " coverage-" artifacts.list; then
-            echo "::error::Run $REPORTS_RUN_ID no longer holds coverage (it expired after the reuse decision). Set PUSH_RUN_FULL_MATRIX=true (or RELEASE_CUT_FULL_MATRIX=true) and re-run all jobs."
+            echo "::error::Run $REPORTS_RUN_ID no longer holds coverage (it expired after the reuse decision). Set PUSH_RUN_FULL_MATRIX=true and re-run all jobs."
             exit 1
           fi
           mkdir -p coverage trx
@@ -958,6 +934,46 @@ jobs:
       # The whole solution, the same projects Compile builds; nothing is uploaded, only the verdict matters.
       - name: Build every project with the analyzers on
         run: dotnet build --no-restore --configuration Release
+
+  # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day every project targets net11.0
+  # only, so a .NET 11-only API would otherwise surface first on a release branch, the day a release is cut.
+  # This compiles the whole solution for net10.0 (no tests, analyzers off) on every pull request into develop
+  # and in the merge queue, so it is caught on the change that introduces it. A release-branch run builds and
+  # tests both frameworks itself and skips this. In ci-result's needs: a failure blocks the merge.
+  compile-net10:
+    name: Build · Compile net10.0
+    needs: [changes, pick-runner]
+    if: >-
+      ${{ !failure() && !cancelled() &&
+      ((github.event_name == 'pull_request' && github.base_ref == 'develop') || github.event_name == 'merge_group') &&
+      needs.changes.outputs.code == 'true' }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # Restore always covers both frameworks (Directory.Build.props), so the locked restore is the usual one.
+      - name: Restore Dependencies
+        run: dotnet restore --locked-mode
+
+      # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0.
+      - name: Build every project for net10.0
+        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
@@ -1666,7 +1682,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, queue-prs, version, pr-version, format, build, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, queue-quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
+    needs: [changes, queue-prs, version, pr-version, format, build, compile-net10, analyzers, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality-build, quality, queue-quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has

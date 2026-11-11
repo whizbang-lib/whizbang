@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <!-- This is a container project for the Angular UI - no compilation -->
-    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <EnableDefaultItems>false</EnableDefaultItems>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
