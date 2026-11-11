@@ -4895,7 +4895,9 @@ public abstract partial class Dispatcher(
       // Priority step 1: a cascade emission is declared like any other send; the ambient parent supplies inheritance,
       // and an explicit number on the options is kept.
       _stampExplicitPriority(jsonEnvelope, priority);
+      #pragma warning disable RS0030 // versioned on purpose: the declaring hooks see the message type this envelope carries on the wire (#2267); their lookups normalize it
       jsonEnvelope.Priority = _declarePriority(jsonEnvelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(eventType), scheduledFor: null);
+      #pragma warning restore RS0030
 
       // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
@@ -4944,7 +4946,7 @@ public abstract partial class Dispatcher(
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
   private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext) {
-    var typeNameForLookup = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(eventType);
+    var typeNameForLookup = TypeNameFormatter.Format(eventType);   // the registry looks names up in the wire form (#2267)
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
       ?? throw new InvalidOperationException(
@@ -5036,12 +5038,16 @@ public abstract partial class Dispatcher(
         SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(eventData),
         SupersedingGroup = Whizbang.Core.Lifecycle.SupersedingEvents.GroupOf(eventData)
       },
+      #pragma warning disable RS0030 // versioned on purpose: an envelope type a receiver resolves the envelope from (#2267)
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
+      #pragma warning restore RS0030
       StreamId = streamId,
       IsEvent = eventData is IEvent,
       Flags = Whizbang.Core.Messaging.EventFlagsDeriver.FromPayload(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
+      #pragma warning disable RS0030 // versioned on purpose: the message type a receiver resolves the payload from (#2267)
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType),
+      #pragma warning restore RS0030
       Priority = jsonEnvelope.Priority,
       CollectiveLinkType = CollectivePredecessorLink.TypeFor(eventData)
     };
@@ -6305,7 +6311,9 @@ public abstract partial class Dispatcher(
 
     // Priority step 1: declared before the row is built so the number travels inside the stored envelope
     // and sits on the row for the store. The message type is rendered by the shared helper.
+    #pragma warning disable RS0030 // versioned on purpose: the declaring hooks see the message type this envelope carries on the wire (#2267); their lookups normalize it
     var declaredPriority = _declarePriority(envelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(payloadType), scheduledFor);
+    #pragma warning restore RS0030
     envelope.Priority = declaredPriority;
 
     // Use centralized envelope serializer (REQUIRED)

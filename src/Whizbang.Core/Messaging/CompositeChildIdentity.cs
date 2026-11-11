@@ -54,15 +54,14 @@ public static class CompositeChildIdentity {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_TheTypeAndEveryRenderingOfItsName_DeriveOneIdAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_ANullType_ThrowsAsync</tests>
   public static Guid ForChild(Guid compositeMessageId, int ordinal, Type childType) =>
-    Derive(compositeMessageId, ordinal, HashedTypeName(childType));
+    _derive(compositeMessageId, ordinal, HashedTypeName(childType));
 
   /// <summary>
-  /// The one definition of the type name a child id hashes (#2266): the type's assembly-qualified name in the
-  /// framework's version-free wire form (<see cref="EventTypeMatchingHelper.NormalizeTypeName"/>), every type argument at
-  /// every depth included. For a type with no type arguments it is exactly <see cref="TypeNameFormatter.Format"/>
-  /// (<c>Namespace.Type, Assembly</c>, nested types with <c>+</c>); for a generic type it also strips the versions of the
-  /// type arguments, which <see cref="TypeNameFormatter.Format"/> keeps, so a receiver on another build of any assembly
-  /// in the name derives the same id.
+  /// The type name a child id hashes (#2266): the canonical wire form, <see cref="TypeNameFormatter.Format"/>
+  /// (<c>Namespace.Type, Assembly</c>, nested types with <c>+</c>, version-free at every depth). A name read off the wire
+  /// goes through the one string normalizer, <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>, which turns any
+  /// rendering of a type's name into that same form (#2267), so a receiver on another build of any assembly in the name
+  /// derives the same id.
   /// </summary>
   /// <param name="childType">The child's runtime type.</param>
   /// <returns>The name the child id is derived from.</returns>
@@ -71,7 +70,7 @@ public static class CompositeChildIdentity {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_ForATypeWithoutTypeArguments_IsTheCanonicalWireFormAsync</tests>
   internal static string HashedTypeName(Type childType) {
     ArgumentNullException.ThrowIfNull(childType);
-    return HashedTypeName(TypeNameFormatter.AssemblyQualifiedNameOrDisplay(childType));
+    return TypeNameFormatter.Format(childType);
   }
 
   /// <summary>The one definition of the hashed name (see <see cref="HashedTypeName(Type)"/>), from a rendered name.</summary>
@@ -89,12 +88,13 @@ public static class CompositeChildIdentity {
   /// <returns>The id every path derives for this child.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:TryExpand_TheTypedAndTheRawPath_DeriveTheSameIds_WhenThePublisherRanAnotherBuildAsync</tests>
   public static Guid ForChild(Guid compositeMessageId, int ordinal, string wireTypeName) =>
-    Derive(compositeMessageId, ordinal, wireTypeName);
+    _derive(compositeMessageId, ordinal, wireTypeName);
 
   /// <summary>
   /// Derives the child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>. The
   /// type name enters the hash version-free, so any rendering of one type derives one id (#2266). Library code calls
-  /// <see cref="ForChild(Guid, int, Type)"/> or <see cref="ForChild(Guid, int, string)"/>; a test fails a second call site.
+  /// <see cref="ForChild(Guid, int, Type)"/> or <see cref="ForChild(Guid, int, string)"/>: this member is banned for it
+  /// (BannedSymbols.txt, #2267), so a second call site does not compile.
   /// </summary>
   /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
   /// <param name="ordinal">Zero-based position of the child within the composite.</param>
@@ -103,7 +103,10 @@ public static class CompositeChildIdentity {
   /// <exception cref="ArgumentException">The composite id is empty.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The ordinal is negative.</exception>
   /// <exception cref="ArgumentNullException">The type name is null.</exception>
-  public static Guid Derive(Guid compositeMessageId, int ordinal, string childTypeName) {
+  public static Guid Derive(Guid compositeMessageId, int ordinal, string childTypeName) =>
+    _derive(compositeMessageId, ordinal, childTypeName);
+
+  private static Guid _derive(Guid compositeMessageId, int ordinal, string childTypeName) {
     if (compositeMessageId == Guid.Empty) {
       throw new ArgumentException("A deterministic child id needs the composite it was expanded from.", nameof(compositeMessageId));
     }

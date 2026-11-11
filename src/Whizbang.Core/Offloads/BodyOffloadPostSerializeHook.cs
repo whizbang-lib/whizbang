@@ -135,7 +135,9 @@ public sealed partial class BodyOffloadPostSerializeHook(
 
     var claimPayload = new BodyClaimEnvelopePayload(claim, context.ContentType, context.EnvelopeType);
     var claimEnvelope = _buildClaimEnvelope(context.Envelope, claimPayload);
+    #pragma warning disable RS0030 // versioned on purpose: the claim envelope's type, which a receiver resolves the envelope from (#2267)
     var claimEnvelopeType = TypeNameFormatter.AssemblyQualifiedName(claimEnvelope.GetType());
+    #pragma warning restore RS0030
 
     var typeInfo = context.JsonOptions.GetTypeInfo(claimEnvelope.GetType());
 

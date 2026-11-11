@@ -97,8 +97,14 @@ public static class TypeNameFormatter {
 
   /// <summary>
   /// Formats a type to "TypeName, AssemblyName" format for consistent storage and matching.
-  /// This is the standard format used across Whizbang for type identification.
+  /// This is the standard format used across Whizbang for type identification: the wire form.
   /// </summary>
+  /// <remarks>
+  /// Version-free at every depth (#2267): a generic type's CLR full name carries each type argument's versioned
+  /// assembly-qualified name, which the one string normalizer (<see cref="Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName"/>)
+  /// strips, so the form a type renders is the form any rendering of its name normalizes to, whichever build wrote it.
+  /// A name with no type arguments carries no version and is returned as rendered.
+  /// </remarks>
   /// <param name="type">The type to format</param>
   /// <returns>Type name in format "TypeName, AssemblyName"</returns>
   /// <exception cref="InvalidOperationException">If type doesn't have required metadata</exception>
@@ -111,7 +117,7 @@ public static class TypeNameFormatter {
     var assemblyName = type.Assembly.GetName().Name
       ?? throw new InvalidOperationException($"Type {type.Name} does not have an Assembly.GetName().Name");
 
-    return $"{typeName}, {assemblyName}";
+    return Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName($"{typeName}, {assemblyName}");
   }
 
   /// <summary>
@@ -199,18 +205,31 @@ public static class TypeNameFormatter {
   public static string Parse(string typeNameString) {
     ArgumentException.ThrowIfNullOrWhiteSpace(typeNameString);
 
-    // Split on commas and trim whitespace
-    var parts = typeNameString.Split(',').Select(p => p.Trim()).ToArray();
-
-    if (parts.Length < 2) {
+    // #2267: the version decorations are stripped by the one string normalizer, at every depth; only the top-level
+    // separators (outside a generic name's brackets) split the type from its assembly and the assembly from the rest.
+    var normalized = Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName(typeNameString);
+    var separators = _topLevelCommas(normalized);
+    if (separators.Count == 0) {
       throw new InvalidOperationException(
         $"Type name '{typeNameString}' does not contain assembly information. " +
         "Expected format: 'TypeName, AssemblyName' or 'TypeName, AssemblyName, Version=...'");
     }
+    var assemblyEnd = separators.Count > 1 ? separators[1] : normalized.Length;
+    return $"{normalized[..separators[0]].Trim()}, {normalized[(separators[0] + 1)..assemblyEnd].Trim()}";
+  }
 
-    // Extract first two parts (TypeName, AssemblyName)
-    // Ignore Version=, Culture=, PublicKeyToken= if present
-    return $"{parts[0]}, {parts[1]}";
+  // The commas of a type name that are not inside a generic name's brackets.
+  private static List<int> _topLevelCommas(string name) {
+    var commas = new List<int>();
+    var depth = 0;
+    for (var i = 0; i < name.Length; i++) {
+      switch (name[i]) {
+        case '[': depth++; break;
+        case ']': depth--; break;
+        case ',' when depth == 0: commas.Add(i); break;
+      }
+    }
+    return commas;
   }
 
   /// <summary>

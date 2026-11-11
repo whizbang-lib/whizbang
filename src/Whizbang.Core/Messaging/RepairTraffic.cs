@@ -24,10 +24,10 @@ public static class RepairTraffic {
   /// containment, not equality.
   /// </summary>
   public static IReadOnlyList<string> InboxMessageTypeNames { get; } = [
-    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RequestRedeliveryCommand))),
-    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RedeliveryComposite))),
+    TypeNameFormatter.Format(typeof(RequestRedeliveryCommand)),
+    TypeNameFormatter.Format(typeof(RedeliveryComposite)),
     // #2092: a paced backfill window's answer is repair traffic too; a report-only service applies none.
-    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(BackfillWindowAnswer))),
+    TypeNameFormatter.Format(typeof(BackfillWindowAnswer)),
   ];
 
   /// <summary>
