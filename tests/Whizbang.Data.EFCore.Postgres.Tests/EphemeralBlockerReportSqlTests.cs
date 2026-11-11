@@ -34,10 +34,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard5")]
 public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
   private const int EPHEMERAL = 8;
-  private const string TYPE = "Contracts.Sessions.SessionPinged, Contracts";
-  private const string TYPE_KEY = "Contracts.Sessions.SessionPinged";
-  private const string OPENED = "Contracts.Sessions.SessionOpened, Contracts";
-  private const string CLOSED = "Contracts.Sessions.SessionClosed, Contracts";
+  // Real types, named the way the append path stores them (#2254): the walk names each catalog entry by its Type.
+  private static readonly string TYPE = TypeNameFormatter.Format(typeof(SessionPinged));
+  private static readonly string TYPE_KEY = TypeNameFormatter.GetFullName(TYPE);
+  private static readonly string OPENED = TypeNameFormatter.Format(typeof(SessionOpened));
+  private static readonly string CLOSED = TypeNameFormatter.Format(typeof(SessionClosed));
   private static readonly string BATCH = TypeNameFormatter.Format(typeof(BatchGenerated));
   private static readonly string ITEM = TypeNameFormatter.Format(typeof(ItemGenerated));
 
@@ -204,7 +205,7 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
 
     await _executeAsync(conn,
       "SELECT * FROM register_type_definition(@n, sha256(convert_to('ephemeral', 'UTF8')), sha256(convert_to('{}', 'UTF8')), 0)",
-      ("n", TYPE));
+      ("n", TYPE_KEY));  // the definition registry is keyed by the bare name (#2254)
     var again = await _step(new ListLogger()).ReclassifyAsync(_services(), CancellationToken.None);
 
     await Assert.That(again.TypesFinished).IsEqualTo(1).Because("the newer definition walked the type again");
@@ -325,7 +326,7 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
     await _appendAsync(conn, mixed, TYPE);
     var opened = await _appendAsync(conn, mixed, OPENED);
     var released = await _appendAsync(conn, mixed, probe);
-    var catalog = new Catalog(_ephemeral(TYPE),
+    var catalog = new Catalog(_ephemeral(typeof(SessionPinged)),
       new MessageTypeCatalogEntry(typeof(BlockerReleaseProbe), TypeNameFormatter.GetFullName(probe), "event", null));
 
     // The key in any case and without the assembly; one value with the assembly, one without it (resolved through the
@@ -531,8 +532,8 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
     },
     new PerspectiveRegistrationInfo("App.PlainPerspective", "global::App.PlainPerspective", "global::App.Plain", [ITEM]));
 
-  private static MessageTypeCatalogEntry _ephemeral(string name) =>
-    new(typeof(object), name, "event", null) { Ephemeral = new EphemeralInfo(default, default) };
+  private static MessageTypeCatalogEntry _ephemeral(Type type) =>
+    new(type, TypeNameFormatter.FormatClrTypeName(type), "event", null) { Ephemeral = new EphemeralInfo(default, default) };
 
   private static EphemeralHistoryReclassifyStep _step(ILogger logger) => new(logger, 10, 10);
 
@@ -573,7 +574,7 @@ public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
         return connection;
       }, schema))
       .AddSingleton(Options.Create(options))
-      .AddSingleton(catalog ?? new Catalog(_ephemeral(TYPE)));
+      .AddSingleton(catalog ?? new Catalog(_ephemeral(typeof(SessionPinged))));
     if (registry is not null) {
       services.AddSingleton(registry);
     }
@@ -645,3 +646,12 @@ internal sealed record BatchGenerated;
 
 /// <summary>A real legacy durable per-item event for the mixed read-model tests.</summary>
 internal sealed record ItemGenerated;
+
+/// <summary>A real ephemeral event type for the report tests.</summary>
+internal sealed record SessionPinged;
+
+/// <summary>A real durable event type that shares streams with <see cref="SessionPinged"/>.</summary>
+internal sealed record SessionOpened;
+
+/// <summary>A second real durable event type that shares streams with <see cref="SessionPinged"/>.</summary>
+internal sealed record SessionClosed;

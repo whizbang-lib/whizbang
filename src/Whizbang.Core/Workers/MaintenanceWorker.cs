@@ -1254,7 +1254,7 @@ public sealed partial class MaintenanceWorker(
   static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
-    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s), {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
+    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s), {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}). Cleanup has no deadline but it does have a limit: space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
   static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
