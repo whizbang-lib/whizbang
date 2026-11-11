@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres.Collective;
 
@@ -175,7 +176,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     }
 
     throw new NotSupportedException(
-      $"CollectivePredicateSqlCompiler<{typeof(TModel).Name}> supports equality over scope/data fields and id, " +
+      $"CollectivePredicateSqlCompiler<{TypeNameFormatter.ForLog(typeof(TModel))}> supports equality over scope/data fields and id, " +
       "ordering (<, <=, >, >=) over numeric and temporal fields, &&-chains, Contains (→ IN), and " +
       "q.Of<TOther>().Any(...) cross-perspective cohorts (→ EXISTS). " +
       $"Got expression node kind '{node.NodeType}'. Provide a raw-SQL form for richer predicates.");
@@ -312,7 +313,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var temporal = _isTemporal(type);
     if (!temporal && !_isNumeric(type)) {
       throw new NotSupportedException(
-        $"{typeof(TModel).Name}.{column.PropName} is {type.Name}. A collective ordering comparison needs a numeric, " +
+        $"{TypeNameFormatter.ForLog(typeof(TModel))}.{column.PropName} is {TypeNameFormatter.ForLog(type)}. A collective ordering comparison needs a numeric, " +
         "enumeration or temporal (DateTime, DateTimeOffset, DateOnly, TimeOnly, TimeSpan) member.");
     }
     var scale = OrderingScale.Number;
@@ -459,7 +460,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       Guid g => g,
       string text when Guid.TryParse(text, out var parsed) => parsed,
       _ => throw new NotSupportedException(
-        $"A predicate on the row id compares it with '{value.GetType().Name}'. The id column is a uuid, so the " +
+        $"A predicate on the row id compares it with '{TypeNameFormatter.ForLog(value.GetType())}'. The id column is a uuid, so the " +
         "value has to be a Guid, or a string that parses as one."),
     },
     _ => _toJsonbText(value),
@@ -503,13 +504,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       sourceExpr = mc.Object;
       itemExpr = mc.Arguments[0];
     } else {
-      var arg0 = mc.Arguments.Count > 0 ? mc.Arguments[0].Type.Name : "-";
-      var arg1 = mc.Arguments.Count > 1 ? mc.Arguments[1].Type.Name : "-";
+      var arg0 = mc.Arguments.Count > 0 ? TypeNameFormatter.SimpleName(mc.Arguments[0].Type) : "-";
+      var arg1 = mc.Arguments.Count > 1 ? TypeNameFormatter.SimpleName(mc.Arguments[1].Type) : "-";
       // Only a module-level (global) function has no declaring type, and C# cannot declare one, so a
       // method a C# lambda calls always has its type to name.
       throw new NotSupportedException(
-        $"Unsupported Contains shape in collective scope filter. Method={mc.Method.DeclaringType!.Name}.{mc.Method.Name}, " +
-        $"Object={(mc.Object is null ? "null" : mc.Object.Type.Name)}, Args={mc.Arguments.Count} [{arg0}, {arg1}].");
+        $"Unsupported Contains shape in collective scope filter. Method={TypeNameFormatter.ForLog(mc.Method.DeclaringType!)}.{mc.Method.Name}, " +
+        $"Object={(mc.Object is null ? "null" : TypeNameFormatter.ForLog(mc.Object.Type))}, Args={mc.Arguments.Count} [{arg0}, {arg1}].");
     }
 
     if (_tryColumn(itemExpr, ctx, refs) is not { } item) {

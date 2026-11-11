@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres;
 
@@ -108,13 +109,13 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
       // Caller's CT didn't fire — the borrow timeout deadline did. Record timeout and
       // surface as OCE rooted at the original CT so callers don't confuse a pool-starvation
       // timeout with their own cancellation.
-      _metrics?.BorrowTimeouts.Add(1, new KeyValuePair<string, object?>("worker", workerType.Name));
+      _metrics?.BorrowTimeouts.Add(1, new KeyValuePair<string, object?>("worker", TypeNameFormatter.ForLog(workerType)));
       throw new OperationCanceledException(
-        $"Pinned pool borrow timed out after {_options.BorrowTimeoutMilliseconds} ms (worker={workerType.Name}). " +
+        $"Pinned pool borrow timed out after {_options.BorrowTimeoutMilliseconds} ms (worker={TypeNameFormatter.ForLog(workerType)}). " +
         "Raise WhizbangPinnedPoolOptions.Size or investigate worker that's holding too long.");
     }
     sw.Stop();
-    _metrics?.BorrowDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("worker", workerType.Name));
+    _metrics?.BorrowDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("worker", TypeNameFormatter.ForLog(workerType)));
 
     return new ActiveBorrow(conn);
   }

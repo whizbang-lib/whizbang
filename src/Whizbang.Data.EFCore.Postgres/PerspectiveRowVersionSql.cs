@@ -11,6 +11,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Perspectives;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -74,7 +75,7 @@ internal static class PerspectiveRowVersionSql {
     var entityType = context.Model.FindEntityType(typeof(PerspectiveRow<TModel>));
     if (entityType?.GetTableName() is not { } table) {
       throw new InvalidOperationException(
-        $"PerspectiveRow<{typeof(TModel).Name}> is not mapped to a table in {context.GetType().Name}, so its row version cannot be read.");
+        $"PerspectiveRow<{TypeNameFormatter.ForLog(typeof(TModel))}> is not mapped to a table in {TypeNameFormatter.ForLog(context.GetType())}, so its row version cannot be read.");
     }
     return (entityType.GetSchema(), table);
   }

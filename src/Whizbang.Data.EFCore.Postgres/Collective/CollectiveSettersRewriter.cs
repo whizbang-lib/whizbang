@@ -10,6 +10,7 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.Postgres.Collective;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -107,7 +108,7 @@ internal static class CollectiveSettersRewriter {
 
     if (visitor.Assignments.Count == 0) {
       throw new InvalidOperationException(
-        $"Spec for {typeof(TModel).Name} produced zero SetProperty calls. " +
+        $"Spec for {TypeNameFormatter.ForLog(typeof(TModel))} produced zero SetProperty calls. " +
         "An ICollectiveSpec must mutate at least one property.");
     }
 
@@ -186,7 +187,7 @@ internal static class CollectiveSettersRewriter {
       if (CollectivePhysicalColumns.TryJsonbKey(modelType, selector) is { } nested) {
         if (_isLambda(valueExpr)) {
           throw new NotSupportedException(
-            $"A collective sets {modelType.Name}.{nested.Root.Name}.{nested.Key.Name} only to a value, not a computed expression.");
+            $"A collective sets {TypeNameFormatter.ForLog(modelType)}.{nested.Root.Name}.{nested.Key.Name} only to a value, not a computed expression.");
         }
         Assignments.Add(new PropertyAssignment(nested.Root, _evaluateValue(valueExpr), Comparison: null, JsonbKey: nested.Key));
         return node;

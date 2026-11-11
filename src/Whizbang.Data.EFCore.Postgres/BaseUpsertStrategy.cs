@@ -16,6 +16,7 @@ using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Data.Postgres;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -277,7 +278,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
     if (!string.Equals(args.TableName, mappedTable, StringComparison.Ordinal)) {
       throw new InvalidOperationException(
-        $"A blue-green rebuild writes {typeof(TModel).Name} rows to {args.TableName} only through the atomic upsert, and this row " +
+        $"A blue-green rebuild writes {TypeNameFormatter.ForLog(typeof(TModel))} rows to {args.TableName} only through the atomic upsert, and this row " +
         "could not take it (a provider other than PostgreSQL, or a value the upsert cannot bind). The rebuild stops rather than " +
         $"write {mappedTable}, the table readers are using.");
     }

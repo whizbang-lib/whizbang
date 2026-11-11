@@ -531,7 +531,7 @@ public static class PostgresDriverExtensions {
         // An unnamed context still configured under the name earlier releases derived from its class
         // keeps working until its keys are renamed (see ResolveConnectionStringName).
         var legacyConnectionStringName = selector.ConnectionStringName is null
-          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(selector.DbContextType.Name)
+          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(TypeNameFormatter.SimpleName(selector.DbContextType))
           : null;
         // #1012: the same name keys this database's PostgresOptions section,
         // Whizbang:Postgres:<name>, which overrides the code values per key.

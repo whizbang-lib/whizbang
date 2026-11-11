@@ -89,7 +89,7 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
     }
     if (entry.ModelType != typeof(TModel)) {
       throw new ArgumentException(
-        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to CollectiveEventApplier<{entry.ModelType.Name}> instead.",
+        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to CollectiveEventApplier<{TypeNameFormatter.ForLog(entry.ModelType)}> instead.",
         nameof(entry));
     }
 
@@ -112,7 +112,7 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
     var query = new EFCoreCollectiveQuery(dbContext);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{TypeNameFormatter.ForLog(typeof(TModel))}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field

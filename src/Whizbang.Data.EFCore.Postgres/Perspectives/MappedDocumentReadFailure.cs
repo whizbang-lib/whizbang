@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 
@@ -78,7 +79,7 @@ internal static class MappedDocumentReadFailure {
           context, table, column, id, cancellationToken).ConfigureAwait(false);
       }
     }
-    return Explain(rowType, typeof(TModel).Name, column => documents.GetValueOrDefault(column), failure);
+    return Explain(rowType, TypeNameFormatter.SimpleName(typeof(TModel)), column => documents.GetValueOrDefault(column), failure);
   }
 
   /// <summary>
@@ -167,14 +168,14 @@ internal static class MappedDocumentReadFailure {
     if (CanonicalTemporalConvention.KindOf(property.ClrType) is not null) {
       return null;
     }
-    var name = $"{property.DeclaringType.ClrType.Name}.{property.Name}";
+    var name = $"{TypeNameFormatter.ForLog(property.DeclaringType.ClrType)}.{property.Name}";
     if (property.IsPrimitiveCollection) {
       return value.ValueKind == JsonValueKind.Array ? null : new Mismatch(path, value.ValueKind, name, "an array");
     }
     var stored = property.GetTypeMapping().Converter?.ProviderClrType ?? property.ClrType;
     var type = Nullable.GetUnderlyingType(stored) ?? stored;
     var expected = _expectedFor(type);
-    return expected is null || _reads(type, value) ? null : new Mismatch(path, value.ValueKind, $"{name} ({type.Name})", expected);
+    return expected is null || _reads(type, value) ? null : new Mismatch(path, value.ValueKind, $"{name} ({TypeNameFormatter.ForLog(type)})", expected);
   }
 
   /// <summary>What a property of this stored type reads, or null for a type the walk leaves to its reader.</summary>

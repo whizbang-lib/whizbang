@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Data.Postgres;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -156,7 +157,7 @@ public sealed class SchemaStepRunner {
         return $"{postgres.SqlState} {postgres.MessageText}";
       }
     }
-    return $"{exception.GetType().Name} {exception.Message}";
+    return $"{TypeNameFormatter.ForLog(exception.GetType())} {exception.Message}";
   }
 
   /// <summary>Runs one step in a transaction of its own, under the schema lock.</summary>

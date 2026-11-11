@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Npgsql;
 using Whizbang.Core.Versioning;
+using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres;
 
@@ -97,7 +98,7 @@ public sealed partial record MigrationReversal(SchemaChangeReversal Kind, string
       return Irreversible;
     }
     var stem = fileName.EndsWith(".sql", StringComparison.Ordinal) ? fileName[..^".sql".Length] : fileName;
-    var resource = $"{source.GetName().Name}.{RESOURCE_FOLDER}.{stem}.down.sql";
+    var resource = $"{TypeNameFormatter.AssemblySimpleName(source)}.{RESOURCE_FOLDER}.{stem}.down.sql";
     using var stream = source.GetManifestResourceStream(resource)
       ?? throw new InvalidOperationException(
         $"Migration {fileName} declares '-- Reversal: {LedgerText(declared)}' but ships no {stem}.down.sql to reverse it.");

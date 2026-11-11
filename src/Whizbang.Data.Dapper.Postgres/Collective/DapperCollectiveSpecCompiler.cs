@@ -9,6 +9,7 @@ using System.Text.Json;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Postgres.Collective;
+using Whizbang.Core;
 
 namespace Whizbang.Data.Dapper.Postgres.Collective;
 
@@ -103,7 +104,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
 
     if (visitor.Properties.Count == 0 && visitor.Columns.Count == 0) {
       throw new InvalidOperationException(
-        $"Spec for {typeof(TModel).Name} produced zero SetProperty calls. " +
+        $"Spec for {TypeNameFormatter.ForLog(typeof(TModel))} produced zero SetProperty calls. " +
         "An ICollectiveSpec must mutate at least one property — empty specs are unsupported because they translate to a SQL UPDATE with no SET clause.");
     }
 
@@ -283,7 +284,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     private void _addJsonbKey(CollectiveJsonbKey nested, Expression valueExpr) {
       if (_isLambda(valueExpr)) {
         throw new NotSupportedException(
-          $"A collective sets {typeof(TModel).Name}.{nested.Root.Name}.{nested.Key.Name} only to a value, not a computed expression.");
+          $"A collective sets {TypeNameFormatter.ForLog(typeof(TModel))}.{nested.Root.Name}.{nested.Key.Name} only to a value, not a computed expression.");
       }
       var value = _evaluateValue(valueExpr);
       var paramName = _nextParam(nested.Root.Name);
@@ -363,7 +364,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
 
       throw new NotSupportedException(
-        $"DapperCollectiveSpecCompiler<{typeof(TModel).Name}> supports computed SetProperty only as a property-vs-constant comparison " +
+        $"DapperCollectiveSpecCompiler<{TypeNameFormatter.ForLog(typeof(TModel))}> supports computed SetProperty only as a property-vs-constant comparison " +
         $"(j => j.{targetProperty}, j => j.SomeProp == value). Arithmetic, string, and other computed shapes require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
     }
 

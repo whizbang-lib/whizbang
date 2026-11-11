@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -32,8 +33,8 @@ internal sealed class EFCoreCollectiveQuery(DbContext dbContext) : ICollectiveQu
     ArgumentNullException.ThrowIfNull(modelType);
     var rowType = typeof(PerspectiveRow<>).MakeGenericType(modelType);
     return PerspectiveRowTable.Resolve(
-      dbContext.Model, rowType, modelType.Name,
-      $"a handler's Where referenced a sibling perspective q.Of<{modelType.Name}>() whose DbSet is not registered in this DbContext.")
+      dbContext.Model, rowType, TypeNameFormatter.SimpleName(modelType),
+      $"a handler's Where referenced a sibling perspective q.Of<{TypeNameFormatter.ForLog(modelType)}>() whose DbSet is not registered in this DbContext.")
       .Table;
   }
 }

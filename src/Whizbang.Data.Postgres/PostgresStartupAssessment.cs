@@ -6,6 +6,7 @@ using System.Text;
 using Npgsql;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Versioning;
+using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres;
 
@@ -97,7 +98,7 @@ internal static class PostgresStartupAssessment {
       current = await isCurrent(cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Unanswerable is not current: the full path runs, as it always has, and finds out for itself.
-      return verdict with { Reason = verdict.Reason + "; the schema could not be shown current (" + ex.GetType().Name + ")" };
+      return verdict with { Reason = verdict.Reason + "; the schema could not be shown current (" + TypeNameFormatter.SimpleName(ex.GetType()) + ")" };
     }
     return current
       ? new StartupAssessment(StartupVerdict.Current, verdict.Reason + "; the schema is current: nothing to apply or convert")

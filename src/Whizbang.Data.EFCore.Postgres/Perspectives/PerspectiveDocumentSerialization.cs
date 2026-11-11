@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Whizbang.Core.Serialization;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 
@@ -82,7 +83,7 @@ public static class PerspectiveDocumentSerialization {
   /// <returns>The document.</returns>
   public static T Deserialize<T>(string stored) where T : class =>
     JsonSerializer.Deserialize(stored, _typeInfo<T>())
-      ?? throw new JsonException($"A stored {typeof(T).Name} document was null, which no document is");
+      ?? throw new JsonException($"A stored {TypeNameFormatter.ForLog(typeof(T))} document was null, which no document is");
 
   /// <summary>
   /// A converter for a promoted jsonb column: a <c>[PhysicalField]</c> holding an object, a list or a
