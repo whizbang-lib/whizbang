@@ -354,6 +354,7 @@ public sealed partial class IntegrityCheckpointReceptor(
         ToCommitSequence = pending.ToCommitSequence,
         RequesterService = requester,
         Topic = topic,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), services.GetService<IServiceInstanceProvider>(), DateTimeOffset.UtcNow)

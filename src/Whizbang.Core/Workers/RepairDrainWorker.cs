@@ -184,6 +184,7 @@ public sealed partial class RepairDrainWorker(
         Topic = replyTopic,
         FromCommitSequence = fromSeq,
         ToCommitSequence = toSeq,
+        AcceptsStreamSpanningBundles = true,
       };
       try {
         await RedeliveryRequestDispatch.PublishAsync(
