@@ -24,6 +24,9 @@ public class StreamIntegrityBacklogMetricsTests {
   private const string OPENED = "whizbang.stream_integrity.ledger_buckets_opened";
   private const string CLOSED = "whizbang.stream_integrity.ledger_buckets_closed";
 
+  private static readonly string[] _openedHows = ["new", "reopened"];
+  private static readonly string[] _closedHows = ["forgotten", "healed", "unhealable"];
+
   private static StreamIntegrityMetrics _metrics() =>
     new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
@@ -55,9 +58,9 @@ public class StreamIntegrityBacklogMetricsTests {
     var opened = _byTag(ProbeMeterReader.ReadSeries(_meterOf(metrics), OPENED), "how");
     var closed = _byTag(ProbeMeterReader.ReadSeries(_meterOf(metrics), CLOSED), "how");
 
-    await Assert.That(opened.Keys.Order().ToArray()).IsEquivalentTo(new[] { "new", "reopened" })
+    await Assert.That(opened.Keys.Order().ToArray()).IsEquivalentTo(_openedHows)
       .Because("a rate over a series that does not exist yet reads as no data, not as zero");
-    await Assert.That(closed.Keys.Order().ToArray()).IsEquivalentTo(new[] { "forgotten", "healed", "unhealable" });
+    await Assert.That(closed.Keys.Order().ToArray()).IsEquivalentTo(_closedHows);
     await Assert.That(opened.Values.Sum() + closed.Values.Sum()).IsEqualTo(0L);
   }
 

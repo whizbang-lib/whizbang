@@ -155,6 +155,8 @@ public class StreamPurgeTests : EFCoreTestBase {
 
     _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [doomed], RequestedBy = "operator-1", Reason = "rehearsal", DryRun = true });
     await Assert.That(_forgotten(metrics)).IsEqualTo(0L).Because("a dry run removes nothing");
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [Guid.CreateVersion7()], RequestedBy = "operator-1", Reason = "no ledger rows" });
+    await Assert.That(_forgotten(metrics)).IsEqualTo(0L).Because("a stream with no ledger rows closes no bucket");
     _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [doomed], RequestedBy = "operator-1", Reason = "retired" });
 
     await Assert.That(_forgotten(metrics)).IsEqualTo(2L)

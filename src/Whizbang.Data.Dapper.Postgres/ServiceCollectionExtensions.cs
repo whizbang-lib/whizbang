@@ -535,7 +535,8 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<IStreamPurger>(sp =>
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
-        logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+        integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
     // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
     // registered first wins.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));

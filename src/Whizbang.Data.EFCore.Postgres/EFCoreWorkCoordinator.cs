@@ -609,10 +609,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>The function answers an outcome (migration 392): 0 not reported, 1 reported, 2 reported and the row
+  /// recorded, 3 reported and the unhealable mark lifted; the last two are counted as buckets opened (#2256).</remarks>
   public async Task<bool> IntegrityTryBeginReportAsync(
       IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
-    await _integrityLedgerBoolAsync("wh_integrity_try_begin_report", cmd => {
+    _flagFromOutcome(await _integrityLedgerOutcomeAsync("wh_integrity_report_outcome", cmd => {
       _bindDivergenceKey(cmd, key);
       cmd.Parameters.AddWithValue("p_origin_lo", originLo);
       cmd.Parameters.AddWithValue("p_origin_hi", originHi);
@@ -620,24 +622,59 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.AddWithValue("p_local_hi", localHi);
       cmd.Parameters.AddWithValue(P_NOW, now);
       cmd.Parameters.AddWithValue("p_cooldown_seconds", (int)cooldown.TotalSeconds);
-    }, failOpen: true, cancellationToken).ConfigureAwait(false);
+    }, failOpen: true, cancellationToken).ConfigureAwait(false), failOpen: true);
 
   /// <inheritdoc />
+  /// <remarks>The function answers an outcome (migration 392): 0 refused, 1 granted, 2 granted and the row recorded,
+  /// counted as a bucket opened (#2256).</remarks>
   public async Task<bool> IntegrityTryBeginRepairAsync(
       IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
       CancellationToken cancellationToken = default) =>
-    await _integrityLedgerBoolAsync("wh_integrity_try_begin_repair", cmd => {
+    _flagFromOutcome(await _integrityLedgerOutcomeAsync("wh_integrity_repair_outcome", cmd => {
       _bindDivergenceKey(cmd, key);
       cmd.Parameters.AddWithValue(P_NOW, now);
       cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
       cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
-    }, failOpen: false, cancellationToken).ConfigureAwait(false);
+    }, failOpen: false, cancellationToken).ConfigureAwait(false), failOpen: false);
 
   /// <inheritdoc />
+  /// <remarks>The function answers the rows it removed that were still open (migration 392), counted as healed.</remarks>
   public async Task IntegrityMarkHealedAsync(
       IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
-    _ = await _integrityLedgerBoolAsync("wh_integrity_mark_healed",
-      cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false);
+    _recordClosed(await _integrityLedgerOutcomeAsync("wh_integrity_heal_counted",
+      cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false) ?? 0,
+      Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
+
+  // The single-key outcome (migration 392) as the flag callers read, counting an opened or reopened bucket on the way.
+  // An unreadable outcome (the call failed) is the caller's fail-open or fail-closed answer, and counts nothing.
+  private bool _flagFromOutcome(int? outcome, bool failOpen) {
+    if (outcome is not { } known) {
+      return failOpen;
+    }
+    _recordOpened(known == LEDGER_OUTCOME_OPENED ? 1 : 0, Whizbang.Core.Observability.StreamIntegrityMetrics.OPENED_NEW);
+    _recordOpened(known == LEDGER_OUTCOME_REOPENED ? 1 : 0, Whizbang.Core.Observability.StreamIntegrityMetrics.OPENED_REOPENED);
+    return known > 0;
+  }
+
+  // The outcomes of wh_integrity_report_outcome and wh_integrity_repair_outcome that record a bucket (392).
+  private const int LEDGER_OUTCOME_OPENED = 2;
+  private const int LEDGER_OUTCOME_REOPENED = 3;
+
+  /// <summary>#2256: counts buckets the ledger opened, by how; nothing when none or when metrics are not registered.</summary>
+  private void _recordOpened(long buckets, string how) {
+    if (buckets > 0) {
+      _integrityMetrics?.LedgerBucketsOpened.Add(buckets,
+        new KeyValuePair<string, object?>(Whizbang.Core.Observability.StreamIntegrityMetrics.HOW_TAG, how));
+    }
+  }
+
+  /// <summary>#2256: counts buckets the ledger closed, by how; nothing when none or when metrics are not registered.</summary>
+  private void _recordClosed(long buckets, string how) {
+    if (buckets > 0) {
+      _integrityMetrics?.LedgerBucketsClosed.Add(buckets,
+        new KeyValuePair<string, object?>(Whizbang.Core.Observability.StreamIntegrityMetrics.HOW_TAG, how));
+    }
+  }
 
   private static void _bindDivergenceKeyArrays(
       Npgsql.NpgsqlCommand cmd, Guid originServiceId,
@@ -654,9 +691,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
   }
 
-  /// <summary>The array sibling of <c>_integrityLedgerBoolAsync</c>: one batch function call
-  /// returning BOOLEAN[]. Null on ANY failure — the caller then loops the single-key path, whose
-  /// per-operation fail-open/fail-closed semantics remain the authority.</summary>
+  /// <summary>The array sibling of <c>_integrityLedgerOutcomeAsync</c>: one batch function call answering the per-key
+  /// flags (<c>granted</c>), the rows it recorded (<c>opened</c>) and, for the report batch, the unhealable marks it
+  /// lifted (<c>reopened</c>), which are counted (#2256, migration 392). Null on ANY failure — the caller then loops the
+  /// single-key path, whose per-operation fail-open/fail-closed semantics remain the authority.</summary>
   private async Task<IReadOnlyList<bool>?> _integrityLedgerBoolArrayAsync(
       string fn, Action<Npgsql.NpgsqlCommand> bind, CancellationToken ct) {
     try {
@@ -672,10 +710,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
         .Cast<Npgsql.NpgsqlParameter>()
         .Select(p => "@" + p.ParameterName));
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT {qualified}({args})";
+      cmd.CommandText = $"SELECT * FROM {qualified}({args})";
 #pragma warning restore S2077
-      var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-      return result as bool[];
+      await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+      _ = await reader.ReadAsync(ct).ConfigureAwait(false);   // one row, always; a missing one throws below and falls back
+      var granted = await reader.GetFieldValueAsync<bool[]>(0, ct).ConfigureAwait(false);
+      _recordOpened(reader.GetInt32(1), Whizbang.Core.Observability.StreamIntegrityMetrics.OPENED_NEW);
+      if (reader.FieldCount > 2) {
+        _recordOpened(reader.GetInt32(2), Whizbang.Core.Observability.StreamIntegrityMetrics.OPENED_REOPENED);
+      }
+      return granted;
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -694,7 +738,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // #1842: the batch that also records each key's divergence kind (251), which decides whether the
     // paced repair drain may claim the row, and (#2030, 320) its deficit size, so a grown deficit resets the ladder.
     // Arguments bind in the order they are added.
-    _integrityLedgerBoolArrayAsync("wh_integrity_report_divergences_with_deficits", cmd => {
+    _integrityLedgerBoolArrayAsync("wh_integrity_report_divergences_counted", cmd => {
       cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
@@ -732,7 +776,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
       CancellationToken cancellationToken = default) =>
-    _integrityLedgerBoolArrayAsync("wh_integrity_try_begin_repair_batch", cmd => {
+    _integrityLedgerBoolArrayAsync("wh_integrity_repair_batch_counted", cmd => {
       _bindDivergenceKeyArrays(cmd, originServiceId, keys);
       cmd.Parameters.AddWithValue(P_NOW, now);
       cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
@@ -1149,29 +1193,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_healed_batch");
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_heal_batch_counted");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       var conn = __scope.Connection;
       await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
       _bindDivergenceKeyArrays(cmd, originServiceId, keys);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids)";
+      cmd.CommandText = $"SELECT age_seconds, was_open FROM {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids)";
 #pragma warning restore S2077
       var ages = new List<double>(keys.Count);
+      var closed = 0;
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
           ages.Add(reader.GetDouble(0));
         }
+        closed += reader.GetBoolean(1) ? 1 : 0;
       }
+      // #2256: a row already marked unhealable was closed by the mark, and is not closed again (392).
+      _recordClosed(closed, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
       return ages;
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
       _log.LogWarning(ex,
-        "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
+        "Integrity ledger batch wh_integrity_heal_batch_counted failed; falling back to single-key calls for this chunk.");
 #pragma warning restore CA1848
       return null;
     }
@@ -1185,7 +1233,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(typeKeys);
     try {
       return await _withCoordinatorCommandAsync<IReadOnlyList<double>?>(async (cmd, schema) => {
-        cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_mark_types_healed")}(@p_origin_service_id,@p_tenant_scopes,@p_event_types)";
+        cmd.CommandText = $"SELECT age_seconds, was_open FROM {BuildSchemaQualifiedName(schema, "wh_integrity_heal_types_counted")}(@p_origin_service_id,@p_tenant_scopes,@p_event_types)";
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN_SERVICE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
           Value = typeKeys.Select(k => k.TenantScope).ToArray()
@@ -1194,10 +1242,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Value = typeKeys.Select(k => k.EventType).ToArray()
         });
         var ages = new List<double>();
+        var closed = 0;
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
           ages.Add(reader.GetDouble(0));
+          closed += reader.GetBoolean(1) ? 1 : 0;
         }
+        // #2256: a row already marked unhealable was closed by the mark, and is not closed again (392).
+        _recordClosed(closed, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
         return ages;
       }, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
@@ -1205,7 +1257,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; the ledger falls back to the type lanes.
       _log.LogWarning(ex,
-        "Integrity ledger wh_integrity_mark_types_healed failed for origin {OriginServiceId}; only the proven types' type lanes are forgotten this time.",
+        "Integrity ledger wh_integrity_heal_types_counted failed for origin {OriginServiceId}; only the proven types' type lanes are forgotten this time.",
         originServiceId);
 #pragma warning restore CA1848
       return null;
@@ -1297,31 +1349,40 @@ public class EFCoreWorkCoordinator<TDbContext>(
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       var schema = _resolveSchema(typeof(OutboxRecord));
-      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_forget_unconsumed");
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_forget_unconsumed_counted");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
       cmd.Parameters.AddWithValue("p_consumed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, consumedEventTypes.ToArray());
       cmd.Parameters.AddWithValue("p_absorbed", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, absorbedNamespaces.ToArray());
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT {qualified}(@p_consumed,@p_absorbed)";
+      cmd.CommandText = $"SELECT forgotten, closed FROM {qualified}(@p_consumed,@p_absorbed)";
 #pragma warning restore S2077
-      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+      return await _readForgottenAsync(cmd, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; the next audit cycle prunes.
       _log.LogWarning(ex,
-        "Integrity ledger wh_integrity_forget_unconsumed failed; rows of unconsumed event types stay until the next audit cycle.");
+        "Integrity ledger wh_integrity_forget_unconsumed_counted failed; rows of unconsumed event types stay until the next audit cycle.");
 #pragma warning restore CA1848
       return 0;
     }
   }
 
+  // The forget functions' one row (migration 392): the rows removed, answered to the caller, and those of them still
+  // open, counted as forgotten (#2256). A row already marked unhealable was closed by the mark.
+  private async Task<int> _readForgottenAsync(Npgsql.NpgsqlCommand cmd, CancellationToken cancellationToken) {
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);   // one row, always
+    _recordClosed(reader.GetInt32(1), Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_FORGOTTEN);
+    return reader.GetInt32(0);
+  }
+
   /// <inheritdoc />
   /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs with their origin's last report
   /// (<c>wh_integrity_ledger_origin_types</c>, migrations 370 and 372), then the judged ones forgotten
-  /// (<c>wh_integrity_forget_origin_types</c>); the second is skipped when nothing is judged. Best-effort: a prune that
+  /// (<c>wh_integrity_forget_origin_types_counted</c>, migration 392); the second is skipped when nothing is judged. Best-effort: a prune that
   /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
   public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
       Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
@@ -1355,9 +1416,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       forget.Parameters.AddWithValue("p_origins", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, origins.ToArray());
       forget.Parameters.AddWithValue("p_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, types.ToArray());
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      forget.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_forget_origin_types")}(@p_origins,@p_types)";
+      forget.CommandText = $"SELECT forgotten, closed FROM {BuildSchemaQualifiedName(schema, "wh_integrity_forget_origin_types_counted")}(@p_origins,@p_types)";
 #pragma warning restore S2077
-      return Convert.ToInt32(await forget.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+      return await _readForgottenAsync(forget, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -1833,10 +1894,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public Task<Whizbang.Core.Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
+  /// <remarks>
+  /// One grouped read (<c>wh_integrity_ledger_backlog</c>, migration 392). An origin is named by its last checkpoint's
+  /// service name, and by its id when none is recorded. Degrades to the not-reported reading rather than throwing, and is
+  /// logged: no series is better than a zero, which would read as a healed service.
+  /// </remarks>
+  public async Task<Whizbang.Core.Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
       int maxRepairAttempts, CancellationToken cancellationToken = default) {
-    _ = _integrityMetrics;   // RED (#2256): the counters are not recorded yet
-    return Task.FromResult(Whizbang.Core.Observability.LedgerBacklogSnapshot.NotReported);
+    try {
+      return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+        cmd.CommandText = $"SELECT origin_service_id, origin_service_name, state, buckets, outbound_deliveries FROM {BuildSchemaQualifiedName(schema, "wh_integrity_ledger_backlog")}(@p_max)";
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, maxRepairAttempts));
+        var buckets = new List<Whizbang.Core.Observability.LedgerBacklogCount>();
+        var outbound = 0L;
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          outbound = reader.GetInt64(4);
+          if (await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
+            continue;   // no origin at all: the row carries only the queue depth
+          }
+          var origin = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false)
+            ? reader.GetGuid(0).ToString()
+            : reader.GetString(1);
+          buckets.Add(new Whizbang.Core.Observability.LedgerBacklogCount(origin, reader.GetString(2), reader.GetInt64(3)));
+        }
+        return new Whizbang.Core.Observability.LedgerBacklogSnapshot {
+          Reported = true,
+          Buckets = buckets,
+          OutboundDeliveries = outbound,
+        };
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
+      _log.LogWarning(ex, "Integrity ledger backlog read failed; the backlog gauges report nothing until it succeeds.");
+#pragma warning restore CA1848
+      return Whizbang.Core.Observability.LedgerBacklogSnapshot.NotReported;
+    }
   }
 
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
@@ -1851,7 +1946,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <paramref name="failOpen"/>: reporting proceeds (over-reporting is recoverable), repair does
   /// not (an unbounded repair request against real data is not).
   /// </summary>
-  private async Task<bool> _integrityLedgerBoolAsync(
+  private async Task<int?> _integrityLedgerOutcomeAsync(
       string fn, Action<Npgsql.NpgsqlCommand> bind, bool failOpen, CancellationToken ct) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
@@ -1874,8 +1969,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}({args})";
 #pragma warning restore S2077
-      var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-      return result is bool b ? b : failOpen;
+      // 392 (#2256): each single-key function answers a number (an outcome, or the rows it closed), never null.
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -1886,7 +1981,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         "Integrity ledger call {Function} failed; continuing with failOpen={FailOpen}. " +
         "Convergence bounding is degraded until this is resolved.", fn, failOpen);
 #pragma warning restore CA1848
-      return failOpen;
+      return null;
     }
   }
 

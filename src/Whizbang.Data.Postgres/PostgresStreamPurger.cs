@@ -27,9 +27,6 @@ public sealed partial class PostgresStreamPurger(
   ILogger<PostgresStreamPurger>? logger = null,
   Whizbang.Core.Observability.StreamIntegrityMetrics? integrityMetrics = null) : IStreamPurger {
 
-  /// <summary>Stream-integrity metrics, for the ledger rows a purge removes (#2256).</summary>
-  internal Whizbang.Core.Observability.StreamIntegrityMetrics? IntegrityMetrics { get; } = integrityMetrics;
-
   /// <summary>The claim key prefix, so the claim prune and an operator can tell purge claims apart.</summary>
   public const string CLAIM_KEY_PREFIX = "whizbang:stream-purge:";
 
@@ -37,7 +34,25 @@ public sealed partial class PostgresStreamPurger(
   public async Task<StreamPurgeReport> PurgeAsync(StreamPurgeRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
-    return await RunAsync(connection, schema, request, logger, cancellationToken).ConfigureAwait(false);
+    var report = await RunAsync(connection, schema, request, logger, cancellationToken).ConfigureAwait(false);
+    _recordLedgerRowsPurged(integrityMetrics, report);
+    return report;
+  }
+
+  /// <summary>The integrity ledger table, as <c>wh_purge_streams</c> names it in its report.</summary>
+  private const string INTEGRITY_LEDGER_TABLE = "wh_integrity_ledger";
+
+  // #2256: the integrity ledger rows a committed purge removed are buckets closed without a heal (how=forgotten), so the
+  // backlog's closed counter falls in step with its open gauge. A dry run removes nothing and counts nothing.
+  private static void _recordLedgerRowsPurged(Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, StreamPurgeReport report) {
+    if (metrics is null || report.DryRun) {
+      return;
+    }
+    var purged = report.Batches.Sum(b => b.RowsByTable.GetValueOrDefault(INTEGRITY_LEDGER_TABLE));
+    if (purged > 0) {
+      metrics.LedgerBucketsClosed.Add(purged, new KeyValuePair<string, object?>(
+        Whizbang.Core.Observability.StreamIntegrityMetrics.HOW_TAG, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_FORGOTTEN));
+    }
   }
 
   /// <summary>The claim a batch takes: one per (purge, batch), so a resumed purge skips what it committed.</summary>

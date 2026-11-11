@@ -42,6 +42,8 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
   private static readonly TimeSpan _cooldown = TimeSpan.FromMinutes(60);
 
   private readonly List<WorkCoordinationDbContext> _contexts = [];
+  private static readonly bool[] _grantedTwiceThenCapped = [true, true, false];
+  private static readonly bool[] _granted = [true];
 
   // ── the backlog read ─────────────────────────────────────────────────────────────────────────
 
@@ -195,7 +197,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
 
     var grants = await coordinator.IntegrityTryBeginRepairBatchAsync(origin, keys, _t0, TimeSpan.FromSeconds(30), MAX_ATTEMPTS, maxGrants: 2);
 
-    await Assert.That(grants!.ToArray()).IsEquivalentTo(new[] { true, true, false })
+    await Assert.That(grants!.ToArray()).IsEquivalentTo(_grantedTwiceThenCapped)
       .Because("the grant cap still stops the batch in order");
     await Assert.That(_how(metrics, OPENED, "new")).IsEqualTo(2L)
       .Because("the report recorded one row and the batch one more; the key past the cap was not consulted");
@@ -257,6 +259,87 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
 
     await Assert.That(nonOwner).IsEqualTo(1);
     await Assert.That(_how(metrics, CLOSED, "forgotten")).IsEqualTo(2L);
+  }
+
+  // ── the previous release's names, and the reverse ─────────────────────────────────────────────
+
+  /// <summary>
+  /// An older release, still running during a rolling deploy or rolled back onto this schema, calls the ledger functions
+  /// by their existing names and reads the shapes it always read. 392 keeps each name as a wrapper over its counting form.
+  /// </summary>
+  [Test]
+  public async Task ThePreviousReleasesFunctions_AnswerInTheirOldShapesAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (a, b, c, d) = (TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value);
+    await using var conn = await _openAsync();
+
+    await Assert.That(await _scalarAsync<bool>(conn,
+      "SELECT wh_integrity_try_begin_report($1, '', $2, $3, 11, 21, 0, 0, $4, 3600)", origin, EVENT_TYPE, a, _t0)).IsTrue();
+    await Assert.That(await _scalarAsync<bool>(conn,
+      "SELECT wh_integrity_try_begin_report($1, '', $2, $3, 11, 21, 0, 0, $4, 3600)", origin, EVENT_TYPE, a, _t0)).IsFalse()
+      .Because("inside the cooldown, as before");
+    await Assert.That(await _scalarAsync<bool>(conn,
+      "SELECT wh_integrity_try_begin_repair($1, '', $2, $3, $4, 30, 8)", origin, EVENT_TYPE, b, _t0)).IsTrue();
+    await Assert.That(await _scalarAsync<bool[]>(conn,
+      "SELECT wh_integrity_report_divergences_with_deficits($1, ARRAY[''], ARRAY[$2], ARRAY[$3], ARRAY[11::bigint], " +
+      "ARRAY[21::bigint], ARRAY[0::bigint], ARRAY[0::bigint], ARRAY[true], ARRAY[3::bigint], $4, 3600)",
+      origin, EVENT_TYPE, c, _t0)).IsEquivalentTo(_granted);
+    await Assert.That(await _scalarAsync<bool[]>(conn,
+      "SELECT wh_integrity_try_begin_repair_batch($1, ARRAY[''], ARRAY[$2], ARRAY[$3], $4, 30, 8, 1)",
+      origin, EVENT_TYPE, d, _t0)).IsEquivalentTo(_granted);
+    await Assert.That(await _scalarAsync<double>(conn,
+      "SELECT count(*)::float8 FROM wh_integrity_mark_healed_batch($1, ARRAY[''], ARRAY[$2], ARRAY[$3])", origin, EVENT_TYPE, a))
+      .IsEqualTo(1.0).Because("one age per healed row, as before");
+    await _execAsync(conn, "SELECT wh_integrity_mark_healed($1, '', $2, $3)", origin, EVENT_TYPE, b);
+    await Assert.That(await _scalarAsync<long>(conn,
+      "SELECT count(*) FROM wh_integrity_mark_types_healed($1, ARRAY[''], ARRAY[$2])", origin, EVENT_TYPE)).IsEqualTo(2L)
+      .Because("the heal removed one row and the type heal the other two");
+    await _reportAsync(_coordinator().Coordinator, origin, a, local: 0);
+    await _reportAsync(_coordinator().Coordinator, TrackedGuid.New().Value, b, local: 0);
+    await Assert.That(await _scalarAsync<int>(conn,
+      "SELECT wh_integrity_forget_origin_types(ARRAY[$1::uuid], ARRAY[$2])", origin, EVENT_TYPE)).IsEqualTo(1);
+    await Assert.That(await _scalarAsync<int>(conn,
+      "SELECT wh_integrity_forget_unconsumed(ARRAY['Contracts.Other, Contracts'], ARRAY[]::text[])")).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// 392's reverse restores the existing names to their last words and drops what 392 added, so a rollback leaves an
+  /// older release the functions it was built against, working without the counting forms.
+  /// </summary>
+  [Test]
+  public async Task TheReverse_RestoresThePreviousDefinitions_AndDropsTheCountingFormsAsync() {
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    await using var conn = await _openAsync();
+    var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
+      "Whizbang.Data.Postgres.MigrationReversals.392_TheLedgerCountsWhatItOpensAndCloses.down.sql")
+      ?? throw new InvalidOperationException("392 ships its reverse");
+    using var reader = new StreamReader(down);
+    await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
+      (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));
+
+    foreach (var added in new[] {
+               "wh_integrity_report_outcome", "wh_integrity_report_divergences_counted", "wh_integrity_repair_outcome",
+               "wh_integrity_repair_batch_counted", "wh_integrity_heal_counted", "wh_integrity_heal_batch_counted",
+               "wh_integrity_heal_types_counted", "wh_integrity_forget_unconsumed_counted",
+               "wh_integrity_forget_origin_types_counted", "wh_integrity_ledger_backlog" }) {
+      await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM pg_proc WHERE proname = $1", added)).IsEqualTo(0L)
+        .Because($"{added} is 392's and goes with it");
+    }
+    await Assert.That(await _scalarAsync<bool>(conn,
+      "SELECT wh_integrity_try_begin_report($1, '', $2, $3, 11, 21, 0, 0, $4, 3600)", origin, EVENT_TYPE, stream, _t0)).IsTrue()
+      .Because("the restored definition stands on its own");
+    await _execAsync(conn, "SELECT wh_integrity_mark_healed($1, '', $2, $3)", origin, EVENT_TYPE, stream);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_ledger")).IsEqualTo(0L);
+  }
+
+  private static async Task<T> _scalarAsync<T>(NpgsqlConnection conn, string sql, params object[] args) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    foreach (var arg in args) {
+      cmd.Parameters.Add(new NpgsqlParameter { Value = arg });
+    }
+    return (T)(await cmd.ExecuteScalarAsync())!;
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────

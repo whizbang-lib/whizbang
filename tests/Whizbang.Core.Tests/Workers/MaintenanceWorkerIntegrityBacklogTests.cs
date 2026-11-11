@@ -60,11 +60,13 @@ public class MaintenanceWorkerIntegrityBacklogTests {
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
       BacklogCoordinator coordinator, DutyHolderWorker? duty = null, WhizbangRunPermit? permit = null,
-      bool withIntegrity = true) {
+      bool withIntegrity = true, bool withMetrics = true) {
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton(metrics);
+    if (withMetrics) {
+      services.AddSingleton(metrics);
+    }
     if (withIntegrity) {
       services.AddSingleton(Options.Create(new StreamIntegrityOptions { MaxRepairAttemptsPerBucket = 6 }));
     }
@@ -162,9 +164,25 @@ public class MaintenanceWorkerIntegrityBacklogTests {
   }
 
   [Test]
+  public async Task WithoutStreamIntegrityMetrics_NothingIsReadOrRecorded_AndTheCycleRunsAsync() {
+    var coordinator = new BacklogCoordinator { Results = [new MaintenanceResult("trim_integrity_ledger", 5, 1.0, "ok")] };
+    var (worker, _) = _build(coordinator, withMetrics: false);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    var paused = new WhizbangRunPermit();
+    await paused.ChangeAsync(RunState.Paused, CancellationToken.None);
+    var (idle, _) = _build(coordinator, permit: paused, withMetrics: false);
+    await idle.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.BacklogReads).IsEqualTo(0)
+      .Because("with nowhere to publish the backlog, the grouped read is not worth its cost");
+  }
+
+  [Test]
   public async Task TheLedgerRowCapTrim_CountsItsRowsAsForgottenAsync() {
     var coordinator = new BacklogCoordinator {
       Results = [
+        new MaintenanceResult("trim_integrity_ledger", 0, 1.0, "ok"),
         new MaintenanceResult("trim_integrity_ledger", 12, 1.0, "ok"),
         new MaintenanceResult("reap_expired_perspective_rows", 900, 1.0, "ok"),
       ],

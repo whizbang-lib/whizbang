@@ -28,6 +28,24 @@ public sealed class StreamIntegrityMetrics {
 #pragma warning disable CA1707
   /// <summary>OpenTelemetry meter name.</summary>
   public const string METER_NAME = "Whizbang.StreamIntegrity";
+
+  /// <summary>The tag naming how a ledger bucket opened or closed (#2256).</summary>
+  public const string HOW_TAG = "how";
+
+  /// <summary><c>how</c> on <see cref="LedgerBucketsOpened"/>: a row recorded for a bucket the ledger did not hold.</summary>
+  public const string OPENED_NEW = "new";
+
+  /// <summary><c>how</c> on <see cref="LedgerBucketsOpened"/>: an unhealable mark lifted, so repair can act again.</summary>
+  public const string OPENED_REOPENED = "reopened";
+
+  /// <summary><c>how</c> on <see cref="LedgerBucketsClosed"/>: a comparison removed the row.</summary>
+  public const string CLOSED_HEALED = "healed";
+
+  /// <summary><c>how</c> on <see cref="LedgerBucketsClosed"/>: the row was removed without a heal.</summary>
+  public const string CLOSED_FORGOTTEN = "forgotten";
+
+  /// <summary><c>how</c> on <see cref="LedgerBucketsClosed"/>: the bucket was marked unhealable.</summary>
+  public const string CLOSED_UNHEALABLE = "unhealable";
 #pragma warning restore CA1707
 
   /// <summary>Phase B checkpoints this origin published (empty windows included — the liveness beat).</summary>
@@ -489,7 +507,18 @@ public sealed class StreamIntegrityMetrics {
       () => _ledger.OldestIntegrityDeliveryAgeSeconds,
       description: "How long the oldest integrity delivery has waited for the maintainer's drain");
 
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.ledger_open_buckets",
+      () => _backlogMeasurements(_backlog),
+      description: "Open integrity ledger buckets by origin and state (waiting | answered | unhealable | exhausted | open); reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.outbound_deliveries",
+      () => _outboundMeasurements(_backlog),
+      description: "Integrity deliveries waiting in the queue the maintainer drains; reported by the maintainer duty's holder only");
+
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    LedgerBucketsOpened.Touch(HOW_TAG, _openedHows);
+    LedgerBucketsClosed.Touch(HOW_TAG, _closedHows);
     RepairsRequested.Touch("source", _repairSources);
     ManifestChunksSent.Touch("level", Enum.GetNames<Whizbang.Core.Messaging.ManifestLevel>());
     DigestDriftHealed.Touch("kind", _driftKinds);
@@ -498,6 +527,27 @@ public sealed class StreamIntegrityMetrics {
     BackfillsEnded.Touch("outcome", _backfillOutcomes);
     RedeliveryAnswersCapped.Touch("kind", _cappedKinds);
   }
+
+  private static readonly string[] _openedHows = [OPENED_NEW, OPENED_REOPENED];
+  private static readonly string[] _closedHows = [CLOSED_HEALED, CLOSED_FORGOTTEN, CLOSED_UNHEALABLE];
+
+  // One measurement per origin and state; none at all when this instance does not report the backlog (#2256).
+  private static Measurement<long>[] _backlogMeasurements(LedgerBacklogSnapshot reading) {
+    if (!reading.Reported) {
+      return [];
+    }
+    var measurements = new Measurement<long>[reading.Buckets.Count];
+    for (var i = 0; i < reading.Buckets.Count; i++) {
+      var count = reading.Buckets[i];
+      measurements[i] = new Measurement<long>(count.Buckets,
+        new KeyValuePair<string, object?>("origin", count.Origin),
+        new KeyValuePair<string, object?>("state", count.State));
+    }
+    return measurements;
+  }
+
+  private static Measurement<long>[] _outboundMeasurements(LedgerBacklogSnapshot reading) =>
+    reading.Reported ? [new Measurement<long>(reading.OutboundDeliveries)] : [];
 
   private static readonly string[] _backfillOutcomes = ["complete", "unanswered"];
   private static readonly string[] _cappedKinds = ["window", "ordinary"];
@@ -524,7 +574,7 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityBacklogMetricsTests.cs</tests>
   public void UpdateLedgerBacklog(LedgerBacklogSnapshot? snapshot) =>
-    _backlog = snapshot is { Reported: false } ? snapshot : LedgerBacklogSnapshot.NotReported;
+    _backlog = snapshot ?? LedgerBacklogSnapshot.NotReported;
 
   /// <summary>The backlog reading the gauges would currently report.</summary>
   internal LedgerBacklogSnapshot CurrentLedgerBacklogForTest => _backlog;
@@ -536,7 +586,13 @@ public sealed class StreamIntegrityMetrics {
   /// <param name="buckets">Buckets the mark changed.</param>
   /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityBacklogMetricsTests.cs</tests>
-  public void RecordBucketsMarkedUnhealable(long buckets) => RepairsUnhealable.Add(buckets);
+  public void RecordBucketsMarkedUnhealable(long buckets) {
+    if (buckets <= 0) {
+      return;
+    }
+    RepairsUnhealable.Add(buckets);
+    LedgerBucketsClosed.Add(buckets, new KeyValuePair<string, object?>(HOW_TAG, CLOSED_UNHEALABLE));
+  }
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
