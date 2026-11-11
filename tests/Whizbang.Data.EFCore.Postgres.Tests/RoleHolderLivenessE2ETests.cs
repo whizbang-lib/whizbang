@@ -338,6 +338,9 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task ATickWhileTheLastCheckIsStillRunning_Skips_SoChecksNeverPileUpAsync(CancellationToken cancellationToken) {
     // Two renew intervals pass at once: the second tick finds the first check still waiting on the database and skips.
+    // The first check is HELD at the database by a lock on the table it reads, so it is still running when the second
+    // tick fires, by construction. Without the hold, a runner that preempted the test thread between the two timer
+    // callbacks let the first check finish in between, and the second tick then ran a full check of its own.
     var time = new FakeTimeProvider();
     var a = await _joinAsync(cancellationToken);
     var elector = _electorFor(a, time);
@@ -345,7 +348,19 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
     elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
 
+    await using var hold = new NpgsqlConnection(ConnectionString);
+    await hold.OpenAsync(cancellationToken);
+    await using var holdTx = await hold.BeginTransactionAsync(cancellationToken);
+    await using (var lockCmd = new NpgsqlCommand("LOCK TABLE wh_role_assignments IN ACCESS EXCLUSIVE MODE", hold, holdTx)) {
+      await lockCmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     time.Advance(_defaults.RenewInterval * 2);
+
+    // Advance runs both timer callbacks on this thread before it returns. The first marked its check running before it
+    // first yielded, and that check cannot finish while the table is locked, so the second tick found it running and
+    // skipped. Only now is the first check let through.
+    await holdTx.RollbackAsync(cancellationToken);
 
     await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsTrue();
     await Assert.That(checks.Reader.TryRead(out _)).IsFalse().Because("the overlapping tick asked nothing and reported nothing");

@@ -29,7 +29,8 @@ namespace Whizbang.Core.Workers;
 /// <see cref="StreamIntegrityOptions.LedgerRecheckRowsPerTick"/> rows last reported more than
 /// <see cref="StreamIntegrityOptions.LedgerRecheckAfterMinutes"/> ago (oldest first), and asks each row's owner for a
 /// stream-level answer over the row's window, marked <see cref="RequestIntegrityManifest.Recheck"/>: rows of one origin,
-/// type and window share one request. The answer is compared like any other (a matching or undecided bucket is removed
+/// type and window share one request. A row with no window was compared over the whole history and is asked for again
+/// over the whole history: an unwindowed answer from the origin's recompute (#2208). The answer is compared like any other (a matching or undecided bucket is removed
 /// exactly as the audit removes it), but a re-check never asks for a repair. When no row is that old, a tick claims
 /// nothing and sends nothing.
 /// </para>
@@ -126,6 +127,10 @@ public sealed partial class IntegrityLedgerRecheckWorker(
     // One stream-level answer covers every tenant and stream of a type over a window, so rows that share them share one ask.
     foreach (var group in claimed.GroupBy(c => (c.OriginServiceId, c.EventType, c.WindowFrom, c.WindowUntil))) {
       var (originName, requestTopic) = byOrigin[group.Key.OriginServiceId];
+      // #2208: a row with no window was compared over the whole history, so it is answered over the whole history: an
+      // unwindowed answer from the origin's recompute (a window opened from the start would be cut at the origin's cap and
+      // prove only its slice), compared against this service's own whole-history fold of the answered streams.
+      var windowed = group.Key.WindowFrom is not null;
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.New()),
@@ -134,10 +139,11 @@ public sealed partial class IntegrityLedgerRecheckWorker(
           Topic = replyTopic,
           EventTypes = [group.Key.EventType],
           Level = ManifestLevel.Streams,
-          Windowed = true,
+          Windowed = windowed,
+          UseRecompute = !windowed,
           SinceSequence = group.Key.WindowFrom ?? 0,
           UntilSequence = group.Key.WindowUntil,
-          MaxDigests = _options.MaxDigestsPerManifest,
+          MaxDigests = windowed ? _options.MaxDigestsPerManifest : null,
           Recheck = true,
         },
         Hops = [ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)],

@@ -86,6 +86,34 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// #2201: the generated model registration is keyed by its assembly and declares the models it registers for each
+  /// DbContext, so every assembly's models are registered and a model two assemblies share is reported.
+  /// </summary>
+  [Test]
+  public async Task Generator_ModelRegistration_IsKeyedByItsAssembly_AndDeclaresItsModelsAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+
+    await Assert.That(registration).Contains(
+      "ModelRegistrationRegistry.RegisterModels(typeof(GeneratedModelRegistration).Assembly.GetName().Name!, [");
+    await Assert.That(registration).Contains("(typeof(global::TestApp.TestDbContext), typeof(global::TestApp.TestModel)),");
+  }
+
+  /// <summary>
   /// Issue #697: the perspective registry key for a NESTED model is the CLR form (Outer+Model),
   /// from TypeNameUtilities.BuildClrTypeName, which the runtime mirrors with
   /// TypeNameFormatter.FormatClrTypeName. The display-string form (Outer.Model) matched nothing
@@ -2425,6 +2453,37 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     // The generated code should call dbContext.RegisterPerspectiveAssociationsAsync(...)
     // This only happens when perspectives are detected and matched to the DbContext
     await Assert.That(sourceText).Contains("await dbContext.RegisterPerspectiveAssociationsAsync(");
+  }
+
+  /// <summary>
+  /// #2145: the associations step writes the collective event types this service handles, read from the consumer
+  /// registry the host's service provider holds, and the schema currency check reads the same set, so a start whose
+  /// handler set changed is not reported current and runs the step.
+  /// </summary>
+  [Test]
+  public async Task Generator_HandledCollectiveSet_ReachesTheAssociationsStep_AndTheCurrencyCheckAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions")).SourceText.ToString();
+    var registration = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(schemaExtensions).Contains("logger, cancellationToken, _collectiveEventTypes.Value);")
+      .Because("the step passes the handled set the pass resolved, the set its hash was computed over");
+    await Assert.That(registration).Contains("IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider)")
+      .Because("the currency check must hash the same handled set the pass would write");
   }
 
   /// <summary>

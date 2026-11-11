@@ -44,7 +44,7 @@ public sealed class BacklogAgeOptions {
 /// </summary>
 /// <remarks>
 /// <para>
-/// Modelled on <see cref="TableStatisticsCollector"/> — a periodic <see cref="BackgroundService"/>
+/// Modeled on <see cref="TableStatisticsCollector"/>: a periodic <see cref="BackgroundService"/>
 /// refreshing gauge caches, with a public once-through method as the deterministic test seam —
 /// because the repo has no separate scheduling abstraction: <c>IDutyElector</c> is leader election,
 /// not scheduling, and this duty is deliberately per-instance (each instance observes the entities

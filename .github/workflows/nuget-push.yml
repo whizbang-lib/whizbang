@@ -127,6 +127,10 @@ jobs:
           for attempt in 1 2 3; do
             if dotnet nuget push "./packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate; then
               echo "Published successfully on attempt $attempt"
+              # When the push landed, for the summary: a reader comparing it with a consumer's restore or deploy
+              # needs the time, not just the run.
+              echo "PUSHED_AT_UTC=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_ENV"
+              echo "PUSHED_AT_EASTERN=$(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S %Z')" >> "$GITHUB_ENV"
               exit 0
             fi
             echo "Attempt $attempt failed, retrying in 30s..."
@@ -160,6 +164,7 @@ jobs:
           fi
           echo "- **Version**: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Packages**: $PACKAGE_COUNT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Pushed**: $PUSHED_AT_UTC ($PUSHED_AT_EASTERN)" >> "$GITHUB_STEP_SUMMARY"
           echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION" >> "$GITHUB_STEP_SUMMARY"
 
   # ============================================================================

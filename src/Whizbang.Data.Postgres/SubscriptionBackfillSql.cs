@@ -79,6 +79,33 @@ internal static class SubscriptionBackfillSql {
   }
 
   /// <summary>
+  /// Takes back a window request whose send failed: the row returns to the state it was requested from. Applies only
+  /// while that request is still the latest one recorded (one more than the requests counted before it) and still awaits
+  /// its answer, so an answer that landed meanwhile, a later request, or an end stands.
+  /// </summary>
+  internal static async Task WithdrawRequestAsync(
+      DbCommand cmd, string prefix, SubscriptionBackfillCursor requestedFrom, long window, CancellationToken cancellationToken) {
+    cmd.CommandText =
+      $"UPDATE {prefix}{TABLE} SET " +
+      "window_number = @p_from_window, answer_due_by = @p_from_due, window_attempts = @p_from_attempts, " +
+      "windows_requested = @p_from_requested, last_requested_at = @p_from_last " +
+      "WHERE backfill_id = @p_id AND window_number = @p_window AND windows_requested = @p_from_requested + 1 " +
+      "AND answer_due_by IS NOT NULL AND completed_at IS NULL";
+    cmd.Parameters.Add(new NpgsqlParameter(P_ID, NpgsqlDbType.Uuid) { Value = requestedFrom.BackfillId });
+    cmd.Parameters.Add(new NpgsqlParameter(P_WINDOW, NpgsqlDbType.Bigint) { Value = window });
+    cmd.Parameters.Add(new NpgsqlParameter("p_from_window", NpgsqlDbType.Bigint) { Value = requestedFrom.Window });
+    cmd.Parameters.Add(new NpgsqlParameter("p_from_due", NpgsqlDbType.TimestampTz) {
+      Value = requestedFrom.AnswerDueBy is { } due ? due.UtcDateTime : (object)DBNull.Value,
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_from_attempts", NpgsqlDbType.Integer) { Value = requestedFrom.WindowAttempts });
+    cmd.Parameters.Add(new NpgsqlParameter("p_from_requested", NpgsqlDbType.Bigint) { Value = requestedFrom.WindowsRequested });
+    cmd.Parameters.Add(new NpgsqlParameter("p_from_last", NpgsqlDbType.TimestampTz) {
+      Value = requestedFrom.LastRequestedAt is { } last ? last.UtcDateTime : (object)DBNull.Value,
+    });
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
   /// Applies a window's answer to the running backfill awaiting exactly that window, and returns the row after it; null
   /// when it applied to nothing (no such backfill, another window, no answer awaited, or already ended).
   /// </summary>

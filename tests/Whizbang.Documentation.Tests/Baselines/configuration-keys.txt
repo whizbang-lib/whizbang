@@ -76,6 +76,7 @@ Whizbang:Database:ListenReconnectInitialDelay
 Whizbang:Database:ListenReconnectMaxDelay
 Whizbang:Database:PollingFallbackInterval
 Whizbang:Database:RoleAssignment:CooldownAfterLapse
+Whizbang:Database:RoleAssignment:MigratorStallLimit
 Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse
 Whizbang:Database:RoleAssignment:OwedWorkRetryBase
 Whizbang:Database:RoleAssignment:ProgressWindow
@@ -220,6 +221,7 @@ Whizbang:Routing:ControlClass:NonDurableReceive
 Whizbang:Routing:ControlClass:SessionlessSubscriptions
 Whizbang:Routing:ControlClass:TimeToLive
 Whizbang:Routing:ControlClass:TimeToLiveFloor
+Whizbang:Routing:ExcludedEventTypes:*
 Whizbang:Routing:PoisonMessages
 Whizbang:Routing:PoisonMessages:AgeThreshold
 Whizbang:Routing:PoisonMessages:AgeThresholdFloor
@@ -277,7 +279,9 @@ Whizbang:SignalBus:ProbeTimeoutMilliseconds
 Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
+Whizbang:Startup:AllowLossyRollback
 Whizbang:Startup:OverrideIncompatibility
+Whizbang:Startup:RegistrationCollisions
 Whizbang:StartupStatusGraph:IncludeReasons
 Whizbang:StreamIntegrity:AuditEnabled
 Whizbang:StreamIntegrity:AuditIntervalMinutes

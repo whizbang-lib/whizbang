@@ -67,6 +67,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
   private const string P_TYPES = "p_types";
+  private const string P_EVENT_TYPES = "p_event_types";
+  private const string P_SINCE = "p_since";
   private const string P_STREAMS = "p_streams";
   private const string P_FROM = "p_from";
   private const string P_TO = "p_to";
@@ -640,7 +642,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.TenantScope).ToArray()
     });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.EventType).ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -693,7 +695,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.EventType).ToArray()
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -858,6 +860,72 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
       return new IntegrityGapTrackerState(origins, pending);
     }, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the drill-down then starts from the window's first stream, as it did before
+  /// the cursor existed.</remarks>
+  public async Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync<Guid?>(async (cmd, schema) => {
+        // #2211: read and forgotten in one statement, so a cursor is used by one drill-down only.
+        cmd.CommandText = $"""
+          DELETE FROM {schema}.wh_integrity_drill_cursors
+          WHERE origin_service_id = @p_origin AND window_since = @p_since
+          RETURNING resume_after_stream_id
+          """;
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
+        return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is Guid cursor ? cursor : null;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the drill-down starts from the first stream.
+      _log.LogWarning(ex,
+        "Integrity drill cursor for origin {OriginServiceId}, window from {WindowSince}, could not be read; the drill-down starts from the window's first stream.",
+        originServiceId, windowSince);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>A failure is logged and keeps nothing: the next drill-down starts from the window's first stream.</remarks>
+  public async Task IntegritySaveDrillCursorAsync(
+      Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now, CancellationToken cancellationToken = default) {
+    try {
+      _ = await _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+        // #2211: one cursor per window, the later replacing the earlier; the origin's cursors of windows below its seal
+        // are never read again (the audit starts at the seal), so they go in the same statement.
+        cmd.CommandText = $"""
+          WITH dead AS (
+            DELETE FROM {schema}.wh_integrity_drill_cursors c
+            USING {schema}.wh_integrity_seals s
+            WHERE c.origin_service_id = @p_origin AND s.origin_service_id = @p_origin AND c.window_since < s.sealed_through
+              AND c.window_since <> @p_since
+          )
+          INSERT INTO {schema}.wh_integrity_drill_cursors (origin_service_id, window_since, resume_after_stream_id, saved_at)
+          VALUES (@p_origin, @p_since, @p_resume, @p_now)
+          ON CONFLICT (origin_service_id, window_since) DO UPDATE SET
+            resume_after_stream_id = EXCLUDED.resume_after_stream_id,
+            saved_at = EXCLUDED.saved_at
+          """;
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = resumeAfterStreamId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+        return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the next drill-down starts from the first stream.
+      _log.LogWarning(ex,
+        "Integrity drill cursor for origin {OriginServiceId}, window from {WindowSince}, could not be kept; the next drill-down starts from the window's first stream.",
+        originServiceId, windowSince);
+#pragma warning restore CA1848
+    }
+  }
 
   /// <inheritdoc />
   public Task IntegrityRecordOriginCheckpointAsync(
@@ -1030,8 +1098,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 348) returns only rows with a stamped
-  /// window, so each item carries both bounds. A failure propagates: the re-check worker logs it and retries next tick.</remarks>
+  /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 375) returns a row with a stamped window
+  /// with both bounds, and a row with no window (compared over the whole history) with neither (#2208). A failure
+  /// propagates: the re-check worker logs it and retries next tick.</remarks>
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimLedgerRecheckAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset reportedBefore, DateTimeOffset now, int limit,
       CancellationToken cancellationToken = default) {
@@ -1056,7 +1125,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       items.Add(new IntegrityRepairDrainItem(
-        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5)));
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3),
+        await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
+        await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)));
     }
     return items;
   }
@@ -1097,6 +1168,41 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
       _log.LogWarning(ex,
         "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Null on any failure (logged): the ledger then forgets the type lanes alone, through the batch heal.</remarks>
+  public async Task<IReadOnlyList<double>?> IntegrityMarkTypesHealedWithAgesAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(typeKeys);
+    try {
+      return await _withCoordinatorCommandAsync<IReadOnlyList<double>?>(async (cmd, schema) => {
+        cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_mark_types_healed")}(@p_origin_service_id,@p_tenant_scopes,@p_event_types)";
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN_SERVICE_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+          Value = typeKeys.Select(k => k.TenantScope).ToArray()
+        });
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+          Value = typeKeys.Select(k => k.EventType).ToArray()
+        });
+        var ages = new List<double>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          ages.Add(reader.GetDouble(0));
+        }
+        return ages;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the ledger falls back to the type lanes.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_mark_types_healed failed for origin {OriginServiceId}; only the proven types' type lanes are forgotten this time.",
+        originServiceId);
 #pragma warning restore CA1848
       return null;
     }
@@ -1549,7 +1655,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("p_after", batch.AfterCommitSequence);
     cmd.Parameters.AddWithValue("p_through", batch.ThroughCommitSequence);
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_types", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_EVENT_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = batch.Targets.Select(t => t.EventType).ToArray()
     });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_owner_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -1678,7 +1784,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from a validated schema constant.
-      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs, answer_pending_buckets, answered_buckets, deliveries_pending, oldest_delivery_secs FROM {fn}(@max)";
+      cmd.CommandText = $"SELECT unhealed_buckets, repair_exhausted, oldest_unhealed_secs, answer_pending_buckets, answered_buckets, deliveries_pending, oldest_delivery_secs, unhealed_deficit_events, unhealable_buckets FROM {fn}(@max)";
 #pragma warning restore S2077
       cmd.Parameters.AddWithValue("max", maxRepairAttempts);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1693,6 +1799,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         AnsweredBuckets = reader.GetInt64(4),
         IntegrityDeliveriesPending = reader.GetInt64(5),
         OldestIntegrityDeliveryAgeSeconds = reader.GetDouble(6),
+        UnhealedDeficitEvents = reader.GetInt64(7),
+        UnhealableBuckets = reader.GetInt64(8),
       };
       await reader.DisposeAsync().ConfigureAwait(false);
       // Per-origin verified watermarks for the sealed_through gauge — a handful of rows read in
@@ -2338,7 +2446,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = streamIds.ToArray()
       });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, NpgsqlTypes.NpgsqlDbType.Bigint) {
         Value = (object?)sinceSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", NpgsqlTypes.NpgsqlDbType.Bigint) {
@@ -2488,7 +2596,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch_window")}(@p_origin, @p_types, @p_since, @p_until, NOW(), @p_settle)";
 #pragma warning restore S2077
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
@@ -2530,7 +2638,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // presence is how we know the window is not complete without a second count query.
       cmd.CommandText = WindowedStreamDigestSql(schema);
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = (object?)resumeAfterStreamId ?? DBNull.Value
@@ -2894,7 +3002,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2944,6 +3052,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_lifecycle_phase", NpgsqlTypes.NpgsqlDbType.Text) {
       Value = (object?)request.LifecyclePhase ?? DBNull.Value
     });
+    // 390 (#1853): no new inbox rows while the caller's inbox working set is at its byte budget.
+    cmd.Parameters.Add(new NpgsqlParameter("p_acquire_inbox", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AcquireInbox });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
@@ -3996,6 +4106,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
         .ConfigureAwait(false);
       return 0;
     }, cancellationToken).ConfigureAwait(false);
+
+  /// <inheritdoc />
+  public async Task WithdrawSubscriptionBackfillWindowRequestAsync(
+    SubscriptionBackfillCursor requestedFrom, long window, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(requestedFrom);
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      await Whizbang.Data.Postgres.SubscriptionBackfillSql.WithdrawRequestAsync(
+        cmd, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), requestedFrom, window, cancellationToken).ConfigureAwait(false);
+      return 0;
+    }, cancellationToken).ConfigureAwait(false);
+  }
 
   /// <inheritdoc />
   public Task<SubscriptionBackfillCursor?> RecordSubscriptionBackfillAnswerAsync(

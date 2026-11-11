@@ -18,12 +18,13 @@ namespace Whizbang.Data.Postgres;
 
 /// <summary>What one superseding-history cycle did.</summary>
 /// <param name="Batches">The batches it began, across every type.</param>
-/// <param name="EventsScanned">Events of the store read past the types' cursors, of any type.</param>
+/// <param name="EventsScanned">The types' own events read past their cursors (#2205: never an event of another type).</param>
 /// <param name="EventsStamped">Events stamped with the superseding flag and their key.</param>
 /// <param name="EventsQueued">Events queued for the superseded-event reaper.</param>
-/// <param name="TypesFinished">Types whose walk read to the end of the store in this cycle.</param>
-/// <param name="Status">The last batch's status: <c>ok</c>, <c>finished</c>, <c>complete</c>, <c>held (...)</c> or
-/// <c>skipped (...)</c>.</param>
+/// <param name="TypesFinished">Types whose walk completed in this cycle: read past the type's newest event, with none of
+/// its events still unstamped.</param>
+/// <param name="Status">The last batch's status: <c>ok</c>, <c>finished</c>, <c>complete</c>, <c>held (...)</c>,
+/// <c>waiting (...)</c> or <c>skipped (...)</c>.</param>
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs:Reconcile_RunsInBoundedBatches_AndResumesFromItsCursor_AfterACrashAsync</tests>
 public readonly record struct SupersedingHistoryReconcileResult(
@@ -32,13 +33,15 @@ public readonly record struct SupersedingHistoryReconcileResult(
 /// <summary>
 /// The maintenance step that brings the events a superseding type stored before it was declared
 /// <see cref="Core.Attributes.SupersedingAttribute">[Superseding]</see> under the superseding rule (#2110). For each
-/// registered superseding type it walks the event store by event id, a window of <see cref="SCAN_SIZE"/> events per batch
-/// and each batch its own transaction, reads each unflagged event's key from its payload with the generated accessor the
-/// write paths use, and has the SQL stamp the flag and the key and queue every event a newer one of its stream, type and
-/// key supersedes. The superseded-event reaper then deletes a queued event only past every one of its gates.
+/// registered superseding type it walks the type's own stored events through the per-type history walker
+/// (<see cref="TypeHistoryWalker"/>, #2205): in commit order through the type's index, a window of
+/// <see cref="SCAN_SIZE"/> of them per batch and each batch its own transaction. It reads each unflagged event's key from
+/// its payload with the generated accessor the write paths use, and has the SQL stamp the flag and the key and queue every
+/// event a newer one of its stream, type and key supersedes. The superseded-event reaper then deletes a queued event only past every one of its gates.
 /// A type's superseding group (#2124) is stamped with its key; when the group a type declares changes, its walk starts
 /// again from the first event and re-stamps every stored event of the type whose group differs, so a type that joins a
-/// group later has its history superseded within the group.
+/// group later has its history superseded within the group. A walk completes only once it has read past the type's newest
+/// commit sequence and none of the type's events is still waiting for the commit-order stamper.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -49,28 +52,30 @@ public readonly record struct SupersedingHistoryReconcileResult(
 /// never read again and a queued event is never queued twice.
 /// </para>
 /// <para>
-/// A cycle runs at most <see cref="MAX_BATCHES_PER_CYCLE"/> batches across all types, so a large store is walked over many
-/// idle cycles. A walk restarts from the first event when the type-definition registry holds a newer definition of the
+/// A cycle runs at most <see cref="MAX_BATCHES_PER_CYCLE"/> batches across all types, so a type with many events is walked
+/// over many idle cycles; a type with N events costs ceil(N / <see cref="SCAN_SIZE"/>) batches whatever the size of the
+/// store, and a complete type spends none of the budget. A walk restarts from the first event when the type-definition registry holds a newer definition of the
 /// type than the walk started under. <see cref="SupersedingOptions.ReconcileHistory"/> set to <see langword="false"/>
 /// turns the step off.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TypeHistoryWalkSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:HistoryStoredBeforeTheDeclaration_IsReconciledByTheRegisteredStep_AndReapedToTheNewestAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:HistoryMissingAValueTypeKey_IsReconciledUnkeyed_AndNoneIsReapedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Reconcile_TypesThatJoinAGroupLater_AreReStamped_AndTheOlderEventOfTheGroupIsReapedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingHistoryReconcileSqlTests.cs:Reconcile_AValueTypeKeyMissingFromThePayload_IsStampedUnkeyed_KeptAndLogged_APresentDefaultIsAKeyAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Only the schema prefix is formatted in, built by SqlText.Identifier; every value is a bound parameter.")]
 public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
-  /// <summary>Events of the store one batch reads past a type's cursor: one transaction's worth.</summary>
+  /// <summary>Events of the type one batch reads past its cursor: one transaction's worth.</summary>
   public const int SCAN_SIZE = 5000;
 
   /// <summary>Batches one cycle runs at most, across every type.</summary>
   public const int MAX_BATCHES_PER_CYCLE = 20;
 
-  private const string OK = "ok";
-  private const string FINISHED = "finished";
+  // The walker's name for this operation: its rows of wh_type_history_walks.
+  private const string OPERATION = "superseding";
 
   private readonly ILogger _logger;
   private readonly int _scanSize;
@@ -125,131 +130,65 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
     }
     var database = services.GetRequiredService<PostgresArchiveConnection>();
     var json = services.GetService<JsonSerializerOptions>() ?? JsonContextRegistry.CreateCombinedOptions();
-    var prefix = database.Schema is null ? string.Empty : SqlText.Identifier(database.Schema) + ".";
-    var total = new SupersedingHistoryReconcileResult(0, 0, 0, 0, 0, OK);
-    foreach (var type in _types()) {
-      if (total.Batches >= _maxBatches) {
-        break;
+    var targets = _types()
+      .Select(t => new TypeHistoryTarget(TypeNameFormatter.Format(t), TypeNameFormatter.FormatClrTypeName(t), SupersedingEvents.GroupOf(t)))
+      .ToList();
+    var walk = await new TypeHistoryWalker(OPERATION, _scanSize, _maxBatches)
+      .WalkAsync(database, targets, (transaction, prefix, target, window, ct) => _applyAsync(transaction, prefix, target, window, json, ct),
+        cancellationToken)
+      .ConfigureAwait(false);
+    foreach (var type in walk.Types) {
+      // Nothing is queued without a stamp in the same batch, so a cycle that stamped nothing has nothing to report.
+      if (type.Changed > 0) {
+        LogProgress(_logger, type.Target.EventType, type.Changed, type.Queued, type.Left, type.Total);
       }
-      var walk = new TypeWalk(TypeNameFormatter.Format(type), TypeNameFormatter.FormatClrTypeName(type), SupersedingEvents.GroupOf(type));
-      total = await _walkAsync(database, prefix, walk, json, total, cancellationToken).ConfigureAwait(false);
-    }
-    if (total.EventsStamped == 0) {
-      LogNothing(_logger, total.Status);
-    }
-    return total;
-  }
-
-  // Group (#2124): the type's superseding group, which the walk stamps; a change of group walks the type again.
-  private readonly record struct TypeWalk(string EventType, string DefinitionName, string? Group);
-
-  private readonly record struct Begun(string Status, Guid? After, Guid? Through, long Scanned, long Total, long Matched);
-
-  private readonly record struct Applied(string Status, long Stamped, long Queued, long Total, long Matched);
-
-  // Walks one type until a batch is not ok or the cycle's budget is spent, and logs what this cycle did for it.
-  private async Task<SupersedingHistoryReconcileResult> _walkAsync(
-      PostgresArchiveConnection database, string prefix, TypeWalk walk, JsonSerializerOptions json,
-      SupersedingHistoryReconcileResult total, CancellationToken cancellationToken) {
-    await using (var connection = await database.Open(cancellationToken).ConfigureAwait(false)) {
-      await using var ensure = new NpgsqlCommand($"SELECT {prefix}wh_superseding_history_ensure($1, $2, $3)", connection);
-      ensure.Parameters.AddWithValue(walk.EventType);
-      ensure.Parameters.AddWithValue(walk.DefinitionName);
-      ensure.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Text, Value = (object?)walk.Group ?? DBNull.Value });
-      _ = await ensure.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-    long stamped = 0, queued = 0, left = 0, of = 0;
-    var finished = false;
-    while (total.Batches < _maxBatches) {
-      var (status, scanned, batchStamped, batchQueued, batchTotal, batchMatched) =
-        await _batchAsync(database, prefix, walk, json, cancellationToken).ConfigureAwait(false);
-      stamped += batchStamped;
-      queued += batchQueued;
-      of = batchTotal;
-      left = Math.Max(batchTotal - batchMatched, 0);
-      finished = status == FINISHED;
-      total = new SupersedingHistoryReconcileResult(total.Batches + 1, total.EventsScanned + scanned, total.EventsStamped + batchStamped,
-        total.EventsQueued + batchQueued, total.TypesFinished + (finished ? 1 : 0), status);
-      if (status != OK) {
-        break;
+      if (type.Finished) {
+        LogFinished(_logger, type.Target.EventType);
       }
     }
-    // Nothing is queued without a stamp in the same batch, so a cycle that stamped nothing has nothing to report.
-    if (stamped > 0) {
-      LogProgress(_logger, walk.EventType, stamped, queued, left, of);
+    if (walk.Changed == 0) {
+      LogNothing(_logger, walk.Status);
     }
-    if (finished) {
-      LogFinished(_logger, walk.EventType);
-    }
-    return total;
+    return new SupersedingHistoryReconcileResult(walk.Batches, walk.Scanned, walk.Changed, walk.Queued, walk.TypesFinished, walk.Status);
   }
 
-  // One batch, one transaction: take the type's walk and its window, read the window's unflagged events, read their keys,
-  // stamp and queue. A crash anywhere rolls all of it back.
-  private async Task<(string Status, long Scanned, long Stamped, long Queued, long Total, long Matched)> _batchAsync(
-      PostgresArchiveConnection database, string prefix, TypeWalk walk, JsonSerializerOptions json, CancellationToken cancellationToken) {
-    await using var connection = await database.Open(cancellationToken).ConfigureAwait(false);
-    await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-    var begun = await _beginAsync(connection, transaction, prefix, walk, cancellationToken).ConfigureAwait(false);
-    if (begun.Status != OK) {
-      await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-      return (begun.Status, 0, 0, 0, begun.Total, begun.Matched);
-    }
-    var (ids, keys) = await _keysAsync(connection, transaction, prefix, walk, begun, json, cancellationToken).ConfigureAwait(false);
-    var applied = await _applyAsync(transaction, prefix, walk, begun, ids, keys, cancellationToken).ConfigureAwait(false);
-    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-    return (applied.Status, begun.Scanned, applied.Stamped, applied.Queued, applied.Total, applied.Matched);
-  }
-
-  private async Task<Begun> _beginAsync(
-      NpgsqlConnection connection, NpgsqlTransaction transaction, string prefix, TypeWalk walk, CancellationToken cancellationToken) {
+  // One window: read its unflagged events and their keys, then stamp and queue, in the walker's transaction.
+  private async Task<TypeHistoryBatch> _applyAsync(
+      NpgsqlTransaction transaction, string prefix, TypeHistoryTarget target, TypeHistoryWindow window,
+      JsonSerializerOptions json, CancellationToken cancellationToken) {
+    var (ids, keys) = await _keysAsync(transaction, prefix, target.EventType, window, json, cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
-      "SELECT status, after_id, through_id, rows_scanned, events_total, events_matched " +
-      $"FROM {prefix}wh_superseding_history_begin($1, $2, $3)", connection, transaction);
-    command.Parameters.AddWithValue(walk.EventType);
-    command.Parameters.AddWithValue(walk.DefinitionName);
-    command.Parameters.AddWithValue(_scanSize);
+      "SELECT status, events_stamped, events_queued, events_total, events_matched " +
+      $"FROM {prefix}wh_superseding_history_apply($1, $2, $3, $4, $5, $6, $7)", transaction.Connection, transaction);
+    command.Parameters.AddWithValue(target.EventType);
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)window.After ?? DBNull.Value });
+    command.Parameters.AddWithValue(window.Through);
+    command.Parameters.AddWithValue(window.ScanSize);
+    command.Parameters.AddWithValue(window.Scanned);
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = ids });
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = keys });
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new Begun(reader.GetString(0), _guidOrNull(reader, 1), _guidOrNull(reader, 2), reader.GetInt64(3),
-      reader.GetInt64(4), reader.GetInt64(5));
+    return new TypeHistoryBatch(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), 0, reader.GetInt64(3), reader.GetInt64(4));
   }
 
   private async Task<(Guid[] Ids, string?[] Keys)> _keysAsync(
-      NpgsqlConnection connection, NpgsqlTransaction transaction, string prefix, TypeWalk walk, Begun begun,
+      NpgsqlTransaction transaction, string prefix, string eventType, TypeHistoryWindow window,
       JsonSerializerOptions json, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
-      $"SELECT event_id, event_data::text FROM {prefix}wh_superseding_history_rows($1, $2, $3)", connection, transaction);
-    command.Parameters.AddWithValue(walk.EventType);
-    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)begun.After ?? DBNull.Value });
-    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = begun.Through.GetValueOrDefault() });
+      $"SELECT event_id, event_data::text FROM {prefix}wh_superseding_history_rows($1, $2, $3)", transaction.Connection, transaction);
+    command.Parameters.AddWithValue(eventType);
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)window.After ?? DBNull.Value });
+    command.Parameters.AddWithValue(window.Through);
     var ids = new List<Guid>();
     var keys = new List<string?>();
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var eventId = reader.GetGuid(0);
       ids.Add(eventId);
-      keys.Add(_keyOf(eventId, walk.EventType, reader.GetString(1), json));
+      keys.Add(_keyOf(eventId, eventType, reader.GetString(1), json));
     }
     return ([.. ids], [.. keys]);
-  }
-
-  private async Task<Applied> _applyAsync(
-      NpgsqlTransaction transaction, string prefix, TypeWalk walk, Begun begun,
-      Guid[] ids, string?[] keys, CancellationToken cancellationToken) {
-    await using var command = new NpgsqlCommand(
-      "SELECT status, events_stamped, events_queued, events_total, events_matched " +
-      $"FROM {prefix}wh_superseding_history_apply($1, $2, $3, $4, $5, $6, $7)", transaction.Connection, transaction);
-    command.Parameters.AddWithValue(walk.EventType);
-    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)begun.After ?? DBNull.Value });
-    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = begun.Through.GetValueOrDefault() });
-    command.Parameters.AddWithValue(_scanSize);
-    command.Parameters.AddWithValue(begun.Scanned);
-    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = ids });
-    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = keys });
-    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new Applied(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
   }
 
   // The key a write path would have stored for this payload: the generated accessor over the payload read as its type. A
@@ -273,8 +212,6 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
       return null;
     }
   }
-
-  private static Guid? _guidOrNull(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Superseding history of {EventType}: {Stamped} stamped, {Queued} queued for the reaper this cycle; {Left} of {Total} left to read")]

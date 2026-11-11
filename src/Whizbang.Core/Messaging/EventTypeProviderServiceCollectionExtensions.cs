@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Whizbang.Core.Messaging;
 
@@ -44,10 +43,7 @@ public static class EventTypeProviderServiceCollectionExtensions {
   public static IServiceCollection AddEventTypeProviderContribution<TProvider>(this IServiceCollection services)
       where TProvider : class, IEventTypeProvider {
     ArgumentNullException.ThrowIfNull(services);
-    services.TryAddEnumerable(ServiceDescriptor.KeyedSingleton<IEventTypeProvider, TProvider>(
-      CONTRIBUTION_KEY, static (sp, _) => sp.GetRequiredService<TProvider>()));
-    services.TryAddSingletonOverNullDefault<IEventTypeProvider>(static sp =>
-      new CompositeEventTypeProvider(sp.GetKeyedServices<IEventTypeProvider>(CONTRIBUTION_KEY)));
-    return services;
+    return services.AddContribution<IEventTypeProvider, TProvider>(
+      CONTRIBUTION_KEY, static providers => new CompositeEventTypeProvider(providers));
   }
 }

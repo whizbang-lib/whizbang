@@ -1055,66 +1055,53 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for a specific number of perspective EVENTS (not fires) to be processed using
-  /// the <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events belonging to <paramref name="streamId"/>.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// The handler fires ONCE per (perspective, stream) batch — but each fire carries an
-  /// <c>EventCount</c> that reflects how many events were processed in that batch. This
-  /// implementation SUMS EventCount so callers can specify a precise event total instead
-  /// of guessing how the worker batched them.
-  /// </para>
-  /// <para>
-  /// Example: CreateProductCommand with InitialStock &gt; 0 produces 3 events on inventory
-  /// (ProductCreated x2 + InventoryRestocked x1). Whether the worker dispatches them in 2
-  /// or 3 batches (depending on drain timing) doesn't matter — <c>expectedCompletions: 3</c>
-  /// always waits until all 3 events have actually been applied.
-  /// </para>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: the shared fixture's
+  /// workers keep applying a previous test's in-flight events after that test ends, and an
+  /// unfiltered counter let those stale fires satisfy the wait before this test's events were
+  /// applied (the InventoryWorker_Perspectives_Materialize and UpdateProduct_PriceOnly flakes).
+  /// See <see cref="PerspectiveProcessingWaiter"/> for the counting semantics (sums EventCount).
   /// </remarks>
-  public async Task WaitForPerspectiveProcessingAsync(
+  /// <param name="expectedCompletions">Total event applications on <paramref name="streamId"/> to wait for.</param>
+  /// <param name="streamId">The stream whose events count (for product workflows, the ProductId).</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
+      Guid streamId,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null,
-      Guid? streamId = null) {
+      string? hostFilter = null) =>
+    WaitForPerspectiveProcessingAsync(expectedCompletions, [streamId], timeoutMilliseconds, hostFilter);
 
-    var eventCount = 0;
-    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    void WireWorker(PerspectiveWorker? worker) {
-      if (worker is null) {
-        return;
-      }
-
-      void handler(PerspectiveEventProcessedEvent e) {
-        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
-        // events keep firing on the worker after cleanup; without this filter their
-        // EventCount satisfied the wait before THIS test's command had committed.
-        // Mirror of the ASB fixture fix.
-        if (streamId.HasValue && e.StreamId != streamId.Value) {
-          return;
-        }
-        var current = Interlocked.Add(ref eventCount, e.EventCount);
-        if (current >= expectedCompletions) {
-          tcs.TrySetResult(true);
-        }
-      }
-
-      worker.OnPerspectiveEventProcessed += handler;
-    }
-
+  /// <summary>
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events whose stream is in <paramref name="streamIds"/>,
+  /// for tests that wait on events from several streams at once (seeding, batches).
+  /// </summary>
+  /// <remarks>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: see the single-stream
+  /// overload and <see cref="PerspectiveProcessingWaiter"/>.
+  /// </remarks>
+  /// <param name="expectedCompletions">Total event applications across all <paramref name="streamIds"/>.</param>
+  /// <param name="streamIds">The streams whose events count; must not be empty.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      IReadOnlyCollection<Guid> streamIds,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var workers = new List<PerspectiveWorker?>();
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = InventoryHost.Services.GetHostedWorker<PerspectiveWorker>();
-      WireWorker(inventoryWorker);
+      workers.Add(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
-
     if (hostFilter is null or "bff") {
-      var bffWorker = BffHost.Services.GetHostedWorker<PerspectiveWorker>();
-      WireWorker(bffWorker);
+      workers.Add(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
-
-    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    return PerspectiveProcessingWaiter.WaitAsync(workers, expectedCompletions, streamIds, timeoutMilliseconds);
   }
 
   /// <summary>

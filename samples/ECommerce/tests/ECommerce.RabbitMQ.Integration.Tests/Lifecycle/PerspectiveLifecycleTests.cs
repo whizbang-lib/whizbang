@@ -125,8 +125,11 @@ public class PerspectiveLifecycleTests {
 
     // Act — use OnPerspectiveEventProcessed hook to verify perspective processed the event.
     // If the worker processed it, PrePerspectiveInline must have fired (it fires before processing).
+    // Arm the wait BEFORE sending: it counts only this product's stream, so a fire that
+    // happened before subscribing would be missed rather than substituted by a stale one.
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 2, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "bff");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "bff");
+    await perspectiveTask;
     // The [Timeout(180_000)] above is the test-framework wall-clock budget. The internal
     // 45 s timer above is bounded by WHIZBANG_TEST_TIMEOUT_MULTIPLIER under CI (legacy path
     // — WaitForPerspectiveProcessingAsync doesn't expose a CT yet; out of scope to extend here).
@@ -499,7 +502,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for 3 inventory perspective events.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }

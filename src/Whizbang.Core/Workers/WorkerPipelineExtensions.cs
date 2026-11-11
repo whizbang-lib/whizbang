@@ -650,6 +650,11 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
+    // The safety net for in-process tracker entries whose one removal path was not taken (#2228). In-process
+    // state only, so it starts with the host; a tracker the host does not register is skipped.
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
+    services.TryAddSingleton<Whizbang.Core.Perspectives.Sync.ISyncEventTracker, Whizbang.Core.Perspectives.Sync.SyncEventTracker>();
+    services.AddHostedService<InProcessTrackerSweepWorker>();
     services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>());
 
     // Slice 4 of zero-idle-polling: register the coordinator as a hosted service
@@ -666,6 +671,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IFailureChannel>(sp => sp.GetRequiredService<FailureFlushWorker>());
     services.TryAddSingleton<ILeaseRenewalChannel>(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.TryAddSingleton<IInboxHandlerCommitChannel>(sp => sp.GetRequiredService<InboxHandlerWorker>());
+    // #1899: when every queued work-table write has landed. Hosting a worker with its start point registers it as a
+    // flusher when it reports queued writes, so a new flush worker is covered by being hosted; they are resolved on first
+    // use, not here.
+    services.TryAddSingleton<IQueuedWritesLandedSignal>(sp => new QueuedWritesLandedSignal(QueuedWritesLandedSignal.RegisteredIn(sp)));
 
     // Perspective work-distribution channel: ClaimWorker writes here, PerspectiveWorker reads.
     // Singleton so producer + consumer share the same Channel<T>.

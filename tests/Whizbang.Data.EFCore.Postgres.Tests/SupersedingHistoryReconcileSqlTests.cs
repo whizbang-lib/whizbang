@@ -65,13 +65,15 @@ public sealed record SupersedingHistoryProbePlain : IEvent {
 
 /// <summary>
 /// #2110: the events a superseding type stored before it was declared [Superseding] are brought under the superseding
-/// rule by the superseding-history-reconcile maintenance step (migration 345): stamped with the flag and the key the
-/// write paths would store, and queued for the reaper, which deletes them only past its gates. Each test is built from
-/// rows stored the way a write path stored them before the declaration: no flag, no key.
+/// rule by the superseding-history-reconcile maintenance step (migration 345, on the per-type history walker since 374):
+/// stamped with the flag and the key the write paths would store, and queued for the reaper, which deletes them only past
+/// its gates. Each test is built from rows stored the way a write path stored them before the declaration: no flag, no
+/// key, and numbered by the commit-order stamper, as every stored event is once it is history.
 /// </summary>
 /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/345_SupersedingHistoryReconcile.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/380_HistoryWalksReadTheirOwnType.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
@@ -190,7 +192,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     var p1 = await _historicAsync(conn, stream, _plainJson(stream, "k"), _plain);
     var p2 = await _historicAsync(conn, stream, _plainJson(stream, "k"), _plain);
     // A walk left by an instance under which the type was superseding.
-    await _executeAsync(conn, "INSERT INTO wh_superseding_history (event_type) VALUES (@t)", ("t", _plain));
+    await _executeAsync(conn, "INSERT INTO wh_type_history_walks (operation, event_type) VALUES ('superseding', @t)", ("t", _plain));
 
     var result = await _step().ReconcileAsync(_services(), CancellationToken.None);
 
@@ -199,7 +201,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     await Assert.That(await _flagsAsync(conn, p2)).IsEqualTo(0L);
     await Assert.That(await _queuedAsync(conn)).IsEmpty();
     await Assert.That(await _scalarAsync(conn,
-      "SELECT count(*) FROM wh_superseding_history WHERE event_type = @t AND last_event_id IS NULL AND events_stamped = 0", ("t", _plain))).IsEqualTo(1L)
+      "SELECT count(*) FROM wh_type_history_walks WHERE event_type = @t AND last_commit_sequence IS NULL AND events_changed = 0", ("t", _plain))).IsEqualTo(1L)
       .Because("the walk of a type that is no longer superseding does not move");
   }
 
@@ -231,6 +233,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
       "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)",
       ("inst", instanceId), ("ids", ids));
     await _executeAsync(conn, "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)", ("inst", instanceId));
+    await _stampAsync(conn);
     await Assert.That(await _flagsAsync(conn, ids[0])).IsEqualTo(0L).Because("the control: the copy was stored unflagged");
 
     await _step().ReconcileAsync(_services(), CancellationToken.None);
@@ -272,23 +275,25 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     // A batch that crashed before its commit leaves nothing behind: not a stamp, not a queued event, not a cursor move.
     await _ensureAsync(conn);
     await using (var crashed = await conn.BeginTransactionAsync()) {
-      await _executeAsync(conn, "SELECT * FROM wh_superseding_history_begin(@t, @d, 10)", ("t", _embedded), ("d", _definitionName));
+      var through = await _scalarAsync(conn,
+        "SELECT through_sequence FROM wh_type_history_begin('superseding', @t, @d, 10)", ("t", _embedded), ("d", _definitionName));
       await _executeAsync(conn,
-        "SELECT * FROM wh_superseding_history_apply(@t, NULL, @through, 10, 5, @ids, @keys)",
-        ("t", _embedded), ("through", ids.Max()), ("ids", ids.ToArray()), ("keys", ids.Select(_ => "k").ToArray()));
+        "SELECT * FROM wh_superseding_history_apply(@t, NULL, @through, 10, 4, @ids, @keys)",
+        ("t", _embedded), ("through", through), ("ids", ids.ToArray()), ("keys", ids.Select(_ => "k").ToArray()));
       await crashed.RollbackAsync();
     }
     await Assert.That(await _flagsAsync(conn, ids[0])).IsEqualTo(0L);
     await Assert.That(await _scalarAsync(conn,
-      "SELECT count(*) FROM wh_superseding_history WHERE last_event_id IS NOT NULL OR events_stamped > 0 OR completed_at IS NOT NULL")).IsEqualTo(0L);
+      "SELECT count(*) FROM wh_type_history_walks WHERE last_commit_sequence IS NOT NULL OR events_changed > 0 OR completed_at IS NOT NULL")).IsEqualTo(0L);
 
     var first = await _step(2, 1).ReconcileAsync(_services(), CancellationToken.None);
     var rest = await _step(2, 10).ReconcileAsync(_services(), CancellationToken.None);
 
     await Assert.That(first.Batches).IsEqualTo(1).Because("one batch is the cycle's limit");
-    await Assert.That(first.EventsScanned).IsEqualTo(2L).Because("a batch reads a window of the whole store by event id");
+    await Assert.That(first.EventsScanned).IsEqualTo(2L).Because("a batch reads a window of the type's own events in commit order");
     await Assert.That(first.EventsStamped).IsEqualTo(2L);
-    await Assert.That(rest.EventsScanned).IsEqualTo(3L).Because("the next cycle resumes past the window the first one read");
+    await Assert.That(rest.EventsScanned).IsEqualTo(2L)
+      .Because("the next cycle resumes past the window the first one read, and never reads the event of another type");
     await Assert.That(rest.EventsStamped).IsEqualTo(2L);
     await Assert.That(rest.TypesFinished).IsEqualTo(1);
     await Assert.That(await _queuedAsync(conn)).IsEquivalentTo(ids.Take(3).ToList());
@@ -303,7 +308,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     await _ensureAsync(conn);
     await using var other = await _openAsync();
     await using var hold = await other.BeginTransactionAsync();
-    await _executeAsync(other, "SELECT * FROM wh_superseding_history_begin(@t, @d, 10)", ("t", _embedded), ("d", _definitionName));
+    await _executeAsync(other, "SELECT * FROM wh_type_history_begin('superseding', @t, @d, 10)", ("t", _embedded), ("d", _definitionName));
 
     var skipped = await _step().ReconcileAsync(_services(), CancellationToken.None);
     await hold.RollbackAsync();
@@ -370,7 +375,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
 
     await new SupersedingHistoryReconcileStep(logger, 1, 10, () => [typeof(SupersedingProbeEmbedded)])
       .ReconcileAsync(_services(), CancellationToken.None);
-    await _executeAsync(conn, "DELETE FROM wh_superseding_history");
+    await _executeAsync(conn, "DELETE FROM wh_type_history_walks");
     await _executeAsync(conn, "UPDATE wh_event_store SET flags = 0, supersede_key = NULL WHERE event_id = @e", ("e", unreadable));
     // Options that cannot read the type at all.
     await new SupersedingHistoryReconcileStep(logger, 100, 10, () => [typeof(SupersedingProbeEmbedded)])
@@ -450,7 +455,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
 
     await Assert.That(result.Status).IsEqualTo("skipped (Whizbang:Superseding:ReconcileHistory=false)");
     await Assert.That(await _flagsAsync(conn, a1)).IsEqualTo(0L);
-    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_superseding_history")).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_type_history_walks")).IsEqualTo(0L);
   }
 
   [Test]
@@ -460,12 +465,11 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     var a1 = await _historicAsync(conn, stream, _embeddedJson(stream, "k"));
 
     await Assert.That(async () => await _executeAsync(conn,
-      "SELECT * FROM wh_superseding_history_apply(@t, NULL, @e, 10, 1, @ids, @keys)",
-      ("t", _embedded), ("e", a1), ("ids", new[] { a1 }), ("keys", Array.Empty<string>()))).Throws<PostgresException>();
+      "SELECT * FROM wh_superseding_history_apply(@t, NULL, 1, 10, 1, @ids, @keys)",
+      ("t", _embedded), ("ids", new[] { a1 }), ("keys", Array.Empty<string>()))).Throws<PostgresException>();
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT status FROM wh_superseding_history_apply(@t, NULL, @e, 10, 1, @ids, @keys)";
+    cmd.CommandText = "SELECT status FROM wh_superseding_history_apply(@t, NULL, 1, 10, 1, @ids, @keys)";
     cmd.Parameters.AddWithValue("t", _embedded);
-    cmd.Parameters.AddWithValue("e", a1);
     cmd.Parameters.AddWithValue("ids", new[] { a1 });
     cmd.Parameters.AddWithValue("keys", _oneKey);
     var status = (string)(await cmd.ExecuteScalarAsync())!;
@@ -563,6 +567,8 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     await _executeAsync(conn,
       "SELECT wh_append_event(@id, @s, @s, split_part(@t, ',', 1), @t, @p::jsonb, @m::jsonb, NULL, NOW(), @f)",
       ("id", id), ("s", stream), ("t", type), ("p", payload), ("m", metadata), ("f", flags));
+    // History is numbered by the commit-order stamper; the walk reads a type's events in that order.
+    await _stampAsync(conn);
     return id;
   }
 
@@ -595,7 +601,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
   }
 
   private static Task _ensureAsync(NpgsqlConnection conn) =>
-    _executeAsync(conn, "SELECT wh_superseding_history_ensure(@t, @d)", ("t", _embedded), ("d", _definitionName));
+    _executeAsync(conn, "SELECT wh_type_history_ensure('superseding', @t, @d)", ("t", _embedded), ("d", _definitionName));
 
   private static Task _registerDefinitionAsync(NpgsqlConnection conn, string settings) =>
     _executeAsync(conn,

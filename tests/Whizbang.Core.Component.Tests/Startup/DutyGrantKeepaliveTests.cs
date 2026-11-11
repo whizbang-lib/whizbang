@@ -305,4 +305,104 @@ public class DutyGrantKeepaliveTests {
     await Assert.That(logger.Entries).IsEmpty()
       .Because("a verify the dispose canceled is the keepalive stopping, not a failure");
   }
+  // ── #2165: a stuck holder's role lapses ─────────────────────────────
+
+  private static readonly TimeSpan _stallLimit = TimeSpan.FromSeconds(12);
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AHolderThatReportsNoProgress_StopsBeingRenewed_PastTheStallLimit_AndSaysSoOnceAsync(CancellationToken cancellationToken) {
+    var time = new FakeTimeProvider();
+    var logger = new RecordingLogger();
+    var grant = new LeasedGrant(_interval);
+    await using var keepalive = DutyGrantKeepalive.Start(grant, time, logger, _stallLimit);
+
+    time.Advance(_tick);
+    await Assert.That(await grant.NextVerifyAsync(cancellationToken)).IsEqualTo(1);
+    time.Advance(_tick);
+    await Assert.That(await grant.NextVerifyAsync(cancellationToken)).IsEqualTo(2);
+    time.Advance(_tick);   // 15 seconds without progress: past the 12-second limit
+    time.Advance(TimeSpan.FromHours(1));
+
+    await Assert.That(grant.Count).IsEqualTo(2)
+      .Because("a holder that is alive but stuck must let its lease lapse, so another instance takes the role over");
+    await Assert.That(keepalive.IsRunning).IsFalse();
+    await Assert.That(keepalive.IsStalled).IsTrue();
+    await Assert.That(logger.Entries).Count().IsEqualTo(1).Because("said once, not once per tick");
+    await Assert.That(logger.Entries[0].Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(logger.Entries[0].Message).Contains(StartupDuties.MIGRATOR);
+    await Assert.That(logger.Entries[0].Message).Contains("00:00:12");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AHolderThatReportsProgress_IsRenewedPastTheStallLimit_ForAsLongAsItDoesAsync(CancellationToken cancellationToken) {
+    var time = new FakeTimeProvider();
+    var grant = new LeasedGrant(_interval);
+    await using var keepalive = DutyGrantKeepalive.Start(grant, time, stallLimit: _stallLimit);
+
+    for (var verify = 1; verify <= 8; verify++) {
+      time.Advance(_tick);
+      await Assert.That(await grant.NextVerifyAsync(cancellationToken)).IsEqualTo(verify);
+      keepalive.NoteProgress();
+    }
+
+    await Assert.That(keepalive.IsStalled).IsFalse()
+      .Because("40 seconds of work, each tick of it progress: a long pass that is working keeps its role");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ProgressAfterTheStall_DoesNotTakeTheRoleBackAsync(CancellationToken cancellationToken) {
+    var time = new FakeTimeProvider();
+    var grant = new LeasedGrant(_interval);
+    await using var keepalive = DutyGrantKeepalive.Start(grant, time, stallLimit: _stallLimit);
+    time.Advance(_tick);
+    await grant.NextVerifyAsync(cancellationToken);
+    time.Advance(_tick);
+    await grant.NextVerifyAsync(cancellationToken);
+    time.Advance(_tick);   // stalled at 15 seconds
+
+    keepalive.NoteProgress();
+    time.Advance(_tick * 4);
+
+    await Assert.That(grant.Count).IsEqualTo(2)
+      .Because("the lease may already have lapsed to another instance; renewing it now would be two migrators");
+  }
+
+  [Test]
+  public async Task NoteProgress_OnAKeepaliveOfNothing_IsHarmlessAsync() {
+    await using var keepalive = DutyGrantKeepalive.Start(null, new FakeTimeProvider(), stallLimit: _stallLimit);
+
+    keepalive.NoteProgress();
+
+    await Assert.That(keepalive.IsStalled).IsFalse();
+  }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task AStallLimitThatIsNotPositive_IsRefusedAsync(int seconds) {
+    await Assert.That(() => DutyGrantKeepalive.Start(new LeasedGrant(_interval), new FakeTimeProvider(), stallLimit: TimeSpan.FromSeconds(seconds)))
+      .Throws<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AVerifyOwedWhenTheStallArrives_IsNotRunAsync(CancellationToken cancellationToken) {
+    var time = new FakeTimeProvider();
+    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var grant = new LeasedGrant(_interval) { Gate = gate };
+    var keepalive = DutyGrantKeepalive.Start(grant, time, stallLimit: _stallLimit);
+    time.Advance(_tick);
+    await grant.NextVerifyAsync(cancellationToken);   // in flight, held by the gate
+    time.Advance(_tick);                               // owed
+    time.Advance(_tick);                               // stalled at 15 seconds
+
+    gate.SetResult();
+    await keepalive.DisposeAsync();
+
+    await Assert.That(grant.Count).IsEqualTo(1)
+      .Because("a verify owed to a holder that has since stalled would renew a lease that must lapse");
+  }
 }

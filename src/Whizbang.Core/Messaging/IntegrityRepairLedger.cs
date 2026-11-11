@@ -34,7 +34,16 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
 
   /// <summary>One divergent bucket — stream-level entries carry the stream id; type- or
   /// window-level entries use <see cref="Guid.Empty"/>.</summary>
-  public readonly record struct DivergenceKey(Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId);
+  public readonly record struct DivergenceKey(Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId) {
+    /// <summary>The same (origin, tenant, type) bucket at the type level: its stream id is <see cref="Guid.Empty"/>.</summary>
+    /// <remarks>A method, not a property: a property of the key's own type makes every structural walk of a key (an
+    /// equivalence assertion, a serializer, a deep comparer) recurse without end.</remarks>
+    /// <returns>The type-level key of this key's (origin, tenant, type).</returns>
+    /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKey_TypeLane_KeepsTheBucketAtTheTypeLevelAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKeys_CompareStructurally_WithoutRecursingAsync</tests>
+    public DivergenceKey ToTypeLane() => new(OriginServiceId, TenantScope, EventType, Guid.Empty);
+  }
 
   private sealed class Entry {
     public long OriginLo;
@@ -249,6 +258,23 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
         if (_entries.Remove(key, out var entry)) {
           ages.Add(Math.Max(0d, (now - entry.FirstSeen).TotalSeconds));
         }
+      }
+    }
+    return ValueTask.FromResult<IReadOnlyList<double>>(ages);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Every entry of the proven (origin, tenant, type) triples goes, whatever its stream; ages come off the
+  /// entries removed, as for <see cref="MarkHealedBatchWithAgesAsync"/>.</remarks>
+  public ValueTask<IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
+      IReadOnlyList<DivergenceKey> typeKeys, CancellationToken cancellationToken = default) {
+    var proven = typeKeys.Select(k => (k.OriginServiceId, k.TenantScope, k.EventType)).ToHashSet();
+    var now = DateTimeOffset.UtcNow;
+    var ages = new List<double>();
+    lock (_lock) {
+      foreach (var key in _entries.Keys.Where(k => proven.Contains((k.OriginServiceId, k.TenantScope, k.EventType))).ToList()) {
+        _entries.Remove(key, out var entry);
+        ages.Add(Math.Max(0d, (now - entry!.FirstSeen).TotalSeconds));
       }
     }
     return ValueTask.FromResult<IReadOnlyList<double>>(ages);

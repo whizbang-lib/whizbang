@@ -2146,6 +2146,52 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
     // Apply CorrelationFilter if specified in metadata (production without Aspire)
     await _applyCorrelationFilterFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+
+    // Converge an event subscription on the event types this service opts out of (#2175)
+    await _applyExcludedEventTypesFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+  }
+
+  /// <summary>
+  /// Converges an event subscription on the subjects its destination excludes (#2175). Only an event destination
+  /// carries the key (<see cref="TransportSubscriptionBuilder.ExcludedEventSubjectsMetadataKey"/>), so an inbox or a
+  /// custom destination is never touched. Rule writes need the management plane and auto-provisioning, like every
+  /// other rule this transport writes; without them a non-empty list is logged and the subscription keeps delivering
+  /// everything.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusExcludedEventTypesSubscribeTests.cs:Subscribe_ExcludedSubjects_AppliesTheRuleAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusExcludedEventTypesSubscribeTests.cs:Subscribe_DestinationWithoutTheKey_NeverReadsRulesAsync</tests>
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Event subscription {TopicName}/{SubscriptionName} opts out of {Count} excluded event types, but this transport has no management client or AutoProvisionInfrastructure is off, so the rule is not applied and every event is still delivered")]
+  private static partial void LogExcludedEventTypesNotApplied(ILogger logger, string topicName, string subscriptionName, int count);
+
+  private async Task _applyExcludedEventTypesFromMetadataAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    if (destination.Metadata?.TryGetValue(TransportSubscriptionBuilder.ExcludedEventSubjectsMetadataKey, out var element) != true
+        || element.ValueKind != JsonValueKind.Array) {
+      return;
+    }
+
+    var subjects = new List<string>();
+    foreach (var entry in element.EnumerateArray()) {
+      if (entry.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(entry.GetString())) {
+        subjects.Add(entry.GetString()!);
+      }
+    }
+
+    if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
+      if (subjects.Count > 0) {
+        LogExcludedEventTypesNotApplied(_logger, topicName, subscriptionName, subjects.Count);
+      }
+      return;
+    }
+
+    await ServiceBusEntityProvisioning.ApplyExcludedEventTypesAsync(
+      _adminClient, topicName, subscriptionName, subjects, _logger, cancellationToken);
   }
 
   private async Task _applyRoutingPatternsFromMetadataAsync(

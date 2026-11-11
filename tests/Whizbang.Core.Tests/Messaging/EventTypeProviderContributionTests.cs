@@ -61,10 +61,11 @@ public class EventTypeProviderContributionTests {
 
     var types = provider.GetRequiredService<IEventTypeProvider>().GetEventTypes();
 
-    Type[] expected = [typeof(OrderPlaced), typeof(OrderShipped), typeof(InvoiceIssued), typeof(TenantRenamedCollective)];
+    Type[] expected = [typeof(InvoiceIssued), typeof(OrderPlaced), typeof(TenantRenamedCollective), typeof(OrderShipped)];
     await Assert.That(types.SequenceEqual(expected)).IsTrue()
       .Because("the first assembly's events must not vanish because a second assembly registered after it, and the "
-             + $"union keeps the contributions' order; served: {string.Join(", ", types.Select(t => t.Name))}");
+             + "union lists the latest registration first, the rule every per-assembly registration follows (#2201); "
+             + $"served: {string.Join(", ", types.Select(t => t.Name))}");
   }
 
   [Test]
@@ -92,6 +93,14 @@ public class EventTypeProviderContributionTests {
 
     await Assert.That(served.IsAvailable).IsTrue();
     await Assert.That(served.GetEventTypes().Count).IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task ATypeTwoAssembliesKnow_IsNoCollisionAsync() {
+    await using var provider = _twoAssemblies().BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<IRegistrationCollisionSource>()).IsEmpty()
+      .Because("two assemblies that know the same event type name the same type: neither registration is hidden");
   }
 
   [Test]
