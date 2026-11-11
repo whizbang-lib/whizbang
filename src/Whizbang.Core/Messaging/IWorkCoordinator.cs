@@ -129,6 +129,13 @@ public sealed record ServiceBacklog {
   public bool IsQuiescentApartFromIntegrity => NonIntegrityWorkRows is { } work
     ? work == 0 && PendingPerspectiveRows == 0 && PendingIdleRows == 0
     : IsQuiescent;
+
+  /// <summary>
+  /// <see cref="IsSettled"/> with the framework's steady-state integrity traffic not counted as work: what admits the idle
+  /// drain (#2263). Falls back to <see cref="IsSettled"/> when <see cref="NonIntegrityWorkRows"/> was not measured.
+  /// </summary>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  public bool IsSettledApartFromIntegrity => IsSettled;
 }
 
 

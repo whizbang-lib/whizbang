@@ -61,4 +61,31 @@ public class SteadyIntegrityTrafficTests {
       .Because("a backend that cannot tell integrity traffic apart counts every row, as before");
     await Assert.That(new ServiceBacklog().IsQuiescentApartFromIntegrity).IsTrue();
   }
+
+  // ===== #2263: what admits the idle drain =====
+
+  [Test]
+  public async Task OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync() {
+    var integrityOnly = new ServiceBacklog { UnprocessedInboxRows = 2, ActiveLeasedRows = 1, PendingOutboxRows = 1, NonIntegrityWorkRows = 0 };
+
+    await Assert.That(integrityOnly.IsSettledApartFromIntegrity).IsTrue()
+      .Because("the idle drain is not held back by the framework's integrity chatter");
+    await Assert.That(integrityOnly.IsSettled).IsFalse()
+      .Because("the integrity receptors still read the rows as in flight");
+  }
+
+  [Test]
+  public async Task ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync() {
+    await Assert.That(new ServiceBacklog { UnprocessedInboxRows = 3, NonIntegrityWorkRows = 1 }.IsSettledApartFromIntegrity).IsFalse();
+    await Assert.That(new ServiceBacklog { NonIntegrityWorkRows = 0, PendingPerspectiveRows = 1 }.IsSettledApartFromIntegrity).IsFalse();
+    await Assert.That(new ServiceBacklog { NonIntegrityWorkRows = 0, PendingIdleRows = 1 }.IsSettledApartFromIntegrity).IsTrue()
+      .Because("the idle band is what the drain this reading admits exists to release");
+  }
+
+  [Test]
+  public async Task AnUnmeasuredFigure_FallsBackToSettledAsync() {
+    await Assert.That(new ServiceBacklog { UnprocessedInboxRows = 1 }.IsSettledApartFromIntegrity).IsFalse()
+      .Because("a backend that cannot tell integrity traffic apart counts every row, as before");
+    await Assert.That(new ServiceBacklog { PendingIdleRows = 1 }.IsSettledApartFromIntegrity).IsTrue();
+  }
 }
