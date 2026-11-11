@@ -125,8 +125,8 @@ internal static class CoordinatorFleetSql {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CountServiceBacklogSqlTests.cs:IntegrityTraffic_IsBacklog_ButNotWorkBesidesIntegrityAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CountServiceBacklogSqlTests.cs:ApplicationWork_IsWorkBesidesIntegrity_InEachTableAsync</tests>
   internal static async Task<ServiceBacklog?> CountServiceBacklogAsync(DbCommand cmd, string prefix, CancellationToken cancellationToken) {
-    var inbox = prefix + "wh_inbox_state";
-    var inboxMessages = prefix + "wh_inbox";
+    // The work state and the message row it joins to for the type (#2253): one line, a join across the split.
+    var (inbox, inboxMessages) = (prefix + "wh_inbox_state", prefix + "wh_inbox");
     var outbox = prefix + "wh_outbox";
     var perspectiveEvents = prefix + "wh_perspective_events";
     const int idleBandStart = WorkPriority.BACKGROUND_BAND_END;
