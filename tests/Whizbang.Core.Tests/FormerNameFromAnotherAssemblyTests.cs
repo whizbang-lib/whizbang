@@ -10,7 +10,11 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests;
 
 /// <summary>An event type whose ledger entry records a former name from another assembly.</summary>
-public sealed record MovedAssemblyProbeEvent : IEvent;
+public sealed record MovedAssemblyProbeEvent : IEvent {
+  /// <summary>The order, which is the stream.</summary>
+  [StreamId]
+  public Guid OrderId { get; init; }
+}
 
 /// <summary>
 /// #2264: the pinned-type ledger records a former name with its assembly when the type moved from another assembly
@@ -31,14 +35,15 @@ public class FormerNameFromAnotherAssemblyTests {
   private static readonly MessageTypeCatalogEntry _entry =
     new(typeof(MovedAssemblyProbeEvent), TypeNameFormatter.FormatClrTypeName(typeof(MovedAssemblyProbeEvent)), "event",
       "44444444-4444-4444-4444-444444444444") {
-      // A blank former name is skipped, and one recorded both ways is one bare name.
-      FormerNames = [FORMER_RECORDED, " ", FORMER_BARE],
+      FormerNames = [FORMER_RECORDED],
       IsComposite = true,
     };
 
   [Test]
   public async Task TheRegistryReconcile_IsGivenTheBareFormerName_ItsRowsAreKeyedByAsync() {
-    using var document = JsonDocument.Parse(MessageTypeRegistryJson.Serialize([_entry]));
+    using var document = JsonDocument.Parse(MessageTypeRegistryJson.Serialize([
+      // A blank former name is skipped, and a name recorded both bare and with its assembly is sent once.
+      _entry with { FormerNames = [FORMER_RECORDED, " ", FORMER_BARE] }]));
 
     var former = document.RootElement[0].GetProperty("FormerNames").EnumerateArray().Select(n => n.GetString()!).ToList();
 
