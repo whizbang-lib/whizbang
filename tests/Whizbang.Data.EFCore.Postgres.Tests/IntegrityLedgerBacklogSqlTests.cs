@@ -116,6 +116,17 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
       .Because("a failed read reports nothing; a zero would read as a healed service");
   }
 
+  [Test]
+  public async Task Backlog_ReadCanceled_PropagatesTheCancellationAsync() {
+    var (coordinator, _) = _coordinator();
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+
+    await Assert.That(async () => await coordinator.GetIntegrityLedgerBacklogAsync(MAX_ATTEMPTS, canceled.Token))
+      .Throws<OperationCanceledException>()
+      .Because("a canceled read is a stopping host, not a failed read to report as nothing");
+  }
+
   // ── opened and closed ────────────────────────────────────────────────────────────────────────
 
   [Test]
@@ -139,6 +150,24 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
       .IsEqualTo(0L).Because("the heal removed the row, so the open gauge falls by it");
     _ = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(origin, [_key(origin, stream)]);
     await Assert.That(_how(metrics, CLOSED, "healed")).IsEqualTo(1L).Because("a heal that removes nothing closes nothing");
+  }
+
+  /// <summary>
+  /// An unscoped stream's bucket (a null tenant, as an origin's digest carries it) is recorded under the empty scope; the
+  /// batch heal that every comparison and re-check uses keyed it raw, so it never matched and the bucket stayed open.
+  /// </summary>
+  [Test]
+  public async Task TheBatchHeal_OfAnUnscopedBucket_RemovesItsRowAsync() {
+    var (coordinator, _) = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    await _reportAsync(coordinator, origin, stream, local: 0);
+    await using var conn = await _openAsync();
+
+    _ = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(origin, [_key(origin, stream)]);
+
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_ledger WHERE stream_id = $1", stream))
+      .IsEqualTo(0L).Because("a null tenant is the ledger's empty scope on every path, the batch heal included");
   }
 
   [Test]
@@ -185,6 +214,28 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
     await coordinator.IntegrityMarkHealedAsync(reported);
 
     await Assert.That(_how(metrics, CLOSED, "healed")).IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// A coordinator built without stream-integrity metrics (a host that did not register them) still opens and closes
+  /// buckets; it only has nowhere to count them.
+  /// </summary>
+  [Test]
+  public async Task WithoutMetrics_TheLedgerStillOpensAndClosesBucketsAsync() {
+    var ctx = CreateDbContext();
+    _contexts.Add(ctx);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
+    var origin = TrackedGuid.New().Value;
+    var key = _key(origin, TrackedGuid.New().Value);
+    await using var conn = await _openAsync();
+
+    await Assert.That(await coordinator.IntegrityTryBeginReportAsync(key, 11, 21, 0, 0, _t0, _cooldown)).IsTrue();
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_ledger WHERE stream_id = $1", key.StreamId))
+      .IsEqualTo(1L).Because("the bucket is recorded whether or not it is counted");
+    await coordinator.IntegrityMarkHealedAsync(key);
+
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_ledger WHERE stream_id = $1", key.StreamId))
+      .IsEqualTo(0L);
   }
 
   [Test]
@@ -331,6 +382,12 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
       .Because("the restored definition stands on its own");
     await _execAsync(conn, "SELECT wh_integrity_mark_healed($1, '', $2, $3)", origin, EVENT_TYPE, stream);
     await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_ledger")).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync<bool[]>(conn,
+      "SELECT wh_integrity_try_begin_repair_batch($1, ARRAY[''], ARRAY[$2], ARRAY[$3], $4, 30, 8, 1)",
+      origin, EVENT_TYPE, stream, _t0)).IsEquivalentTo(_granted);
+    await Assert.That(await _scalarAsync<long>(conn,
+      "SELECT count(*) FROM wh_integrity_mark_healed_batch($1, ARRAY[''], ARRAY[$2], ARRAY[$3])", origin, EVENT_TYPE, stream))
+      .IsEqualTo(1L).Because("the restored batches answer their old shapes");
   }
 
   private static async Task<T> _scalarAsync<T>(NpgsqlConnection conn, string sql, params object[] args) {

@@ -69,6 +69,7 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.GetConsumedTypeRegistrationsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegrityDomainClaimsAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegrityLedgerSummaryAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.GetIntegrityLedgerBacklogAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegrityOriginGenerationAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegritySealAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.GetIntegritySettledMaxAsync)] = INTEGRITY,

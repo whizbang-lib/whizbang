@@ -36,7 +36,10 @@
 --              5. wh_integrity_heal_counted (new): 090's single-key heal, answering the rows removed that were still
 --                 open (not marked unhealable). wh_integrity_mark_healed: the same, answering nothing.
 --              6. wh_integrity_heal_batch_counted, wh_integrity_heal_types_counted (new): 094's batch heal and 384's
---                 whole-type heal, answering each removed row's age with whether it was still open.
+--                 whole-type heal, answering each removed row's age with whether it was still open. The batch heal
+--                 also keys an unscoped (null) tenant as the empty scope, as every report and the single-key heal do:
+--                 094 compared it raw, so the bucket of an unscoped stream never healed through the batch that every
+--                 comparison and re-check heals with.
 --                 wh_integrity_mark_healed_batch, wh_integrity_mark_types_healed: the ages.
 --              7. wh_integrity_forget_unconsumed_counted, wh_integrity_forget_origin_types_counted (new): 331's and
 --                 370's prunes, answering (forgotten, closed): the rows removed and those of them still open.
@@ -552,9 +555,11 @@ COMMENT ON FUNCTION __SCHEMA__.wh_integrity_mark_healed(UUID, TEXT, TEXT, UUID) 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_heal_batch_counted');
 
 -- 094's batch heal: each removed row's age in seconds (first sighting to heal, clamped at zero for clock skew), with
--- whether the row was still open (not marked unhealable, which closed it already).
+-- whether the row was still open (not marked unhealable, which closed it already). An unscoped (null) tenant key now
+-- matches the empty scope the ledger stores, as the single-key heal always did.
 -- <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs:AHealedBucket_IsClosedOnce_AndLowersTheOpenGaugeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs:TheBatchHeal_OfAnUnscopedBucket_RemovesItsRowAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBatchSqlTests.cs</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_heal_batch_counted(
   p_origin_service_id UUID,
@@ -575,7 +580,9 @@ BEGIN
     DELETE FROM __SCHEMA__.wh_integrity_ledger l
     USING keys k
     WHERE l.origin_service_id = p_origin_service_id
-      AND l.tenant_scope      = k.tenant_scope
+      -- 392: an unscoped key (null) is the ledger's empty scope, as every report and the single-key heal key it; 094
+      -- compared it raw, so an unscoped bucket never healed through this batch.
+      AND l.tenant_scope      = COALESCE(k.tenant_scope, '')
       AND l.event_type        = k.event_type
       AND l.stream_id         = k.stream_id
     RETURNING l.first_seen_at, l.unhealable_at

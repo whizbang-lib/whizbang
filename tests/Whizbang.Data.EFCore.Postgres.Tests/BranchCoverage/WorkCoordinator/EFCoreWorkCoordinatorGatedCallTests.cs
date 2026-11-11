@@ -148,7 +148,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("GetEphemeralPairsNeedingSnapshot", "GetEphemeralPairsNeedingSnapshotAsync", (c, _) => c.GetEphemeralPairsNeedingSnapshotAsync());
 
     // ── Integrity ledger and audit ─────────────────────────────────────────
-    register("IntegrityTryBeginReport", "_integrityLedgerBoolAsync", (c, _) =>
+    register("IntegrityTryBeginReport", "_integrityLedgerOutcomeAsync", (c, _) =>
       c.IntegrityTryBeginReportAsync(_key(), 1, 10, 1, 5, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityTryBeginReportBatch", "_integrityLedgerBoolArrayAsync", (c, _) =>
       c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5)));

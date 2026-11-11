@@ -253,6 +253,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_integrity_try_begin_repair(UUID, TEXT, TEXT, U
 -- ---------------------------------------------------------------------------------------------
 -- wh_integrity_try_begin_repair_batch: 094's definition, whole.
 -- ---------------------------------------------------------------------------------------------
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs:TheReverse_RestoresThePreviousDefinitions_AndDropsTheCountingFormsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_try_begin_repair_batch(
   p_origin_service_id UUID,
   p_tenant_scopes     TEXT[],
@@ -298,6 +300,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_integrity_try_begin_repair_batch IS
 -- wh_integrity_mark_healed: 090's definition, whole.
 -- ---------------------------------------------------------------------------------------------
 -- The bucket folded identical: forget it. A later divergence is a brand-new incident.
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs:TheReverse_RestoresThePreviousDefinitions_AndDropsTheCountingFormsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_mark_healed(
   p_origin_service_id UUID,
   p_tenant_scope      TEXT,
@@ -318,6 +322,8 @@ $$;
 -- ---------------------------------------------------------------------------------------------
 -- wh_integrity_mark_healed_batch: 094's definition, whole.
 -- ---------------------------------------------------------------------------------------------
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs:TheReverse_RestoresThePreviousDefinitions_AndDropsTheCountingFormsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_mark_healed_batch(
   p_origin_service_id UUID,
   p_tenant_scopes     TEXT[],
