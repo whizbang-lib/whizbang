@@ -61,6 +61,25 @@ public class LedgerRecheckWorkerTests {
       .IsFalse().Because("a re-check is a compare, never a repair request");
   }
 
+  /// <summary>#2262: a re-check's answer passes the generation guard too, so its ask names the recorded generation.</summary>
+  [Test]
+  public async Task RecheckTick_NamesTheRecordedOriginGeneration_ReadOncePerOriginAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions(), origin);
+    coordinator.SealGeneration = 41;
+    coordinator.Stale.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+    coordinator.Stale.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 100, 500));
+
+    await worker.RecheckTickAsync(_fixedNow, CancellationToken.None);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(2);
+    foreach (var published in transport.Published) {
+      await Assert.That(_deserializeManifestRequest(published.Envelope).KnownOriginGeneration).IsEqualTo(41L);
+    }
+    await Assert.That(coordinator.SealGenerationReads).IsEqualTo(1)
+      .Because("the generation belongs to the origin, so one read serves every ask to it in the tick");
+  }
+
   // #2208: a row with no stamped window was compared over the whole history, so it is answered again over the whole
   // history: an unwindowed answer from the origin's recompute, every stream of the type, compared to this service's own
   // whole-history fold. A window would prove only itself, and the origin caps a window opened from the start.
@@ -379,6 +398,15 @@ public class LedgerRecheckWorkerTests {
 
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) =>
       ValueTask.FromResult(Backlog);
+
+    /// <summary>#2262: the origin generation recorded beside the seal.</summary>
+    public long? SealGeneration { get; set; }
+    public int SealGenerationReads;
+
+    public Task<long?> GetIntegritySealGenerationAsync(Guid originServiceId, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref SealGenerationReads);
+      return Task.FromResult(SealGeneration);
+    }
   }
 
   private sealed class CaptureTransport : ITransport {

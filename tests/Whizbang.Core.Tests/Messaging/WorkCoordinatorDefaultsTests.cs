@@ -812,6 +812,29 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task EnsureIntegritySealGenerationAsync_WithARewrite_WithoutProviderSupport_FallsBackToTheGenerationOnlyGuardAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 3L, new IntegrityHistoryRewrite(2, 10));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task GetIntegritySealGenerationAsync_WithoutProviderSupport_IsUnknownAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegritySealGenerationAsync(Guid.Empty)).IsNull();
+  }
+
+  [Test]
+  public async Task GetIntegrityHistoryRewriteAsync_WithoutProviderSupport_VouchesForNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegrityHistoryRewriteAsync(0L)).IsNull();
+  }
+
+  [Test]
   public async Task TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
