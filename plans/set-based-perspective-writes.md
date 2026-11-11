@@ -98,3 +98,14 @@ are the starting inventory.
 6. Registration and mode selection, and the resolution test.
 7. Conformance suite across both modes.
 8. Measure: a 100k-stream fan-out, round trips and rows per second, before and after.
+
+## Decisions after step 2 (2026-11-10)
+
+- **DbContext:** each perspective writes through its own store's DbContext, never one global sink, so a service with
+  several contexts works. A test with two contexts locks it.
+- **Transactions:** one transaction per table and statement-shape group. Nothing spans tables: each row's outcome
+  stands alone, and completion is already a later step.
+- **Prepare entry:** a public method on `IPerspectiveStore` returning a `PendingPerspectiveWrite` or null. A null
+  (non-Npgsql provider, unresolvable type, non-plain identifier) sends that pair to the existing per-pair path, as do a
+  rewind anchor, a bootstrap, a purge marker, an eviction hit and a row conflict.
+- **No unwired types:** the sink ships in the same PR as the worker path that calls it.
