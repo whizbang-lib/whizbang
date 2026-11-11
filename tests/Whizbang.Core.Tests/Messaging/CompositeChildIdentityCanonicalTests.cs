@@ -196,26 +196,18 @@ public class CompositeChildIdentityCanonicalTests {
   }
 
   /// <summary>
-  /// The guard: no code in the library derives a child id except through <see cref="CompositeChildIdentity.ForChild(Guid, int, Type)"/>
-  /// or its wire-name twin, which render the type the one canonical way. A second call site rendering the type its own way
-  /// is how the same child got two ids.
+  /// The guard (#2267): library code cannot call <see cref="CompositeChildIdentity.Derive"/>, nor render a type's versioned
+  /// assembly-qualified name, because both are banned for it at compile time (RS0030). This reads the ban list the
+  /// production projects compile against, so removing an entry fails here before a second rendering can creep back.
   /// </summary>
   [Test]
-  public async Task NoLibraryCode_CallsTheRawDerivationDirectlyAsync() {
-    var src = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src"));
-    var files = Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories)
-      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-               && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-      .ToList();
-    var offenders = new List<string>();
-    foreach (var file in files.Where(f => !f.EndsWith($"{Path.DirectorySeparatorChar}CompositeChildIdentity.cs", StringComparison.Ordinal))) {
-      if ((await File.ReadAllTextAsync(file)).Contains("CompositeChildIdentity.Derive(", StringComparison.Ordinal)) {
-        offenders.Add(Path.GetRelativePath(src, file));
-      }
-    }
+  public async Task TheBanList_ForbidsTheRawDerivation_AndTheVersionedTypeNamesAsync() {
+    var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "BannedSymbols.txt"));
+    var banned = (await File.ReadAllLinesAsync(path)).Select(l => l.Split(';')[0].Trim()).ToHashSet(StringComparer.Ordinal);
 
-    await Assert.That(files.Count).IsGreaterThan(100).Because("a guard over no files proves nothing");
-    await Assert.That(offenders).IsEmpty()
-      .Because("every composite child id goes through CompositeChildIdentity.ForChild, which renders the type one way");
+    await Assert.That(banned).Contains("M:Whizbang.Core.Messaging.CompositeChildIdentity.Derive(System.Guid,System.Int32,System.String)");
+    await Assert.That(banned).Contains("M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedName(System.Type)");
+    await Assert.That(banned).Contains("M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedNameOrNull(System.Type)");
+    await Assert.That(banned).Contains("M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedNameOrDisplay(System.Type)");
   }
 }
