@@ -93,6 +93,14 @@ are the starting inventory.
    (`BaseUpsertStrategy.PreparePendingWrite`), so both write the same bytes. Open for step 4/5: the public entry the
    runner prepares through, and which DbContext the sink writes when a service has more than one.
 3. State source: batched load and known-new detection.
+   **Done** (local commits): `IPerspectiveStateSource` / `IPerspectiveBatchState` and the default
+   `BatchedPerspectiveStateSource` (registered with `TryAddSingleton` by the Postgres driver). A batch reads no row for a
+   stream it knows is new (no cursor, first event first in its stream), and for the rest of a perspective reads the rows
+   once through the store's `ReadForApplyManyAsync`: two statements per table (versions, metadata and scopes with one
+   `id = ANY` read, then the models with one EF query, so every model is materialized as `GetByStreamIdAsync` does). The
+   purge-marker and history probes of the rows it found missing are one query each (`PurgedAmongAsync`,
+   `StreamsWithEventsBeforeAsync`, with per-stream defaults). A failed batched read is logged and each pair reads per
+   stream. Only prepare consults it; a rerun reads afresh. The snapshot count is now per stream (it was per runner).
 4. Runner template: prepare and complete, generated for every perspective, with generator tests.
    **Done** (local commits): `IPerspectiveRunner.PrepareAsync` / `CompleteAsync` (defaults hand every pair to the
    per-pair path), `PreparedPerspectiveApply` + `PerspectivePerPairReason`, `IPerspectiveStore.PrepareWrite` /
@@ -102,7 +110,17 @@ are the starting inventory.
    3 replaces), `_foldAsync`, `_beginRowWriteAsync`, then `_writeRowAsync` (per-pair) or the store's prepare, and
    `_finishApplyAsync`. Complete reruns a hand-back, a conflict or a rejected row through the lock-free per-pair core.
 5. Worker: the set-based batch path behind the mode, with locks taken as a set.
+   **Done** (local commits): `PerspectiveApplyBatch` (lock set, prepare at the governor width, one flush per DbContext
+   through that context's keyed sink and the flush policy, complete with each outcome; a pair's failure stays on the
+   pair). Claimed path: every group's affinity gate in `PerspectiveApplyLockSet.Order`, then begin (resolve,
+   pre-lifecycle), rewind/bootstrap/no-read runners per pair, the rest batched, then the same finish (report, sync,
+   post-lifecycle). Drain path: the first lap of every stream batched (collective sink and per-stream pairs first, per
+   pair), later laps per pair. The per-pair code is the same begin/finish/fail split, so the two cannot drift.
 6. Registration and mode selection, and the resolution test.
+   **Done** (local commits): `PerspectiveWriteMode { SetBased, PerStream }`, `PerspectiveWorkerOptions.WriteMode`
+   (SetBased default), `[PerspectiveWriteMode]` read by the generator, and `PerspectiveWriteModes` (every generated runner
+   registers its declared mode; an unregistered perspective is per stream). `IApplyBatchStrategy` is the flush-policy
+   seam (`FlushEveryBatchStrategy`), registered with the worker; the old unwired strategy is deleted.
 7. Conformance suite across both modes.
 8. Measure: a 100k-stream fan-out, round trips and rows per second, before and after.
 
