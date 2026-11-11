@@ -114,8 +114,12 @@ public sealed partial class MaintenanceWorker(
     }
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();   // the tick requires one anyway, just below
     try {
-      integrityMetrics.UpdateLedgerGauges(
-        await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false));
+      var summary = await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
+      integrityMetrics.UpdateLedgerGauges(summary);
+      // #2261: derived from the seals just read, on every instance as sealed_through is.
+      integrityMetrics.UpdateVerifiedPercent(integrity.VerifiedPercentGaugeEnabled
+        ? Whizbang.Core.Observability.IntegrityCompletion.Verified(summary.Seals)
+        : null);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -144,13 +148,81 @@ public sealed partial class MaintenanceWorker(
       return;
     }
     try {
-      integrityMetrics.UpdateLedgerBacklog(await sp.GetRequiredService<IWorkCoordinator>()
-        .GetIntegrityLedgerBacklogAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false));
+      var coordinator = sp.GetRequiredService<IWorkCoordinator>();
+      var backlog = await coordinator.GetIntegrityLedgerBacklogAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
+      integrityMetrics.UpdateLedgerBacklog(backlog);
+      integrityMetrics.UpdateRepairProgress(await _readRepairProgressAsync(sp, coordinator, integrity, backlog, ct).ConfigureAwait(false));
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
       integrityMetrics.UpdateLedgerBacklog(null);
+      integrityMetrics.UpdateRepairProgress(null);
       LogLedgerBacklogRefreshFailed(_logger, ex);
+    }
+  }
+
+  // #2261: progress and ETA over the rolling window, from the service's shared tally; null (no reading) when both are
+  // switched off or the tally cannot be read.
+  private static async Task<Whizbang.Core.Observability.RepairProgressReading?> _readRepairProgressAsync(
+      IServiceProvider sp, IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions integrity,
+      Whizbang.Core.Observability.LedgerBacklogSnapshot backlog, CancellationToken ct) {
+    if (!_tallies(integrity)) {
+      return null;
+    }
+    var window = TimeSpan.FromMinutes(integrity.RepairProgressWindowMinutes);
+    var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    if (await coordinator.GetIntegrityLedgerTallyAsync(now - window, ct).ConfigureAwait(false) is not { } tally) {
+      return null;
+    }
+    var open = Whizbang.Core.Observability.IntegrityCompletion.RepairableOpenBuckets(backlog);
+    return new Whizbang.Core.Observability.RepairProgressReading {
+      Reported = true,
+      ProgressPercent = integrity.RepairProgressGaugeEnabled
+        ? Whizbang.Core.Observability.IntegrityCompletion.RepairProgressPercent(tally.Opened, tally.Closed)
+        : null,
+      EtaSeconds = integrity.BacklogEtaGaugeEnabled && open is { } buckets
+        ? Whizbang.Core.Observability.IntegrityCompletion.BacklogEtaSeconds(buckets, tally.Opened, tally.Closed, window)
+        : null,
+    };
+  }
+
+  private static bool _tallies(Whizbang.Core.Messaging.StreamIntegrityOptions integrity) =>
+    integrity.RepairProgressGaugeEnabled || integrity.BacklogEtaGaugeEnabled;
+
+  /// <summary>
+  /// Adds the ledger buckets this instance's counters opened and closed since its last write to the service's shared
+  /// tally (#2261), on every instance and every tick, ahead of the maintainer check.
+  /// </summary>
+  /// <remarks>
+  /// The opened and closed counters are per process and start over on a restart; the progress and ETA gauges are per
+  /// service and read a rolling window, so each instance contributes its own counts to one table the reporting instance
+  /// reads. Only what the counters moved is written, and nothing when they did not move. A write that does not land is
+  /// retried on the next tick with the counts it carried, so none are lost while the process lives; the counts of a
+  /// process that stops between two ticks are. Skipped when both derived gauges are switched off.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityCompletionTests.cs</tests>
+  private async Task _flushLedgerTallyAsync(IServiceProvider sp, CancellationToken ct) {
+    var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    if (integrity is null || integrityMetrics is null || !_tallies(integrity)) {
+      return;
+    }
+    var (opened, closed) = integrityMetrics.PendingLedgerTally();
+    if (opened == 0 && closed == 0) {
+      return;
+    }
+    var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    var keepSince = now - (2 * TimeSpan.FromMinutes(integrity.RepairProgressWindowMinutes));
+    try {
+      if (await sp.GetRequiredService<IWorkCoordinator>()
+            .IntegrityAddLedgerTallyAsync(now, opened, closed, keepSince, ct).ConfigureAwait(false)) {
+        integrityMetrics.MarkLedgerTallied(opened, closed);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLedgerTallyWriteFailed(_logger, ex);
     }
   }
 
@@ -159,11 +231,15 @@ public sealed partial class MaintenanceWorker(
     var sp = scope.ServiceProvider;
     // #2024: the integrity gauges first, on every instance and every tick, ahead of the duty check and the idle gate.
     await _refreshLedgerGaugesAsync(sp, ct).ConfigureAwait(false);
+    // #2261: this instance's opened and closed buckets into the service's tally, whoever reports it.
+    await _flushLedgerTallyAsync(sp, ct).ConfigureAwait(false);
     // The sweep is fleet-wide work on shared tables: with the maintainer duty assigned, its holder does it
     // once, rather than every instance sweeping the same rows (#1377), as the vacuum already does
     if (!_isThisInstancesTurn(sp)) {
       // #2256: the backlog is the holder's to report; a reading left from when this instance had the turn is withdrawn.
-      sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.UpdateLedgerBacklog(null);
+      var withdrawn = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      withdrawn?.UpdateLedgerBacklog(null);
+      withdrawn?.UpdateRepairProgress(null);
       LogSkippedNotMaintainer(_logger);
       return;
     }
@@ -1345,6 +1421,10 @@ public sealed partial class MaintenanceWorker(
       new KeyValuePair<string, object?>(
         Whizbang.Core.Observability.StreamIntegrityMetrics.HOW_TAG, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_FORGOTTEN));
   }
+
+  [LoggerMessage(EventId = 72, Level = LogLevel.Debug,
+    Message = "Stream-integrity ledger tally write failed; this instance's opened and closed buckets are written on the next cycle")]
+  static partial void LogLedgerTallyWriteFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 71, Level = LogLevel.Debug,
     Message = "Stream-integrity repair backlog read failed; the backlog gauges report nothing until the next cycle")]

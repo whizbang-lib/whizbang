@@ -64,6 +64,8 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
     _atLeastOne(failures, "UnownedTypeOriginSilenceDays", options.UnownedTypeOriginSilenceDays,
       "it is how long an origin may be silent before its ledger rows for a type no service owns are forgotten, and below a "
       + "day an origin between two checkpoints would read as silent (#2185)");
+    _atLeastOne(failures, "RepairProgressWindowMinutes", options.RepairProgressWindowMinutes,
+      "it is the window repair progress and the backlog ETA are computed over, and an empty window divides by nothing (#2261)");
     if (options.MaxOutstandingRepairAnswers < 0) {
       failures.Add(
         $"Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers must not be negative (was {options.MaxOutstandingRepairAnswers}); " +

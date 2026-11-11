@@ -695,6 +695,17 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityRecordOriginCheckpointAsync_WithoutProviderSupport_KeepsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityRecordOriginCheckpointAsync(Guid.Empty, "origin", null, DateTimeOffset.UnixEpoch, 10);
+    await task;
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue()
+      .Because("an engine with no store keeps no checkpoint, and says so by doing nothing");
+  }
+
+  [Test]
   public async Task IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

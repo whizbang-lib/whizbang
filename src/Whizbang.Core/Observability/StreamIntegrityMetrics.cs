@@ -520,6 +520,27 @@ public sealed class StreamIntegrityMetrics {
       () => _outboundMeasurements(_backlog),
       description: "Integrity deliveries waiting in the queue the maintainer drains; reported by the maintainer duty's holder only");
 
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.verified_percent",
+      () => _verifiedMeasurements(_verified),
+      unit: "%",
+      description: "Derived (#2261): each origin's verified watermark as a percentage of the latest commit sequence its checkpoints announced, by origin_service_id");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.verified_percent_all_origins",
+      () => _optional(_verified.AllOrigins),
+      unit: "%",
+      description: "Derived (#2261): verified_percent over all origins, weighted by the commit sequences each announced");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.repair_progress_percent",
+      () => _optional(_progress.ProgressPercent),
+      unit: "%",
+      description: "Derived (#2261): ledger buckets closed as a percentage of buckets opened over the rolling window, per service; reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.backlog_eta_seconds",
+      () => _optional(_progress.EtaSeconds),
+      unit: "s",
+      description: "Derived (#2261): repairable open buckets over the window's net close rate; no measurement while the backlog is flat or growing; reported by the maintainer duty's holder only");
+
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     LedgerBucketsOpened.Touch(HOW_TAG, _openedHows);
     LedgerBucketsClosed.Touch(HOW_TAG, _closedHows);
@@ -539,6 +560,19 @@ public sealed class StreamIntegrityMetrics {
     new(reading.DigestMismatchBuckets, new KeyValuePair<string, object?>(LedgerBucketKinds.TAG, LedgerBucketKinds.DIGEST_MISMATCH)),
     new(reading.UnknownKindBuckets, new KeyValuePair<string, object?>(LedgerBucketKinds.TAG, LedgerBucketKinds.UNKNOWN)),
   ];
+
+  // #2261: one series per origin with a known latest; none when the reading is withdrawn.
+  private static Measurement<double>[] _verifiedMeasurements(IntegrityVerifiedReading reading) {
+    var measurements = new Measurement<double>[reading.Origins.Count];
+    for (var i = 0; i < reading.Origins.Count; i++) {
+      measurements[i] = new Measurement<double>(reading.Origins[i].Percent,
+        new KeyValuePair<string, object?>("origin_service_id", reading.Origins[i].OriginServiceId.ToString()));
+    }
+    return measurements;
+  }
+
+  // #2261: a derived value with no value reports no measurement, never a sentinel.
+  private static Measurement<double>[] _optional(double? value) => value is { } v ? [new Measurement<double>(v)] : [];
 
   private static readonly string[] _openedHows = [OPENED_NEW, OPENED_REOPENED];
   private static readonly string[] _closedHows = [CLOSED_HEALED, CLOSED_FORGOTTEN, CLOSED_UNHEALABLE];
@@ -643,14 +677,15 @@ public sealed class StreamIntegrityMetrics {
   /// #2261: the buckets the opened and closed counters counted that the shared tally has not been told of yet. The
   /// counters are the source, whoever adds to them, so the tally and the counters cannot disagree.
   /// </summary>
-  internal (long Opened, long Closed) PendingLedgerTally() => (_talliedOpened, _talliedClosed);
+  internal (long Opened, long Closed) PendingLedgerTally() =>
+    (LedgerBucketsOpened.Total - Interlocked.Read(ref _talliedOpened), LedgerBucketsClosed.Total - Interlocked.Read(ref _talliedClosed));
 
   /// <summary>#2261: records that the shared tally now holds these buckets.</summary>
   /// <param name="opened">Buckets opened that were written.</param>
   /// <param name="closed">Buckets closed that were written.</param>
   internal void MarkLedgerTallied(long opened, long closed) {
-    _talliedOpened += opened;
-    _talliedClosed += closed;
+    _ = Interlocked.Add(ref _talliedOpened, opened);
+    _ = Interlocked.Add(ref _talliedClosed, closed);
   }
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;

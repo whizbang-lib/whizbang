@@ -28,6 +28,8 @@ namespace Whizbang.Core.Tests.Workers;
 public class MaintenanceWorkerIntegrityCompletionTests {
   private static readonly DateTimeOffset _now = new(2026, 11, 1, 9, 30, 0, TimeSpan.Zero);
   private static readonly Guid _origin = Guid.Parse("00000000-0000-0000-0000-0000000000a1");
+  private static readonly (long, long)[] _theSameCountsTwice = [(4L, 1L), (4L, 1L)];
+  private static readonly DateTimeOffset[] _halfAnHourBack = [_now.AddMinutes(-30)];
 
   private sealed class CompletionCoordinator : IWorkCoordinator {
     public LedgerGaugeSnapshot Summary { get; set; } = new() { Seals = [new OriginSeal(_origin, 51, 100)] };
@@ -77,12 +79,15 @@ public class MaintenanceWorkerIntegrityCompletionTests {
   }
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
-      CompletionCoordinator coordinator, StreamIntegrityOptions? options = null, DutyHolderWorker? duty = null) {
+      CompletionCoordinator coordinator, StreamIntegrityOptions? options = null, DutyHolderWorker? duty = null,
+      bool withClock = true) {
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton(metrics);
-    services.AddSingleton<TimeProvider>(new FakeTimeProvider(_now));
+    if (withClock) {
+      services.AddSingleton<TimeProvider>(new FakeTimeProvider(_now));
+    }
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions()));
     if (duty is not null) {
       services.AddSingleton(duty);
@@ -146,6 +151,19 @@ public class MaintenanceWorkerIntegrityCompletionTests {
   }
 
   [Test]
+  public async Task WithoutARegisteredClock_TheTallyIsStampedOnTheSystemClockAsync() {
+    var coordinator = new CompletionCoordinator();
+    var (worker, metrics) = _build(coordinator, withClock: false);
+    _count(metrics, opened: 1, closed: 1);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    var write = coordinator.TallyWrites.Single();
+    await Assert.That(write.At - write.KeepSince).IsEqualTo(TimeSpan.FromHours(2))
+      .Because("a host that registers no clock still tallies, on the system clock, keeping twice the window");
+  }
+
+  [Test]
   public async Task ATallyNotWritten_IsWrittenOnTheNextTickAsync() {
     var coordinator = new CompletionCoordinator { TallyWriteSucceeds = false };
     var (worker, metrics) = _build(coordinator);
@@ -159,7 +177,7 @@ public class MaintenanceWorkerIntegrityCompletionTests {
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coordinator.TallyWrites.Select(w => (w.Opened, w.Closed)).ToArray())
-      .IsEquivalentTo(new[] { (4L, 1L), (4L, 1L) })
+      .IsEquivalentTo(_theSameCountsTwice)
       .Because("a write that did not land, or failed, leaves the counts to the next tick rather than losing them");
   }
 
@@ -183,7 +201,7 @@ public class MaintenanceWorkerIntegrityCompletionTests {
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coordinator.TallyReads).IsEquivalentTo(new[] { _now.AddMinutes(-30) });
+    await Assert.That(coordinator.TallyReads).IsEquivalentTo(_halfAnHourBack);
     var reading = metrics.CurrentRepairProgressForTest;
     await Assert.That(reading.Reported).IsTrue();
     await Assert.That(reading.ProgressPercent).IsEqualTo(400.0).Because("400 closed of 100 opened in the window");

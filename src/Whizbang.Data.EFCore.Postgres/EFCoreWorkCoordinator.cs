@@ -873,13 +873,50 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public Task<bool> IntegrityAddLedgerTallyAsync(
-      DateTimeOffset at, long opened, long closed, DateTimeOffset keepSince, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+  /// <remarks>False on any failure (logged), so the caller keeps its counts for the next tick; a canceled write is a
+  /// stopping host and propagates.</remarks>
+  public async Task<bool> IntegrityAddLedgerTallyAsync(
+      DateTimeOffset at, long opened, long closed, DateTimeOffset keepSince, CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync(async (cmd, schema) => {
+        cmd.CommandText = $"SELECT {schema}.wh_integrity_ledger_tally_add(@p_at, @p_opened, @p_closed, @p_keep)";
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_at", at));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_opened", opened));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_closed", closed));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_keep", keepSince));
+        _ = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the counts are written on the next tick.
+      _log.LogWarning(ex, "Integrity ledger tally write failed; this instance's opened and closed buckets are written on the next tick.");
+#pragma warning restore CA1848
+      return false;
+    }
+  }
 
   /// <inheritdoc />
-  public Task<IntegrityLedgerTally?> GetIntegrityLedgerTallyAsync(DateTimeOffset since, CancellationToken cancellationToken = default) =>
-    throw new NotImplementedException();
+  /// <remarks>Null on any failure (logged): the progress and ETA gauges report nothing rather than a zero.</remarks>
+  public async Task<IntegrityLedgerTally?> GetIntegrityLedgerTallyAsync(DateTimeOffset since, CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync<IntegrityLedgerTally?>(async (cmd, schema) => {
+        cmd.CommandText = $"SELECT opened, closed FROM {schema}.wh_integrity_ledger_tally_since(@p_since)";
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", since));
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);   // one row, always
+        return new IntegrityLedgerTally(reader.GetInt64(0), reader.GetInt64(1));
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the gauges report nothing until a read succeeds.
+      _log.LogWarning(ex, "Integrity ledger tally read failed; repair progress and the backlog ETA report nothing this cycle.");
+#pragma warning restore CA1848
+      return null;
+    }
+  }
 
   /// <inheritdoc />
   public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
@@ -991,19 +1028,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
       // #2104: one row per origin, rewritten in place per checkpoint; no indexed column changes, so the update is
       // heap-only. An origin that announces no address keeps the known one.
+      // #2261: the highest watermark announced is kept (GREATEST ignores a NULL), so a late checkpoint never lowers it.
       cmd.CommandText = $"""
         INSERT INTO {schema}.wh_integrity_known_origins AS k
-          (origin_service_id, origin_service_name, request_topic, last_checkpoint_at)
-        VALUES (@p_origin, @p_name, @p_topic, @p_at)
+          (origin_service_id, origin_service_name, request_topic, last_checkpoint_at, last_commit_sequence)
+        VALUES (@p_origin, @p_name, @p_topic, @p_at, @p_latest)
         ON CONFLICT (origin_service_id) DO UPDATE SET
           origin_service_name = EXCLUDED.origin_service_name,
           request_topic = COALESCE(EXCLUDED.request_topic, k.request_topic),
-          last_checkpoint_at = GREATEST(k.last_checkpoint_at, EXCLUDED.last_checkpoint_at)
+          last_checkpoint_at = GREATEST(k.last_checkpoint_at, EXCLUDED.last_checkpoint_at),
+          last_commit_sequence = GREATEST(k.last_commit_sequence, EXCLUDED.last_commit_sequence)
         """;
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_name", originServiceName));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_topic", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)requestTopic ?? DBNull.Value });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_at", checkpointAt));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_latest", NpgsqlTypes.NpgsqlDbType.Bigint) {
+        Value = (object?)latestCommitSequence ?? DBNull.Value
+      });
       return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }, cancellationToken);
 
@@ -1886,12 +1928,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var sealsSchema = BuildSchemaQualifiedName(schema, "wh_integrity_seals");
       await using var sealsCmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified table name built from a validated schema constant.
-      sealsCmd.CommandText = $"SELECT origin_service_id, sealed_through FROM {sealsSchema}";
+      // #2261: with the latest commit sequence the origin's checkpoints announced, for verified_percent.
+      var knownOrigins = BuildSchemaQualifiedName(schema, "wh_integrity_known_origins");
+      sealsCmd.CommandText = $"SELECT s.origin_service_id, s.sealed_through, k.last_commit_sequence FROM {sealsSchema} s LEFT JOIN {knownOrigins} k ON k.origin_service_id = s.origin_service_id";
 #pragma warning restore S2077
       var seals = new List<Whizbang.Core.Observability.OriginSeal>();
       await using (var sealsReader = await sealsCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
         while (await sealsReader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-          seals.Add(new Whizbang.Core.Observability.OriginSeal(sealsReader.GetGuid(0), sealsReader.GetInt64(1)));
+          seals.Add(new Whizbang.Core.Observability.OriginSeal(sealsReader.GetGuid(0), sealsReader.GetInt64(1),
+            await sealsReader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : sealsReader.GetInt64(2)));
         }
       }
       return snapshot with { Seals = seals };
