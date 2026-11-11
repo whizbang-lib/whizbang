@@ -146,7 +146,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     context.RegisterSourceOutput(combined, static (ctx, all) => {
       var (((((receptorEntries, perspectiveEntries), taggedEntries), compositeEntries), collectiveEntries), handledCollectiveEntries) = all.Left;
-      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, handledCollectiveEntries, all.Right);
+      _emitRegistryQuery(ctx, new RegistryQuerySources(
+        receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, handledCollectiveEntries, all.Right));
     });
   }
 
@@ -330,15 +331,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   // ===== Emission =====
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Generator emission walks every (receptor, perspective) pair and renders the routing branches inline; splitting would require building intermediate models for each branch shape, which costs incremental-cache parity.")]
-  private static void _emitRegistryQuery(
-      SourceProductionContext context,
-      ImmutableArray<ReceptorRegistryEntry?> receptors,
-      ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
-      ImmutableArray<ConsumedTypeEntry?> taggedTypes,
-      ImmutableArray<ConsumedTypeEntry?> compositeTypes,
-      ImmutableArray<ConsumedTypeEntry?> collectiveTypes,
-      ImmutableArray<string?> handledCollectiveTypes,
-      string? assemblyName) {
+  private static void _emitRegistryQuery(SourceProductionContext context, RegistryQuerySources sources) {
+    var (receptors, perspectives, taggedTypes, compositeTypes, collectiveTypes, handledCollectiveTypes, assemblyName) = sources;
 
     // The wire form of every consumed type, keyed by the display name the predicate sets hold (#2058).
     var consumed = new System.Collections.Generic.Dictionary<string, ConsumedTypeEntry>(System.StringComparer.Ordinal);
@@ -497,4 +491,21 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     context.AddSource("WhizbangReceptorRegistryQueryRegistration.g.cs", sb.ToString());
   }
+
+  /// <summary>Everything the receptor registry query is emitted from: one compilation's discovered entries and its name.</summary>
+  /// <param name="Receptors">The receptors.</param>
+  /// <param name="Perspectives">Each perspective's handled events.</param>
+  /// <param name="TaggedTypes">Tagged message types consumed.</param>
+  /// <param name="CompositeTypes">Composite types consumed.</param>
+  /// <param name="CollectiveTypes">Collective types consumed.</param>
+  /// <param name="HandledCollectiveTypes">Collective event types a handler applies (#2145).</param>
+  /// <param name="AssemblyName">The compilation's assembly name, which names the contribution (#2243).</param>
+  private sealed record RegistryQuerySources(
+      ImmutableArray<ReceptorRegistryEntry?> Receptors,
+      ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> Perspectives,
+      ImmutableArray<ConsumedTypeEntry?> TaggedTypes,
+      ImmutableArray<ConsumedTypeEntry?> CompositeTypes,
+      ImmutableArray<ConsumedTypeEntry?> CollectiveTypes,
+      ImmutableArray<string?> HandledCollectiveTypes,
+      string? AssemblyName);
 }

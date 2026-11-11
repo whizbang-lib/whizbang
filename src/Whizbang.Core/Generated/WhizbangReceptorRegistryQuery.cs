@@ -156,26 +156,15 @@ public static class WhizbangReceptorRegistryQuery {
     // Unknown until a contribution is counted (#2145); under a host's scope, one of the host's own (#2243).
     var counted = 0;
     var everyOneListed = true;
-    foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
-      if (include is not null && !include(contribution)) {
-        continue;
-      }
+    foreach (var contribution in _included(include)) {
       counted++;
-      foreach (var t in contribution.AnyConsumerTypes) {
-        any.Add(t);
-      }
-      foreach (var t in contribution.InboxHandlerTypes) {
-        inbox.Add(t);
-      }
+      any.UnionWith(contribution.AnyConsumerTypes);
+      inbox.UnionWith(contribution.InboxHandlerTypes);
       _addStageTypes(stages, contribution.StageTypes);
-      foreach (var handled in contribution.HandledMessages) {
-        // Dedupe by type name across assemblies (first contribution wins — the same type
-        // handled in two assemblies carries identical namespace/kind metadata anyway).
-        handledByName.TryAdd(handled.MessageTypeName, handled);
-      }
-      foreach (var consumed in contribution.ConsumedMessages) {
-        consumedByName.TryAdd(consumed.TypeName, consumed);
-      }
+      // Dedupe by type name across assemblies (first contribution wins — the same type
+      // handled in two assemblies carries identical namespace/kind metadata anyway).
+      _addFirst(handledByName, contribution.HandledMessages, static handled => handled.MessageTypeName);
+      _addFirst(consumedByName, contribution.ConsumedMessages, static consumed => consumed.TypeName);
       if (contribution.HandledCollectiveEventTypes is { } collective) {
         handledCollective.UnionWith(collective);
       } else {
@@ -189,6 +178,17 @@ public static class WhizbangReceptorRegistryQuery {
     return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName) {
       HandledCollective = counted > 0 && everyOneListed ? [.. handledCollective] : null,
     };
+  }
+
+  /// <summary>Every registered contribution, or only those <paramref name="include"/> accepts (a host's own, #2243).</summary>
+  private static IEnumerable<ReceptorRegistryContribution> _included(System.Func<ReceptorRegistryContribution, bool>? include) =>
+    AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions().Where(contribution => include?.Invoke(contribution) ?? true);
+
+  /// <summary>Adds each item under its key unless the key is already present: the first contribution wins.</summary>
+  private static void _addFirst<TItem>(Dictionary<string, TItem> byKey, IEnumerable<TItem> items, System.Func<TItem, string> key) {
+    foreach (var item in items) {
+      byKey.TryAdd(key(item), item);
+    }
   }
 
   /// <summary>Merges one contribution's types per lifecycle stage into the snapshot's per-stage sets.</summary>
