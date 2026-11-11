@@ -36,6 +36,8 @@ public class StrongIdQuery {
 public class WhizbangIdGraphQLTests {
   private const string V4 = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
   private const string EMPTY = "00000000-0000-0000-0000-000000000000";
+  private const string NOT_V7 = "The value is not a valid GraphQLOrderId: GraphQLOrderId requires UUIDv7 but received version 4";
+  private const string NOT_A_UUID = "The value is not a valid GraphQLOrderId: it is not a UUID.";
 
   private static async Task<IRequestExecutor> _executorAsync() =>
     await new ServiceCollection()
@@ -128,7 +130,7 @@ public class WhizbangIdGraphQLTests {
   public async Task Argument_WithANonV7Guid_IsAGraphQLErrorAsync() {
     var result = await _executeAsync($"{{ order(id: \"{V4}\") }}");
 
-    await _assertInvalidIdAsync(result, "GraphQLOrderId requires UUIDv7");
+    await _assertInvalidIdAsync(result, NOT_V7);
   }
 
   [Test]
@@ -137,21 +139,21 @@ public class WhizbangIdGraphQLTests {
       "query($id: GraphQLOrderId!) { order(id: $id) }",
       new Dictionary<string, object?> { ["id"] = V4 });
 
-    await _assertInvalidIdAsync(result, "GraphQLOrderId requires UUIDv7");
+    await _assertInvalidIdAsync(result, NOT_V7);
   }
 
   [Test]
   public async Task InputField_WithANonV7Guid_IsAGraphQLErrorAsync() {
     var result = await _executeAsync($"{{ orderFromInput(input: {{ orderId: \"{V4}\" }}) }}");
 
-    await _assertInvalidIdAsync(result, "GraphQLOrderId requires UUIDv7");
+    await _assertInvalidIdAsync(result, NOT_V7);
   }
 
   [Test]
   public async Task Argument_ThatIsNotAUuid_IsAGraphQLErrorAsync() {
     var result = await _executeAsync("{ order(id: \"not-a-uuid\") }");
 
-    await _assertInvalidIdAsync(result, "it is not a UUID");
+    await _assertInvalidIdAsync(result, NOT_A_UUID);
   }
 
   [Test]
@@ -166,23 +168,24 @@ public class WhizbangIdGraphQLTests {
   public async Task AnyVersionId_WithTheEmptyGuid_IsAGraphQLErrorAsync() {
     var result = await _executeAsync($"{{ user(id: \"{EMPTY}\") }}");
 
-    await _assertInvalidIdAsync(result, "GraphQLExternalUserId requires a non-empty Guid");
+    await _assertInvalidIdAsync(result, "The value is not a valid GraphQLExternalUserId: GraphQLExternalUserId requires a non-empty Guid");
   }
 
   [Test]
   public async Task DefaultId_WithTheEmptyGuid_IsAGraphQLErrorAsync() {
     var result = await _executeAsync($"{{ order(id: \"{EMPTY}\") }}");
 
-    await _assertInvalidIdAsync(result, "GraphQLOrderId requires UUIDv7");
+    await _assertInvalidIdAsync(result, "The value is not a valid GraphQLOrderId: GraphQLOrderId requires UUIDv7 but received version 0");
   }
 
-  private static async Task _assertInvalidIdAsync(IOperationResult result, string reason) {
+  /// <summary>The whole message, so a C# detail such as " (Parameter 'value')" cannot reach a client unnoticed.</summary>
+  private static async Task _assertInvalidIdAsync(IOperationResult result, string message) {
     await Assert.That(result.Data).IsNull();
     await Assert.That(result.Errors).IsNotNull();
     await Assert.That(result.Errors!.Count).IsEqualTo(1);
+    await Assert.That(result.Errors[0].Message).IsEqualTo(message);
+    await Assert.That(result.Errors[0].Code).IsEqualTo("WHIZBANG_INVALID_ID");
     var json = result.ToJson();
-    await Assert.That(json).Contains(reason);
-    await Assert.That(json).Contains("WHIZBANG_INVALID_ID");
     await Assert.That(json).DoesNotContain("Unexpected Execution Error");
   }
 }

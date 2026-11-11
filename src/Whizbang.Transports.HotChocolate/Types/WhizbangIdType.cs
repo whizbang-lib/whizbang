@@ -106,8 +106,21 @@ internal sealed class WhizbangIdType : ScalarType {
     try {
       return _fromGuid(guid);
     } catch (ArgumentException ex) {
-      throw _invalid($"The value is not a valid {Name}: {ex.Message}");
+      throw _invalid($"The value is not a valid {Name}: {ReasonOf(ex)}");
     }
+  }
+
+  /// <summary>
+  /// The message of an id's <see cref="ArgumentException"/> without the " (Parameter 'value')" that .NET appends
+  /// for its parameter name: that names a C# parameter, which means nothing to a GraphQL client.
+  /// </summary>
+  /// <param name="exception">The exception the id's <c>From(Guid)</c> threw.</param>
+  /// <returns>The message, without the parameter suffix when it ends with one.</returns>
+  internal static string ReasonOf(ArgumentException exception) {
+    // The suffix as this runtime writes it, in its own language, rather than a copy of the English text.
+    var suffix = new ArgumentException(string.Empty, exception.ParamName).Message;
+    var message = exception.Message;
+    return message.EndsWith(suffix, StringComparison.Ordinal) ? message[..^suffix.Length] : message;
   }
 
   private SerializationException _invalid(string message) =>

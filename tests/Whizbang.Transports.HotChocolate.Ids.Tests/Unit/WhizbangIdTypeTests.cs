@@ -153,4 +153,27 @@ public class WhizbangIdTypeTests {
       .Throws<SerializationException>()
       .WithMessageContaining("GraphQLOrderId requires UUIDv7");
   }
+
+  [Test]
+  public async Task ReasonOf_AnExceptionWithAParameterName_DropsTheParameterSuffixAsync() {
+    var reason = WhizbangIdType.ReasonOf(_refused(4));
+
+    await Assert.That(reason).IsEqualTo("received version 4");
+  }
+
+  [Test]
+  public async Task ReasonOf_AMessageThatDoesNotEndWithTheSuffix_KeepsTheMessageAsync() {
+    // An ArgumentOutOfRangeException writes its actual value after the parameter name.
+    var exception = _outOfRange(5);
+
+    var reason = WhizbangIdType.ReasonOf(exception);
+
+    await Assert.That(reason).IsEqualTo(exception.Message);
+  }
+
+  private static ArgumentException _refused(int version) =>
+    new($"received version {version}", nameof(version));
+
+  private static ArgumentOutOfRangeException _outOfRange(int value) =>
+    new(nameof(value), value, "Out of range");
 }
