@@ -40,6 +40,22 @@ public interface IPerspectivePurgeMarkerStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   Task<bool> IsPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default);
 
+  /// <summary>
+  /// The streams among <paramref name="streamIds"/> that are purged for the perspective: <see cref="IsPurgedAsync"/> for
+  /// many streams at once, which a set-based batch asks for every stream whose row it found missing
+  /// (<see cref="IPerspectiveStateSource"/>). The default asks each stream on its own.
+  /// </summary>
+  /// <param name="streamIds">The streams.</param>
+  /// <param name="perspectiveName">The perspective, as the runner names it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The purged streams.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:PurgedAmongAsync_Default_AsksEachStreamAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs:PurgedAmongAsync_AnswersEveryStreamInOneQueryAsync</tests>
+  Task<IReadOnlySet<Guid>> PurgedAmongAsync(
+      IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
   /// <summary>Records that the perspective purged the stream. Idempotent: a second purge refreshes the marker.</summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="perspectiveName">The perspective, as the runner names it.</param>

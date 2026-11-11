@@ -33,6 +33,26 @@ public class PendingPerspectiveWriteTests {
   }
 
   [Test]
+  public async Task ForSink_KeysTheSameWriteToTheContextsSinkAsync() {
+    var write = PendingPerspectiveWrite.Write(TABLE, Guid.CreateVersion7(), PerspectiveRowVersion.Of(5), _row);
+    var purge = PendingPerspectiveWrite.Purge(TABLE, Guid.CreateVersion7());
+
+    var keyed = write.ForSink(typeof(string));
+    var keyedPurge = purge.ForSink("context-b");
+
+    await Assert.That(write.SinkKey).IsNull().Because("a write names no context until its store keys it");
+    await Assert.That(keyed.SinkKey).IsEqualTo(typeof(string));
+    await Assert.That(keyed.Operation).IsEqualTo(write.Operation);
+    await Assert.That(keyed.Table).IsEqualTo(write.Table);
+    await Assert.That(keyed.StreamId).IsEqualTo(write.StreamId);
+    await Assert.That(keyed.ExpectedVersion).IsEqualTo(write.ExpectedVersion);
+    await Assert.That(keyed.Row).IsSameReferenceAs(write.Row);
+    await Assert.That(keyedPurge.Operation).IsEqualTo(PerspectiveWriteOperation.Purge);
+    await Assert.That(keyedPurge.SinkKey).IsEqualTo("context-b");
+    await Assert.That(() => write.ForSink(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task Write_WithAnAbsentVersion_IsAnInsertAsync() {
     var write = PendingPerspectiveWrite.Write(TABLE, Guid.CreateVersion7(), PerspectiveRowVersion.Absent, _row);
 

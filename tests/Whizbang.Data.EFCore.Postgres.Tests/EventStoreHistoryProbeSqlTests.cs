@@ -123,6 +123,54 @@ public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
       .Because("a perspective that folds nothing can have folded nothing");
   }
 
+  [Test]
+  public async Task StreamsWithEventsBeforeAsync_AnswersEveryStreamInOneQueryAsync() {
+    // The batched probe of a set-based batch (#2246): one statement for every stream whose row it found missing, each
+    // answered exactly as the per-stream typed probe answers it, archived history included.
+    await using var context = CreateDbContext();
+    var conn = await _openAsync(context);
+    IEventStore store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var handledHistory = Guid.NewGuid();
+    var otherHistory = Guid.NewGuid();
+    var laterOnly = Guid.NewGuid();
+    var noHistory = Guid.NewGuid();
+    var archived = Guid.NewGuid();
+    var waking = Guid.CreateVersion7();
+    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-61)), handledHistory, 1,
+      TypeNameFormatter.Format(typeof(HistoryProbeContracts.HandledEvent)));
+    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-61)), otherHistory, 1,
+      TypeNameFormatter.Format(typeof(HistoryProbeContracts.OtherEvent)));
+    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(1)), laterOnly, 1,
+      TypeNameFormatter.Format(typeof(HistoryProbeContracts.HandledEvent)));
+    await using (var ledger = conn.CreateCommand()) {
+      ledger.CommandText = """
+        INSERT INTO wh_stream_lifecycle (stream_id, stream_type, first_appended_at, last_appended_bucket, last_version, state, archive_locator)
+        VALUES (@s, 'TestAggregate', NOW(), NOW(), 2, 'Archived', 'archive-a')
+        """;
+      ledger.Parameters.AddWithValue("s", archived);
+      await ledger.ExecuteNonQueryAsync();
+    }
+    (Guid, Guid)[] probes = [(handledHistory, waking), (otherHistory, waking), (laterOnly, waking), (noHistory, waking), (archived, waking)];
+    Type[] types = [typeof(HistoryProbeContracts.HandledEvent)];
+    var perStream = new HashSet<Guid>();
+    foreach (var (streamId, before) in probes) {
+      if (await store.HasStreamEventsBeforeAsync(streamId, before, types)) {
+        perStream.Add(streamId);
+      }
+    }
+
+    using var statements = new Perspectives.NpgsqlStatementLog(ConnectionString);
+    var batched = await store.StreamsWithEventsBeforeAsync(probes, types);
+
+    await Assert.That(batched).IsEquivalentTo(perStream).Because("the batched probe answers each stream as the per-stream probe does");
+    await Assert.That(batched).IsEquivalentTo(new[] { handledHistory, archived });
+    await Assert.That(statements.Matching("wh_event_store")).Count().IsEqualTo(1)
+      .Because("every stream is answered by one statement");
+    await Assert.That(await store.StreamsWithEventsBeforeAsync([], types)).IsEmpty();
+    await Assert.That(await store.StreamsWithEventsBeforeAsync(probes, [])).IsEmpty()
+      .Because("a perspective that folds nothing can have folded nothing");
+  }
+
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext context) {
     var conn = (NpgsqlConnection)context.Database.GetDbConnection();
     if (conn.State != ConnectionState.Open) {

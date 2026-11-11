@@ -500,6 +500,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       string perspectiveName,
       Guid? lastProcessedEventId,
       IReadOnlyList<MessageEnvelope<IEvent>> events,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
       CancellationToken cancellationToken = default) {
 
     events = _orderForApply(events);

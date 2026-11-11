@@ -6387,6 +6387,17 @@ public class PerspectiveWorkerOptions {
   public int MaxConcurrentPerspectives { get; set; } = 30;
 
   /// <summary>
+  /// How the service writes its perspectives' rows (#2246). <see cref="PerspectiveWriteMode.SetBased"/>, the default,
+  /// prepares every (stream, perspective) pair of a batch and writes the batch's rows with a few set-based statements
+  /// per table; <see cref="PerspectiveWriteMode.PerStream"/> writes each pair on its own, as before set-based writes. A
+  /// perspective overrides it with <see cref="PerspectiveWriteModeAttribute"/>; a perspective with no generated runner
+  /// is always written per stream.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#selection</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
+
+  /// <summary>
   /// Slice 17: number of parallel consumer loops running on the channel reader. Each loop
   /// independently waits for work, builds a batch, and runs <c>ProcessChannelBatchAsync</c>
   /// (which itself parallelizes per-stream-perspective up to <see cref="MaxConcurrentPerspectives"/>).

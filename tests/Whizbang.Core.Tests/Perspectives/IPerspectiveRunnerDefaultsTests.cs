@@ -105,6 +105,25 @@ public class IPerspectiveRunnerDefaultsTests {
   }
 
   [Test]
+  public async Task PrepareAsync_WithABatchState_Default_HandsThePairToThePerPairPathAsync() {
+    IPerspectiveRunner runner = new MinimalRunner();
+    var batch = new BatchedPerspectiveStateSource().BeginBatch([]);
+
+    var prepared = await runner.PrepareAsync(Guid.NewGuid(), "P", null, [], batch, CancellationToken.None);
+
+    await Assert.That(prepared.PerPairReason).IsEqualTo(PerspectivePerPairReason.RunnerDoesNotPrepare)
+      .Because("a hand-written runner reads nothing from a batch, so its pair takes the per-pair path whole");
+  }
+
+  [Test]
+  public async Task ReadEventsAsync_Default_ReturnsNullAsync() {
+    // A hand-written runner does not expose its read: the batch runs its claimed pair with RunAsync, per pair.
+    IPerspectiveRunner runner = new MinimalRunner();
+
+    await Assert.That(await runner.ReadEventsAsync(Guid.NewGuid(), null)).IsNull();
+  }
+
+  [Test]
   public async Task CompleteAsync_Default_RunsAPerPairPairThroughRunWithEventsAsync() {
     var runner = new RecordingRunner();
     var streamId = Guid.NewGuid();

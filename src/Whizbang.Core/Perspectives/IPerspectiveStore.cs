@@ -71,6 +71,25 @@ public interface IPerspectiveStore<TModel> where TModel : class {
     => Task.FromResult(PerspectiveApplyRead.Unchecked);
 
   /// <summary>
+  /// Reads what <see cref="ReadForApplyAsync"/> and <see cref="GetByStreamIdAsync"/> read, for many streams at once: the
+  /// batched row read of a set-based batch (<see cref="IPerspectiveStateSource"/>).
+  /// </summary>
+  /// <remarks>
+  /// The versions are read before the models, as the per-stream read does, so no model is older than the version its
+  /// write is checked against. A stream whose row is absent is left out of the result. The default returns null, and
+  /// the runner then reads each stream on its own.
+  /// </remarks>
+  /// <param name="streamIds">The streams.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The present rows by stream, or null when the store does not read rows in batches.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:ReadForApplyManyAsync_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
+  Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?> ReadForApplyManyAsync(
+      IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?>(null);
+
+  /// <summary>
   /// Insert or update a read model.
   /// Creates new row if id doesn't exist, updates if it does.
   /// Automatically increments version for optimistic concurrency.

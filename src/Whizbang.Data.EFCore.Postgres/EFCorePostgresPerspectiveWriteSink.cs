@@ -23,8 +23,11 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <docs>fundamentals/perspectives/write-modes</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SetBasedPerspectiveWriteSinkTests.cs</tests>
 public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimeProvider? timeProvider = null) : IPerspectiveWriteSink {
-  private readonly DbContext _context = context ?? throw new ArgumentNullException(nameof(context));
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+  /// <summary>The context this sink writes through.</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverRegistrationTests.cs:Postgres_WithTwoContexts_RegistersASinkOverEachAsync</tests>
+  public DbContext Context { get; } = context ?? throw new ArgumentNullException(nameof(context));
 
   /// <inheritdoc/>
   public async Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
@@ -33,11 +36,11 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
     if (writes.Count == 0) {
       return [];
     }
-    if (!PerspectiveRowVersionSql.Supports(_context)) {
+    if (!PerspectiveRowVersionSql.Supports(Context)) {
       throw new InvalidOperationException(
-        $"{nameof(EFCorePostgresPerspectiveWriteSink)} writes through Npgsql, and {_context.GetType().Name} is configured with another provider.");
+        $"{nameof(EFCorePostgresPerspectiveWriteSink)} writes through Npgsql, and {Context.GetType().Name} is configured with another provider.");
     }
-    var connection = (NpgsqlConnection)_context.Database.GetDbConnection();
+    var connection = (NpgsqlConnection)Context.Database.GetDbConnection();
 
     var openedHere = connection.State != System.Data.ConnectionState.Open;
     if (openedHere) {
@@ -49,7 +52,7 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
     try {
       outcomes = await PostgresPerspectiveWriter.WriteAsync(
         connection,
-        _context.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction,
+        Context.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction,
         writes,
         _timeProvider.GetUtcNow().UtcDateTime,
         cancellationToken).ConfigureAwait(false);

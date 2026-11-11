@@ -35,7 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase {
+public partial class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase {
   private const string ACTION_TABLE = "wh_per_action_test";
   private const string PROGRESS_TABLE = "wh_per_item_progress";
   private const string SPLIT_CLASS_TABLE = "wh_per_split_class_snapshot";

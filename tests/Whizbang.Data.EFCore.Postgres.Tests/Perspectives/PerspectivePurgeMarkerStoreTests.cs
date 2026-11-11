@@ -60,6 +60,27 @@ public class PerspectivePurgeMarkerStoreTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task PurgedAmongAsync_AnswersEveryStreamInOneQueryAsync() {
+    // The batched probe of a set-based batch (#2246): one statement for every stream whose row it found missing.
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    IPerspectivePurgeMarkerStore markers = new PostgresPerspectivePurgeMarkerStore(dataSource.OpenConnectionAsync);
+    var perspectiveOnly = Guid.CreateVersion7();
+    var wholeStream = Guid.CreateVersion7();
+    var otherPerspective = Guid.CreateVersion7();
+    var live = Guid.CreateVersion7();
+    await markers.MarkPurgedAsync(perspectiveOnly, PERSPECTIVE_NAME, null);
+    await markers.MarkPurgedAsync(wholeStream, PerspectivePurgeMarkers.ALL_PERSPECTIVES, null);
+    await markers.MarkPurgedAsync(otherPerspective, "another_perspective", null);
+
+    using var statements = new NpgsqlStatementLog(ConnectionString);
+    var purged = await markers.PurgedAmongAsync([perspectiveOnly, wholeStream, otherPerspective, live], PERSPECTIVE_NAME);
+
+    await Assert.That(purged).IsEquivalentTo(new[] { perspectiveOnly, wholeStream });
+    await Assert.That(statements.Matching("wh_stream_purge_markers")).Count().IsEqualTo(1);
+    await Assert.That(await markers.PurgedAmongAsync([], PERSPECTIVE_NAME)).IsEmpty();
+  }
+
+  [Test]
   public async Task AStoreForAnotherSchema_ReadsAndWritesThatSchemasTable_AndLeavesPublicAloneAsync() {
     // A service whose tables live outside public, reached over the shared data source whose search path is
     // public: the store must qualify the table, or every apply fails on a missing relation.

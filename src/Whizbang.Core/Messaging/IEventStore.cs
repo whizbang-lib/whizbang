@@ -164,6 +164,23 @@ public interface IEventStore {
     Task.FromResult(false);
 
   /// <summary>
+  /// The typed history probe (<see cref="HasStreamEventsBeforeAsync(Guid, Guid, IReadOnlyList{Type}, CancellationToken)"/>)
+  /// for many streams at once, which a set-based batch asks for every stream whose row it found missing
+  /// (<see cref="Perspectives.IPerspectiveStateSource"/>). The default asks each stream on its own.
+  /// </summary>
+  /// <param name="probes">Each stream, with the event its history is asked before.</param>
+  /// <param name="eventTypes">The event types the perspective folds.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The streams that hold such history (or archived history).</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:StreamsWithEventsBeforeAsync_Default_AsksEachStreamAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:StreamsWithEventsBeforeAsync_AnswersEveryStreamInOneQueryAsync</tests>
+  Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+      IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <summary>
   /// The business time a stream started at, when the stream no longer holds its first event (#2152): the superseding
   /// reaper or a prefix truncate removed it. Null while the stream holds its first event, so a perspective row folded
   /// from it is dated by the first event it folds (#2154). The default returns null: a store that does not remove

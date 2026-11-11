@@ -90,6 +90,12 @@ public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventS
     Inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, eventTypes, cancellationToken);
 
   /// <inheritdoc />
+  public virtual Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+      IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+    Inner.StreamsWithEventsBeforeAsync(probes, eventTypes, cancellationToken);
+
+  /// <inheritdoc />
   public virtual Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
     Inner.GetStreamStartedAtAsync(streamId, cancellationToken);
 }

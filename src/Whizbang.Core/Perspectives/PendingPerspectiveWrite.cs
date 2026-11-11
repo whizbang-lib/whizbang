@@ -106,6 +106,21 @@ public sealed class PendingPerspectiveWrite {
   /// <summary>The values written, or null for a purge.</summary>
   public PerspectiveRowValues? Row { get; }
 
+  /// <summary>
+  /// The key the write sink of the row's DbContext is registered under (the context's type for the Entity Framework
+  /// driver), or null for the sink registered without a key. A batch writes each context's rows through that context's
+  /// own sink, so a service with several contexts writes every perspective through its own.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  public object? SinkKey { get; }
+
+  /// <summary>The same write, for the sink registered under <paramref name="sinkKey"/>.</summary>
+  /// <param name="sinkKey">The key of the sink of the row's DbContext.</param>
+  /// <returns>The write, keyed to that sink.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PendingPerspectiveWriteTests.cs:ForSink_KeysTheSameWriteToTheContextsSinkAsync</tests>
+  public PendingPerspectiveWrite ForSink(object sinkKey) =>
+    throw new NotImplementedException($"Keying the write of {Table} to {sinkKey} is not implemented.");
+
   /// <summary>An upsert, insert or update of a row, decided by the version the apply read.</summary>
   /// <param name="table">The schema-qualified, quoted perspective table.</param>
   /// <param name="streamId">The stream, which is the row's id.</param>

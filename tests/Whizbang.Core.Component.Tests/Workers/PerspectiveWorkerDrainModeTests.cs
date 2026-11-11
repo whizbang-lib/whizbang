@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies that when WorkBatch.PerspectiveStreamIds is populated,
 /// the worker batch-fetches events and uses RunWithEventsAsync.
 /// </summary>
-public class PerspectiveWorkerDrainModeTests {
+public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
