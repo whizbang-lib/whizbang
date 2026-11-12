@@ -331,6 +331,14 @@ public static class TypeNameUtilities {
     return assembly.Identity.Version;
   }
 
+  /// <summary>An assembly symbol's simple name, from its identity (#2267).</summary>
+  public static string AssemblyIdentityName(IAssemblySymbol assembly) {
+    if (assembly == null) {
+      throw new ArgumentNullException(nameof(assembly));
+    }
+    return assembly.Identity.Name;
+  }
+
   /// <summary>An assembly's simple name, the prefix of its embedded resource names (#2267).</summary>
   public static string? AssemblySimpleName(System.Reflection.Assembly assembly) {
     if (assembly == null) {

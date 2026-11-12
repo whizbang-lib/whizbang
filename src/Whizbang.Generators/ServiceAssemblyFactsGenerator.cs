@@ -57,7 +57,7 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
     var marker = compilation.GetTypeByMetadataName(MARKER_ATTRIBUTE);
     var references = compilation.SourceModule.ReferencedAssemblySymbols
       .Where(assembly => assembly.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, marker)))
-      .Select(assembly => assembly.Identity.Name)
+      .Select(TypeNameUtilities.AssemblyIdentityName)
       .Distinct()
       .OrderBy(name => name, System.StringComparer.Ordinal)
       .ToArray();

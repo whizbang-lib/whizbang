@@ -74,7 +74,7 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
     ConnectionStringName = connectionStringName;
     // #2243: the DbContext names the host's service, so the host replays its own service's generated registrations
     // and not those of every service loaded in the process.
-    Whizbang.Core.WhizbangServiceScopeExtensions.AddWhizbangServiceAnchor(services, dbContextType.Assembly.GetName().Name!);
+    Whizbang.Core.WhizbangServiceScopeExtensions.AddWhizbangServiceAnchor(services, Whizbang.Core.TypeNameFormatter.AssemblySimpleName(dbContextType.Assembly)!);
   }
 
   /// <summary>

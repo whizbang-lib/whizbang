@@ -33,6 +33,7 @@ public class TypeNameUtilitiesNamingTests {
     await Assert.That(TypeNameUtilities.AssemblyOf(order)).IsEqualTo(compilation.Assembly);
     await Assert.That(TypeNameUtilities.Display(order, SymbolDisplayFormat.MinimallyQualifiedFormat)).IsEqualTo("Order<T>");
     await Assert.That(TypeNameUtilities.AssemblyIdentityVersion(compilation.Assembly)).IsEqualTo(compilation.Assembly.Identity.Version);
+    await Assert.That(TypeNameUtilities.AssemblyIdentityName(compilation.Assembly)).IsEqualTo(compilation.Assembly.Identity.Name);
   }
 
   [Test]
@@ -62,6 +63,7 @@ public class TypeNameUtilitiesNamingTests {
     await Assert.That(() => TypeNameUtilities.AssemblyOf(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => TypeNameUtilities.Display(null!, SymbolDisplayFormat.MinimallyQualifiedFormat)).Throws<ArgumentNullException>();
     await Assert.That(() => TypeNameUtilities.AssemblyIdentityVersion(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => TypeNameUtilities.AssemblyIdentityName(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => TypeNameUtilities.AssemblySimpleName(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => TypeNameUtilities.AssemblyVersion(null!)).Throws<ArgumentNullException>();
   }
