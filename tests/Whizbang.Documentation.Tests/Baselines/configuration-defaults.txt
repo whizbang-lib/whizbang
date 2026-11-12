@@ -93,6 +93,7 @@ Whizbang:DebuggerAwareClock:FrozenThreshold=10
 Whizbang:DebuggerAwareClock:Mode=Auto
 Whizbang:DebuggerAwareClock:SamplingInterval=00:00:00.1000000
 Whizbang:DisableGuidTracking=false
+Whizbang:Ephemeral:BlockerReport:Enabled=true
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup=false
 Whizbang:EventStore:Metadata:ConvertHistory=true
 Whizbang:EventStore:Metadata:WriteForm=Linked
