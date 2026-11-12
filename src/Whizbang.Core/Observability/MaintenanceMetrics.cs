@@ -71,6 +71,13 @@ public sealed class MaintenanceMetrics {
   public void RecordRetentionAdopted(string clrTypeName, long backlog) =>
     RetentionAdopted.Add(Math.Max(0, backlog), new KeyValuePair<string, object?>("perspective", clrTypeName));
 
+  /// <summary>Replaces the pending-reclamation reading the gauges report (#2289).</summary>
+  /// <param name="reading">The reading; <see cref="PendingReclamation.None"/> reports nothing.</param>
+  public void UpdatePendingReclamation(PendingReclamation reading) {
+    // RED stub (#2289): nothing is reported yet.
+    _ = (reading, RowsAffected);
+  }
+
   /// <summary>Records one task's cycle outcome. Duration always records; rows only when &gt; 0.</summary>
   /// <param name="taskName">The maintenance task name (e.g. <c>reap_expired_perspective_rows</c>).</param>
   /// <param name="rowsAffected">Rows the task affected this cycle.</param>
