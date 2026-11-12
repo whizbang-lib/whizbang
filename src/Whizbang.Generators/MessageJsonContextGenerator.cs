@@ -3931,10 +3931,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var fqnByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
-    var livingClrNames = new HashSet<string>(StringComparer.Ordinal);
+    var livingQualifiedNames = new HashSet<string>(StringComparer.Ordinal);
     foreach (var message in messageTypes) {
       fqnByClrName[message.ClrTypeName] = message.FullyQualifiedName;
-      livingClrNames.Add(message.ClrTypeName);
+      livingQualifiedNames.Add($"{message.ClrTypeName}, {actualAssemblyName}");
     }
 
     var emitted = new List<string>();
@@ -3944,12 +3944,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       if (!fqnByClrName.TryGetValue(alias.CurrentClrTypeName, out var fullyQualifiedName)) {
         continue;
       }
+      // A bare former name lived in this assembly; one the ledger records with an assembly (the type moved from another
+      // assembly, #2264) is the name its old events carry, as recorded.
+      var formerQualified = PinnedTypeLedger.AssemblyOf(alias.FormerClrTypeName) is null
+        ? $"{alias.FormerClrTypeName}, {actualAssemblyName}"
+        : alias.FormerClrTypeName;
       // Never shadow a live type that reuses the former name, and de-dupe.
-      if (livingClrNames.Contains(alias.FormerClrTypeName) || !seenFormerNames.Add(alias.FormerClrTypeName)) {
+      if (livingQualifiedNames.Contains(formerQualified) || !seenFormerNames.Add(formerQualified)) {
         continue;
       }
 
-      var formerQualified = $"{alias.FormerClrTypeName}, {actualAssemblyName}";
       emitted.Add(
         REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerQualified}\",\n" +
@@ -4004,12 +4008,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
 
       // Record the relationship for both abstract and non-abstract base classes
-      // so derived types are discovered for polymorphic serialization
-      inheritanceList.Add(new InheritanceInfo(
-          DerivedTypeName: derivedTypeName,
-          BaseTypeName: baseTypeName,
-          IsInterface: false
-      ));
+      // so derived types are discovered for polymorphic serialization. A constructed generic base
+      // ("BaseCommand<OrderId>") has no metadata name, so the by-name check that leaves abstract bases
+      // out cannot see it; an abstract one is left out here, where its symbol is at hand (#2072).
+      if (!(currentBase.IsGenericType && currentBase.IsAbstract)) {
+        inheritanceList.Add(new InheritanceInfo(
+            DerivedTypeName: derivedTypeName,
+            BaseTypeName: baseTypeName,
+            IsInterface: false
+        ));
+      }
 
       currentBase = currentBase.BaseType;
     }

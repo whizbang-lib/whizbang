@@ -139,4 +139,47 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </code>
   /// </example>
   public bool SuppressDuplicateWarning { get; set; }
+
+  /// <summary>
+  /// Gets or sets whether the generated ID takes a Guid of any version, rather than UUIDv7 only.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_AcceptAnyVersionProperty_CanBeSetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdVersionAcceptanceTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdAcceptAnyVersionTests.cs</tests>
+  /// <remarks>
+  /// <para>
+  /// By default (<c>false</c>) <c>From(Guid)</c>, <c>From(TrackedGuid)</c>, <c>Parse</c>, the explicit cast and the
+  /// generated JSON converter throw <see cref="ArgumentException"/> unless the Guid is UUIDv7. Set this to <c>true</c>
+  /// for identities that are not, and cannot become, v7: name-derived ids (v5, v8), hash-derived ids, and v4 ids
+  /// issued by an external identity provider.
+  /// </para>
+  /// <para>
+  /// With the option, the checked entry points (<c>From</c>, <c>Parse</c>, the explicit cast and the transport JSON
+  /// reader) take any Guid except <see cref="Guid.Empty"/>, which throws <see cref="ArgumentException"/>.
+  /// <c>New()</c> still produces a UUIDv7. The public constructor and the <c>Value</c> initializer stay unchecked on
+  /// every id, with or without the option: they are the load path for EF Core materialization and the persistence
+  /// converter, so a stored row whose id field was never set still loads.
+  /// </para>
+  /// <para>
+  /// On an id with the option, values are no longer known to be UUIDv7: <c>CompareTo</c> and the <c>&lt;</c>,
+  /// <c>&lt;=</c>, <c>&gt;</c> and <c>&gt;=</c> operators no longer order by creation time, and for a value that is
+  /// not UUIDv7, <c>IsTimeOrdered</c> is <c>false</c> and <c>GetTimestamp()</c> returns no meaningful time. The id
+  /// type also loses the index locality that time-ordered values give a database. The framework's ordering
+  /// guarantees are unaffected: they rely on the message and event ids the framework mints, and a stream id is only
+  /// hashed for partitioning and sorted for lock ordering, neither of which depends on its version.
+  /// </para>
+  /// <para>
+  /// Set the option the same way on every <c>[WhizbangId]</c> for an id (the struct, a property, a parameter). When
+  /// they disagree, the id keeps the UUIDv7 rule and WHIZ029 is reported at each ignored opt-in.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// [WhizbangId(AcceptAnyVersion = true)]
+  /// public readonly partial struct ExternalUserId;
+  ///
+  /// var id = ExternalUserId.From(Guid.Parse("3f2504e0-4f89-41d3-9a0c-0305e82c3301")); // v4: accepted
+  /// </code>
+  /// </example>
+  public bool AcceptAnyVersion { get; set; }
 }

@@ -14,7 +14,9 @@ namespace Whizbang.Core;
 /// </summary>
 /// <remarks>
 /// Manual string building (no <c>System.Text.Json</c> reflection) keeps this trim/AOT friendly. The array shape is
-/// <c>[{"ClrTypeName":"…","PinnedId":"guid-or-null","Kind":"…","FormerNames":["old", …]}]</c>.
+/// <c>[{"ClrTypeName":"…","PinnedId":"guid-or-null","Kind":"…","FormerNames":["old", …]}]</c>. The registry's
+/// <c>clr_type_name</c> is the bare CLR name, so each former name is sent bare, without an assembly the ledger may record
+/// for a type that moved assemblies (#2264).
 /// </remarks>
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 /// <tests>tests/Whizbang.Core.Tests/MessageTypeRegistryJsonTests.cs</tests>
@@ -30,7 +32,7 @@ public static class MessageTypeRegistryJson {
       sb.Append("{\"ClrTypeName\":").Append(JsonString(e.ClrTypeName))
         .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : JsonString(e.PinnedId))
         .Append(",\"Kind\":").Append(JsonString(e.Kind))
-        .Append(",\"FormerNames\":").Append(JsonArray(e.FormerNames))
+        .Append(",\"FormerNames\":").Append(JsonArray([.. e.FormerClrTypeNames()]))
         .Append('}');
     }
     sb.Append(']');

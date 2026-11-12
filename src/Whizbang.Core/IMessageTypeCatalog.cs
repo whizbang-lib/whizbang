@@ -10,7 +10,9 @@ namespace Whizbang.Core;
 /// IPerspectiveFor&lt;&gt; type known to the current compilation.
 /// </summary>
 /// <param name="Type">The concrete CLR type.</param>
-/// <param name="ClrTypeName">The current CLR type name as produced by <c>TypeNameFormatter.Format</c>.</param>
+/// <param name="ClrTypeName">The current CLR type name as produced by <c>TypeNameFormatter.FormatClrTypeName</c>: the bare
+/// form, without the assembly. The event store's <c>event_type</c> holds the stored form, <c>TypeNameFormatter.Format(Type)</c>
+/// (#2254).</param>
 /// <param name="Kind">One of <c>"event"</c>, <c>"command"</c>, <c>"message"</c> (a plain message, neither command nor
 /// event, #2074) or <c>"perspective"</c>.</param>
 /// <param name="PinnedId">The GUID from <c>[PinnedId]</c>, or null if the type is not pinned.</param>
@@ -27,6 +29,18 @@ public sealed record MessageTypeCatalogEntry(
   /// a stale <c>wh_message_type_registry</c> row (old name -&gt; current name) in place.
   /// </summary>
   public IReadOnlyList<string> FormerNames { get; init; } = [];
+
+  /// <summary>
+  /// The bare CLR names of <see cref="FormerNames"/>, for the lookups keyed by the bare name (the registry reconcile, the
+  /// marker resolver, the declared-kind lookup). The ledger records a former name with its assembly when the type moved
+  /// from another assembly (#2264); the history walks and the rewind grace keep that assembly through
+  /// <see cref="TypeNameFormatter.FormatFormerName"/>, and these lookups read only its name part.
+  /// </summary>
+  /// <returns>Each distinct bare former name, blank names skipped.</returns>
+  /// <docs>fundamentals/identity/pinned-type-ledger#a-type-that-moves-to-another-assembly</docs>
+  /// <tests>tests/Whizbang.Core.Tests/FormerNameFromAnotherAssemblyTests.cs:TheRegistryReconcile_IsGivenTheBareFormerName_ItsRowsAreKeyedByAsync</tests>
+  internal IEnumerable<string> FormerClrTypeNames() =>
+    FormerNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(TypeNameFormatter.GetFullName).Distinct(StringComparer.Ordinal);
 
   /// <summary>
   /// The type's resolved ephemeral mode, or <c>null</c> when it is Sourced (the durable default). The

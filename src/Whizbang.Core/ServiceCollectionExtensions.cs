@@ -454,6 +454,8 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<GovernorMetrics>();
     services.TryAddSingleton<EventCategoryMetrics>();
     services.TryAddSingleton<TypeRegistryMetrics>();
+    // #2250: the ephemeral blocker report's gauge, and the once-per-process startup summary it remembers.
+    services.TryAddSingleton<EphemeralBlockerMetrics>();
 
     // Cross-worker dedup: prevents same message+stage from firing twice
     services.TryAddSingleton<Messaging.LifecycleStageTracker>();

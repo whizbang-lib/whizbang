@@ -72,8 +72,8 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   [Test]
   public async Task PopulateAsync_InsertsPinnedTypesAsync() {
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
-      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.PinnedCommand, Sample", "command", "22222222-2222-2222-2222-222222222222"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.PinnedCommand", "command", "22222222-2222-2222-2222-222222222222"),
     ]);
 
     var populator = new DapperMessageTypeRegistryPopulator(catalog, _connectionFactory!);
@@ -81,14 +81,14 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
 
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(2);
-    await Assert.That(rows.Any(r => r.PinnedId == new Guid("11111111-1111-1111-1111-111111111111") && r.ClrTypeName == "Sample.PinnedEvent, Sample" && r.Kind == "event")).IsTrue();
-    await Assert.That(rows.Any(r => r.PinnedId == new Guid("22222222-2222-2222-2222-222222222222") && r.ClrTypeName == "Sample.PinnedCommand, Sample" && r.Kind == "command")).IsTrue();
+    await Assert.That(rows.Any(r => r.PinnedId == new Guid("11111111-1111-1111-1111-111111111111") && r.ClrTypeName == "Sample.PinnedEvent" && r.Kind == "event")).IsTrue();
+    await Assert.That(rows.Any(r => r.PinnedId == new Guid("22222222-2222-2222-2222-222222222222") && r.ClrTypeName == "Sample.PinnedCommand" && r.Kind == "command")).IsTrue();
   }
 
   [Test]
   public async Task PopulateAsync_InsertsUnpinnedTypesWithNullPinnedIdAsync() {
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.UnpinnedEvent, Sample", "event", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.UnpinnedEvent", "event", null),
     ]);
 
     var populator = new DapperMessageTypeRegistryPopulator(catalog, _connectionFactory!);
@@ -97,14 +97,14 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
     await Assert.That(rows[0].PinnedId).IsNull();
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Sample.UnpinnedEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Sample.UnpinnedEvent");
     await Assert.That(rows[0].Kind).IsEqualTo("event");
   }
 
   [Test]
   public async Task PopulateAsync_IsIdempotent_UpdatesTimestampOnReRunAsync() {
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.PinnedEvent", "event", "11111111-1111-1111-1111-111111111111"),
     ]);
 
     var populator = new DapperMessageTypeRegistryPopulator(catalog, _connectionFactory!);
@@ -123,20 +123,20 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   public async Task PopulateAsync_PinnedRenameDetected_DoesNotOverwriteAsync() {
     // Initial run: pinned type with CLR name "Old.Namespace.FooEvent"
     var catalog1 = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent", "event", "11111111-1111-1111-1111-111111111111"),
     ]);
     await new DapperMessageTypeRegistryPopulator(catalog1, _connectionFactory!).PopulateAsync();
 
     // Subsequent run: same pinned_id, different CLR name (namespace was renamed)
     var catalog2 = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent", "event", "11111111-1111-1111-1111-111111111111"),
     ]);
     await new DapperMessageTypeRegistryPopulator(catalog2, _connectionFactory!).PopulateAsync();
 
     // Registry row remains pointing at the old CLR name — drift is reported, not reconciled.
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent");
     await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid("11111111-1111-1111-1111-111111111111"));
   }
 
@@ -145,20 +145,20 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
     const string id = "11111111-1111-1111-1111-111111111111";
     // Initial run: registry holds the OLD CLR name.
     await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", id),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent", "event", id),
     ]), _connectionFactory!).PopulateAsync();
 
     // Re-populate: same pinned_id, NEW name, with the OLD name recorded as a former name in the ledger.
     var logger = new CapturingLogger<DapperMessageTypeRegistryPopulator>();
     await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", id)
-        { FormerNames = ["Old.Namespace.FooEvent, Sample"] },
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent", "event", id)
+        { FormerNames = ["Old.Namespace.FooEvent"] },
     ]), _connectionFactory!, logger).PopulateAsync();
 
     // The acknowledged rename is reconciled in place: the row now holds the NEW name, same pinned_id.
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("New.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("New.Namespace.FooEvent");
     await Assert.That(rows[0].PinnedId).IsEqualTo(new Guid(id));
     await Assert.That(logger.Messages.Any(m => m.Contains("1 renamed", StringComparison.Ordinal))).IsTrue();
   }
@@ -167,18 +167,18 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   public async Task PopulateAsync_UnacknowledgedRename_NotOverwrittenEvenWithOtherFormerNamesAsync() {
     const string id = "11111111-1111-1111-1111-111111111111";
     await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent, Sample", "event", id),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Old.Namespace.FooEvent", "event", id),
     ]), _connectionFactory!).PopulateAsync();
 
     // Former names are recorded, but NONE of them is the stored old name -> still drift, not overwritten.
     await new DapperMessageTypeRegistryPopulator(new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent, Sample", "event", id)
-        { FormerNames = ["Some.Other.PriorName, Sample"] },
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "New.Namespace.FooEvent", "event", id)
+        { FormerNames = ["Some.Other.PriorName"] },
     ]), _connectionFactory!).PopulateAsync();
 
     var rows = await _queryRegistryAsync();
     await Assert.That(rows).Count().IsEqualTo(1);
-    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent, Sample");
+    await Assert.That(rows[0].ClrTypeName).IsEqualTo("Old.Namespace.FooEvent");
   }
 
   [Test]
@@ -230,9 +230,9 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   [Test]
   public async Task PopulateAsync_MixedPinnedAndUnpinned_BothInsertedAsync() {
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned, Sample", "event", "11111111-1111-1111-1111-111111111111"),
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned, Sample", "event", null),
-      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.Perspective, Sample", "perspective", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned", "event", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinnedCmd), "Sample.Perspective", "perspective", null),
     ]);
 
     var populator = new DapperMessageTypeRegistryPopulator(catalog, _connectionFactory!);
@@ -247,9 +247,9 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   [Test]
   public async Task PopulateAsync_SummaryLog_IncludesPinnedAndUnpinnedCountsAsync() {
     var catalog = new FakeCatalog([
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned1, Sample", "event", "11111111-1111-1111-1111-111111111111"),
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned2, Sample", "command", "22222222-2222-2222-2222-222222222222"),
-      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned1, Sample", "event", null),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned1", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned2", "command", "22222222-2222-2222-2222-222222222222"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned1", "event", null),
     ]);
     var logger = new CapturingLogger<DapperMessageTypeRegistryPopulator>();
 

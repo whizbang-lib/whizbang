@@ -83,6 +83,28 @@ public partial class DapperWorkCoordinator {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamAllowanceTests.cs:SyncMixedStreamAllowancesAsync_AllowsThePair_AndAnEmptyListAllowsNothingAsync</tests>
+  public Task SyncMixedStreamAllowancesAsync(IReadOnlyList<Whizbang.Core.Perspectives.MixedStreamPair> pairs, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(pairs);
+    return _withGatedCommandAsync(async (cmd, prefix) => {
+      await CoordinatorMixedStreamSql.SyncAllowancesAsync(cmd, prefix, pairs, cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamAllowanceTests.cs:GetStateBasedStreamIdsAsync_PassingOverTheAllowedType_LeavesTheMixedStreamRebuildableAsync</tests>
+  public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+      IReadOnlyList<Guid> streamIds, IReadOnlyList<string> ignoredEphemeralTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    ArgumentNullException.ThrowIfNull(ignoredEphemeralTypes);
+    return streamIds.Count == 0
+      ? Task.FromResult<IReadOnlyCollection<Guid>>([])
+      : _withGatedCommandAsync((cmd, prefix) =>
+        CoordinatorMixedStreamSql.StateBasedStreamIdsAsync(cmd, prefix, streamIds, ignoredEphemeralTypes, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
   public Task SyncEphemeralTypeGraceAsync(IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(graceOverrides);
     return _withGatedCommandAsync(async (cmd, prefix) => {
