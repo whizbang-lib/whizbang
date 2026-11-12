@@ -77,6 +77,8 @@ public sealed class RunPermitAuditTests {
     // Measurement and in-process state.
     "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker",
     "RecentlyProcessedEventCacheSweepWorker", "InProcessTrackerSweepWorker", "HealthCheckPublisherHostedService",
+    // Counts what cleanup has left on one instance per window; it reads and never deletes (#2289).
+    "PendingReclamationSampler",
     // Wakes, registrations and checks: each wakes or configures a worker above, which obeys the permit itself.
     "BackupTickCoordinator", "PgWorkNotificationListener", "MultiStreamCommandSubscriber", "PartitionAssignmentSubscriber",
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
