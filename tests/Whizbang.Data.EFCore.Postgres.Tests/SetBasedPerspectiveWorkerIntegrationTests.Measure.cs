@@ -38,7 +38,7 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
   [Test]
   [Explicit]
   // One mode at a time, so neither measures the other's load; 100,000 streams take tens of minutes per mode.
-  [NotInParallel("fan-out-measurement")]
+  [NotInParallel("fan-out-measurement")] // the database: a mode measured beside the other measures its load too
   [Timeout(4 * 60 * 60 * 1000)]
   [Arguments(PerspectiveWriteMode.PerStream)]
   [Arguments(PerspectiveWriteMode.SetBased)]
