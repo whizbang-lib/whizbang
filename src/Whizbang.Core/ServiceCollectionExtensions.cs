@@ -251,7 +251,9 @@ public static class ServiceCollectionExtensions {
     services.AddWhizbangWorkers();
 
     // Auto-invoke generated service registration callbacks
-    // These are set by source-generated module initializers in consumer assemblies
+    // These are set by source-generated module initializers in consumer assemblies. Only the host's own service's
+    // are replayed (#2243): the scope, and the startup report that names it.
+    services.AddServiceAssemblyScope();
     ServiceRegistrationCallbacks.InvokeAll(services, coreOptions.Services);
 
     // Turnkey: if the ASP.NET hosting assembly is loaded, its [ModuleInitializer] set

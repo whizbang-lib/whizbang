@@ -1262,6 +1262,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName} {{");
     result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
+    // #2243: the dispatcher registration is named by this assembly, so a host replays only its own service's
+    result = result.Replace("{{ASSEMBLY_NAME_LITERAL}}", ServiceAssemblyFactsGenerator.Literal(assemblyName));
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_REGISTRATIONS", registrations.ToString());
 
     return result;

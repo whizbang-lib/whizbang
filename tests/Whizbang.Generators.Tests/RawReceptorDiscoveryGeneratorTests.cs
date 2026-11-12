@@ -49,7 +49,7 @@ public class RawReceptorDiscoveryGeneratorTests {
 
     // ModuleInitializer wires the callback
     await Assert.That(code).Contains("[ModuleInitializer]");
-    await Assert.That(code).Contains("ServiceRegistrationCallbacks.RawReceptors");
+    await Assert.That(code).Contains("ServiceRegistrationCallbacks.RegisterRawReceptors(\"TestAssembly\", ");
 
     // Both receptors registered
     await Assert.That(code).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
