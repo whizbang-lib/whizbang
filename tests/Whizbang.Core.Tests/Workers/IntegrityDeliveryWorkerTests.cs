@@ -31,6 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 public class IntegrityDeliveryWorkerTests {
   private const string TYPE = "test-delivery";
+  private const string DELIVERY_BUDGET = "integrity:" + nameof(IntegrityDeliveryWorker);
   private static readonly DateTimeOffset _origin = new(2026, 11, 2, 12, 0, 0, TimeSpan.Zero);
 
   private sealed class Fixture(
@@ -170,6 +171,35 @@ public class IntegrityDeliveryWorkerTests {
     await Assert.That(forced.Outcome).IsEqualTo(IntegrityDeliveryWorker.PassOutcome.Drained);
     await Assert.That(forced.Processed).IsEqualTo(1);
     await Assert.That(fx.Worker.DeferredSince).IsNull();
+  }
+
+  [Test]
+  public async Task ADeferredPass_RecordsItsRequestersFirstDeferral_AndAForcedPassThatEnds_ClearsItAsync() {
+    await using var fx = await _buildAsync();
+    fx.Coordinator.Seed(_id(1), TYPE, "1");
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 500,
+      HousekeepingDeferrals = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal),
+    };
+    var deferred = await fx.Worker.RunPassAsync(CancellationToken.None);
+    var recordedWhileDeferred = fx.Coordinator.DeferralsRecorded.ToList();
+
+    // A new process an hour later: the store, not this process, remembers when the drain was first held back.
+    fx.Clock.Advance(TimeSpan.FromHours(1));
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 500,
+      HousekeepingDeferrals = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal) {
+        ["integrity:" + nameof(IntegrityDeliveryWorker)] = _origin,
+      },
+    };
+    var forced = await fx.Worker.RunPassAsync(CancellationToken.None);
+
+    await Assert.That(deferred.Outcome).IsEqualTo(IntegrityDeliveryWorker.PassOutcome.Deferred);
+    await Assert.That(recordedWhileDeferred).IsEquivalentTo([("integrity:" + nameof(IntegrityDeliveryWorker), _origin)])
+      .Because("the integrity admission records the requester's first deferral, under the requester's own budget");
+    await Assert.That(forced.Processed).IsEqualTo(1);
+    await Assert.That(fx.Coordinator.DeferralsCleared).IsEquivalentTo([DELIVERY_BUDGET])
+      .Because("a pass that ran and ended re-arms the requester's stored ceiling, when the admission ticket is disposed");
   }
 
   [Test]

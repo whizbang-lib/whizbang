@@ -71,6 +71,19 @@ public class ServiceBacklogTests {
              + "store that never implemented the count");
   }
 
+  [Test]
+  public async Task TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync() {
+    IWorkCoordinator coord = new DefaultingCoordinator();
+
+    // Neither write may throw on a backend that cannot hold the figure: the caller cannot tell it apart from one that can.
+    await coord.RecordHousekeepingDeferralAsync("maintenance", DateTimeOffset.UnixEpoch);
+    await coord.ClearHousekeepingDeferralAsync("maintenance");
+    var unset = new ServiceBacklog();
+
+    await Assert.That(unset.HousekeepingDeferrals).IsNull()
+      .Because("a backlog that does not carry the figure keeps the in-memory ceiling, exactly as before #2288");
+  }
+
   /// <summary>A coordinator implementing only what the interface requires.</summary>
   private sealed class DefaultingCoordinator : IWorkCoordinator {
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>

@@ -113,6 +113,21 @@ public class DeadLetterRecoveryWorkerTests {
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
     }
     public ServiceBacklog? Backlog { get; set; }
+    // The housekeeping deferral writes (#2288), each completing its own signal so a test waits on the exact write.
+    public System.Collections.Concurrent.ConcurrentQueue<(string Key, DateTimeOffset At)> DeferralsRecorded { get; } = new();
+    public System.Collections.Concurrent.ConcurrentQueue<string> DeferralsCleared { get; } = new();
+    public TaskCompletionSource DeferralRecordedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource DeferralClearedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public ValueTask RecordHousekeepingDeferralAsync(string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default) {
+      DeferralsRecorded.Enqueue((budgetKey, firstDeferredAt));
+      DeferralRecordedSignal.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
+    public ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default) {
+      DeferralsCleared.Enqueue(budgetKey);
+      DeferralClearedSignal.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
       if (CountServiceBacklogShouldThrow) { throw new InvalidOperationException("simulated backlog-count failure"); }
       return ValueTask.FromResult(Backlog);
@@ -1249,6 +1264,75 @@ public class DeadLetterRecoveryWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+
+  [Test]
+  public async Task ADeferredScan_RecordsRecoverysFirstDeferral_InTheStoreAsync() {
+    // #2288: the ceiling's first deferral is held by the store, so a restart does not start the hour over.
+    var options = new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, EnableGenerationReplay = false, WaitForIdle = true };
+    var svc = new FakeRecoveryService {
+      Backlog = new ServiceBacklog {
+        UnprocessedInboxRows = 500,
+        HousekeepingDeferrals = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal),
+      },
+    };
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var worker = _newGatedWorker(options, svc, new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), clock));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.DeferralRecordedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.DeferralsRecorded.ToArray()).IsEquivalentTo([("dead-letter-recovery", clock.GetUtcNow())])
+      .Because("the scan was refused on a busy service whose store held no first deferral for recovery");
+    await Assert.That(svc.FetchedBatchSizes.IsEmpty).IsTrue().Because("a deferred scan fetches nothing");
+  }
+
+  [Test]
+  public async Task AScanForcedByTheStoredCeiling_ClearsItWhenTheScanEndsAsync() {
+    // #2288: a new process reads the first deferral an earlier one recorded an hour ago, forces the pass, and once the
+    // pass ends re-arms the stored ceiling for every instance.
+    var origin = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    var options = new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, EnableGenerationReplay = false, WaitForIdle = true };
+    var svc = new FakeRecoveryService {
+      Backlog = new ServiceBacklog {
+        UnprocessedInboxRows = 500,
+        HousekeepingDeferrals = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal) { ["dead-letter-recovery"] = origin },
+      },
+    };
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(origin + TimeSpan.FromHours(1));
+    var worker = _newGatedWorker(options, svc, new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), clock));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.DeferralClearedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.FetchedBatchSizes.IsEmpty).IsFalse().Because("the stored hour forced the scan through");
+    await Assert.That(svc.DeferralsCleared.ToArray()).IsEquivalentTo(_recoveryOnly);
+    await Assert.That(svc.DeferralsRecorded.IsEmpty).IsTrue();
+  }
+
+  private static readonly string[] _recoveryOnly = ["dead-letter-recovery"];
+
+  private static DeadLetterRecoveryWorker _newGatedWorker(
+      DeadLetterRecoveryOptions options, FakeRecoveryService svc, HousekeepingCoordinator housekeeping) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IWorkCoordinator>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(new DefaultDeadLetterRecoveryPolicy(Options.Create(options)));
+    var sp = services.BuildServiceProvider();
+    return new DeadLetterRecoveryWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener(),
+      housekeeping: housekeeping);
+  }
 
   [Test]
   public async Task ForcedThroughWhileBusy_ScansNarrowAsync() {

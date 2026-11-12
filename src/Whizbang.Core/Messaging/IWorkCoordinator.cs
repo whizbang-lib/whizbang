@@ -141,6 +141,22 @@ public sealed record ServiceBacklog {
   public bool IsSettledApartFromIntegrity => NonIntegrityWorkRows is { } work
     ? work == 0 && PendingPerspectiveRows == 0
     : IsSettled;
+
+  /// <summary>
+  /// When each housekeeping deferral budget being spent was first deferred, as the service's store holds it, keyed by
+  /// budget (<c>maintenance</c>, <c>dead-letter-recovery</c>, <c>integrity:&lt;requester&gt;</c>); null when the backend
+  /// does not hold the figure (#2288).
+  /// </summary>
+  /// <remarks>
+  /// Read in the same statement as the counts above, so the forced-pass ceiling
+  /// (<see cref="Whizbang.Core.Workers.HousekeepingCoordinator.Settings.MaxDeferral"/>) is measured from the first
+  /// deferral across process restarts, and shared by every instance of the service. Empty means the store holds the
+  /// figure and no budget is being spent; null means it cannot hold it, and the ceiling is measured in memory as before.
+  /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
+  public IReadOnlyDictionary<string, DateTimeOffset>? HousekeepingDeferrals { get; init; }
 }
 
 
@@ -259,6 +275,41 @@ public interface IWorkCoordinator {
   /// <returns>Service-wide outstanding work, or null when unmeasurable.</returns>
   ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
     => ValueTask.FromResult<ServiceBacklog?>(null);
+
+  /// <summary>
+  /// Records in the service's store when a housekeeping deferral budget was first deferred, unless the store already
+  /// holds a moment for it (the first writer wins), so the forced-pass ceiling survives a restart (#2288).
+  /// </summary>
+  /// <remarks>
+  /// Called with <see cref="Whizbang.Core.Workers.HousekeepingCoordinator.Decision.DeferralToRecord"/>, which a decision
+  /// reports only when the backlog it was given carried <see cref="ServiceBacklog.HousekeepingDeferrals"/> without the
+  /// budget. Default is a no-op, for a backend that does not report the figure.
+  /// </remarks>
+  /// <param name="budgetKey">The budget, as <see cref="ServiceBacklog.HousekeepingDeferrals"/> keys it.</param>
+  /// <param name="firstDeferredAt">When the budget was first deferred.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the moment is recorded.</returns>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
+  ValueTask RecordHousekeepingDeferralAsync(string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default)
+    => ValueTask.CompletedTask;
+
+  /// <summary>
+  /// Clears the stored first deferral of a housekeeping budget, once a pass of its activity has ended (#2288).
+  /// </summary>
+  /// <remarks>
+  /// Called with <see cref="Whizbang.Core.Workers.HousekeepingCoordinator.Decision.DeferralToClear"/>. Any instance of the
+  /// service completing a pass re-arms the budget for all of them. Default is a no-op.
+  /// </remarks>
+  /// <param name="budgetKey">The budget, as <see cref="ServiceBacklog.HousekeepingDeferrals"/> keys it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the record is cleared.</returns>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:AClear_RemovesOnlyItsOwnBudgetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
+  ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default)
+    => ValueTask.CompletedTask;
 
   /// <summary>
   /// Publishes the host's debug-retention setting to the store, where the maintenance sweep reads it.

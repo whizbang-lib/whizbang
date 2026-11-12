@@ -132,7 +132,7 @@ public sealed partial class SubscriptionBackfillWorker(
         || string.IsNullOrEmpty(replyTopic)) {
       return 0;   // nothing can leave: the backfills stay queued until the service can send.
     }
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(SubscriptionBackfillWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
       return 0;
