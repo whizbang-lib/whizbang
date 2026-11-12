@@ -193,7 +193,7 @@ public static class WhizbangIdProviderRegistry {
     where TId : struct, IWhizbangId {
     ArgumentNullException.ThrowIfNull(value);
     if (value.Body is not MemberExpression read) {
-      throw new ArgumentException($"The read of {typeof(TId).Name}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
+      throw new ArgumentException($"The read of {TypeNameFormatter.SimpleName(typeof(TId))}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
     }
 
     lock (_lock) {
