@@ -114,6 +114,9 @@ public class DapperFleetRecoveryTests : PostgresTestBase {
       .Because("both rows are unprocessed and claimable, leased or not");
     await Assert.That(busy.ActiveLeasedRows).IsEqualTo(1L);
     await Assert.That(busy.PendingOutboxRows).IsEqualTo(0L);
+    await Assert.That(idle.NonIntegrityWorkRows).IsEqualTo(0L)
+      .Because("#2253: the Dapper driver measures work besides integrity traffic as the EF Core driver does");
+    await Assert.That(busy.NonIntegrityWorkRows).IsEqualTo(1L).Because("application rows are work besides integrity, bounded at one");
   }
 
   [Test]

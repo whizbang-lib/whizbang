@@ -235,6 +235,21 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ029: Warning - Two [WhizbangId] attributes for the same id disagree on AcceptAnyVersion.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz029</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdAcceptAnyVersionTests.cs:RoutesThatDisagree_KeepTheUuidV7RuleAndReportWhiz029AtTheOptInAsync</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdAcceptAnyVersionDisagrees = new(
+      id: "WHIZ029",
+      title: "WhizbangId AcceptAnyVersion Disagrees",
+      messageFormat: "AcceptAnyVersion = true on this [WhizbangId] is ignored: another [WhizbangId] for '{0}' does not set it, so the id keeps the UUIDv7 rule. Set AcceptAnyVersion the same on every [WhizbangId] for this id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The same strongly-typed id is declared through more than one [WhizbangId] (the type, a property or a parameter), and only some of them set AcceptAnyVersion. The generated id takes UUIDv7 only, whatever order the attributes are found in."
+  );
+
+  /// <summary>
   /// WHIZ025: Warning - TopicFilter attribute on non-ICommand type.
   /// </summary>
   /// <docs>operations/diagnostics/whiz025</docs>

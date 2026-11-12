@@ -353,7 +353,8 @@ public static class GeneratorTestHelper {
   /// The ordinary helpers always name the assembly, so only this one reaches those fallbacks.
   /// </remarks>
   [RequiresAssemblyFiles()]
-  public static GeneratorDriverRunResult RunGeneratorOnUnnamedAssembly(IIncrementalGenerator generator, string source) {
+  public static GeneratorDriverRunResult RunGeneratorOnUnnamedAssembly(
+      IIncrementalGenerator generator, string source, (string path, string? content)[]? additionalFiles = null) {
     ArgumentNullException.ThrowIfNull(generator);
     var compilation = CSharpCompilation.Create(
         assemblyName: null,
@@ -361,7 +362,9 @@ public static class GeneratorTestHelper {
         references: _fullFrameworkReferences(),
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
-    var driver = CSharpGeneratorDriver.Create(generator);
+    var driver = CSharpGeneratorDriver.Create(
+        generators: [generator.AsSourceGenerator()],
+        additionalTexts: [.. (additionalFiles ?? []).Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))]);
     var result = driver.RunGenerators(compilation).GetRunResult();
     _throwIfAnyGeneratorFailed(result);
     return result;

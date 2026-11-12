@@ -177,7 +177,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Source: DiscoverySource.ExplicitType,
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
-        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -202,6 +203,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   private static bool _isWhizbangIdAttribute(AttributeData attribute) =>
     TypeNameUtilities.SimpleNameOrNull(attribute.AttributeClass) is "WhizbangIdAttribute" or "WhizbangId";
+
+  /// <summary>Whether <c>[WhizbangId(AcceptAnyVersion = true)]</c> is written: the id takes any non-empty Guid (#2071).</summary>
+  private static bool _acceptsAnyVersion(AttributeData attribute) =>
+    attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "AcceptAnyVersion").Value.Value is true;
 
   private static (WhizbangIdInfo?, Location?, string?)? _extractPropertyBasedId(
       GeneratorSyntaxContext context,
@@ -249,7 +254,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Source: DiscoverySource.Property,
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
-        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -305,7 +311,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Source: DiscoverySource.Parameter,
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
-        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -409,10 +416,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       List<WhizbangIdInfo> validIds) {
 
-    // Group by fully qualified name to deduplicate
+    // Group by fully qualified name to deduplicate; routes that disagree on AcceptAnyVersion resolve the same
+    // way whatever the discovery order, and are reported (WHIZ029)
     var deduplicated = validIds
         .GroupBy(id => id.FullyQualifiedName)
-        .Select(group => group.First())  // Take first occurrence
+        .Select(routes => _resolveRoutes(context, routes))
         .ToList();
 
     // Detect collisions (same type name in different namespaces)
@@ -433,6 +441,30 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     return (deduplicated, collidingTypeNames);
+  }
+
+  /// <summary>
+  /// The one id that the routes discovering the same type resolve to. When every route agrees on
+  /// <c>AcceptAnyVersion</c>, the first is kept, as before. When they disagree, the id keeps the UUIDv7 rule (a
+  /// route without the option is kept) whatever the discovery order, and WHIZ029 is reported at each opt-in that
+  /// is ignored (#2071).
+  /// </summary>
+  private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
+    var all = routes.ToList();
+    var strict = all.Find(id => !id.AcceptAnyVersion);
+    if (strict is null) {
+      return all[0];
+    }
+
+    foreach (var ignoredOptIn in all.Where(id => id.AcceptAnyVersion)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdAcceptAnyVersionDisagrees,
+          ignoredOptIn.Location,
+          ignoredOptIn.FullyQualifiedName
+      ));
+    }
+
+    return strict;
   }
 
   /// <summary>
@@ -554,23 +586,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal(Value);");
     sb.AppendLine();
 
-    // From(TrackedGuid) factory method - preserves tracking metadata
-    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} From(TrackedGuid tracked) {{");
-    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
-    sb.AppendLine($"      throw new ArgumentException(\"{id.TypeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
-    sb.AppendLine("    return new(tracked);");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-
-    // From(Guid) factory method - validates v7, creates untracked
-    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} From(Guid value) {{");
-    sb.AppendLine("    if (value.Version != 7)");
-    sb.AppendLine($"      throw new ArgumentException($\"{id.TypeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
-    sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
-    sb.AppendLine("  }");
-    sb.AppendLine();
+    if (id.AcceptAnyVersion) {
+      _appendAnyVersionFactories(sb, id.TypeName);
+    } else {
+      _appendUuidV7Factories(sb, id.TypeName);
+    }
 
     // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
     sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
@@ -639,12 +659,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Explicit conversion from Guid (validates v7)
-    sb.AppendLine("  /// <summary>Explicitly converts from Guid. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  /// <summary>Explicitly converts from Guid. Throws if {_rejected(id)}.</summary>");
     sb.AppendLine($"  public static explicit operator {id.TypeName}(Guid value) => From(value);");
     sb.AppendLine();
 
     // Parse method for string deserialization (validates v7)
-    sb.AppendLine("  /// <summary>Parses a string representation of a Guid into this ID type. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  /// <summary>Parses a string representation of a Guid into this ID type. Throws if {_rejected(id)}.</summary>");
     sb.AppendLine($"  public static {id.TypeName} Parse(string value) => From(Guid.Parse(value));");
     sb.AppendLine();
 
@@ -661,6 +681,55 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
 
     return sb.ToString();
+  }
+
+  /// <summary>What a generated id refuses, for its doc comments: a non-v7 Guid, or only the empty one.</summary>
+  private static string _rejected(WhizbangIdInfo id) =>
+    id.AcceptAnyVersion ? "the Guid is empty" : "not UUIDv7";
+
+  /// <summary>The default factories: <c>From</c> takes UUIDv7 only.</summary>
+  private static void _appendUuidV7Factories(StringBuilder sb, string typeName) {
+    // From(TrackedGuid) factory method - preserves tracking metadata
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
+    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
+    sb.AppendLine($"      throw new ArgumentException(\"{typeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    // From(Guid) factory method - validates v7, creates untracked
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  public static {typeName} From(Guid value) {{");
+    sb.AppendLine("    if (value.Version != 7)");
+    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
+    sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
+    sb.AppendLine("  }");
+  }
+
+  /// <summary>
+  /// The factories of an id declared with <c>AcceptAnyVersion = true</c>: <c>From</c> takes any Guid but the empty
+  /// one (#2071). The constructor and the <c>Value</c> initializer stay unchecked, as on every id: they are the load
+  /// path for EF Core materialization and the persistence converter.
+  /// </summary>
+  private static void _appendAnyVersionFactories(StringBuilder sb, string typeName) {
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid of any version, preserving tracking metadata. Throws if the Guid is empty.</summary>");
+    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    _requireNonEmpty(tracked.Value, nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid of any version. Throws if the Guid is empty.</summary>");
+    sb.AppendLine($"  public static {typeName} From(Guid value) => new(TrackedGuid.FromExternal(_requireNonEmpty(value, nameof(value))));");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Returns the Guid, or throws if it is empty: the one Guid this id refuses.</summary>");
+    sb.AppendLine("  private static Guid _requireNonEmpty(Guid value, string parameterName) {");
+    sb.AppendLine("    if (value == Guid.Empty)");
+    sb.AppendLine($"      throw new ArgumentException(\"{typeName} requires a non-empty Guid\", parameterName);");
+    sb.AppendLine("    return value;");
+    sb.AppendLine("  }");
   }
 
   /// <summary>
