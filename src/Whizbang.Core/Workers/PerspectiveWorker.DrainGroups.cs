@@ -45,7 +45,7 @@ public partial class PerspectiveWorker {
   private List<MessageEnvelope<IEvent>> _drainEventsFor(
       string perspectiveName, List<MessageEnvelope<IEvent>> events, DrainBatchContext context) =>
     // The __collective__ sink has no registered IPerspectiveFor, so it can't be matched via
-    // _perspectivesPerEventType — select the collective events directly. _processCollectiveSinkAsync
+    // _perspectivesPerEventType, select the collective events directly. _processCollectiveSinkAsync
     // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
     perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
       ? events.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
@@ -72,26 +72,26 @@ public partial class PerspectiveWorker {
       Guid streamId, string perspectiveName, List<MessageEnvelope<IEvent>> filteredEvents, DrainBatchContext context,
       CancellationToken ct) {
     // Slice 30 defensive: an OCE bubbling out of the drain-mode perspective method
-    // — for example shutdown cancellation with both ct + lease.Token canceled so its
-    // own catch filter does not match — must not abort the loop for other perspectives
+    // (for example shutdown cancellation with both ct + lease.Token canceled so its
+    // own catch filter does not match) must not abort the loop for other perspectives
     // on this stream. The single perspective's lease-handle catch already routes
     // failure-mode OCEs; anything that bubbles is either expected shutdown propagation
     // or an unhandled edge case, neither of which should poison sibling perspectives.
     try {
-      // Intra-pod stream-affinity gate — serialize apply for this (stream, perspective) across
+      // Intra-pod stream-affinity gate, serialize apply for this (stream, perspective) across
       // the parallel consumer loops AND against the standard path, closing the same-pod
       // double-apply window the standard path already gated. See WithStreamAffinityGateAsync.
       await WithStreamAffinityGateAsync(streamId, perspectiveName, keepGateHeldUntil =>
         _runDrainModePerspectiveAsync(streamId, perspectiveName, filteredEvents, context, keepGateHeldUntil, ct), ct).ConfigureAwait(false);
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-      // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.
+      // Worker shutdown, propagate out of the loop, Parallel.ForEachAsync handles it.
       throw;
     } catch (OperationCanceledException ex) {
       // Lease-handle OCE that wasn't caught by _runDrainModePerspectiveAsync's filter.
       // Log + continue with next perspective; the row's lease will expire and
       // claim_orphaned will re-issue.
 #pragma warning disable CA1848
-      _logger.LogWarning(ex, "Drain mode: unhandled OCE from {Perspective} on stream {StreamId} — skipping to next perspective", perspectiveName, streamId);
+      _logger.LogWarning(ex, "Drain mode: unhandled OCE from {Perspective} on stream {StreamId}, skipping to next perspective", perspectiveName, streamId);
 #pragma warning restore CA1848
     }
   }
@@ -194,7 +194,7 @@ public partial class PerspectiveWorker {
       // ICollectiveDispatcher and skip the per-stream runner. See _processCollectiveSinkAsync.
       if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
         // Resolve the sink rows' event_work_ids from this drain batch's raw rows so the sink can complete
-        // (DELETE) them on success — without it the row loops forever (a production re-dispatch death spiral).
+        // (DELETE) them on success, without it the row loops forever (a production re-dispatch death spiral).
         var sinkWorkIds = filteredEvents
           .SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
           .Where(raw => string.Equals(raw.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal))
@@ -220,7 +220,7 @@ public partial class PerspectiveWorker {
       // inversion detector below sees null cursors. Late events would then slip
       // past detection into the runner's forward-apply path, where the runner's
       // own idempotency filter (which DOES see the persisted metadata.EventId)
-      // silently drops them — the "5 lost events, 0 rewinds" symptom seen in a consumer deployment.
+      // silently drops them, the "5 lost events, 0 rewinds" symptom seen in a consumer deployment.
       //
       // Cold-cache fallback: read persisted wh_perspective_cursors via the
       // already-scoped IWorkCoordinator and warm the cache. Subsequent
@@ -255,7 +255,7 @@ public partial class PerspectiveWorker {
       // race between drain finish and PerspectiveCompletionFlushWorker DELETE produces a
       // window where just-applied event_work_ids are still in DB pending. Pre-26.15 the
       // inversion detector ran on the full set, saw those cooled events as "pending ≤ cursor",
-      // and triggered a spurious rewind — measured as ~1100 phantom rewinds per consumer bulk-import
+      // and triggered a spurious rewind, measured as ~1100 phantom rewinds per consumer bulk-import
       // when sagas commit N events in two close transactions (drainer re-fetches between flush
       // ticks, sees first-batch events still warm, second-batch fresh, mixed bag).
       var (cooledEvents, freshEvents) = _partitionByCooldown(
@@ -263,7 +263,7 @@ public partial class PerspectiveWorker {
       pair.CooledCount = cooledEvents.Count;
 
       // Signal cooled events into the batch's completion bookkeeping so PostAllPerspectives
-      // can fire correctly — same reasoning as the all-cooled short-circuit.
+      // can fire correctly, same reasoning as the all-cooled short-circuit.
       // SignalPerspectiveComplete + BatchProcessedEvents.TryAdd are idempotent so re-signaling
       // is safe even when the previous drain already signaled them.
       if (cooledEvents.Count > 0) {
@@ -274,7 +274,7 @@ public partial class PerspectiveWorker {
         // wh_event_store and confirm whether the cooldown decision was correct
         // (event was truly applied previously) or a silent-drop bug (event never applied).
         // Gated on IsEnabled to avoid materializing the id strings when Debug logging is off.
-        // CA1873 fires on the string.Join args even with the IsEnabled guard — the analyzer
+        // CA1873 fires on the string.Join args even with the IsEnabled guard, the analyzer
         // doesn't look through the surrounding conditional for source-generated LoggerMessage.
 #pragma warning disable CA1873
         if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -306,7 +306,7 @@ public partial class PerspectiveWorker {
         return null;
       }
 
-      // Phase H step 6 slice 4: cursor-inversion detector — now scoped to the fresh remainder
+      // Phase H step 6 slice 4: cursor-inversion detector, now scoped to the fresh remainder
       // so cursor-flush-race events don't masquerade as real inversions.
       pair.InversionAnchor = _resolveInversionAnchor(
         freshEvents, batchContext.RawByEventId, pair.LastProcessedEventId, pair.LastProcessedCommitSequence);
@@ -326,7 +326,7 @@ public partial class PerspectiveWorker {
   private async Task<PerspectiveCursorCompletion> _rewindDrainPairAsync(DrainPair pair, CancellationToken leaseCt) {
     var (streamId, perspectiveName) = (pair.StreamId, pair.PerspectiveName);
     var inversionAnchor = pair.InversionAnchor!.Value;
-    // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
+    // Cache is stale, reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
     _cursorCache.Invalidate(streamId, perspectiveName);
     // Slice 26.11: look up the violator's commit_sequence so RewindAndRunAsync can
     // use the commit-sequence-anchored snapshot path for full determinism. Falls
@@ -389,7 +389,7 @@ public partial class PerspectiveWorker {
     }
 
     // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
-    // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
+    // dominant phases, runner (read + apply + save), completion (cursor update + lifecycle),
     // completion-enqueue + signaler. Surfaces the per-drain cost dominant when a consumer's
     // service drains at ~40 events/sec despite 4×30 concurrency configured.
     var runnerEndTicks = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -417,7 +417,7 @@ public partial class PerspectiveWorker {
       _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
     }
 
-    // Belt-and-suspenders sweep — when the runner short-circuits its batch
+    // Belt-and-suspenders sweep, when the runner short-circuits its batch
     // (already-applied / cooldown / dedup filtered all events) filteredEvents
     // is empty and the per-event MarkProcessedByPerspective above doesn't fire,
     // leaving any waiter that registered against those tracked events stuck
@@ -436,7 +436,7 @@ public partial class PerspectiveWorker {
       // Slice 26.17: cooldown is now marked at the top of _applyDrainModePerspectiveCompletionAsync,
       // before any cursor cache update or lifecycle invocation that could throw. The
       // late-mark site here was the source of residual inversions in a consumer's
-      // bulk run — keep the call site comment as a regression breadcrumb.
+      // bulk run, keep the call site comment as a regression breadcrumb.
     }
 
     _metrics?.StreamsUpdated.Add(1);
@@ -466,7 +466,7 @@ public partial class PerspectiveWorker {
   /// </summary>
   private async Task _failDrainPairOnLeaseExpiryAsync(DrainPair pair, OperationCanceledException leaseExpired, CancellationToken ct) {
 #pragma warning disable CA1848
-    _logger.LogWarning(leaseExpired, "Drain mode: lease deadline exceeded for {Perspective} stream {StreamId} — routing to failure", pair.PerspectiveName, pair.StreamId);
+    _logger.LogWarning(leaseExpired, "Drain mode: lease deadline exceeded for {Perspective} stream {StreamId}, routing to failure", pair.PerspectiveName, pair.StreamId);
 #pragma warning restore CA1848
     _metrics?.Errors.Add(1);
     var failure = new PerspectiveCursorFailure {
@@ -474,7 +474,7 @@ public partial class PerspectiveWorker {
       PerspectiveName = pair.PerspectiveName,
       LastEventId = Guid.Empty,
       Status = PerspectiveProcessingStatus.Failed,
-      Error = "Lease deadline exceeded — handler did not complete within the configured lease window."
+      Error = "Lease deadline exceeded, handler did not complete within the configured lease window."
     };
     await _completionStrategy.ReportFailureAsync(failure, pair.WorkCoordinator, ct).ConfigureAwait(false);
   }

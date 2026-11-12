@@ -291,8 +291,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
     // Per-event apply hooks: resolve once, mutate the row's data object (SetProperty) in place, and carry the
     // updated_at / version-bump decision to both write paths below. The default whizbang.timestamps hook yields
-    // updated_at = now + a version bump — identical to the prior hardcoded stamping, now overridable.
-    // ApplyTimestamp is BUSINESS time — the applied event's own timestamp — because the timestamps
+    // updated_at = now + a version bump, identical to the prior hardcoded stamping, now overridable.
+    // ApplyTimestamp is BUSINESS time, the applied event's own timestamp, because the timestamps
     // hook's job is to stamp the business axis. Feeding it the wall clock would make every hook
     // decision (including the default) replay-variant, which is the defect this split removes.
     // Direct callers with no event metadata (fixtures, seeds) fall back to now.
@@ -309,8 +309,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
 
     // Row TTL expiry: a perspective registered in PerspectiveTtlRegistry gets a sliding row TTL. The
-    // window ANCHORS TO EVENT TIME — expires_at = the applied event's timestamp (metadata.Timestamp,
-    // threaded by the runner) + ttl — never the wall clock at apply time. Event-time anchoring is what
+    // window ANCHORS TO EVENT TIME, expires_at = the applied event's timestamp (metadata.Timestamp,
+    // threaded by the runner) + ttl, never the wall clock at apply time. Event-time anchoring is what
     // makes the stamp replay-safe: re-applying old history (rebuild/rewind) reproduces the original
     // window, so an idle-past-TTL stream rebuilds BORN-EXPIRED instead of resurrecting with a fresh
     // window. Direct callers with no event metadata (fixtures/seeds pass default Timestamp) fall back
@@ -396,7 +396,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // Resolve schema from the EF Core model (set via HasDefaultSchema on the DbContext) and
     // schema-qualify the raw-SQL target. Without this, multi-tenant deployments that put
     // perspective tables in a service-specific schema ("bff", "inventory", ...) get
-    // 42P01 "relation does not exist" because raw SQL doesn't honor EF's default schema —
+    // 42P01 "relation does not exist" because raw SQL doesn't honor EF's default schema,
     // the connection's search_path determines what unqualified names resolve to, and that
     // isn't set per-service in all deployments. PerspectiveRow<TModel> is the EF entity
     // registered for the perspective table; its schema comes from HasDefaultSchema().
@@ -418,13 +418,13 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // Opt-in via IVersionedApplyTarget: a model that implements the marker gets a stricter
     // WHERE clause that adds a UUIDv7 EventId tie-breaker on top of the legacy CommitSequence
     // comparison. The legacy permissive contract (null-CommitSeq lets the write through
-    // unconditionally) remains the default — see
-    // CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync
-    // — so existing consumers that depend on stamper-lag forwarding keep working.
+    // unconditionally) remains the default, so existing consumers that depend on stamper-lag forwarding keep
+    // working (see
+    // CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync).
     // Models that need strand prevention beyond the v0.740 stream-affinity gate (the first
     // is SagaItemModel) opt in by implementing IVersionedApplyTarget. A production saga
     // showed a small fraction of per-item rows survived the affinity gate and reverted to
-    // State=Running — this marker closes that gap at the storage layer.
+    // State=Running, this marker closes that gap at the storage layer.
     // A rebuild's write is the exception (#1819): it re-derived the row from every event and ends on the stream's
     // last event by version, whose id can sort below the stored one, so it is not ordered on the event id.
     var ordersOnEventId = Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrdersOnEventId(

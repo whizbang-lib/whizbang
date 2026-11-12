@@ -579,12 +579,12 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// whose body was reaped. The one mapping <see cref="ReadPolymorphicAsync"/> and its batched form share.
   /// </summary>
   private MessageEnvelope<IEvent>? _envelopeOf(EventRow record, Dictionary<string, Type> typeMap) {
-    // Look up the concrete type from the EventType column (canonical resolver — skip unknowns)
+    // Look up the concrete type from the EventType column (canonical resolver, skip unknowns)
     if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
       return null;
     }
     if (record.EventData is null || record.Metadata is null) {
-      return null;   // reaped ephemeral body — consumed, snapshot-covered history
+      return null;   // reaped ephemeral body, consumed, snapshot-covered history
     }
 
     // Deserialize the event payload to the concrete type
@@ -595,7 +595,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
     // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
     // perspective runner's idempotency filter can compare against
-    // metadata.CommitSequence — required to keep UUIDv7 generation-time inversions
+    // metadata.CommitSequence, required to keep UUIDv7 generation-time inversions
     // from silently dropping late events (production forensic G5).
     var envelope = new MessageEnvelope<IEvent> {
       MessageId = record.Metadata.MessageId,

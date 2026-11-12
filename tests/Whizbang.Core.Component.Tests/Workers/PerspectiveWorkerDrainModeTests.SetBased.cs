@@ -509,7 +509,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         IsFirstInLocalStream = true,
       });
       _events = events;
-      var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+      var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
       var prepareEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       Action? onPrepare = null;
       if (OutliveLease) {
@@ -765,7 +765,7 @@ public partial class PerspectiveWorkerDrainModeTests {
       }
 
       private static async Task<PreparedPerspectiveApply> _heldAsync(CancellationToken cancellationToken) {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
+        await Task.Delay(Timeout.Infinite, cancellationToken); // review-checks:allow: waits on cancellation only, never on time; the worker's stop is the signal
         throw new InvalidOperationException("a held prepare ends only when the worker stops");
       }
 

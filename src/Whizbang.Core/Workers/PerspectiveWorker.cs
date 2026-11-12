@@ -1419,7 +1419,7 @@ public partial class PerspectiveWorker(
           var streamId = group.Key.StreamId;
           var perspectiveName = group.Key.PerspectiveName;
 
-          // Intra-pod stream-affinity gate — serializes all perspective application for
+          // Intra-pod stream-affinity gate, serializes all perspective application for
           // this stream across consumer loops AND across batches within the same pod.
           // wh_active_streams pins streams to a single pod cross-pod; this gate closes
           // the same-pod hole that caused a production strand race. See

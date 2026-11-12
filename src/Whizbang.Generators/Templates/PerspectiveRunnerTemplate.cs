@@ -1428,7 +1428,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var streamId = state.StreamId;
     var perspectiveName = state.PerspectiveName;
     if (state.RowWrite == RowWriteKind.Purge) {
-      // Hard delete: record the purge FIRST, then remove the row — a crash between the two leaves a marker
+      // Hard delete: record the purge FIRST, then remove the row, a crash between the two leaves a marker
       // on a live row (harmless), never a missing row a later event could recreate.
       await _markPurgedAsync(streamId, perspectiveName, state.PurgeEventId, cancellationToken);
       await _perspectiveStore.PurgeAsync(streamId, cancellationToken);

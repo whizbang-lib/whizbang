@@ -136,11 +136,11 @@ public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
     var noHistory = Guid.NewGuid();
     var archived = Guid.NewGuid();
     var waking = Guid.CreateVersion7();
-    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-61)), handledHistory, 1,
+    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-61)), handledHistory, 1, // review-checks:allow: mints UUIDv7 ids on either side of the database NOW() boundary the probe compares; nothing waits on time
       TypeNameFormatter.Format(typeof(HistoryProbeContracts.HandledEvent)));
-    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-61)), otherHistory, 1,
+    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-61)), otherHistory, 1, // review-checks:allow: mints UUIDv7 ids on either side of the database NOW() boundary the probe compares; nothing waits on time
       TypeNameFormatter.Format(typeof(HistoryProbeContracts.OtherEvent)));
-    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(1)), laterOnly, 1,
+    await _seedPointerAsync(conn, Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(1)), laterOnly, 1, // review-checks:allow: mints UUIDv7 ids on either side of the database NOW() boundary the probe compares; nothing waits on time
       TypeNameFormatter.Format(typeof(HistoryProbeContracts.HandledEvent)));
     await using (var ledger = conn.CreateCommand()) {
       ledger.CommandText = """
@@ -183,8 +183,8 @@ public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
     var conn = await _openAsync(context);
     IEventStore store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
     var stream = Guid.NewGuid();
-    var first = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-2));
-    var second = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-1));
+    var first = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-2)); // review-checks:allow: mints UUIDv7 ids on either side of the database NOW() boundary the probe compares; nothing waits on time
+    var second = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-1)); // review-checks:allow: mints UUIDv7 ids on either side of the database NOW() boundary the probe compares; nothing waits on time
     await _seedPointerAsync(conn, first, stream, 1);
     await _seedPointerAsync(conn, second, stream, 2);
     var missing = Guid.CreateVersion7();

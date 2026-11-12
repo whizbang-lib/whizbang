@@ -22,7 +22,7 @@ public class EFCorePostgresPerspectiveStorePrepareTests : EFCoreTestBase {
   private const string TABLE = "wh_per_action_test";
 
   private static PerspectiveMetadata _metadata() =>
-    new() { EventType = "E", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow };
+    new() { EventType = "E", EventId = Guid.NewGuid().ToString(), Timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc) };
 
   [Test]
   public async Task PrepareWrite_ThroughTheDefaultStrategy_PreparesTheRowAsync() {

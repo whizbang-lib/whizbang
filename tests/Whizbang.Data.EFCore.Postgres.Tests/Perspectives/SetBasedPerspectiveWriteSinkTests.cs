@@ -626,7 +626,7 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var outcomes = await PostgresPerspectiveWriter.WriteAsync(connection, null, writes, DateTime.UtcNow, CancellationToken.None, budget);
+    var outcomes = await PostgresPerspectiveWriter.WriteAsync(connection, null, writes, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CancellationToken.None, budget);
 
     await Assert.That(outcomes.Select(o => o.Status)).All().Satisfy(s => s.IsEqualTo(PerspectiveWriteStatus.Written));
     await Assert.That(await _statementsAsync(ACTION_TABLE, "INSERT")).IsEqualTo(3)
@@ -637,9 +637,9 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
   public async Task Writer_RefusesANullConnectionOrBatchAsync() {
     await using var connection = new NpgsqlConnection(ConnectionString);
 
-    await Assert.That(async () => await PostgresPerspectiveWriter.WriteAsync(null!, null, [], DateTime.UtcNow, CancellationToken.None))
+    await Assert.That(async () => await PostgresPerspectiveWriter.WriteAsync(null!, null, [], new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CancellationToken.None))
       .Throws<ArgumentNullException>();
-    await Assert.That(async () => await PostgresPerspectiveWriter.WriteAsync(connection, null, null!, DateTime.UtcNow, CancellationToken.None))
+    await Assert.That(async () => await PostgresPerspectiveWriter.WriteAsync(connection, null, null!, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), CancellationToken.None))
       .Throws<ArgumentNullException>();
   }
 

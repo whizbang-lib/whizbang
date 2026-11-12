@@ -201,7 +201,7 @@ public partial class PerspectiveWorker {
 
     // Rewind path: the range-based load above covers events above the pre-rewind
     // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
-    // that accumulated during the rewind window) live in the perspective work queue —
+    // that accumulated during the rewind window) live in the perspective work queue;
     // IPerspectiveReplayReader is the authoritative source for that "is_new" set.
     // When registered, we use it to pull every pending event the rewind should fire
     // handlers for. When not registered, we fall back to the narrow trigger-only

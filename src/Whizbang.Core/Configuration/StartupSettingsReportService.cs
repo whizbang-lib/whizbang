@@ -22,7 +22,7 @@ namespace Whizbang.Core.Configuration;
 /// every host writes it when it is fully up and nothing has to remember to call it.
 /// </remarks>
 /// <docs>operations/configuration/startup-settings-report</docs>
-/// <tests>tests/Whizbang.Core.Tests/Configuration/StartupSettingsReportServiceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StartupSettingsReportServiceTests.cs</tests>
 internal sealed partial class StartupSettingsReportService(
     IOptions<WhizbangStartupOptions> options,
     IConfiguration? configuration,

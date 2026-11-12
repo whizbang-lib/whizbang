@@ -56,7 +56,7 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
     }
 
     using var statements = new NpgsqlStatementLog(ConnectionString);
-    var clock = Stopwatch.StartNew();
+    var clock = Stopwatch.StartNew(); // review-checks:allow: a measurement records elapsed time; nothing waits on it or asserts it
     await pipeline.HandOffAsync([], ct);
     await pipeline.StartWorkerAsync(ct);
     await completion.All.WaitAsync(TimeSpan.FromHours(2), ct);

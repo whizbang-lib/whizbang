@@ -369,8 +369,8 @@ public class BatchBufferTests {
   [Test]
   public async Task TheConstructor_RefusesMissingDependenciesAsync() {
     var limits = _limits();
-    await Assert.That(() => new BatchBuffer(null!, new FakeLogger<BatchBuffer>(), null, TimeProvider.System)).Throws<ArgumentNullException>();
-    await Assert.That(() => new BatchBuffer(limits, null!, null, TimeProvider.System)).Throws<ArgumentNullException>();
+    await Assert.That(() => new BatchBuffer(null!, new FakeLogger<BatchBuffer>(), null, new Microsoft.Extensions.Time.Testing.FakeTimeProvider())).Throws<ArgumentNullException>();
+    await Assert.That(() => new BatchBuffer(limits, null!, null, new Microsoft.Extensions.Time.Testing.FakeTimeProvider())).Throws<ArgumentNullException>();
     await Assert.That(() => new BatchBuffer(limits, new FakeLogger<BatchBuffer>(), null, null!)).Throws<ArgumentNullException>();
     await Assert.That(async () => await _buffer(limits).AdmitAsync(null!, 1, false, _standard, default)).Throws<ArgumentNullException>();
     await Assert.That(() => _buffer(limits).Release(null!)).Throws<ArgumentNullException>();

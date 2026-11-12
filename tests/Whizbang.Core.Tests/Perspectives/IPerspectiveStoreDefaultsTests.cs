@@ -142,7 +142,7 @@ public class IPerspectiveStoreDefaultsTests {
 
     var prepared = store.PrepareWrite(
       Guid.NewGuid(), new Model(), new PerspectiveScope(), forceUpdateScope: false,
-      new PerspectiveMetadata { EventType = "E", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+      new PerspectiveMetadata { EventType = "E", EventId = Guid.NewGuid().ToString(), Timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc) },
       PerspectiveRowVersion.Unchecked, physicalFieldValues: null);
 
     await Assert.That(prepared).IsNull();
