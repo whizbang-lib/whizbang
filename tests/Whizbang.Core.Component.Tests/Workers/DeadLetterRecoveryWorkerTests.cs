@@ -1284,7 +1284,7 @@ public class DeadLetterRecoveryWorkerTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(svc.DeferralsRecorded.ToArray()).IsEquivalentTo(new[] { ("dead-letter-recovery", clock.GetUtcNow()) })
+    await Assert.That(svc.DeferralsRecorded.ToArray()).IsEquivalentTo([("dead-letter-recovery", clock.GetUtcNow())])
       .Because("the scan was refused on a busy service whose store held no first deferral for recovery");
     await Assert.That(svc.FetchedBatchSizes.IsEmpty).IsTrue().Because("a deferred scan fetches nothing");
   }
