@@ -136,6 +136,7 @@ public class ServiceScopedRegistrationTests {
       ServiceRegistrationCallbacks.RegisterDispatcher(assembly, _marks(assembly, "Dispatcher"));
       ServiceRegistrationCallbacks.RegisterRawReceptors(assembly, _marks(assembly, "Raw"));
       ServiceRegistrationCallbacks.RegisterPinnedIdRegistry(assembly, _marks(assembly, "PinnedId"));
+      ServiceRegistrationCallbacks.RegisterCollectiveApplyRegistry(assembly, _marks(assembly, "Collective"));
       PerspectiveRunnerCallbackRegistry.RegisterCallback(assembly, _marks(assembly, "Runners"));
     }
 
@@ -145,7 +146,7 @@ public class ServiceScopedRegistrationTests {
     PerspectiveRunnerCallbackRegistry.InvokeRegistration(services);
 
     await Assert.That(_registered(services)).IsEquivalentTo([
-      "Orders:Dispatcher", "Orders:Lens", "Orders:Perspective", "Orders:PinnedId", "Orders:Raw", "Orders:Runners"]);
+      "Orders:Collective", "Orders:Dispatcher", "Orders:Lens", "Orders:Perspective", "Orders:PinnedId", "Orders:Raw", "Orders:Runners"]);
   }
 
   [Test]
