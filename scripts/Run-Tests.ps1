@@ -340,6 +340,8 @@ Set-StrictMode -Version Latest
 
 # Import shared PR readiness module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+# The run's pass/fail verdict, including a crashed test process (#2231)
+Import-Module (Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1") -Force
 
 # Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
 $fastBuildArgs = @()
@@ -1857,6 +1859,7 @@ try {
         $buildWarnings = @()
         $projectErrors = @()  # Track test project-level errors (not individual test failures)
         $infrastructureErrors = 0  # Track MTP infrastructure error count from summary
+        $crashLines = @()  # Lines reporting a test process that died mid-suite (#2231)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -2035,6 +2038,8 @@ try {
             # Strip ANSI escape sequences for reliable regex matching
             # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+            # Checked before the parse below, which claims a line for one purpose only.
+            $crashLines += @(Select-TestProcessCrashLine -Line $cleanLine)
 
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
             # Format: [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
@@ -2315,6 +2320,7 @@ try {
 
         # Capture any stderr content for display
         $stderrContent = $stderrBuilder.ToString().Trim()
+        $crashLines += @(Select-TestProcessCrashLine -Line ($stderrContent -split "`n"))
 
         # Calculate elapsed time
         $endTime = Get-Date
@@ -2534,6 +2540,7 @@ try {
         $buildErrors = @()
         $projectErrors = @()
         $infrastructureErrors = 0
+        $crashLines = @()  # Lines reporting a test process that died mid-suite (#2231)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -2578,6 +2585,8 @@ try {
             # Strip ANSI escape sequences for reliable regex matching
             # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+            # Checked before the parse below, which claims a line for one purpose only.
+            $crashLines += @(Select-TestProcessCrashLine -Line $cleanLine)
 
             # Capture test counts from TUnit summary format
             # Use $cleanLine because TUnit wraps these in ANSI color codes
@@ -2667,6 +2676,7 @@ try {
         }
 
         $stderrContent = $stderrBuilder.ToString().Trim()
+        $crashLines += @(Select-TestProcessCrashLine -Line ($stderrContent -split "`n"))
 
         Write-Host ""
         Write-Host "<<< END TEST OUTPUT <<<" -ForegroundColor Cyan
@@ -2747,25 +2757,24 @@ try {
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Exit code 8 = all tests skipped (TUnit), not treated as failure
         #
-        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if:
-        # - Tests also failed (indicates a real problem)
-        # - No tests passed (indicates setup failure)
-        # If tests pass but cleanup throws, we log a warning but don't fail the build
-        # Non-zero exit code with zero test failures and infrastructure errors = infra issue, not test failure
-        # The .NET test platform can exit non-zero due to NamedPipeServer broken pipe during cleanup
-        $exitCodeIsInfraIssue = $processExitCode -ne 0 -and $processExitCode -ne 8 -and $totalFailed -eq 0 -and $infrastructureErrors -gt 0
-        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8 -and -not $exitCodeIsInfraIssue)
-        $hasInfraErrorsOnly = ($infrastructureErrors -gt 0 -or $exitCodeIsInfraIssue) -and -not $hasTestFailures
+        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if tests also failed or
+        # none passed: the .NET test platform can exit non-zero when its named pipe breaks during cleanup.
+        # A crashed test process is never that noise (#2231): it reports the same shape (a non-zero exit,
+        # no failed test, one `error:`), but every test after the crash never ran. The rules live in
+        # scripts/lib/TestRunVerdict.psm1.
+        $verdict = Get-TestRunVerdict -ExitCode $processExitCode -Passed $totalPassed -Failed $totalFailed `
+            -InfrastructureErrors $infrastructureErrors -FailFastTriggered $failFastTriggered `
+            -ProjectErrorCount $projectErrors.Count -BuildErrorCount $buildErrors.Count -CrashLines $crashLines
+        $hasErrors = $verdict.HasErrors
+        $hasTestFailures = $verdict.HasTestFailures
 
-        if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
+        if ($verdict.Crashed) {
+            Write-TestProcessCrash -Verdict $verdict -Passed $totalPassed
+        } elseif ($verdict.CleanupNoise) {
             # Infrastructure errors with passing tests - warn but don't fail
             Write-Host ""
             Write-Host "WARNING: $infrastructureErrors infrastructure error(s) during cleanup (all tests passed)" -ForegroundColor Yellow
             Write-Host "         This is typically Docker container cleanup noise and does not affect test results." -ForegroundColor DarkYellow
-            $hasErrors = $false
-        } else {
-            # Real failures or infrastructure errors without passing tests
-            $hasErrors = $hasTestFailures -or ($infrastructureErrors -gt 0 -and $totalPassed -eq 0)
         }
     } else {
         # Check both exit code AND output for failures

@@ -168,3 +168,93 @@ Describe 'Run-Tests.ps1 reports a crashed test process as a failure (#2231)' -Sk
     $r.Output | Should -Not -Match 'TEST PROCESS CRASHED'
   }
 }
+
+# The rules behind the verdict, one case each, without a child process.
+Describe 'Get-TestRunVerdict' {
+  BeforeAll {
+    Import-Module (Join-Path $Root 'scripts' 'lib' 'TestRunVerdict.psm1') -Force
+    function Get-Verdict([hashtable]$Overrides) {
+      $a = @{ ExitCode = 0; Passed = 10; Failed = 0; InfrastructureErrors = 0; FailFastTriggered = $false; ProjectErrorCount = 0; BuildErrorCount = 0; CrashLines = @() }
+      foreach ($k in $Overrides.Keys) { $a[$k] = $Overrides[$k] }
+      Get-TestRunVerdict @a
+    }
+  }
+
+  It 'is <Expected> for <Case>' -ForEach @(
+    @{ Case = 'a clean run'; Overrides = @{}; Expected = $false }
+    @{ Case = 'every test skipped (exit 8)'; Overrides = @{ ExitCode = 8 }; Expected = $false }
+    @{ Case = 'a failed test'; Overrides = @{ Failed = 1; ExitCode = 2 }; Expected = $true }
+    @{ Case = 'fail-fast'; Overrides = @{ FailFastTriggered = $true }; Expected = $true }
+    @{ Case = 'a test project error'; Overrides = @{ ProjectErrorCount = 1 }; Expected = $true }
+    @{ Case = 'a build error'; Overrides = @{ BuildErrorCount = 1 }; Expected = $true }
+    @{ Case = 'a non-zero exit with no infrastructure error'; Overrides = @{ ExitCode = 1 }; Expected = $true }
+    @{ Case = 'cleanup noise after passing tests'; Overrides = @{ ExitCode = 1; InfrastructureErrors = 1 }; Expected = $false }
+    @{ Case = 'an infrastructure error with no passing test'; Overrides = @{ Passed = 0; ExitCode = 1; InfrastructureErrors = 1 }; Expected = $true }
+    @{ Case = 'an infrastructure error on a zero exit with passing tests'; Overrides = @{ InfrastructureErrors = 1 }; Expected = $false }
+    @{ Case = 'exit code 7'; Overrides = @{ ExitCode = 7; InfrastructureErrors = 1 }; Expected = $true }
+    @{ Case = 'a crash line on a zero exit'; Overrides = @{ CrashLines = @('Stack overflow.') }; Expected = $true }
+  ) {
+    (Get-Verdict $Overrides).HasErrors | Should -Be $Expected
+  }
+
+  It 'never calls a crash cleanup noise, and marks its coverage partial' {
+    $v = Get-Verdict @{ ExitCode = 7; InfrastructureErrors = 1; CrashLines = @("Test application process didn't exit gracefully, exit code is '7'") }
+    $v.Crashed | Should -BeTrue
+    $v.CleanupNoise | Should -BeFalse
+    $v.HasTestFailures | Should -BeTrue
+    $v.CrashReason | Should -Be "Test application process didn't exit gracefully, exit code is '7' (exit code 7)"
+  }
+
+  It 'names the crash lines alone when the exit code was zero' {
+    (Get-Verdict @{ CrashLines = @('Stack overflow.', 'Test host process crashed') }).CrashReason | Should -Be 'Stack overflow.; Test host process crashed'
+  }
+
+  It 'names the exit code when no crash line was printed' {
+    (Get-Verdict @{ ExitCode = 7 }).CrashReason | Should -Be 'the test process ended with exit code 7'
+  }
+
+  It 'gives no crash reason for a run that did not crash' {
+    $v = Get-Verdict @{ ExitCode = 1; InfrastructureErrors = 1 }
+    $v.Crashed | Should -BeFalse
+    $v.CleanupNoise | Should -BeTrue
+    $v.CrashReason | Should -Be ''
+  }
+}
+
+Describe 'Select-TestProcessCrashLine' {
+  BeforeAll {
+    Import-Module (Join-Path $Root 'scripts' 'lib' 'TestRunVerdict.psm1') -Force
+  }
+
+  It 'selects <Line>' -ForEach @(
+    @{ Line = "Test application process didn't exit gracefully, exit code is '7'" }
+    @{ Line = 'Test host did not exit gracefully.' }
+    @{ Line = 'The active run was aborted: Test host process crashed' }
+    @{ Line = 'Stack overflow.' }
+  ) {
+    @(Select-TestProcessCrashLine -Line @("  $Line  ")) | Should -Be @($Line)
+  }
+
+  It 'selects nothing from ordinary output, blank lines or no lines' {
+    @(Select-TestProcessCrashLine -Line @('  succeeded: 10', '', $null, 'System.IO.IOException: Broken pipe', 'a test named Stack overflow. guard')) | Should -HaveCount 0
+    @(Select-TestProcessCrashLine -Line $null) | Should -HaveCount 0
+    @(Select-TestProcessCrashLine -Line @()) | Should -HaveCount 0
+  }
+}
+
+Describe 'Write-TestProcessCrash' {
+  BeforeAll {
+    Import-Module (Join-Path $Root 'scripts' 'lib' 'TestRunVerdict.psm1') -Force
+  }
+
+  It 'writes a workflow error annotation under GitHub Actions' {
+    $saved = $env:GITHUB_ACTIONS
+    try {
+      $env:GITHUB_ACTIONS = 'true'
+      $out = Write-TestProcessCrash -Verdict ([pscustomobject]@{ CrashReason = 'Stack overflow.' }) -Passed 3 6>&1 | Out-String
+    } finally {
+      $env:GITHUB_ACTIONS = $saved
+    }
+    $out | Should -Match '::error::TEST PROCESS CRASHED after 3 passing test\(s\); the rest of the suite never ran\. Cause: Stack overflow\.'
+  }
+}
