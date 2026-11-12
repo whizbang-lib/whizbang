@@ -283,6 +283,97 @@ public class StrongIdStreamInheritanceGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task AListedDiscoveredId_IsAcceptedByItsFullNameNotItsSimpleNameAsync() {
+    // Two ids named OrderKey, both emitted by the strong-id generator from a property, in different namespaces. Each
+    // message lists the App.Sales one: by its simple name through a using, qualified, through an alias, and from inside
+    // its own namespace. A source of the App.Returns one has the same simple name and must still be refused.
+    const string contracts = """
+      public class LedgerOpened : IEvent { [StreamId] [WhizbangId] public LedgerKey Key { get; set; } }
+
+      namespace App.Sales {
+        public class SaleOpened : IEvent { [StreamId] [WhizbangId] public OrderKey Key { get; set; } }
+
+        public class FromTheIdsNamespace : ICommand {
+          [StreamId(InheritFrom = [typeof(OrderKey)])]
+          public App.Contracts.InvoiceId InvoiceId { get; set; }
+        }
+      }
+
+      namespace App.Returns {
+        public class ReturnOpened : IEvent { [StreamId] [WhizbangId] public OrderKey Key { get; set; } }
+      }
+
+      namespace App.Contracts {
+        using App.Sales;
+        using S = App.Sales;
+
+        public class BySimpleName : ICommand {
+          [StreamId(InheritFrom = [typeof(OrderKey), typeof(ShipmentId), typeof(LedgerKey)])]
+          public InvoiceId InvoiceId { get; set; }
+        }
+
+        public class ByQualifiedName : ICommand {
+          [StreamId(InheritFrom = [typeof(App.Sales.OrderKey)])]
+          public InvoiceId InvoiceId { get; set; }
+        }
+
+        public class ByAlias : ICommand {
+          [StreamId(InheritFrom = [typeof(S.OrderKey)])]
+          public InvoiceId InvoiceId { get; set; }
+        }
+      }
+      """;
+    var probe = $$"""
+      string Check(Func<object> create) {
+        var sales = extractor.SetStreamId(create(), new Guid("{{_v7}}"), typeof(global::App.Sales.OrderKey));
+        var returns = extractor.SetStreamId(create(), new Guid("{{_v7}}"), typeof(global::App.Returns.OrderKey));
+        return $"{sales}/{returns}";
+      }
+      var others = string.Join("/",
+        extractor.SetStreamId(new global::App.Contracts.BySimpleName(), new Guid("{{_v7}}"), typeof(global::App.Contracts.ShipmentId)),
+        extractor.SetStreamId(new global::App.Contracts.BySimpleName(), new Guid("{{_v7}}"), typeof(global::LedgerKey)));
+      return string.Join(",",
+        Check(() => new global::App.Contracts.BySimpleName()), Check(() => new global::App.Contracts.ByQualifiedName()),
+        Check(() => new global::App.Contracts.ByAlias()), Check(() => new global::App.Sales.FromTheIdsNamespace()), others);
+      """;
+
+    var observed = _runProbe("ListedByFullName", IDS + contracts, probe);
+
+    await Assert.That(observed).IsEqualTo("True/False,True/False,True/False,True/False,True/True")
+      .Because("a listed id the stream-id generator cannot see is matched as the type the attribute names, not by its simple name");
+  }
+
+  [Test]
+  public async Task AListedTypeThatNoStrongIdDeclares_AddsNoAcceptClauseAsync() {
+    // CouponKey is an id the strong-id generator emits, but not the one listed; Missing is listed, and the only
+    // property of that type has no [WhizbangId], so nothing will declare it. The listing is left out, not guessed at.
+    const string source = """
+      using Whizbang.Core;
+
+      namespace App.Contracts;
+
+      [WhizbangId]
+      public readonly partial struct InvoiceId;
+
+      public class CouponIssued : IEvent { [StreamId] [WhizbangId] public CouponKey Key { get; set; } }
+
+      public class Holder { [System.Obsolete] public Missing Other { get; set; } public int Plain { get; set; } }
+
+      public class CreateInvoice : ICommand {
+        [StreamId(InheritFrom = [typeof(Missing)])]
+        public InvoiceId InvoiceId { get; set; }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<StreamIdGenerator>(source);
+    var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, EXTRACTORS);
+
+    await Assert.That(code).DoesNotContain("Missing")
+      .Because("a listed type that does not resolve, even with the strong-id generator's ids declared, is refused");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task AStrongIdFromAReferencedAssembly_IsDetectedByItsInterfaceAsync() {
     // A strong id compiled into another assembly carries no [WhizbangId] the consumer can rely on, only IWhizbangId and
     // the From factory the strong-id generator emitted there

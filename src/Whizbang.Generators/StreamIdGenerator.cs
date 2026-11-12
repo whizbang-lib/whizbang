@@ -109,7 +109,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // The [StreamId] the analyzer agrees on: an override, then the nearest property, then a constructor parameter
-    return _selectStreamId(typeSymbol);
+    return _selectStreamId(typeSymbol, context.SemanticModel.Compilation);
   }
 
   /// <summary>
@@ -150,7 +150,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // The inherited CompositeEventBase.StreamId, unless the composite overrides it or declares a nearer one.
-    return _selectStreamId(typeSymbol);
+    return _selectStreamId(typeSymbol, context.SemanticModel.Compilation);
   }
 
   /// <summary>
@@ -174,21 +174,21 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// clauses for the source types its <c>InheritFrom</c> lists. All empty for a stream id that is not a strong id.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs</tests>
-  private static (string? Type, bool Settable, string Clauses) _strongIdFacts(StreamIdSelection.Choice choice) =>
+  private static (string? Type, bool Settable, string Clauses) _strongIdFacts(StreamIdSelection.Choice choice, Compilation compilation) =>
     StrongIdStreamIds.Resolve(choice.Property, choice.Parameter) is { } id
-      ? (id.TypeName, id.HasGuidFactory, StrongIdStreamIds.AcceptClauses(StrongIdStreamIds.InheritFrom(choice.Attribute), id.TypeName))
+      ? (id.TypeName, id.HasGuidFactory, StrongIdStreamIds.AcceptClauses(choice.Attribute, id.TypeName, compilation))
       : (null, false, "");
 
   /// <summary>
   /// Builds the extractor info for an event or composite from its chosen [StreamId].
   /// </summary>
-  private static StreamIdInfo? _selectStreamId(INamedTypeSymbol typeSymbol) {
+  private static StreamIdInfo? _selectStreamId(INamedTypeSymbol typeSymbol, Compilation compilation) {
     if (_isOpenGeneric(typeSymbol) || _resolveStreamId(typeSymbol) is not { } resolved) {
       return null;
     }
     var (choice, hasGenerate, onlyIfEmpty) = resolved;
     var property = choice.Property;
-    var (strongIdType, strongIdSettable, inheritFromClauses) = _strongIdFacts(choice);
+    var (strongIdType, strongIdSettable, inheritFromClauses) = _strongIdFacts(choice, compilation);
     return new StreamIdInfo(
         EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
         PropertyName: property.Name,
@@ -294,7 +294,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
     var (choice, hasGenerate, onlyIfEmpty) = resolved;
     var property = choice.Property;
-    var (strongIdType, strongIdSettable, inheritFromClauses) = _strongIdFacts(choice);
+    var (strongIdType, strongIdSettable, inheritFromClauses) = _strongIdFacts(choice, context.SemanticModel.Compilation);
     return new CommandStreamIdInfo(
         CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
         PropertyName: property.Name,
