@@ -501,7 +501,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     private async Task _runAsync(Guid[] streams, bool drain, int expectedReports, int expectedFailures, CancellationToken ct) {
       // A minute before every event, and a minute after: version 7 ids made in the same millisecond carry random bits
       // after the timestamp, so only a different timestamp orders a cursor before or after an event for certain.
-      var now = DateTimeOffset.UtcNow;
+      var now = DateTimeOffset.UtcNow; // review-checks:allow: the events are minted at the real time, so the cursors are placed a minute either side of it; nothing waits on time
       var behindEvents = Guid.CreateVersion7(now.AddMinutes(-1));
       var aheadOfEvents = Guid.CreateVersion7(now.AddMinutes(1));
       var events = streams.ToDictionary(s => s, s => new MessageEnvelope<IEvent> {
