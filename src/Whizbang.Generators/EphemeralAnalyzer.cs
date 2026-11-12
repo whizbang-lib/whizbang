@@ -231,7 +231,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     }
     var pairs = MixedStreamOptIn.Pairs(events);
     if (pairs.Count > 0) {
-      mixed.Add(new MixedReadModel(symbol.Name, LocationUtilities.FirstOrNone(symbol), MixedStreamOptIn.AllowsStreams(symbol),
+      mixed.Add(new MixedReadModel(TypeNameUtilities.SimpleName(symbol), LocationUtilities.FirstOrNone(symbol), MixedStreamOptIn.AllowsStreams(symbol),
         [.. pairs.Select(p => (TypeNameUtilities.Display(p.Ephemeral), TypeNameUtilities.Display(p.Durable)))]));
     }
 
