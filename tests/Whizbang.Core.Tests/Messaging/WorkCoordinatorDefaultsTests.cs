@@ -98,6 +98,35 @@ public class WorkCoordinatorDefaultsTests {
     await Assert.That(result).IsEmpty();
   }
 
+  /// <summary>
+  /// #2255: an engine that does not implement the mixed-stream members ignores no ephemeral type (every stream holding
+  /// an ephemeral event stays refused, the safe direction) and syncs nothing.
+  /// </summary>
+  [Test]
+  public async Task MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync() {
+    var mixed = Guid.NewGuid();
+    IWorkCoordinator coordinator = new StateBasedOnlyCoordinator(mixed);
+
+    var stateBased = await coordinator.GetStateBasedStreamIdsAsync([mixed], ["Ns.Pinged, Contracts"]);
+    var task = coordinator.SyncMixedStreamAllowancesAsync([new Whizbang.Core.Perspectives.MixedStreamPair("Ns.Pinged, Contracts", "Ns.Opened, Contracts")]);
+
+    await Assert.That(stateBased).IsEquivalentTo([mixed])
+      .Because("the default passes over nothing, so the stream is refused as it was before the allowance");
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  private sealed class StateBasedOnlyCoordinator(Guid stateBased) : IWorkCoordinator {
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyCollection<Guid>>([.. streamIds.Where(s => s == stateBased)]);
+  }
+
   [Test]
   public async Task SyncEphemeralTypeGraceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
@@ -766,6 +795,16 @@ public class WorkCoordinatorDefaultsTests {
     var pending = await coordinator.IntegrityCountAnswerPendingAsync(DateTimeOffset.MinValue, 500);
 
     await Assert.That(pending).IsEqualTo(0).Because("#2184: an engine without the ledger has no answer outstanding");
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var key = new IntegrityRepairLedger.DivergenceKey(Guid.Empty, null, "Contracts.A", Guid.Empty);
+
+    var withdrawn = await coordinator.IntegrityWithdrawAnswerPendingAsync(Guid.Empty, [key], DateTimeOffset.MinValue, TimeSpan.FromMinutes(1));
+
+    await Assert.That(withdrawn).IsEqualTo(0).Because("#2223: an engine without the ledger recorded no answer to withdraw");
   }
 
   [Test]

@@ -1,8 +1,8 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 392_AnsweredRowsAreRecheckedFirst.sql (#2259): wh_integrity_claim_ledger_recheck as 375 defined it, with
--- no answered lane, and the answered lane's partial index dropped. 392 stored no data of its own: the rechecked_at values
+-- The reverse of 396_AnsweredRowsAreRecheckedFirst.sql (#2259): wh_integrity_claim_ledger_recheck as 375 defined it, with
+-- no answered lane, and the answered lane's partial index dropped. 396 stored no data of its own: the rechecked_at values
 -- its answered lane stamped are ordinary re-check stamps, which the restored claim reads as it always did.
 
 DROP INDEX IF EXISTS __SCHEMA__.idx_integrity_ledger_answered_unrechecked;

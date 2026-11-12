@@ -70,7 +70,7 @@ public class IntegrityTypeHealSqlTests : EFCoreTestBase {
     await using (var conn = new NpgsqlConnection(ConnectionString)) {
       await conn.OpenAsync();
       await using var drop = conn.CreateCommand();
-      drop.CommandText = "DROP FUNCTION wh_integrity_heal_types_counted";   // 393: the function the coordinator calls
+      drop.CommandText = "DROP FUNCTION wh_integrity_heal_types_counted";   // 397: the function the coordinator calls
       await drop.ExecuteNonQueryAsync();
     }
     var origin = TrackedGuid.New().Value;

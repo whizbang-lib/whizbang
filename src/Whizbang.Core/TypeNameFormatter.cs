@@ -174,10 +174,34 @@ public static class TypeNameFormatter {
     var typeName = type.FullName
       ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
 
-    var assemblyName = type.Assembly.GetName().Name
+    return Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName($"{typeName}, {_assemblyNameOf(type)}");
+  }
+
+  // The simple assembly name the stored form carries.
+  private static string _assemblyNameOf(Type type) =>
+    type.Assembly.GetName().Name
       ?? throw new InvalidOperationException($"Type {type.Name} does not have an Assembly.GetName().Name");
 
-    return Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName($"{typeName}, {assemblyName}");
+  /// <summary>
+  /// The stored form (<see cref="Format"/>, <c>Ns.Type, Assembly</c>) of a name <paramref name="type"/> was formerly known
+  /// by, as the event store's <c>event_type</c> holds the events written under that name.
+  /// </summary>
+  /// <remarks>
+  /// The pinned-type ledger (<c>.whizbang/pinned-type-ledger.json</c>) records former names in the bare CLR form, which
+  /// carries no assembly. A bare former name is taken to have lived in the type's current assembly. A former name that
+  /// already names its assembly (a type moved between assemblies, recorded that way) is read with <see cref="Parse"/>, so
+  /// its version, culture and key token are dropped as <c>normalize_event_type</c> drops them.
+  /// </remarks>
+  /// <param name="type">The type as it is named today.</param>
+  /// <param name="formerName">A name the type was formerly known by, bare or assembly-qualified.</param>
+  /// <returns>The former name in the stored form.</returns>
+  /// <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameFormatterTests.cs:FormatFormerName_ABareFormerName_TakesTheTypesAssemblyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameFormatterTests.cs:FormatFormerName_AnAssemblyQualifiedFormerName_KeepsItsOwnAssemblyAsync</tests>
+  public static string FormatFormerName(Type type, string formerName) {
+    ArgumentNullException.ThrowIfNull(type);
+    ArgumentException.ThrowIfNullOrWhiteSpace(formerName);
+    return formerName.Contains(',', StringComparison.Ordinal) ? Parse(formerName) : $"{formerName}, {_assemblyNameOf(type)}";
   }
 
   /// <summary>

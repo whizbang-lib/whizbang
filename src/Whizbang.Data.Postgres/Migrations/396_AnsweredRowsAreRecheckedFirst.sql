@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 392_AnsweredRowsAreRecheckedFirst.sql
+-- Migration: 396_AnsweredRowsAreRecheckedFirst.sql
 -- Date: 2026-11-11
 -- Description: The idle ledger re-check claims rows whose repair was answered, and not re-checked since, before any
 --              other row (#2259).
@@ -24,7 +24,7 @@
 --              lane, read on every tick, reaches its rows without walking the origin's whole ledger. A row enters it
 --              when an answer stamps it and leaves when the re-check claims it.
 --
---              Number 392: 391 is the highest on develop.
+--              Number 396: 395 is the highest on develop, and the integrity bundle's changes take 396 to 401 in order.
 --
 -- Reversal: reversible (the index is dropped and the claim is restored from 375; rechecked_at values the answered lane
 --           stamped are ordinary re-check stamps the restored claim reads as it always did)
@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_integrity_ledger_answered_unrechecked
     AND stream_id <> __EMPTY_UUID__::uuid;
 
 COMMENT ON INDEX __SCHEMA__.idx_integrity_ledger_answered_unrechecked IS
-'392 (#2259): the idle re-check''s answered lane: per-stream ledger rows answered and not re-checked since the answer.';
+'396 (#2259): the idle re-check''s answered lane: per-stream ledger rows answered and not re-checked since the answer.';
 
 -- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_claim_ledger_recheck');
@@ -74,7 +74,7 @@ AS $$
 DECLARE
   v_answered INTEGER;
 BEGIN
-  -- 392 (#2259): the answered lane first. Its predicate is idx_integrity_ledger_answered_unrechecked's.
+  -- 396 (#2259): the answered lane first. Its predicate is idx_integrity_ledger_answered_unrechecked's.
   RETURN QUERY
   WITH answered AS (
     SELECT l.origin_service_id, l.tenant_scope, l.event_type, l.stream_id
@@ -127,4 +127,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_claim_ledger_recheck(UUID[], TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-'392 (#2259): claims up to p_limit ledger rows for the idle re-check. First the rows of p_origin_ids answered and not re-checked since the answer, oldest answer first, whatever their report''s age; then rows last reported before p_reported_before and not re-checked since, oldest report first. Never the type lane. A row with no stamped window comes back with NULL bounds and is re-checked over the whole history. Stamps rechecked_at (p_now, or the answer''s time when that is later) and nothing else (no attempt, no repair). SKIP LOCKED against a concurrent claimer.';
+'396 (#2259): claims up to p_limit ledger rows for the idle re-check. First the rows of p_origin_ids answered and not re-checked since the answer, oldest answer first, whatever their report''s age; then rows last reported before p_reported_before and not re-checked since, oldest report first. Never the type lane. A row with no stamped window comes back with NULL bounds and is re-checked over the whole history. Stamps rechecked_at (p_now, or the answer''s time when that is later) and nothing else (no attempt, no repair). SKIP LOCKED against a concurrent claimer.';

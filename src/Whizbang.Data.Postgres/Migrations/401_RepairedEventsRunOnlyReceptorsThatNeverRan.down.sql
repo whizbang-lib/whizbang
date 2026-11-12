@@ -1,8 +1,8 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 397_RepairedEventsRunOnlyReceptorsThatNeverRan.sql (#2273): process_inbox_completions as its last word
--- before 397 defined it (236), so a completion records nothing, then the ledger's functions and tables dropped. The
+-- The reverse of 401_RepairedEventsRunOnlyReceptorsThatNeverRan.sql (#2273): process_inbox_completions as its last word
+-- before 401 defined it (236), so a completion records nothing, then the ledger's functions and tables dropped. The
 -- handled records are lost; a later forward run starts the coverage afresh, so a repair never reads the gap as covered.
 
 -- process_inbox_completions: 236's definition, whole.

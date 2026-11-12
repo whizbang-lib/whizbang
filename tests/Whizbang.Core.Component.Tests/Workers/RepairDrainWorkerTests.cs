@@ -121,9 +121,9 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_ButNotAGroupWhoseSendFailedAsync() {
-    // #2029: a bucket whose request left is not claimed again while its answer is on the way. A group whose send
-    // failed never asked, so it waits out its backoff only.
+  public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_AndWithdrawsAGroupWhoseSendFailedAsync() {
+    // #2029: a bucket whose request left is not claimed again while its answer is on the way. #2223: every group is
+    // recorded before it is sent, and a group whose send failed never asked, so its record is withdrawn.
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -141,8 +141,18 @@ public class RepairDrainWorkerTests {
 
     await worker.DrainTickAsync(1.0, now, CancellationToken.None);
 
-    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(1);
-    var mark = coordinator.PendingMarks[0];
+    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(2)
+      .Because("each group is recorded as awaiting its answer before its request is sent");
+    await Assert.That(coordinator.Withdrawals.Count).IsEqualTo(1);
+    var withdrawal = coordinator.Withdrawals[0];
+    await Assert.That(withdrawal.Keys.Select(k => k.StreamId)).IsEquivalentTo([failed])
+      .Because("only the group whose send failed is taken back");
+    await Assert.That(withdrawal.Origin).IsEqualTo(origin);
+    await Assert.That(withdrawal.Now).IsEqualTo(now);
+    await Assert.That(withdrawal.Timeout).IsEqualTo(TimeSpan.FromMinutes(45))
+      .Because("the withdrawal names the record the mark made, so it cannot take back a later one");
+    await Assert.That(coordinator.PendingKeys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
+    var mark = coordinator.PendingMarks.Single(m => m.Keys[0].StreamId == sent);
     await Assert.That(mark.Keys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
     await Assert.That(mark.Keys[0].TenantScope).IsEqualTo("tenant-a");
     await Assert.That(mark.Keys[0].EventType).IsEqualTo("Contracts.TypeB");
@@ -152,7 +162,7 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_NothingSent_MarksNothingPendingAsync() {
+  public async Task DrainTick_NothingSent_LeavesNothingPendingAsync() {
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -163,7 +173,36 @@ public class RepairDrainWorkerTests {
 
     await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
 
-    await Assert.That(coordinator.PendingMarks).IsEmpty();
+    await Assert.That(coordinator.PendingKeys).IsEmpty()
+      .Because("the one request recorded before its send was withdrawn when the send failed");
+    await Assert.That(coordinator.Withdrawals.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task DrainTick_RecordsTheAnswerPending_BeforeTheRequestLeaves_SoAnAnswerThatOutrunsThePublishIsKeptAsync() {
+    // #2223: the origin may answer before the publish call returns (a fast origin, or this host's continuation delayed
+    // under load). An answer clears the bucket's wait; a mark written after it would put the wait back, and the bucket
+    // would count against the outstanding-answer cap until the answer timeout. The fake answers inside the publish.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var stream = TrackedGuid.New().Value;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", stream, 100, 500));
+    var marksWhenPublished = -1;
+    transport.OnPublish = () => {
+      marksWhenPublished = coordinator.PendingMarks.Count;
+      coordinator.Answer(stream);
+    };
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(marksWhenPublished).IsEqualTo(1)
+      .Because("the bucket is recorded as awaiting its answer before the request can reach the origin");
+    await Assert.That(coordinator.PendingKeys).IsEmpty()
+      .Because("the answer that landed inside the publish stands; nothing after it records the bucket as waiting again");
+    await Assert.That(coordinator.Withdrawals).IsEmpty();
   }
 
   [Test]
@@ -676,7 +715,23 @@ public class RepairDrainWorkerTests {
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
         DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
       PendingMarks.Add((originServiceId, keys, now, timeout));
+      PendingKeys.AddRange(keys);
       return Task.FromResult(keys.Count);
+    }
+
+    /// <summary>The buckets awaiting an answer, as the ledger would hold them: marked, and neither answered nor withdrawn.</summary>
+    public List<IntegrityRepairLedger.DivergenceKey> PendingKeys { get; } = [];
+
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, DateTimeOffset Now, TimeSpan Timeout)> Withdrawals { get; } = [];
+
+    /// <summary>An answer landing for <paramref name="streamId"/>: its bucket stops waiting.</summary>
+    public void Answer(Guid streamId) => PendingKeys.RemoveAll(k => k.StreamId == streamId);
+
+    public Task<int> IntegrityWithdrawAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+        CancellationToken cancellationToken = default) {
+      Withdrawals.Add((originServiceId, keys, now, timeout));
+      return Task.FromResult(PendingKeys.RemoveAll(keys.Contains));
     }
   }
 
@@ -686,10 +741,13 @@ public class RepairDrainWorkerTests {
     /// <summary>Thrown in place of the throttle timeout, for the cancellation contract.</summary>
     public Exception? FailFirstWith { get; set; }
     public int Attempts { get; private set; }
+    /// <summary>Runs inside each publish, before it succeeds or fails: where an answer that outruns the publish lands.</summary>
+    public Action? OnPublish { get; set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
+      OnPublish?.Invoke();
       lock (Published) {
         Attempts++;
         if (Attempts <= FailFirst) {

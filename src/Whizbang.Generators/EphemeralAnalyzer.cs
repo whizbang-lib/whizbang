@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -13,7 +14,7 @@ using Whizbang.Generators.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Roslyn analyzer for the ephemeral virality rules (WHIZ130, WHIZ131, WHIZ132 and WHIZ134). Ephemeral is <em>viral</em>: a
+/// Roslyn analyzer for the ephemeral virality rules (WHIZ130, WHIZ131, WHIZ132, WHIZ134 and WHIZ139). Ephemeral is <em>viral</em>: a
 /// perspective fed by an ephemeral event is authoritative state, not a rebuildable cache. Nobody in the
 /// industry <em>enforces</em> that; Whizbang does, safe by construction at build time. Each diagnostic
 /// is an ordinary <see cref="DiagnosticAnalyzer"/> diagnostic, so it surfaces in both the IDE (squiggle)
@@ -36,7 +37,6 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   // IPerspectiveBase<TModel, TEvent1, ...> is the unified marker extended by IPerspectiveFor and
   // IPerspectiveWithActionsFor; the events are the type arguments from index 1 on.
   private const string PERSPECTIVE_BASE = "Whizbang.Core.Perspectives.IPerspectiveBase";
-  private const string DANGEROUS_MIX_OPT_IN = "DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute";
 
   // WHIZ131: the three call sites that ask to replay a perspective, and the two ways a name is statically a type.
   private const string REBUILD_COMMAND = "Whizbang.Core.Commands.System.RebuildPerspectiveCommand";
@@ -146,33 +146,93 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     description: "When a type composes conflicting ephemeral profiles, the effective mode is otherwise "
       + "resolved by a deterministic-but-arbitrary rule; an explicit declaration makes the choice clear.");
 
+  /// <summary>
+  /// WHIZ139: Warning. A read model applies an (ephemeral, Sourced) pair that another read model allows to share a stream
+  /// (<c>[DangerouslyAllowMixedEphemeralAndSourcedEvents(Streams = MixedStreams.Allow)]</c>), without that opt-in. A pair
+  /// is allowed only when every read model that applies both types opts in, because a rebuild of a read model that
+  /// applies the ephemeral type refuses a stream that holds it, and would silently skip the stream's Sourced events. So
+  /// the pair stays refused at run time, and this names the read model that keeps it so (#2255).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz139</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:SecondReadModelWithoutAllow_ReportsWHIZ139OnItAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:EveryReadModelAllows_OrNoneDoes_NoWHIZ139Async</tests>
+  public static readonly DiagnosticDescriptor MixedStreamPairKeptRefused = new(
+    id: "WHIZ139",
+    title: "Read model keeps an allowed mixed-stream pair refused",
+    messageFormat: "Read model '{0}' applies ephemeral event '{1}' and Sourced event '{2}' without "
+      + "[DangerouslyAllowMixedEphemeralAndSourcedEvents(Streams = MixedStreams.Allow)], so streams holding both stay "
+      + "refused although {3} allows them. Opt '{0}' in the same way if its rebuild may skip those streams, or stop "
+      + "applying one of the two.",
+    category: CATEGORY,
+    defaultSeverity: DiagnosticSeverity.Warning,
+    isEnabledByDefault: true,
+    description: "One read model's opt-in to mixed streams can never break another read model's rebuild: a pair is "
+      + "allowed only when every read model that applies both types opts in.",
+    customTags: WellKnownDiagnosticTags.CompilationEnd);
+
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    [MixedModePerspective, ReplayOfEphemeralOnlyPerspective, EphemeralToSourcedLaundering, AmbiguousComposition];
+    [MixedModePerspective, ReplayOfEphemeralOnlyPerspective, EphemeralToSourcedLaundering, AmbiguousComposition, MixedStreamPairKeptRefused];
+
+  // A read model that applies both kinds: its name, where it is declared, whether it allows mixed streams, and the
+  // (ephemeral, Sourced) pairs it applies by display name.
+  private sealed record MixedReadModel(string Name, Location Location, bool Allows, ImmutableArray<(string Ephemeral, string Durable)> Pairs);
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
-    context.RegisterSymbolAction(_analyzeType, SymbolKind.NamedType);
+    context.RegisterCompilationStartAction(start => {
+      var mixed = new ConcurrentBag<MixedReadModel>();
+      start.RegisterSymbolAction(ctx => _analyzeType(ctx, mixed), SymbolKind.NamedType);
+      start.RegisterCompilationEndAction(ctx => _checkMixedStreamPairs(ctx, mixed));   // WHIZ139
+    });
     context.RegisterOperationAction(_analyzeRebuildCommand, OperationKind.ObjectCreation);   // WHIZ131
     context.RegisterOperationAction(_analyzeReplayCall, OperationKind.Invocation);           // WHIZ131
   }
 
-  private static void _analyzeType(SymbolAnalysisContext context) {
+  private static void _analyzeType(SymbolAnalysisContext context, ConcurrentBag<MixedReadModel> mixed) {
     if (context.Symbol is not INamedTypeSymbol symbol
         || (symbol.TypeKind != TypeKind.Class && symbol.TypeKind != TypeKind.Struct)) {
       return;
     }
-    _checkMixedModePerspective(context, symbol);   // WHIZ130
-    _checkLaundering(context, symbol);             // WHIZ132
-    _checkAmbiguousComposition(context, symbol);   // WHIZ134
+    _checkMixedModePerspective(context, symbol, mixed);   // WHIZ130, and the read models WHIZ139 compares
+    _checkLaundering(context, symbol);                    // WHIZ132
+    _checkAmbiguousComposition(context, symbol);          // WHIZ134
   }
 
-  private static void _checkMixedModePerspective(SymbolAnalysisContext context, INamedTypeSymbol symbol) {
+  /// <summary>
+  /// WHIZ139 once every type is seen: each read model without the stream opt-in that applies a pair some read model
+  /// allows, once per such pair, naming the read models that allow it.
+  /// </summary>
+  private static void _checkMixedStreamPairs(CompilationAnalysisContext context, ConcurrentBag<MixedReadModel> mixed) {
+    var allowing = new Dictionary<(string, string), SortedSet<string>>();
+    foreach (var model in mixed.Where(m => m.Allows)) {
+      foreach (var pair in model.Pairs) {
+        if (!allowing.TryGetValue(pair, out var names)) {
+          allowing[pair] = names = new SortedSet<string>(System.StringComparer.Ordinal);
+        }
+        names.Add(model.Name);
+      }
+    }
+    foreach (var model in mixed.Where(m => !m.Allows).OrderBy(m => m.Name, System.StringComparer.Ordinal)) {
+      foreach (var pair in model.Pairs.Where(allowing.ContainsKey)) {
+        context.ReportDiagnostic(Diagnostic.Create(
+          MixedStreamPairKeptRefused, model.Location, model.Name, pair.Ephemeral, pair.Durable,
+          string.Join(", ", allowing[pair].Select(n => $"'{n}'"))));
+      }
+    }
+  }
+
+  private static void _checkMixedModePerspective(SymbolAnalysisContext context, INamedTypeSymbol symbol, ConcurrentBag<MixedReadModel> mixed) {
     var events = _appliedEventTypes(symbol);
     if (events.Count == 0) {
       return;   // not a perspective
+    }
+    var pairs = MixedStreamOptIn.Pairs(events);
+    if (pairs.Count > 0) {
+      mixed.Add(new MixedReadModel(symbol.Name, LocationUtilities.FirstOrNone(symbol), MixedStreamOptIn.AllowsStreams(symbol),
+        [.. pairs.Select(p => (TypeNameUtilities.Display(p.Ephemeral), TypeNameUtilities.Display(p.Durable)))]));
     }
 
     var ephemeral = new List<string>();
@@ -181,7 +241,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
       (EphemeralResolver.IsEphemeral(evt) ? ephemeral : sourced).Add(TypeNameUtilities.SimpleName(evt));
     }
 
-    if (ephemeral.Count > 0 && sourced.Count > 0 && !_hasDangerousMixOptIn(symbol)) {
+    if (pairs.Count > 0 && !MixedStreamOptIn.HasOptIn(symbol)) {
       context.ReportDiagnostic(Diagnostic.Create(
         MixedModePerspective,
         LocationUtilities.FirstOrNone(symbol),
@@ -397,15 +457,6 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
 
   private static bool _isFormatClrTypeName(IMethodSymbol method) =>
     method.Name == FORMAT_CLR_TYPE_NAME && TypeNameUtilities.IsNamed(method.ContainingType, TYPE_NAME_FORMATTER);
-
-  /// <summary>
-  /// True when the perspective carries <c>[DangerouslyAllowMixedEphemeralAndSourcedEvents]</c> — the
-  /// developer's explicit, in-code acknowledgement of the mixed-mode path. Matched by simple name so it
-  /// works even when the source compilation can't fully bind the attribute.
-  /// </summary>
-  private static bool _hasDangerousMixOptIn(INamedTypeSymbol perspective) =>
-    perspective.GetAttributes().Any(a =>
-      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is DANGEROUS_MIX_OPT_IN or "DangerouslyAllowMixedEphemeralAndSourcedEvents");
 
   /// <summary>
   /// The distinct event types a perspective applies — the type arguments (from index 1) of every

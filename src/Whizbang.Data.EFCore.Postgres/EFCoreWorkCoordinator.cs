@@ -558,6 +558,36 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:StateBased_IgnoringTheAllowedEphemeralType_LeavesTheMixedStreamRebuildableAsync</tests>
+  public async Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds, IReadOnlyList<string> ignoredEphemeralTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    ArgumentNullException.ThrowIfNull(ignoredEphemeralTypes);
+    if (streamIds.Count == 0) {
+      return [];
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorMixedStreamSql.StateBasedStreamIdsAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), streamIds, ignoredEphemeralTypes, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Sync_ReplacesThePairs_AndAnEmptyListClearsThemAsync</tests>
+  public async Task SyncMixedStreamAllowancesAsync(IReadOnlyList<Whizbang.Core.Perspectives.MixedStreamPair> pairs, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(pairs);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await CoordinatorMixedStreamSql.SyncAllowancesAsync(cmd, PgIdentifier.QualifyPrefix(schema), pairs, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task SyncEphemeralTypeGraceAsync(
     IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(graceOverrides);
@@ -609,7 +639,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <remarks>The function answers an outcome (migration 393): 0 not reported, 1 reported, 2 reported and the row
+  /// <remarks>The function answers an outcome (migration 397): 0 not reported, 1 reported, 2 reported and the row
   /// recorded, 3 reported and the unhealable mark lifted; the last two are counted as buckets opened (#2256).</remarks>
   public async Task<bool> IntegrityTryBeginReportAsync(
       IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
@@ -625,7 +655,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, failOpen: true, cancellationToken).ConfigureAwait(false), failOpen: true);
 
   /// <inheritdoc />
-  /// <remarks>The function answers an outcome (migration 393): 0 refused, 1 granted, 2 granted and the row recorded,
+  /// <remarks>The function answers an outcome (migration 397): 0 refused, 1 granted, 2 granted and the row recorded,
   /// counted as a bucket opened (#2256).</remarks>
   public async Task<bool> IntegrityTryBeginRepairAsync(
       IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
@@ -638,14 +668,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, failOpen: false, cancellationToken).ConfigureAwait(false), failOpen: false);
 
   /// <inheritdoc />
-  /// <remarks>The function answers the rows it removed that were still open (migration 393), counted as healed.</remarks>
+  /// <remarks>The function answers the rows it removed that were still open (migration 397), counted as healed.</remarks>
   public async Task IntegrityMarkHealedAsync(
       IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
     _recordClosed(await _integrityLedgerOutcomeAsync("wh_integrity_heal_counted",
       cmd => _bindDivergenceKey(cmd, key), failOpen: false, cancellationToken).ConfigureAwait(false) ?? 0,
       Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
 
-  // The single-key outcome (migration 393) as the flag callers read, counting an opened or reopened bucket on the way.
+  // The single-key outcome (migration 397) as the flag callers read, counting an opened or reopened bucket on the way.
   // An unreadable outcome (the call failed) is the caller's fail-open or fail-closed answer, and counts nothing.
   private bool _flagFromOutcome(int? outcome, bool failOpen) {
     if (outcome is not { } known) {
@@ -656,7 +686,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return known > 0;
   }
 
-  // The outcomes of wh_integrity_report_outcome and wh_integrity_repair_outcome that record a bucket (393).
+  // The outcomes of wh_integrity_report_outcome and wh_integrity_repair_outcome that record a bucket (397).
   private const int LEDGER_OUTCOME_OPENED = 2;
   private const int LEDGER_OUTCOME_REOPENED = 3;
 
@@ -693,7 +723,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>The array sibling of <c>_integrityLedgerOutcomeAsync</c>: one batch function call answering the per-key
   /// flags (<c>granted</c>), the rows it recorded (<c>opened</c>) and, for the report batch, the unhealable marks it
-  /// lifted (<c>reopened</c>), which are counted (#2256, migration 393). Null on ANY failure: the caller then loops the
+  /// lifted (<c>reopened</c>), which are counted (#2256, migration 397). Null on ANY failure: the caller then loops the
   /// single-key path, whose per-operation fail-open/fail-closed semantics remain the authority.</summary>
   private async Task<IReadOnlyList<bool>?> _integrityLedgerBoolArrayAsync(
       string fn, Action<Npgsql.NpgsqlCommand> bind, CancellationToken ct) {
@@ -1262,7 +1292,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         }
         closed += reader.GetBoolean(1) ? 1 : 0;
       }
-      // #2256: a row already marked unhealable was closed by the mark, and is not closed again (393).
+      // #2256: a row already marked unhealable was closed by the mark, and is not closed again (397).
       _recordClosed(closed, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
       return ages;
     } catch (OperationCanceledException) {
@@ -1299,7 +1329,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ages.Add(reader.GetDouble(0));
           closed += reader.GetBoolean(1) ? 1 : 0;
         }
-        // #2256: a row already marked unhealable was closed by the mark, and is not closed again (393).
+        // #2256: a row already marked unhealable was closed by the mark, and is not closed again (397).
         _recordClosed(closed, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_HEALED);
         return ages;
       }, cancellationToken).ConfigureAwait(false);
@@ -1421,7 +1451,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
   }
 
-  // The forget functions' one row (migration 393): the rows removed, answered to the caller, and those of them still
+  // The forget functions' one row (migration 397): the rows removed, answered to the caller, and those of them still
   // open, counted as forgotten (#2256). A row already marked unhealable was closed by the mark.
   private async Task<int> _readForgottenAsync(Npgsql.NpgsqlCommand cmd, CancellationToken cancellationToken) {
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1433,7 +1463,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>Two statements on one connection: the ledger's distinct (origin, type) pairs with their origin's last report
   /// (<c>wh_integrity_ledger_origin_types</c>, migrations 370 and 372), then the judged ones forgotten
-  /// (<c>wh_integrity_forget_origin_types_counted</c>, migration 393); the second is skipped when nothing is judged. Best-effort: a prune that
+  /// (<c>wh_integrity_forget_origin_types_counted</c>, migration 397); the second is skipped when nothing is judged. Best-effort: a prune that
   /// cannot reach the ledger is logged and answers 0, and the next audit cycle prunes.</remarks>
   public async Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
       Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) {
@@ -1525,6 +1555,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable CA1848 // Rare error path; the buckets wait out their backoff instead of their answer.
       _log.LogWarning(ex,
         "Integrity ledger wh_integrity_mark_answer_pending failed for origin {OriginServiceId}; the requested buckets wait out their backoff only.",
+        originServiceId);
+#pragma warning restore CA1848
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>One call to <c>wh_integrity_withdraw_answer_pending</c> (migration 395). Best-effort: a withdrawal that
+  /// cannot reach the ledger is logged and answers 0, and the buckets wait out their answer timeout with the attempt
+  /// spent.</remarks>
+  public async Task<int> IntegrityWithdrawAnswerPendingAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    if (keys.Count == 0) {
+      return 0;
+    }
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_integrity_withdraw_answer_pending");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.AddWithValue(P_NOW, now);
+      cmd.Parameters.AddWithValue("p_timeout_secs", _wholeSeconds(timeout));
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now,@p_timeout_secs)";
+#pragma warning restore S2077
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the buckets wait out their answer timeout instead.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_withdraw_answer_pending failed for origin {OriginServiceId}; the buckets whose send failed wait out their answer timeout, with the attempt spent.",
         originServiceId);
 #pragma warning restore CA1848
       return 0;
@@ -1953,7 +2019,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   /// <remarks>
-  /// One grouped read (<c>wh_integrity_ledger_backlog</c>, migration 393). An origin is named by its last checkpoint's
+  /// One grouped read (<c>wh_integrity_ledger_backlog</c>, migration 397). An origin is named by its last checkpoint's
   /// service name, and by its id when none is recorded. Degrades to the not-reported reading rather than throwing, and is
   /// logged: no series is better than a zero, which would read as a healed service.
   /// </remarks>
@@ -2027,7 +2093,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT {qualified}({args})";
 #pragma warning restore S2077
-      // 393 (#2256): each single-key function answers a number (an outcome, or the rows it closed), never null.
+      // 397 (#2256): each single-key function answers a number (an outcome, or the rows it closed), never null.
       return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
     } catch (OperationCanceledException) {
       throw;

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 394_LedgerGaugesSplitBucketsByKind.sql
+-- Migration: 398_LedgerGaugesSplitBucketsByKind.sql
 -- Date: 2026-11-11
 -- Description: The stream-integrity ledger gauges split the unhealed buckets by kind (#2260).
 --
@@ -29,7 +29,7 @@
 --              No index: four more FILTER aggregates in the one pass over the ledger the function already makes (090
 --              caps the ledger), so the read stays one sequential scan and one aggregate.
 --
---              Number 394: 392, 393, 395 and 396 are taken by changes in flight.
+--              Number 398: 395 is the highest on develop, and the integrity bundle's changes take 396 to 401 in order.
 --
 -- Reversal: reversible (no data is stored; 373's definition restores the function)
 -- Dependencies: 251 (is_deficit), 320 (deficit_events), 373 (wh_integrity_ledger_gauges, copied with the delta above)
@@ -77,7 +77,7 @@ BEGIN
       COALESCE(SUM(x.deficit_events) FILTER (
         WHERE x.is_deficit AND x.unhealable_at IS NULL AND x.exhausted_at IS NULL), 0)::BIGINT AS deficit_events,
       COUNT(*) FILTER (WHERE x.unhealable_at IS NOT NULL)::BIGINT AS unhealable,
-      -- 394 (#2260): the kinds; whatever none of the three names is unknown.
+      -- 398 (#2260): the kinds; whatever none of the three names is unknown.
       COUNT(*) FILTER (WHERE x.is_deficit)::BIGINT AS deficits,
       COUNT(*) FILTER (WHERE NOT x.is_deficit AND x.deficit_events < 0)::BIGINT AS surpluses,
       COUNT(*) FILTER (WHERE NOT x.is_deficit AND x.deficit_events = 0)::BIGINT AS mismatches
@@ -93,4 +93,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_ledger_gauges(INTEGER) IS
-'Ledger as a gauge: unhealed buckets, how many have exhausted their repair budget, the age of the oldest, the buckets awaiting the answer to a request and those answered and waiting for the next comparison (320); the integrity deliveries waiting for the maintainer with the age of the oldest (#2035); the deficit events left to heal in buckets repair can still act on, and the unhealable buckets (373, #2203); and the unhealed buckets by kind: deficit, surplus, digest mismatch and unknown, which add up to the total (394, #2260).';
+'Ledger as a gauge: unhealed buckets, how many have exhausted their repair budget, the age of the oldest, the buckets awaiting the answer to a request and those answered and waiting for the next comparison (320); the integrity deliveries waiting for the maintainer with the age of the oldest (#2035); the deficit events left to heal in buckets repair can still act on, and the unhealable buckets (373, #2203); and the unhealed buckets by kind: deficit, surplus, digest mismatch and unknown, which add up to the total (398, #2260).';

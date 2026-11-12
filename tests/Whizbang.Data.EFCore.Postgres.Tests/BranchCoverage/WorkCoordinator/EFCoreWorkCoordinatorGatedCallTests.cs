@@ -141,6 +141,9 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       await c.RecordDefinitionLineageAsync(from.DefinitionId, to.DefinitionId, DefinitionRelationship.SchemaUpgradedTo, migrationRef: null);
     });
     register("GetStateBasedStreamIds", "GetStateBasedStreamIdsAsync", (c, _) => c.GetStateBasedStreamIdsAsync([_newId()]));
+    register("GetStateBasedStreamIdsIgnoring", "GetStateBasedStreamIdsAsync", (c, _) => c.GetStateBasedStreamIdsAsync([_newId()], [EVENT_TYPE]));
+    register("SyncMixedStreamAllowances", "SyncMixedStreamAllowancesAsync", (c, _) =>
+      c.SyncMixedStreamAllowancesAsync([new Whizbang.Core.Perspectives.MixedStreamPair(EVENT_TYPE, EVENT_TYPE + "2")]));
     register("SyncEphemeralTypeGrace", "SyncEphemeralTypeGraceAsync", (c, _) =>
       c.SyncEphemeralTypeGraceAsync([new EphemeralTypeGrace(EVENT_TYPE, 60)]));
     register("SyncPerspectiveRetention", "SyncPerspectiveRetentionAsync", (c, _) =>

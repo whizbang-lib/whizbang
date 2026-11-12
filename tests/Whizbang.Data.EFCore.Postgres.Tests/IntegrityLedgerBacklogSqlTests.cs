@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// removing a row already marked unhealable does not close it a second time. So the repairable rows change by exactly
 /// <c>opened - closed</c>.
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/393_TheLedgerCountsWhatItOpensAndCloses.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/397_TheLedgerCountsWhatItOpensAndCloses.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
 [Category("Integration")]
@@ -316,7 +316,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
 
   /// <summary>
   /// An older release, still running during a rolling deploy or rolled back onto this schema, calls the ledger functions
-  /// by their existing names and reads the shapes it always read. 393 keeps each name as a wrapper over its counting form.
+  /// by their existing names and reads the shapes it always read. 397 keeps each name as a wrapper over its counting form.
   /// </summary>
   [Test]
   public async Task ThePreviousReleasesFunctions_AnswerInTheirOldShapesAsync() {
@@ -354,7 +354,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// 393's reverse restores the existing names to their last words and drops what 393 added, so a rollback leaves an
+  /// 397's reverse restores the existing names to their last words and drops what 397 added, so a rollback leaves an
   /// older release the functions it was built against, working without the counting forms.
   /// </summary>
   [Test]
@@ -363,8 +363,8 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
     var stream = TrackedGuid.New().Value;
     await using var conn = await _openAsync();
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
-      "Whizbang.Data.Postgres.MigrationReversals.393_TheLedgerCountsWhatItOpensAndCloses.down.sql")
-      ?? throw new InvalidOperationException("393 ships its reverse");
+      "Whizbang.Data.Postgres.MigrationReversals.397_TheLedgerCountsWhatItOpensAndCloses.down.sql")
+      ?? throw new InvalidOperationException("397 ships its reverse");
     using var reader = new StreamReader(down);
     await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
       (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));
@@ -375,7 +375,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
                "wh_integrity_heal_types_counted", "wh_integrity_forget_unconsumed_counted",
                "wh_integrity_forget_origin_types_counted", "wh_integrity_ledger_backlog" }) {
       await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM pg_proc WHERE proname = $1", added)).IsEqualTo(0L)
-        .Because($"{added} is 393's and goes with it");
+        .Because($"{added} is 397's and goes with it");
     }
     await Assert.That(await _scalarAsync<bool>(conn,
       "SELECT wh_integrity_try_begin_report($1, '', $2, $3, 11, 21, 0, 0, $4, 3600)", origin, EVENT_TYPE, stream, _t0)).IsTrue()

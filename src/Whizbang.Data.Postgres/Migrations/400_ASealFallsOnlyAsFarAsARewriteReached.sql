@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 396_ASealFallsOnlyAsFarAsARewriteReached.sql
+-- Migration: 400_ASealFallsOnlyAsFarAsARewriteReached.sql
 -- Date: 2026-11-11
 -- Description: An origin generation bump invalidates only what it changed (#2262).
 --
@@ -40,7 +40,7 @@
 --              lane; the bump adds one insert and one primary-key range delete; the answer reads the log by primary
 --              key. None of it is on the emit path.
 --
---              Number 396: 392 to 395 are taken by changes in flight.
+--              Number 400: 395 is the highest on develop, and the integrity bundle's changes take 396 to 401 in order.
 --
 -- Reversal: lossy (the rewrite log, its settings and the new guard are dropped, and the five functions return to their 092 and 093
 --           definitions; seals are kept, and the next generation change resets them, as before this migration)
@@ -127,7 +127,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_fold_digest_epoch IS
-'Internal: (re)writes one epoch''s bucket rows from the canonical fold (_wh_epoch_buckets). 396 (#2262): refolding a sealed epoch of the local lane notes its first position as rewritten.';
+'Internal: (re)writes one epoch''s bucket rows from the canonical fold (_wh_epoch_buckets). 400 (#2262): refolding a sealed epoch of the local lane notes its first position as rewritten.';
 
 -- 093's definition whole, plus the note: the range's minimum, before the early return, because a rewrite above the
 -- frontier (nothing sealed to refold) can still lie below a consumer's seal.
@@ -160,7 +160,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_refold_epochs_covering IS
-'Internal: refolds the sealed epochs whose sequence ranges a legitimate mutation touched. 396 (#2262): a range of the local lane notes its minimum as rewritten.';
+'Internal: refolds the sealed epochs whose sequence ranges a legitimate mutation touched. 400 (#2262): a range of the local lane notes its minimum as rewritten.';
 
 -- ===========================================================================================
 -- The bump: only after a noted local rewrite, recording how far it reached
@@ -203,7 +203,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_bump_origin_generation IS
-'Internal: advances the origin generation after a legitimate mutation of folded history. 396 (#2262): only when the transaction noted a rewrite of the local lane, recording the lowest position it touched in wh_integrity_origin_rewrites.';
+'Internal: advances the origin generation after a legitimate mutation of folded history. 400 (#2262): only when the transaction noted a rewrite of the local lane, recording the lowest position it touched in wh_integrity_origin_rewrites.';
 
 -- ===========================================================================================
 -- The answer: how far history was rewritten since a consumer's generation
@@ -309,4 +309,4 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.integrity_seal_generation_guard(UUID, BIGINT) IS
-'Consumer guard without a rewrite floor: unchanged generation proceeds; a changed one resets the seal once and skips the round. 396 (#2262): the floorless call of wh_integrity_seal_guard.';
+'Consumer guard without a rewrite floor: unchanged generation proceeds; a changed one resets the seal once and skips the round. 400 (#2262): the floorless call of wh_integrity_seal_guard.';
