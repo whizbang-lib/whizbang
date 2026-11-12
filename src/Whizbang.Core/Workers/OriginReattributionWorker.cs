@@ -90,7 +90,7 @@ public sealed partial class OriginReattributionWorker(
       return 0;   // no owned domains: every event without an origin is this service's own, as before.
     }
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(OriginReattributionWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
       return 0;

@@ -317,6 +317,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
+  public async ValueTask RecordHousekeepingDeferralAsync(
+      string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(budgetKey);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    _ = await CoordinatorFleetSql.RecordHousekeepingDeferralAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), budgetKey, firstDeferredAt, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:AClear_RemovesOnlyItsOwnBudgetAsync</tests>
+  public async ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(budgetKey);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    _ = await CoordinatorFleetSql.ClearHousekeepingDeferralAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), budgetKey, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

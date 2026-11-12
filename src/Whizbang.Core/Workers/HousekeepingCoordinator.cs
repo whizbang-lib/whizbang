@@ -51,6 +51,8 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/workers/housekeeping-arbitration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
 public sealed class HousekeepingCoordinator {
@@ -195,12 +197,17 @@ public sealed class HousekeepingCoordinator {
     /// </summary>
     /// <remarks>
     /// Measured on the coordinator's <see cref="TimeProvider"/>, per activity, and re-armed when a
-    /// pass completes. Takes precedence over <see cref="MaxConsecutiveDeferrals"/>.
+    /// pass completes. Takes precedence over <see cref="MaxConsecutiveDeferrals"/>. A refusal behind a
+    /// higher-ranked activity counts toward it (#2287), and when the backlog reading carries
+    /// <see cref="ServiceBacklog.HousekeepingDeferrals"/> it is measured from the earlier of the stored
+    /// first deferral and this process's own, so it survives a restart (#2288).
     /// </remarks>
     /// <docs>operations/workers/housekeeping-arbitration#tick-idle-gate-and-forced-ceiling</docs>
     /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AShortTick_DoesNotForceTheSweepBeforeMaxDeferralAsync</tests>
     /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheSweepIsNotForcedOneMomentBeforeMaxDeferral_AndIsForcedAtItAsync</tests>
     /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheEarlierOfTheStoredAndTheInMemoryFirstDeferral_GovernsAsync</tests>
     public TimeSpan MaxDeferral {
       get => _maxDeferral;
       set {
@@ -473,25 +480,56 @@ public sealed class HousekeepingCoordinator {
       // Ranked, not merely serialized: an activity yields only to a STRICTLY higher rank, so
       // recovery never waits behind integrity or cleanup, and integrity never waits behind cleanup.
       var budget = _budgetFor(activity, requester);
+      var budgetKey = _budgetKey(activity, requester);
+      // The store's first deferral (#2288), read with the backlog: the earlier of it and this process's own governs.
+      var stored = backlog?.HousekeepingDeferrals;
+      var storedAt = _storedFirstDeferral(stored, budgetKey);
+      if (storedAt < (budget.FirstDeferredAt ?? DateTimeOffset.MaxValue)) {
+        budget.FirstDeferredAt = storedAt;
+      }
+
       var rank = _rank(activity);
+      Decision decision;
       if ((_dlqRunning && rank > _rank(Activity.DeadLetterRecovery))
           || (_integrityRunning && rank > _rank(Activity.Integrity))) {
         // Time held back behind a higher rank is time held back (#2287): the refusal spends this activity's budget, so a
         // long integrity audit cannot keep cleanup waiting past its ceiling. The rank still wins while the slot is held;
         // the ceiling only decides that the first ask to find it free is forced through.
         _ = _spend(budget);
-        return new Decision(false, Verdict.HigherPriorityRunning);
+        decision = new Decision(false, Verdict.HigherPriorityRunning);
+      } else {
+        // Recovery, integrity and cleanup ask the same question of the service and differ only in
+        // which budget they spend and which slot they take, so they share one admission rule rather
+        // than copies of it that can drift.
+        decision = _admitWhenQuiet(backlog, budget);
+        if (decision.Granted) {
+          _claim(activity, requester);
+        }
       }
-
-      // Recovery, integrity and cleanup ask the same question of the service and differ only in
-      // which budget they spend and which slot they take, so they share one admission rule rather
-      // than copies of it that can drift.
-      var decision = _admitWhenQuiet(backlog, budget);
-      if (decision.Granted) {
-        _claim(activity, requester);
-      }
-      return decision;
+      return stored is null ? decision : _withStoreChange(decision, budgetKey, budget, storedAt);
     }
+  }
+
+  // The stored key of a budget (#2288). A persisted contract: renaming one orphans the rows already written under it.
+  private static string _budgetKey(Activity activity, string requester) => activity switch {
+    Activity.DeadLetterRecovery => "dead-letter-recovery",
+    Activity.Integrity => "integrity:" + requester,
+    _ => "maintenance",
+  };
+
+  private static DateTimeOffset? _storedFirstDeferral(IReadOnlyDictionary<string, DateTimeOffset>? stored, string budgetKey) =>
+    stored is not null && stored.TryGetValue(budgetKey, out var at) ? at : null;
+
+  // What the caller changes in the store after a decision judged on a reading that carried the figure (#2288): a refusal
+  // while the store held no first deferral records this process's; a grant while it held one clears it once the pass
+  // ends. Every refusal reaching here has spent the budget, so its first deferral is set.
+  private static Decision _withStoreChange(Decision decision, string budgetKey, DeferralBudget budget, DateTimeOffset? storedAt) {
+    if (storedAt is not null) {
+      return decision.Granted ? decision with { DeferralToClear = budgetKey } : decision;
+    }
+    return decision.Granted
+      ? decision
+      : decision with { DeferralToRecord = new DeferralRecord(budgetKey, budget.FirstDeferredAt!.Value) };
   }
 
   // Caller holds _gate. The budget an ask spends: one per activity, and one per requester for integrity (#2001), because

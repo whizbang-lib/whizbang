@@ -35,9 +35,15 @@ internal static partial class HousekeepingDeferralStore {
   internal static async ValueTask RecordAsync(
       IWorkCoordinator? coordinator, HousekeepingCoordinator.Decision decision, ILogger logger,
       CancellationToken cancellationToken) {
-    // RED stub (#2288): nothing is written yet.
-    _ = (coordinator, decision, logger, cancellationToken);
-    await Task.CompletedTask.ConfigureAwait(false);
+    if (coordinator is null || decision.DeferralToRecord is not { } record) {
+      return;
+    }
+    try {
+      await coordinator.RecordHousekeepingDeferralAsync(record.BudgetKey, record.FirstDeferredAt, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogRecordFailed(logger, record.BudgetKey, ex);
+    }
   }
 
   /// <summary>Clears the stored first deferral of a granted pass that has ended, if the decision asks for it.</summary>
@@ -52,9 +58,14 @@ internal static partial class HousekeepingDeferralStore {
   /// </remarks>
   internal static async ValueTask ClearAsync(
       IWorkCoordinator? coordinator, HousekeepingCoordinator.Decision decision, ILogger logger) {
-    // RED stub (#2288): nothing is cleared yet.
-    _ = (coordinator, decision, logger);
-    await Task.CompletedTask.ConfigureAwait(false);
+    if (coordinator is null || decision.DeferralToClear is not { } budgetKey) {
+      return;
+    }
+    try {
+      await coordinator.ClearHousekeepingDeferralAsync(budgetKey, CancellationToken.None).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogClearFailed(logger, budgetKey, ex);
+    }
   }
 
   [LoggerMessage(Level = LogLevel.Warning,
