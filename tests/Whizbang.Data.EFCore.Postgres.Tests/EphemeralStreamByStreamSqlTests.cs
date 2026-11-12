@@ -126,7 +126,8 @@ public class EphemeralStreamByStreamSqlTests : EFCoreTestBase {
     var updated = await _appendAsync(conn, session, UPDATED);
     var created = await _appendAsync(conn, session, CREATED);
     var owned = await _appendAsync(conn, session, OWNED);
-    var ownedElsewhere = await _appendAsync(conn, (Guid)TrackedGuid.New(), OWNED);
+    var elsewhere = (Guid)TrackedGuid.New();
+    var ownedElsewhere = await _appendAsync(conn, elsewhere, OWNED);
 
     var result = await new EphemeralHistoryReclassifyStep(new ListLogger(), 10, 1).ReclassifyAsync(
       _services(release: new() { [TypeNameFormatter.GetFullName(CREATED)] = [OWNED] }), CancellationToken.None);
@@ -139,7 +140,9 @@ public class EphemeralStreamByStreamSqlTests : EFCoreTestBase {
     await Assert.That(await _flagsAsync(conn, owned)).IsEqualTo((long)EPHEMERAL);
     await Assert.That(await _flagsAsync(conn, ownedElsewhere)).IsEqualTo(0L)
       .Because("a release still applies only in streams that hold the type it is released for");
-    await StoredDigestInvariant.AssertAgreeAsync(conn, session);
+    await StoredDigestInvariant.AssertAgreeAsync(conn, session, elsewhere);
+    await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_stream_digests WHERE stream_id = @s", ("s", session)))
+      .IsEqualTo(0L).Because("the released type's events left the digests with the declared types' events");
   }
 
   [Test]

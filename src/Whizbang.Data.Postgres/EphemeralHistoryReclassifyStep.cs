@@ -20,7 +20,8 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Batches">The batches it ran, across every type.</param>
 /// <param name="EventsScanned">The types' own events read past their cursors.</param>
 /// <param name="EventsReclassified">Events stamped ephemeral (and taken out of the stream digests).</param>
-/// <param name="EventsBlocked">Events left Sourced because their stream holds a Sourced event of another type.</param>
+/// <param name="EventsBlocked">Events left Sourced because their stream holds a Sourced event of a type that is neither
+/// declared ephemeral nor released or allowed for one (#2278).</param>
 /// <param name="TypesFinished">Types whose walk completed in this cycle.</param>
 /// <param name="Status">The last batch's status: <c>ok</c>, <c>finished</c>, <c>complete</c>, <c>waiting (...)</c> or
 /// <c>skipped (...)</c>.</param>
@@ -55,6 +56,12 @@ public readonly record struct EphemeralHistoryReclassifyResult(
 /// batches a cycle across all types, one instance per type, resumable after a crash. Each batch keeps the mixed-stream
 /// guard (an event whose stream holds a Sourced event of another type is left Sourced and counted as blocked) and takes the
 /// events out of the stream digests through the one digest fold.
+/// </para>
+/// <para>
+/// A stream converts whole (#2278): when every Sourced event in it is of a type declared ephemeral, or released or
+/// allowed for one, the batch converts every declared type's events in it in the one statement, so a stream whose types
+/// were all declared together is never held back by its own declared types, and never left partly converted. A stream
+/// holding a type meant to stay durable is refused whole, and only that type is reported.
 /// </para>
 /// <para>
 /// It used to run inside the startup reconciler as one statement over every event of the type; it now runs in the
@@ -136,10 +143,12 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     var allowed = MixedStreamAllowance.Stored(MixedStreamAllowance.Allowed(services.GetService<IPerspectiveRunnerRegistry>()), catalog);
     var targets = _targets(catalog, options.ReleaseBlockers, report, allowed);
     long released = 0;
+    long withStream = 0;
     var walk = await new TypeHistoryWalker(OPERATION, _scanSize, _maxBatches)
       .WalkAsync(database, targets, async (transaction, prefix, target, window, ct) => {
-        var (batch, releasedInBatch) = await _applyAsync(transaction, prefix, target, window, ct).ConfigureAwait(false);
+        var (batch, releasedInBatch, withStreamInBatch) = await _applyAsync(transaction, prefix, target, window, ct).ConfigureAwait(false);
         released += releasedInBatch;
+        withStream += withStreamInBatch;
         return batch;
       }, cancellationToken)
       .ConfigureAwait(false);
@@ -159,6 +168,7 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     }
     return new EphemeralHistoryReclassifyResult(walk.Batches, walk.Scanned, walk.Changed, walk.Blocked, walk.TypesFinished, walk.Status) {
       EventsReleased = released,
+      EventsReclassifiedWithStream = withStream,
     };
   }
 
@@ -297,11 +307,18 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
   /// The report switch, the type's release list and the Sourced types allowed to share its streams (#2255) are the walk's
   /// variant: a change walks the type again, so a release or an allowance reaches history a completed walk passed, and the
   /// report's counts describe one walk. Off with nothing released or allowed is no variant, as before the report.
+  /// The walk is given the other declared-ephemeral types with their own released and allowed types (#2278), so a stream
+  /// whose Sourced events are all of declared types converts whole; they are part of the variant too, as a digest
+  /// (<see cref="EphemeralStreamMates.Fingerprint"/>), so declaring, undeclaring, releasing for or allowing with another
+  /// type walks the type again and its report never names a type that is now ephemeral. A type declared alone adds no
+  /// part, as before.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralHistoryReclassifySqlTests.cs:TheWalk_NamesTheTypeAsTheAppendPathStoredIt_AndItsDefinitionByTheBareNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HistoryWalkTargetNamingTests.cs:EveryHistoryWalkStep_NamesItsTargetsAsTheAppendPathStoresThem_AndReadsThemAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Reclassify_AnAllowedPair_ReclassifiesTheEphemeralEvents_KeepsTheDurable_AndTheDigestsEqualARecountAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Reclassify_WithNoAllowingReadModel_TheAllowedPairStillBlocksAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralStreamByStreamSqlTests.cs:DeclaringAnotherType_WalksTheTypeAgain_SoItsReportNoLongerNamesTheNewlyDeclaredTypeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralStreamByStreamSqlTests.cs:TheVariant_IsTheSame_WhicheverOrderTheCatalogListsTheDeclaredTypesInAsync</tests>
   private static List<EphemeralTarget> _targets(
       IMessageTypeCatalog? catalog, IReadOnlyDictionary<string, List<string>> releaseBlockers, bool report,
       IReadOnlyList<MixedStreamPair> allowed) {
@@ -310,6 +327,7 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
       return targets;
     }
     var all = catalog.GetAll();
+    var declared = new List<(MessageTypeCatalogEntry Entry, string[] Names, EphemeralReleaseList Release, string[] Mixing)>();
     foreach (var entry in all) {
       if (entry.Ephemeral is null || !string.Equals(entry.Kind, "event", StringComparison.Ordinal)) {
         continue;
@@ -321,14 +339,23 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
       var release = EphemeralReleaseList.Resolve(releaseBlockers, entry, all);
       string[] mixing = [.. allowed.Where(p => names.Contains(p.EphemeralType, StringComparer.Ordinal))
         .Select(p => p.DurableType).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-      var variant = _variant(report, release.Names, mixing);
-      targets.AddRange(names.Select(name => new EphemeralTarget(name, entry.ClrTypeName, names, release, report, variant) { Allowed = mixing }));
+      declared.Add((entry, names, release, mixing));
+    }
+    foreach (var (entry, names, release, mixing) in declared) {
+      // #2278: every other declared type, with its own rules, converts with this one in the streams they share.
+      var mates = EphemeralStreamMates.From(
+        declared.Where(d => !ReferenceEquals(d.Entry, entry)).Select(d => (d.Names, d.Release.Names, d.Mixing)), names);
+      var variant = _variant(report, release.Names, mixing, mates.Fingerprint());
+      targets.AddRange(names.Select(name => new EphemeralTarget(name, entry.ClrTypeName, names, release, report, variant) {
+        Allowed = mixing,
+        Mates = mates,
+      }));
     }
     return targets;
   }
 
-  private static string? _variant(bool report, string[] released, string[] allowed) {
-    var parts = new List<string>(3);
+  private static string? _variant(bool report, string[] released, string[] allowed, string? mates) {
+    var parts = new List<string>(4);
     if (report) {
       parts.Add("blocker-report");
     }
@@ -339,14 +366,18 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     if (allowed.Length > 0) {
       parts.Add("allow=" + string.Join('|', allowed));
     }
+    // #2278: the other declared types and their rules decide which streams convert whole, so a change walks it again.
+    if (mates is not null) {
+      parts.Add("declared=" + mates);
+    }
     return parts.Count == 0 ? null : string.Join(';', parts);
   }
 
-  private static async Task<(TypeHistoryBatch Batch, long Released)> _applyAsync(
+  private static async Task<(TypeHistoryBatch Batch, long Released, long WithStream)> _applyAsync(
       NpgsqlTransaction transaction, string prefix, EphemeralTarget target, TypeHistoryWindow window, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
-      "SELECT status, events_reclassified, events_blocked, events_total, events_matched, events_released " +
-      $"FROM {prefix}wh_ephemeral_history_apply($1, $2, $3, $4, $5, $6, $7, $8, $9)", transaction.Connection, transaction);
+      "SELECT status, events_reclassified, events_blocked, events_total, events_matched, events_released, events_declared " +
+      $"FROM {prefix}wh_ephemeral_history_apply($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)", transaction.Connection, transaction);
     command.Parameters.AddWithValue(target.EventType);
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Names });
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)window.After ?? DBNull.Value });
@@ -356,19 +387,25 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Release.Names });
     command.Parameters.AddWithValue(target.Report);
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Allowed });
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Mates.Names });
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Mates.RuleOwner });
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Mates.RuleKind });
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = target.Mates.RuleType });
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return (new TypeHistoryBatch(reader.GetString(0), reader.GetInt64(1), 0, reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4)),
-      reader.GetInt64(5));
+      reader.GetInt64(5), reader.GetInt64(6));
   }
 
   // A walk of one stored name; Names are every name the type is stored under, which the mixed-stream guard treats as one.
   // Release is the type's release list, Report whether its batches record their blockers, Allowed the Sourced types allowed
-  // to share its streams (#2255); all three make up the Variant.
+  // to share its streams (#2255), Mates the other declared-ephemeral types converted with it in its streams (#2278); all
+  // four make up the Variant.
   private sealed record EphemeralTarget(
       string EventType, string DefinitionName, string[] Names, EphemeralReleaseList Release, bool Report, string? Variant)
     : TypeHistoryTarget(EventType, DefinitionName, Variant) {
     public string[] Allowed { get; init; } = [];
+    public EphemeralStreamMates Mates { get; init; } = EphemeralStreamMates.None;
   }
 
   [LoggerMessage(Level = LogLevel.Information,
@@ -376,7 +413,7 @@ public sealed partial class EphemeralHistoryReclassifyStep : IMaintenanceStep {
   static partial void LogProgress(ILogger logger, string eventType, long reclassified, long blocked, long left, long total);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Ephemeral history of {EventType} reclassified: every event stored before the declaration is ephemeral, except in streams that also hold Sourced events of another type")]
+    Message = "Ephemeral history of {EventType} reclassified: every event stored before the declaration is ephemeral, except in streams that also hold Sourced events of a type not declared ephemeral")]
   static partial void LogFinished(ILogger logger, string eventType);
 
   [LoggerMessage(Level = LogLevel.Information,
