@@ -925,6 +925,9 @@ function Invoke-CoverageReport {
     }
 }
 
+# Read by the finally block below, so set before anything in the try can exit: a run that exits early
+# (no test assemblies found) otherwise halts there under strict mode, and the halt hides its own error.
+$failFastTriggered = $false
 try {
     # Determine parallel level
     if ($MaxParallel -eq 0) {
@@ -1480,9 +1483,12 @@ try {
             #
             # Filtering by write time against the run's own start keeps this non-destructive --
             # nothing is deleted, they are simply not counted as if they were current.
-            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
-                               $_.LastWriteTimeUtc -ge $script:runStartTime }
+            #
+            # Under the configuration that ran (#2244): a -Configuration Release run that looked under Debug
+            # found nothing, or a stale Debug run's files. @(): one file is not a collection under strict mode.
+            $coberturaFiles = @(Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]TestResults" -and
+                               $_.LastWriteTimeUtc -ge $script:runStartTime })
 
             # Drop the cobertura of any project that failed or was killed.
             #
@@ -1644,6 +1650,20 @@ try {
         return $null -ne $testType
     }
 
+    # Written, not Write-Error: this script stops on errors, and its trap re-throws a Write-Error as a
+    # bare "ScriptHalted" with the message lost. A workflow error annotation under GitHub Actions.
+    function Write-RunError([string]$Message) {
+        if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$Message" } else { Write-Host $Message -ForegroundColor Red }
+    }
+
+    # The one error for a run that found nothing to run (#2244), whichever selection found it, naming the
+    # selection and the build output it looked in.
+    function Exit-NoTestAssemblies([string]$Selection, [string]$Hint) {
+        Write-RunError ("No test assemblies found: $Selection matched no test DLL in bin/$Configuration/net10.0, " +
+            "so nothing ran. $Hint")
+        exit 1
+    }
+
     # Helper function to ensure build exists for dynamic DLL discovery
     function Ensure-BuildExists {
         # Discovery maps a BUILT DLL back to its .csproj and only then reads <WhizbangTestType>, so a
@@ -1716,9 +1736,11 @@ try {
             } else {
                 Write-Host "Building solution ($($unbuilt.Count) test project(s) not built)..." -ForegroundColor Gray
             }
-            & dotnet build --verbosity quiet @fastBuildArgs
+            # The configuration discovery then reads (#2244): without it the build wrote Debug, and a
+            # -Configuration Release run found no test assembly and exited 1 having run nothing.
+            & dotnet build --configuration $Configuration --verbosity quiet @fastBuildArgs
             if ($LASTEXITCODE -ne 0) {
-                Write-Error "Build failed. Cannot discover test projects."
+                Write-RunError "Build failed. Cannot discover test projects."
                 exit 1
             }
         }
@@ -1766,8 +1788,7 @@ try {
                 Write-Host "Discovered $($tagFilteredDlls.Count) test projects with tag '$Tag'" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test projects found with tag '$Tag'. Check that projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
-            exit 1
+            Exit-NoTestAssemblies "tag '$Tag'" "Check for build failures first, then that the projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
         }
     } elseif ($ProjectFilter) {
         Ensure-BuildExists
@@ -1791,8 +1812,7 @@ try {
                 Write-Host "Discovered $($filteredDlls.Count) test projects matching '$ProjectFilter'" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found matching '$ProjectFilter'. Check the project name."
-            exit 1
+            Exit-NoTestAssemblies "project filter '$ProjectFilter'" "Check for build failures first, then the project name."
         }
     } else {
         # Run every project whose WhizbangTestType this mode selects ($selectedTestTypes)
@@ -1813,11 +1833,9 @@ try {
                 Write-Host "Discovered $($selectedDlls.Count) test projects (WhizbangTestType: $typeList)" -ForegroundColor Gray
             }
         } else {
-            Write-Error ("No test projects selected (WhizbangTestType: $typeList). Discovery reads " +
-                "<WhizbangTestType> from the .csproj behind each BUILT DLL, so a project with no output in " +
-                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
-                "Check for build failures first, then the property.")
-            exit 1
+            Exit-NoTestAssemblies "WhizbangTestType $typeList" ("Discovery reads <WhizbangTestType> from the .csproj " +
+                "behind each BUILT DLL, so a project with no output there is invisible even when the property is " +
+                "correct. Check for build failures first, then the property.")
         }
     }
 
@@ -2810,9 +2828,9 @@ try {
         # Find all cobertura XML files from test output
         # Same staleness guard as the primary call site above: only count cobertura files this
         # run produced, or the report merges every run still sitting in TestResults.
-        $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
-                           $_.LastWriteTimeUtc -ge $script:runStartTime }
+        $coberturaFiles = @(Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]TestResults" -and
+                           $_.LastWriteTimeUtc -ge $script:runStartTime })
 
         if ($coberturaFiles.Count -gt 0) {
             $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($hasTestFailures)
