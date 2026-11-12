@@ -107,20 +107,26 @@ internal static class StrongIdStreamIds {
     var attribute = streamIdAttribute.ApplicationSyntaxReference!.GetSyntax();
     var tree = attribute.SyntaxTree;
     var model = compilation.GetSemanticModel(tree);
-    var unresolved = attribute.DescendantNodes().OfType<TypeOfExpressionSyntax>()
-      .Select(t => (Syntax: t.Type, Type: model.GetTypeInfo(t.Type).Type))
-      .Where(t => t.Type is { TypeKind: TypeKind.Error })
-      .ToList();
-    var names = new HashSet<string>(unresolved.Select(t => t.Type!.Name));
-    var declarations = _discoveredIds(compilation, names)
-      .Distinct()
-      .Select(id => CSharpSyntaxTree.ParseText(_declaration(id), (CSharpParseOptions)tree.Options));
+    var unresolved = new List<TypeSyntax>();
+    var names = new HashSet<string>();
+    foreach (var listed in attribute.DescendantNodes().OfType<TypeOfExpressionSyntax>()) {
+      if (model.GetTypeInfo(listed.Type).Type is IErrorTypeSymbol error) {
+        unresolved.Add(listed.Type);
+        names.Add(error.Name);
+      }
+    }
+    var declarations = new List<SyntaxTree>();
+    foreach (var id in new HashSet<(string? Namespace, string Name)>(_discoveredIds(compilation, names))) {
+      declarations.Add(CSharpSyntaxTree.ParseText(_declaration(id), (CSharpParseOptions)tree.Options));
+    }
     var withIds = compilation.AddSyntaxTrees(declarations).GetSemanticModel(tree);
-    return unresolved
-      .Select(t => withIds.GetTypeInfo(t.Syntax).Type)
-      .OfType<ITypeSymbol>()
-      .Where(t => t.TypeKind != TypeKind.Error)
-      .Select(TypeNameUtilities.FullyQualified);
+    foreach (var listed in unresolved) {
+      // A type syntax always binds to a type, an error type when it does not resolve
+      var type = withIds.GetTypeInfo(listed).Type!;
+      if (type is not IErrorTypeSymbol) {
+        yield return TypeNameUtilities.FullyQualified(type);
+      }
+    }
   }
 
   /// <summary>

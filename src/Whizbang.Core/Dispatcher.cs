@@ -3529,13 +3529,20 @@ public abstract partial class Dispatcher(
     if (message is IHasStreamId hasStreamId) {
       hasStreamId.StreamId = inherited;
     } else if (!_streamIdExtractor.SetStreamId(message, inherited, _streamIdExtractor.GetStreamIdType(sourceType))
-        && _streamIdExtractor.GetStreamIdType(messageType) is not null) {
+        && _isStrongIdStreamId(messageType)) {
       _logRefusedInheritanceOnce(sourceType, messageType);
       return null;
     }
     Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, sourceType.Name, messageType.Name);
     return inherited;
   }
+
+  /// <summary>
+  /// Whether <paramref name="messageType"/>'s <c>[StreamId]</c> is a strong id: the extractor reports its type, and it
+  /// is not <see cref="Guid"/>, which the generated extractor reports for a stream id that is not a strong id (#2072).
+  /// </summary>
+  private bool _isStrongIdStreamId(Type messageType) =>
+    _streamIdExtractor!.GetStreamIdType(messageType) is { } type && type != typeof(Guid);
 
   /// <summary>
   /// Logs, the first time only, that a message of <paramref name="messageType"/> did not inherit the stream of a

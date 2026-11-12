@@ -93,8 +93,10 @@ public static class StreamIdExtractorRegistry {
   /// The stream-id type of a message type: the first non-null answer of the registered extractors, in priority order.
   /// </summary>
   /// <param name="messageType">The runtime type of the message.</param>
-  /// <returns>The strong-id type of its stream id, or null.</returns>
+  /// <returns>The strong-id type of its stream id, <see cref="Guid"/> for one that is not a strong id, or null when no
+  /// extractor knows the type.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Registry/StreamIdExtractorRegistryTests.cs:GetStreamIdType_ReturnsTheFirstTypeAnExtractorReportsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:ADerivedGuidStreamIdInAnotherAssembly_IsNotReportedAsItsBasesStrongIdAsync</tests>
   public static Type? GetStreamIdType(Type messageType) {
     // S3267: the loop returns the first type an extractor reports; a LINQ query would hide that
 #pragma warning disable S3267

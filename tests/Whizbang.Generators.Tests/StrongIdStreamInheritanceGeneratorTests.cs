@@ -112,7 +112,17 @@ public class StrongIdStreamInheritanceGeneratorTests {
       _inheritProbe("App.Contracts.InvoiceCreated", "InvoiceId", _v7, "null"));
 
     await Assert.That(observed).IsEqualTo(_written(_v7))
-      .Because("a source whose stream id is not a strong id reports no type and is always accepted");
+      .Because("a source an extractor does not know reports no type, and is taken as a plain Guid");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AGuidStreamIdSource_IsWrittenAsync() {
+    var observed = _runProbe("InheritGuidType", IDS + INVOICE_CREATED,
+      _inheritProbe("App.Contracts.InvoiceCreated", "InvoiceId", _v7, "typeof(Guid)"));
+
+    await Assert.That(observed).IsEqualTo(_written(_v7))
+      .Because("a source whose stream id is not a strong id reports Guid and is always accepted");
   }
 
   [Test]
@@ -221,8 +231,8 @@ public class StrongIdStreamInheritanceGeneratorTests {
 
     var observed = _runProbe("StreamIdTypes", IDS + contracts, probe);
 
-    await Assert.That(observed).IsEqualTo("OrderId,OrderId,null,InvoiceId,null,null")
-      .Because("a strong id is reported whether or not it is settable; a Guid stream id, a derived type's own Guid stream id and an unknown type report none");
+    await Assert.That(observed).IsEqualTo("OrderId,OrderId,Guid,InvoiceId,Guid,null")
+      .Because("a strong id is reported whether or not it is settable; a Guid stream id and a derived type's own Guid stream id report Guid; an unknown type reports none");
   }
 
   [Test]
@@ -301,6 +311,7 @@ public class StrongIdStreamInheritanceGeneratorTests {
 
       namespace App.Returns {
         public class ReturnOpened : IEvent { [StreamId] [WhizbangId] public OrderKey Key { get; set; } }
+        public record ParcelReturned([StreamId] [WhizbangId] ParcelKey Key) : IEvent;
       }
 
       namespace App.Contracts {
@@ -321,6 +332,11 @@ public class StrongIdStreamInheritanceGeneratorTests {
           [StreamId(InheritFrom = [typeof(S.OrderKey)])]
           public InvoiceId InvoiceId { get; set; }
         }
+
+        public class FromAParcel : ICommand {
+          [StreamId(InheritFrom = [typeof(App.Returns.ParcelKey)])]
+          public InvoiceId InvoiceId { get; set; }
+        }
       }
       """;
     var probe = $$"""
@@ -331,7 +347,8 @@ public class StrongIdStreamInheritanceGeneratorTests {
       }
       var others = string.Join("/",
         extractor.SetStreamId(new global::App.Contracts.BySimpleName(), new Guid("{{_v7}}"), typeof(global::App.Contracts.ShipmentId)),
-        extractor.SetStreamId(new global::App.Contracts.BySimpleName(), new Guid("{{_v7}}"), typeof(global::LedgerKey)));
+        extractor.SetStreamId(new global::App.Contracts.BySimpleName(), new Guid("{{_v7}}"), typeof(global::LedgerKey)),
+        extractor.SetStreamId(new global::App.Contracts.FromAParcel(), new Guid("{{_v7}}"), typeof(global::App.Returns.ParcelKey)));
       return string.Join(",",
         Check(() => new global::App.Contracts.BySimpleName()), Check(() => new global::App.Contracts.ByQualifiedName()),
         Check(() => new global::App.Contracts.ByAlias()), Check(() => new global::App.Sales.FromTheIdsNamespace()), others);
@@ -339,7 +356,7 @@ public class StrongIdStreamInheritanceGeneratorTests {
 
     var observed = _runProbe("ListedByFullName", IDS + contracts, probe);
 
-    await Assert.That(observed).IsEqualTo("True/False,True/False,True/False,True/False,True/True")
+    await Assert.That(observed).IsEqualTo("True/False,True/False,True/False,True/False,True/True/True")
       .Because("a listed id the stream-id generator cannot see is matched as the type the attribute names, not by its simple name");
   }
 
@@ -416,6 +433,67 @@ public class StrongIdStreamInheritanceGeneratorTests {
       var observed = (string)assembly.GetType("App.Probe", throwOnError: true)!.GetMethod("Run")!.Invoke(null, null)!;
 
       await Assert.That(observed).IsEqualTo($"LedgerId;True;{_v7}");
+    } finally {
+      context.Unload();
+    }
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ADerivedGuidStreamIdInAnotherAssembly_IsNotReportedAsItsBasesStrongIdAsync() {
+    // OrderRekeyed derives, in its own assembly, from a base whose [StreamId] is a strong id, and names its own Guid
+    // stream id. Both assemblies' extractors are in the registry, its own first, as the registry tries them: its own
+    // extracts the Guid, so its own must also answer the type. If it answered null the registry would ask the base
+    // assembly's, which matches the derived type and reports OrderId, and the cascaded InvoiceId would be refused.
+    var baseImage = _compileWithGenerators("RekeyedBase", """
+      using System;
+      using Whizbang.Core;
+      namespace Shared {
+        [WhizbangId]
+        public readonly partial struct OrderId;
+
+        public class OrderEvent : IEvent { [StreamId] public OrderId OrderId { get; set; } }
+
+        public static class BaseExtractor {
+          public static IStreamIdExtractor Instance => new global::RekeyedBase.Generated.GeneratedStreamIdExtractor();
+        }
+      }
+      """, []);
+    var appImage = _compileWithGenerators("RekeyedApp", $$"""
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Registry;
+      namespace App {
+        [WhizbangId]
+        public readonly partial struct InvoiceId;
+
+        public class OrderRekeyed : Shared.OrderEvent { [StreamId(Override = true)] public Guid Key { get; set; } }
+
+        public class CreateInvoice : ICommand { [StreamId] public InvoiceId InvoiceId { get; set; } }
+
+        public static class Probe {
+          public static string Run() {
+            StreamIdExtractorRegistry.Register(new global::RekeyedApp.Generated.GeneratedStreamIdExtractor(), priority: -20720);
+            StreamIdExtractorRegistry.Register(Shared.BaseExtractor.Instance, priority: -20719);
+            var source = new OrderRekeyed { Key = new Guid("{{_v7}}") };
+            var sourceType = StreamIdExtractorRegistry.GetStreamIdType(typeof(OrderRekeyed));
+            var inherited = StreamIdExtractorRegistry.ExtractStreamId(source, typeof(OrderRekeyed))!.Value;
+            var invoice = new CreateInvoice();
+            var wrote = StreamIdExtractorRegistry.SetStreamId(invoice, inherited, sourceType);
+            return $"{sourceType?.Name ?? "null"};{wrote};{invoice.InvoiceId.ToGuid()}";
+          }
+        }
+      }
+      """, [MetadataReference.CreateFromImage(baseImage)]);
+
+    var context = new System.Runtime.Loader.AssemblyLoadContext("RekeyedAcrossAssemblies", isCollectible: true);
+    try {
+      context.LoadFromStream(new MemoryStream(baseImage));
+      var assembly = context.LoadFromStream(new MemoryStream(appImage));
+      var observed = (string)assembly.GetType("App.Probe", throwOnError: true)!.GetMethod("Run")!.Invoke(null, null)!;
+
+      await Assert.That(observed).IsEqualTo($"Guid;True;{_v7}")
+        .Because("the type of a stream id comes from the extractor that extracted it, so a derived Guid stream id is a plain Guid source");
     } finally {
       context.Unload();
     }
@@ -523,14 +601,14 @@ public class StrongIdStreamInheritanceGeneratorTests {
         extractor.SetStreamId(seal, id, null), extractor.SetStreamId(label, id, null));
       string Name(Type t) => extractor.GetStreamIdType(t)?.Name ?? "null";
       var types = string.Join(",", Name(typeof(App.Contracts.OpenLedger)), Name(typeof(App.Contracts.NoteLedger)),
-        Name(typeof(App.Contracts.LedgerBundle)));
+        Name(typeof(App.Contracts.LedgerBundle)), Name(typeof(App.Contracts.LabelLedger)));
       return $"{written};{open.Key.ToGuid() == id};{note.Key == id};{types}";
       """;
 
     var observed = _runProbe("EveryKind", contracts, probe);
 
-    await Assert.That(observed).IsEqualTo("True,True,False,False;True;True;LedgerKey,null,null")
-      .Because("a strong id with a From(Guid) and a settable Guid are written; an init-only Guid and a string are not");
+    await Assert.That(observed).IsEqualTo("True,True,False,False;True;True;LedgerKey,Guid,Guid,Guid")
+      .Because("a strong id with a From(Guid) and a settable Guid are written; an init-only Guid and a string are not; every stream id that is not a strong id reports Guid");
   }
 
   [Test]
@@ -569,7 +647,7 @@ public class StrongIdStreamInheritanceGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  public async Task AnAssemblyWithNoStrongIdStreamIds_GetsNoStreamIdTypeCasesAsync() {
+  public async Task AnAssemblyWithOnlyGuidStreamIds_ReportsGuidForEachAsync() {
     const string source = """
       using System;
       using Whizbang.Core;
@@ -582,8 +660,24 @@ public class StrongIdStreamInheritanceGeneratorTests {
     var result = GeneratorTestHelper.RunGenerator<StreamIdGenerator>(source);
     var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, EXTRACTORS);
 
-    await Assert.That(code).DoesNotContain("IsAssignableFrom")
-      .Because("with no strong-id stream id in the assembly every type answers null, which is the fallback");
+    await Assert.That(code).Contains("typeof(global::App.Contracts.OrderNoted).IsAssignableFrom(messageType)");
+    await Assert.That(code).Contains("return typeof(global::System.Guid);")
+      .Because("an assembly with no strong-id stream id still answers for its types, so the registry never asks a base type's assembly instead");
+  }
+
+  /// <summary>Compiles an assembly with the stream-id and strong-id generators and returns its image.</summary>
+  [RequiresAssemblyFiles]
+  private static byte[] _compileWithGenerators(string assemblyName, string source, IEnumerable<MetadataReference> references) {
+    var (_, output) = GeneratorTestHelper.RunGeneratorsWithFullReferences(
+      [new StreamIdGenerator(), new WhizbangIdGenerator()], source, assemblyName, references);
+    using var image = new MemoryStream();
+    var emitted = output.Emit(image);
+    if (!emitted.Success) {
+      throw new InvalidOperationException(
+        $"{assemblyName} does not compile: "
+        + string.Join(Environment.NewLine, emitted.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
+    }
+    return image.ToArray();
   }
 
   /// <summary>Compiles a strong-id assembly with the strong-id generator and returns its image.</summary>

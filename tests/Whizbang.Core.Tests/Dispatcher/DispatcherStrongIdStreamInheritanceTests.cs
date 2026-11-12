@@ -57,6 +57,10 @@ public sealed class DispatcherStrongIdStreamInheritanceTests {
     [StreamId] public Guid InvoiceId { get; init; }
   }
 
+#pragma warning disable WHIZ009 // Intentionally without [StreamId]: an event no extractor reports a stream-id type for
+  public sealed class InheritanceInvoiceUnkeyed : IEvent;
+#pragma warning restore WHIZ009
+
   [GenerateStreamId]
   public sealed class InheritanceInvoiceMinted : IEvent {
     [StreamId] public InheritanceInvoiceId InvoiceId { get; set; }
@@ -158,6 +162,14 @@ public sealed class DispatcherStrongIdStreamInheritanceTests {
     var cascaded = new InheritanceInvoiceNoted();
 
     var tracked = await _cascadeAsync(cascaded, _orderSource());
+
+    await Assert.That(tracked).IsEqualTo(_v7);
+  }
+
+  [Test]
+  public async Task AnEventWithNoStreamId_StillTakesTheSourceStreamAsBeforeAsync() {
+    // No extractor reports a stream-id type for it, so not writing it is not a refusal either
+    var tracked = await _cascadeAsync(new InheritanceInvoiceUnkeyed(), _orderSource());
 
     await Assert.That(tracked).IsEqualTo(_v7);
   }

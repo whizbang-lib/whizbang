@@ -894,12 +894,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates the GET_STREAM_ID_TYPE_DISPATCH region: for each event, command and composite, most derived first, the
-  /// strong-id type of its stream id, or null for one that is not a strong id, so a derived type's own Guid stream id
-  /// is not reported as its base's strong id (#2072). An assembly with no strong-id stream id gets no cases, since
-  /// every answer would be null.
+  /// strong-id type of its stream id, or <c>typeof(Guid)</c> for one that is not a strong id, so a derived type's own
+  /// Guid stream id is not reported as its base's strong id (#2072). Every type the extractor knows gets an answer, so
+  /// the registry, which takes the first extractor's answer, never asks a base type's assembly about a derived type this
+  /// assembly extracts: the stream id's type comes from the extractor that extracts its value.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:GetStreamIdType_ReportsTheStrongIdOfEachMessageTypeAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:AnAssemblyWithNoStrongIdStreamIds_GetsNoStreamIdTypeCasesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:AnAssemblyWithOnlyGuidStreamIds_ReportsGuidForEachAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StrongIdStreamInheritanceGeneratorTests.cs:ADerivedGuidStreamIdInAnotherAssembly_IsNotReportedAsItsBasesStrongIdAsync</tests>
   private static string _generateStreamIdTypeRegion(
       string template,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
@@ -909,16 +911,12 @@ public class StreamIdGenerator : IIncrementalGenerator {
       .Concat(commandsWithStreamId.Select(c => (EventType: c.CommandType, c.StrongIdType)))
       .Concat(compositesWithStreamId.Select(c => (c.EventType, c.StrongIdType)))
       .ToList();
-    if (cases.TrueForAll(c => c.StrongIdType is null)) {
-      return TemplateUtilities.ReplaceRegion(template, "GET_STREAM_ID_TYPE_DISPATCH", "");
-    }
-
     var snippet = TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "STREAM_ID_TYPE_CASE");
     var code = new StringBuilder();
     foreach (var (messageType, strongIdType) in cases) {
       code.AppendLine(snippet
         .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-        .Replace("__STREAM_ID_TYPE__", strongIdType is null ? "null" : $"typeof({strongIdType})"));
+        .Replace("__STREAM_ID_TYPE__", $"typeof({strongIdType ?? "global::System.Guid"})"));
     }
     return TemplateUtilities.ReplaceRegion(template, "GET_STREAM_ID_TYPE_DISPATCH", code.ToString().TrimEnd());
   }

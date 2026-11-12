@@ -245,7 +245,8 @@ public class StreamIdSnippets {
   public bool SetStreamIdStrongIdExample() {
     #region SET_STREAM_ID_STRONG_ID_CASE
     if (message is __MESSAGE_TYPE__ setS__INDEX__) {
-      if (!(sourceStreamIdType is null || sourceStreamIdType == typeof(__STRONG_ID_TYPE__)__ACCEPTED_SOURCES__)) {
+      if (!(sourceStreamIdType is null || sourceStreamIdType == typeof(global::System.Guid)
+          || sourceStreamIdType == typeof(__STRONG_ID_TYPE__)__ACCEPTED_SOURCES__)) {
         return false;
       }
       try {
