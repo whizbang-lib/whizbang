@@ -75,4 +75,37 @@ public sealed class StreamIdAttribute : Attribute {
   /// <tests>tests/Whizbang.Generators.Tests/StreamIdOverrideGeneratorTests.cs:AnEventOverrideParameter_IsTheStreamIdAheadOfAnInheritedPropertyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAttributeAnalyzerTests.cs:ADerivedOverridePropertyOverAnInheritedOne_IsNotReportedAsync</tests>
   public bool Override { get; init; }
+
+  /// <summary>
+  /// The strong-id types, beyond the property's own, whose stream a cascaded message may inherit. Defaults to
+  /// <see langword="null"/>: only a source whose stream id is the same strong id, or is not a strong id at all (a plain
+  /// <see cref="Guid"/>), is inherited.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// When a receptor returns a message that names no stream, the dispatcher gives it the stream of the message that
+  /// caused it. A strong-id stream id (a <c>[WhizbangId]</c> type) takes that stream only from a source whose stream id
+  /// is a plain <see cref="Guid"/>, the same strong id, or one of the types listed here. Any other source, such as an
+  /// <c>OrderId</c> stream cascading into an <c>InvoiceId</c>, is refused: the message's stream id stays empty, the
+  /// dispatcher logs a warning once for that pair of types, and the message goes on as if its source named no stream,
+  /// so a message with <c>[GenerateStreamId]</c> mints its own id and one without it has none. The value always goes
+  /// through the strong id's <c>From</c>, so an id that takes only UUIDv7 refuses an inherited Guid of another version
+  /// the same way.
+  /// </para>
+  /// <para>
+  /// It applies only to inheritance from the source message; a receptor that sets the stream id itself is not
+  /// affected. A listed type that is not a strong id is reported as WHIZ018, the option on a stream id that is not a
+  /// strong id as WHIZ019, and listing the property's own type as WHIZ034.
+  /// </para>
+  /// <code>
+  /// public record CreateInvoice : ICommand {
+  ///   [StreamId(InheritFrom = [typeof(OrderId)])]
+  ///   public InvoiceId Id { get; set; }
+  /// }
+  /// </code>
+  /// </remarks>
+  /// <docs>extending/attributes/streamid#inheriting-a-stream-of-another-id-type</docs>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyAttributeTests.cs:StreamIdAttribute_InheritFrom_DefaultsToNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyAttributeTests.cs:StreamIdAttribute_InheritFrom_CanBeSetAsync</tests>
+  public Type[]? InheritFrom { get; init; }
 }
