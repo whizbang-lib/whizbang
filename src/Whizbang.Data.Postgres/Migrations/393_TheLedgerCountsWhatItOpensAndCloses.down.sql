@@ -276,7 +276,7 @@ DECLARE
 BEGIN
   FOR v_i IN 1 .. v_n LOOP
     IF v_granted >= p_max_grants THEN
-      -- Budget spent: do not even ASK — the single function records an attempt when it grants,
+      -- Budget spent: do not even ASK: the single function records an attempt when it grants,
       -- and a grant the caller must discard burns backoff budget for nothing.
       v_results := v_results || FALSE;
       CONTINUE;

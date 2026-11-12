@@ -258,7 +258,7 @@ public sealed class StartupPipelineRunner {
         if (transientFailures > MaxTransientDutyFailures) {
           return new StartupStepReport(StartupStepOutcome.Failed,
             $"duty '{descriptor.RequiredCapability}' could not be reached after "
-            + $"{transientFailures} consecutive failures — last was {TypeNameFormatter.ForLog(transient.GetType())}: "
+            + $"{transientFailures} consecutive failures; last was {TypeNameFormatter.ForLog(transient.GetType())}: "
             + $"{transient.Message}. Failing the step rather than waiting on it indefinitely.");
         }
       } else if (attempt!.Refusal is DutyRefusal.Halted && _dutyElector is Whizbang.Core.RunControl.IObeysRunPermit { RunPermit: var permit }) {

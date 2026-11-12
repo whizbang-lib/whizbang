@@ -51,7 +51,7 @@ public sealed class EFCoreCollectiveEventExecutor<TModel>(
 
     if (dbContextOrSession is not DbContext dbContext) {
       throw new ArgumentException(
-        $"EFCoreCollectiveEventExecutor<{TypeNameFormatter.ForLog(typeof(TModel))}> requires a DbContext but received '{TypeNameFormatter.DisplayName(dbContextOrSession.GetType())}'. The worker dispatch routed an EF executor at a non-EF session — driver registration is wrong.",
+        $"EFCoreCollectiveEventExecutor<{TypeNameFormatter.ForLog(typeof(TModel))}> requires a DbContext but received '{TypeNameFormatter.DisplayName(dbContextOrSession.GetType())}'. The worker dispatch routed an EF executor at a non-EF session: driver registration is wrong.",
         nameof(dbContextOrSession));
     }
 

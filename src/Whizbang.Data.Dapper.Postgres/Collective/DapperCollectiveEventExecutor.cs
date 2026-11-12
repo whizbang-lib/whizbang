@@ -74,7 +74,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     if (dbContextOrSession is not IDbConnectionFactory connectionFactory) {
       throw new ArgumentException(
-        $"DapperCollectiveEventExecutor<{TypeNameFormatter.ForLog(typeof(TModel))}> requires an IDbConnectionFactory but received '{TypeNameFormatter.DisplayName(dbContextOrSession.GetType())}'. The worker dispatch routed a Dapper executor at a non-Dapper session — driver registration is wrong.",
+        $"DapperCollectiveEventExecutor<{TypeNameFormatter.ForLog(typeof(TModel))}> requires an IDbConnectionFactory but received '{TypeNameFormatter.DisplayName(dbContextOrSession.GetType())}'. The worker dispatch routed a Dapper executor at a non-Dapper session: driver registration is wrong.",
         nameof(dbContextOrSession));
     }
 
