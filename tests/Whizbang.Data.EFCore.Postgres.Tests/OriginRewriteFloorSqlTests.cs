@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// bump (one per maintenance batch, on any lane) reset every consumer's seal to 0.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/400_ASealFallsOnlyAsFarAsARewriteReached.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/402_ASealFallsOnlyAsFarAsARewriteReached.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
 public class OriginRewriteFloorSqlTests : EFCoreTestBase {

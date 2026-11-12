@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// ids are a digest mismatch, more events here than at the origin a surplus, and a row whose kind was never stated
 /// (written before kinds were recorded, or by the single-key report) is unknown. The kinds add up to the total.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/398_LedgerGaugesSplitBucketsByKind.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/400_LedgerGaugesSplitBucketsByKind.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#unhealed-buckets-by-kind</docs>
 [Category("Integration")]
@@ -74,14 +74,14 @@ public class IntegrityLedgerBucketKindGaugesSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// 398's reverse restores 373's definition: a rollback leaves an older release the nine columns it reads.
+  /// 400's reverse restores 373's definition: a rollback leaves an older release the nine columns it reads.
   /// </summary>
   [Test]
   public async Task TheReverse_RestoresTheGaugesWithoutTheKindsAsync() {
     await using var conn = await _openAsync();
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
-      "Whizbang.Data.Postgres.MigrationReversals.398_LedgerGaugesSplitBucketsByKind.down.sql")
-      ?? throw new InvalidOperationException("398 ships its reverse");
+      "Whizbang.Data.Postgres.MigrationReversals.400_LedgerGaugesSplitBucketsByKind.down.sql")
+      ?? throw new InvalidOperationException("400 ships its reverse");
     using var reader = new StreamReader(down);
     await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
       (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));
@@ -90,7 +90,7 @@ public class IntegrityLedgerBucketKindGaugesSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT * FROM wh_integrity_ledger_gauges(8)";
     await using var rows = await cmd.ExecuteReaderAsync();
 
-    await Assert.That(rows.FieldCount).IsEqualTo(9).Because("373's columns, and none of 398's");
+    await Assert.That(rows.FieldCount).IsEqualTo(9).Because("373's columns, and none of 400's");
     await Assert.That(rows.GetName(8)).IsEqualTo("unhealable_buckets");
   }
 

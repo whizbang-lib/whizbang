@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// answers which of a bundle's events were handled and when coverage starts, and the sweep keeps the ledger to the
 /// lookback, moving coverage forward before it removes anything and never moving it back.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/401_RepairedEventsRunOnlyReceptorsThatNeverRan.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/403_RepairedEventsRunOnlyReceptorsThatNeverRan.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
 [Category("Integration")]

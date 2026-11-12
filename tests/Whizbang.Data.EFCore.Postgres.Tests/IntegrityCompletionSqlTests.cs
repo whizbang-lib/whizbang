@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// from its checkpoints beside its name, and read with its seal; the buckets each instance opened and closed are added to
 /// a per-minute tally the service shares, pruned in the same call, and summed over a window.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/399_IntegrityCompletionIsReportedDirectly.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/401_IntegrityCompletionIsReportedDirectly.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
 [Category("Integration")]
@@ -122,15 +122,15 @@ public class IntegrityCompletionSqlTests : EFCoreTestBase {
   // ── the reverse ──────────────────────────────────────────────────────────────────────────────
 
   /// <summary>
-  /// 399's reverse drops what 399 added: the tally (its minutes are lost, which is why 399 is lossy) and the kept
+  /// 401's reverse drops what 401 added: the tally (its minutes are lost, which is why 401 is lossy) and the kept
   /// watermark, so a rollback leaves an older release the tables it was built against.
   /// </summary>
   [Test]
   public async Task TheReverse_DropsTheTallyAndTheWatermarkAsync() {
     await using var conn = await _openAsync();
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
-      "Whizbang.Data.Postgres.MigrationReversals.399_IntegrityCompletionIsReportedDirectly.down.sql")
-      ?? throw new InvalidOperationException("399 ships its reverse");
+      "Whizbang.Data.Postgres.MigrationReversals.401_IntegrityCompletionIsReportedDirectly.down.sql")
+      ?? throw new InvalidOperationException("401 ships its reverse");
     using var reader = new StreamReader(down);
     await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
       (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));
@@ -142,7 +142,7 @@ public class IntegrityCompletionSqlTests : EFCoreTestBase {
       .IsEqualTo(0L);
     foreach (var added in new[] { "wh_integrity_ledger_tally_add", "wh_integrity_ledger_tally_since" }) {
       await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM pg_proc WHERE proname = $1", added)).IsEqualTo(0L)
-        .Because($"{added} is 399's and goes with it");
+        .Because($"{added} is 401's and goes with it");
     }
   }
 

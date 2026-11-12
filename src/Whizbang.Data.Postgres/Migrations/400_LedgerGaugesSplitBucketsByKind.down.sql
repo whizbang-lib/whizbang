@@ -1,8 +1,8 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 398_LedgerGaugesSplitBucketsByKind.sql (#2260): wh_integrity_ledger_gauges as its last words before 398
--- defined it (373), without the four kind columns. 398 stored no data, so the reverse loses none.
+-- The reverse of 400_LedgerGaugesSplitBucketsByKind.sql (#2260): wh_integrity_ledger_gauges as its last words before 400
+-- defined it (373), without the four kind columns. 400 stored no data, so the reverse loses none.
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_integrity_ledger_gauges: 373's definition, whole.

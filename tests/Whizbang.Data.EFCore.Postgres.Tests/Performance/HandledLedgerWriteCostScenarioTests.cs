@@ -17,7 +17,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 
 /// <summary>
-/// What the handled-ledger record (#2273, migration 401) adds to the inbox completion, a hot path: 500 stored inbox
+/// What the handled-ledger record (#2273, migration 403) adds to the inbox completion, a hot path: 500 stored inbox
 /// events are completed in one <c>process_inbox_completions</c> call under <c>EXPLAIN (ANALYZE, BUFFERS)</c>, and the
 /// ledger's share of it (the same 500 records written alone, against a ledger already holding 20,000) is measured the
 /// same way. Both are reported; the gate is the ledger write's blocks per record, which must stay a primary-key insert

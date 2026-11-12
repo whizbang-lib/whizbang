@@ -51,7 +51,7 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
   [Test]
   public async Task IntegrityTryBeginReport_LedgerUnavailableAndNoLogger_StillFailsOpenAsync() {
     await using var dbContext = CreateDbContext();
-    // 397 (#2256): the function the coordinator calls.
+    // 399 (#2256): the function the coordinator calls.
     await _dropFunctionAsync("wh_integrity_report_outcome");
 
     var began = await _coordinator(dbContext, logger: null).IntegrityTryBeginReportAsync(
@@ -64,7 +64,7 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
   [Test]
   public async Task IntegrityTryBeginReportBatch_BatchFunctionMissingAndNoLogger_ReturnsNullAsync() {
     await using var dbContext = CreateDbContext();
-    // 397 (#2256): the function the coordinator calls.
+    // 399 (#2256): the function the coordinator calls.
     await _dropFunctionAsync("wh_integrity_report_divergences_counted");
 
     var results = await _coordinator(dbContext, logger: null).IntegrityTryBeginReportBatchAsync(
@@ -99,7 +99,7 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
   [Test]
   public async Task IntegrityMarkHealedBatchWithAges_BatchFunctionMissingAndNoLogger_ReturnsNullAsync() {
     await using var dbContext = CreateDbContext();
-    // 397 (#2256): the function the coordinator calls.
+    // 399 (#2256): the function the coordinator calls.
     await _dropFunctionAsync("wh_integrity_heal_batch_counted");
 
     var ages = await _coordinator(dbContext, logger: null).IntegrityMarkHealedBatchWithAgesAsync(_originId, [_key()]);
