@@ -24,32 +24,46 @@ BeforeAll {
     Copy-Item -LiteralPath (Join-Path $Root 'scripts' 'Run-Tests.ps1') -Destination (Join-Path $repo 'scripts')
     Copy-Item -LiteralPath (Join-Path $Root 'scripts' 'lib') -Destination (Join-Path $repo 'scripts') -Recurse
     Set-Content -LiteralPath (Join-Path $repo 'Whizbang.slnx') -Value '<Solution><Project Path="tests/A.Tests/A.Tests.csproj" /></Solution>'
-    Set-Content -LiteralPath (Join-Path $repo 'tests' 'A.Tests' 'A.Tests.csproj') -Value '<Project><PropertyGroup><IsTestProject>true</IsTestProject><WhizbangTestType>Unit</WhizbangTestType></PropertyGroup></Project>'
+    Set-Content -LiteralPath (Join-Path $repo 'tests' 'A.Tests' 'A.Tests.csproj') -Value '<Project><PropertyGroup><IsTestProject>true</IsTestProject><WhizbangTestType>Unit</WhizbangTestType><WhizbangTestTags>Fake</WhizbangTestTags></PropertyGroup></Project>'
 
     $bin = Join-Path $repo '.fake' 'bin'
     # `dotnet build` writes A.Tests.dll under the configuration it was given (Debug when none, as the real
-    # one does); `dotnet test` prints FAKE_TEST_OUTPUT and exits FAKE_TEST_EXIT; anything else succeeds.
+    # one does), unless FAKE_BUILD_NO_OUTPUT is set; `dotnet test` prints FAKE_TEST_OUTPUT and exits
+    # FAKE_TEST_EXIT; `dotnet run` (the -Coverage path) does the same after writing a cobertura report under
+    # its configuration's TestResults; `dotnet tool list` reports reportgenerator installed; anything else
+    # succeeds. The fake reportgenerator only records its call.
     Set-Content -LiteralPath (Join-Path $bin 'dotnet') -Value @'
 #!/bin/sh
 echo "dotnet $*" >> "$FAKE_LOG"
+cfg=Debug; prev=""
+for a in "$@"; do
+  if [ "$prev" = "--configuration" ] || [ "$prev" = "-c" ]; then cfg="$a"; fi
+  prev="$a"
+done
 case "$1" in
   build)
-    cfg=Debug; prev=""
-    for a in "$@"; do
-      if [ "$prev" = "--configuration" ] || [ "$prev" = "-c" ]; then cfg="$a"; fi
-      prev="$a"
-    done
-    mkdir -p "$FAKE_REPO/tests/A.Tests/bin/$cfg/net10.0"
-    touch "$FAKE_REPO/tests/A.Tests/bin/$cfg/net10.0/A.Tests.dll"
+    if [ -z "$FAKE_BUILD_NO_OUTPUT" ]; then
+      mkdir -p "$FAKE_REPO/tests/A.Tests/bin/$cfg/net10.0"
+      touch "$FAKE_REPO/tests/A.Tests/bin/$cfg/net10.0/A.Tests.dll"
+    fi
     exit 0;;
   test)
     if [ -n "$FAKE_TEST_OUTPUT" ]; then cat "$FAKE_TEST_OUTPUT"; fi
     exit "${FAKE_TEST_EXIT:-0}";;
+  run)
+    mkdir -p "$FAKE_REPO/tests/A.Tests/bin/$cfg/net10.0/TestResults"
+    echo '<coverage line-rate="1" />' > "$FAKE_REPO/tests/A.Tests/bin/$cfg/net10.0/TestResults/run.cobertura.xml"
+    if [ -n "$FAKE_TEST_OUTPUT" ]; then cat "$FAKE_TEST_OUTPUT"; fi
+    exit "${FAKE_TEST_EXIT:-0}";;
+  tool)
+    echo "dotnet-reportgenerator-globaltool   5.4.0   reportgenerator"
+    exit 0;;
   *) exit 0;;
 esac
 '@
+    Set-Content -LiteralPath (Join-Path $bin 'reportgenerator') -Value "#!/bin/sh`necho `"reportgenerator `$*`" >> `"`$FAKE_LOG`"`nexit 0"
     Set-Content -LiteralPath (Join-Path $bin 'docker') -Value "#!/bin/sh`nexit 0"
-    chmod +x (Join-Path $bin 'dotnet') (Join-Path $bin 'docker')
+    chmod +x (Join-Path $bin 'dotnet') (Join-Path $bin 'reportgenerator') (Join-Path $bin 'docker')
     $repo
   }
 
@@ -63,18 +77,19 @@ esac
   # Runs the copied Run-Tests.ps1 in a child pwsh with the fakes first on PATH. `dotnet test` prints
   # $TestOutput and exits $TestExitCode. Returns the exit code, the combined output and the fake's call log.
   function Invoke-RunTests {
-    param([string]$Repo, [string[]]$Arguments, [string]$TestOutput = '', [int]$TestExitCode = 0)
+    param([string]$Repo, [string[]]$Arguments, [string]$TestOutput = '', [int]$TestExitCode = 0, [switch]$BuildWritesNothing)
     $outputFile = Join-Path $Repo '.fake' 'test-output.txt'
     $log = Join-Path $Repo '.fake' 'calls.log'
     Set-Content -LiteralPath $outputFile -Value $TestOutput
     Set-Content -LiteralPath $log -Value ''
-    $saved = @{ PATH = $env:PATH; FAKE_LOG = $env:FAKE_LOG; FAKE_REPO = $env:FAKE_REPO; FAKE_TEST_OUTPUT = $env:FAKE_TEST_OUTPUT; FAKE_TEST_EXIT = $env:FAKE_TEST_EXIT; GITHUB_ACTIONS = $env:GITHUB_ACTIONS }
+    $saved = @{ PATH = $env:PATH; FAKE_LOG = $env:FAKE_LOG; FAKE_REPO = $env:FAKE_REPO; FAKE_TEST_OUTPUT = $env:FAKE_TEST_OUTPUT; FAKE_TEST_EXIT = $env:FAKE_TEST_EXIT; FAKE_BUILD_NO_OUTPUT = $env:FAKE_BUILD_NO_OUTPUT; GITHUB_ACTIONS = $env:GITHUB_ACTIONS }
     try {
       $env:PATH = "$(Join-Path $Repo '.fake' 'bin')$([IO.Path]::PathSeparator)$($saved.PATH)"
       $env:FAKE_LOG = $log
       $env:FAKE_REPO = $Repo
       $env:FAKE_TEST_OUTPUT = $outputFile
       $env:FAKE_TEST_EXIT = "$TestExitCode"
+      $env:FAKE_BUILD_NO_OUTPUT = if ($BuildWritesNothing) { '1' } else { $null }
       $env:GITHUB_ACTIONS = $null
       Push-Location $Repo
       try {
@@ -166,6 +181,53 @@ Describe 'Run-Tests.ps1 reports a crashed test process as a failure (#2231)' -Sk
     $r.ExitCode | Should -Be 0
     $r.Output | Should -Match 'cleanup noise'
     $r.Output | Should -Not -Match 'TEST PROCESS CRASHED'
+  }
+}
+
+Describe 'Run-Tests.ps1 builds the configuration it runs (#2244)' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+  }
+
+  It 'builds <Configuration> for a <Mode> run that has no <Configuration> build output, then runs it' -ForEach @(
+    @{ Mode = 'Unit'; Configuration = 'Release' }, @{ Mode = 'AiUnit'; Configuration = 'Release' }, @{ Mode = 'AiUnit'; Configuration = 'Debug' }) {
+    $repo = New-FakeRepo
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Configuration', $Configuration) -TestOutput $Passing
+    $calls = $r.Calls -join "`n"
+    $calls | Should -Match "(?m)^dotnet build .*--configuration $Configuration( |$)"
+    $calls | Should -Match "(?m)^dotnet test .*--test-modules tests/A\.Tests/bin/$Configuration/net10\.0/A\.Tests\.dll"
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'names the error when the build leaves no <Configuration> test assembly for <Case>' -ForEach @(
+    @{ Case = 'the mode'; Extra = @(); Configuration = 'Release' }
+    @{ Case = 'a project filter'; Extra = @('-ProjectFilter', 'A'); Configuration = 'Release' }
+    @{ Case = 'a tag'; Extra = @('-Tag', 'Fake'); Configuration = 'Release' }
+    @{ Case = 'the mode in Debug'; Extra = @(); Configuration = 'Debug' }) {
+    $repo = New-FakeRepo
+    $r = Invoke-RunTests -Repo $repo -Arguments (@('-Mode', 'AiUnit', '-Configuration', $Configuration) + $Extra) -BuildWritesNothing
+    ($r.Calls -join "`n") | Should -Match "(?m)^dotnet build .*--configuration $Configuration( |$)" -Because 'the build must have been attempted'
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet test ' -Because 'there was nothing to run'
+    $r.ExitCode | Should -Be 1
+    $r.Output | Should -Match "No test assemblies found: .*bin/$Configuration/net10\.0"
+    $r.Output | Should -Not -Match 'ScriptHalted'
+  }
+
+  It 'reads -Coverage results from the <Configuration> build it ran' -ForEach @(
+    @{ Configuration = 'Release' }, @{ Configuration = 'Debug' }) {
+    $repo = New-FakeRepo
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'AiUnit', '-Coverage', '-Configuration', $Configuration) -TestOutput $Passing
+    $calls = $r.Calls -join "`n"
+    $calls | Should -Match "(?m)^dotnet build .*--configuration $Configuration( |$)"
+    $calls | Should -Match "(?m)^reportgenerator -reports:\S*tests/A\.Tests/bin/$Configuration/net10\.0/TestResults/run\.cobertura\.xml"
+    $r.Output | Should -Not -Match 'No cobertura XML files found'
+    $r.ExitCode | Should -Be 0
   }
 }
 
