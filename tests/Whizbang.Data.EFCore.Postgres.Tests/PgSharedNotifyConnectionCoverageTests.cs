@@ -302,7 +302,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     var instanceProvider = new ServiceInstanceProvider(
       Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
     var logger = new CapturingLogger();
-    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     using var gate = _sharedConnection(logger, instanceProvider, clock);
     var waits = new ScriptedWaits();
     gate.WaitForMessageAsync = waits.WaitAsync;
@@ -342,7 +342,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     var instanceProvider = new ServiceInstanceProvider(
       Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
     var logger = new CapturingLogger();
-    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     using var gate = _sharedConnection(logger, instanceProvider, clock);
     var waits = new ScriptedWaits();
     gate.WaitForMessageAsync = waits.WaitAsync;
