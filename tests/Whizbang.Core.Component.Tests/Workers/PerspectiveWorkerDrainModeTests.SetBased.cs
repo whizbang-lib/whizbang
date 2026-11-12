@@ -499,8 +499,11 @@ public partial class PerspectiveWorkerDrainModeTests {
     }
 
     private async Task _runAsync(Guid[] streams, bool drain, int expectedReports, int expectedFailures, CancellationToken ct) {
-      // Before every event: a cursor here is behind each stream's event.
-      var behindEvents = Guid.CreateVersion7();
+      // A minute before every event, and a minute after: version 7 ids made in the same millisecond carry random bits
+      // after the timestamp, so only a different timestamp orders a cursor before or after an event for certain.
+      var now = DateTimeOffset.UtcNow;
+      var behindEvents = Guid.CreateVersion7(now.AddMinutes(-1));
+      var aheadOfEvents = Guid.CreateVersion7(now.AddMinutes(1));
       var events = streams.ToDictionary(s => s, s => new MessageEnvelope<IEvent> {
         MessageId = new MessageId(Guid.CreateVersion7()),
         Payload = new DrainModeTestEvent($"set-based-{s}"),
@@ -535,13 +538,13 @@ public partial class PerspectiveWorkerDrainModeTests {
       Coordinator.LeaseExpiresOnReportOf = LeaseExpiresOnReportOf;
       Coordinator.OnLeaseExpiry = () => time.Advance(TimeSpan.FromHours(1));
       if (CommitSequenceAheadOf is { } ahead) {
-        Coordinator.Cursors[ahead] = new PerspectiveCursorInfo { StreamId = ahead, PerspectiveName = SET_BASED, LastEventId = Guid.CreateVersion7(), LastCommitSequence = 100 };
+        Coordinator.Cursors[ahead] = new PerspectiveCursorInfo { StreamId = ahead, PerspectiveName = SET_BASED, LastEventId = aheadOfEvents, LastCommitSequence = 100 };
       }
       if (RewindRequiredFor is { } rewind) {
         Coordinator.Cursors[rewind] = new PerspectiveCursorInfo {
           StreamId = rewind,
           PerspectiveName = SET_BASED,
-          LastEventId = Guid.CreateVersion7(),
+          LastEventId = aheadOfEvents,
           Status = PerspectiveProcessingStatus.RewindRequired,
           RewindTriggerEventId = events[rewind].MessageId.Value,
         };
@@ -558,7 +561,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         Coordinator.Cursors[resumes] = new PerspectiveCursorInfo { StreamId = resumes, PerspectiveName = SET_BASED, LastEventId = behindEvents };
       }
       if (CaughtUp is { } caughtUp) {
-        Coordinator.Cursors[caughtUp] = new PerspectiveCursorInfo { StreamId = caughtUp, PerspectiveName = SET_BASED, LastEventId = Guid.CreateVersion7() };
+        Coordinator.Cursors[caughtUp] = new PerspectiveCursorInfo { StreamId = caughtUp, PerspectiveName = SET_BASED, LastEventId = aheadOfEvents };
       }
       string[] perspectives = AlsoPerStream ? [SET_BASED, PER_STREAM] : [SET_BASED];
       Coordinator.StreamEventsToReturn = [.. streams.SelectMany(s => perspectives.Select(p => new StreamEventData {
