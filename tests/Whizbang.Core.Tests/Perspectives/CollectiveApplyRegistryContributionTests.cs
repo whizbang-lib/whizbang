@@ -107,7 +107,8 @@ public class CollectiveApplyRegistryContributionTests {
 
     var registry = new CompositeCollectiveApplyRegistry([new ListedRegistry([first, second, otherEvent])]);
 
-    await Assert.That(registry.Entries).IsEquivalentTo([first, second, otherEvent]);
+    await Assert.That(registry.Entries.SequenceEqual([first, second, otherEvent], ReferenceEqualityComparer.Instance)).IsTrue()
+      .Because("two methods, or one method of two events, are distinct handlers: none is dropped");
   }
 
   private sealed class ListedRegistry(IReadOnlyList<CollectiveApplyEntry> entries) : ICollectiveApplyRegistry {
@@ -156,7 +157,7 @@ public class CollectiveApplyRegistryContributionTests {
   public async Task GetCollectiveApplyEntries_IsTheServedRegistrysHandlersAsync() {
     await using var provider = _withContributions(ordersFirst: true).BuildServiceProvider();
 
-    await Assert.That(provider.GetCollectiveApplyEntries()).IsEquivalentTo([_billing, _orders]);
+    await Assert.That(provider.GetCollectiveApplyEntries().SequenceEqual([_billing, _orders], ReferenceEqualityComparer.Instance)).IsTrue();
   }
 
   [Test]
@@ -169,8 +170,9 @@ public class CollectiveApplyRegistryContributionTests {
 
     var entries = provider.GetCollectiveApplyEntries([handPassedOrders, _billing]);
 
-    await Assert.That(entries).IsEquivalentTo([_orders, _billing])
-      .Because("a hand-passed table listing a contributed handler adds nothing; one listing another handler adds it");
+    await Assert.That(entries.SequenceEqual([_orders, _billing], ReferenceEqualityComparer.Instance)).IsTrue()
+      .Because("a hand-passed table listing a contributed handler adds nothing (the registered entry stays); one "
+             + "listing another handler adds it, after the registered ones");
   }
 
   [Test]

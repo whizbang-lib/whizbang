@@ -22,10 +22,10 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// session accessor (which hands the apply chain the <c>IDbConnectionFactory</c>).
 /// </summary>
 /// <remarks>
-/// <c>applyEntries</c> is the consumer's generated
-/// <c>Whizbang.Core.Generated.CollectiveApplyRegistry.Entries</c> (the framework assembly's copy is
-/// empty). Register one executor per perspective model via
-/// <see cref="AddCollectiveExecutorDapper{TModel}"/>, supplying the model's <c>wh_per_*</c> table name.
+/// The dispatcher's handlers come from the container: every assembly that declares <c>[CollectiveApplyFor]</c>
+/// handlers registers its generated table as a contribution, through <c>AddWhizbang()</c> (#2238). Register one
+/// executor per perspective model via <see cref="AddCollectiveExecutorDapper{TModel}"/>, supplying the model's
+/// <c>wh_per_*</c> table name.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:AddCollectiveEventsDapper_RegistersDispatcherResolverAccessorAsync</tests>
@@ -36,12 +36,33 @@ public static class CollectiveEventsDapperExtensions {
   /// Registers <see cref="ICollectiveDispatcher"/>, the built-in <see cref="TenantCollectiveScopeResolver"/>,
   /// and the Dapper <see cref="ICollectiveSessionAccessor"/>.
   /// </summary>
+  /// <remarks>
+  /// The dispatcher and the replay applier read every assembly's <c>[CollectiveApplyFor]</c> handlers from the
+  /// container (<see cref="CollectiveApplyRegistryServiceCollectionExtensions.GetCollectiveApplyEntries"/>): each
+  /// assembly's generated table is registered by <c>AddWhizbang()</c>, for the host's own service only (#2238).
+  /// </remarks>
   /// <param name="services">The service collection.</param>
-  /// <param name="applyEntries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperMultiAssemblyCollectiveDispatchTests.cs:TwoAssemblies_TheDispatcher_AppliesEachAssemblysCollectiveEventsAsync</tests>
+  public static IServiceCollection AddCollectiveEventsDapper(this IServiceCollection services) =>
+    _addCollectiveEvents(services, handPassed: null);
+
+  /// <summary>
+  /// The registration that took one assembly's handler table by hand. The table now joins the handlers every assembly
+  /// registers, so it is no longer needed: call <see cref="AddCollectiveEventsDapper(IServiceCollection)"/>.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="applyEntries">A generated <c>CollectiveApplyRegistry.Entries</c>; handlers it lists that no assembly registered are dispatched too.</param>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperMultiAssemblyCollectiveDispatchTests.cs:TheObsoleteHandPassedTable_StillApplies_AlongsideTheContributedOnesAsync</tests>
+  [Obsolete("Every assembly's [CollectiveApplyFor] handlers are now registered automatically (#2238). Drop the argument: call AddCollectiveEventsDapper(). Will be removed in the next major.")]
   public static IServiceCollection AddCollectiveEventsDapper(
       this IServiceCollection services,
       IReadOnlyList<CollectiveApplyEntry> applyEntries) {
     ArgumentNullException.ThrowIfNull(applyEntries);
+    return _addCollectiveEvents(services, applyEntries);
+  }
+
+  private static IServiceCollection _addCollectiveEvents(
+      IServiceCollection services, IReadOnlyList<CollectiveApplyEntry>? handPassed) {
     // Apply policy (batching + statement_timeout) from PostgresOptions. TryAdd so a consumer can register
     // their own CollectiveApplyOptions first to override.
     services.TryAddSingleton(sp => {
@@ -60,7 +81,7 @@ public static class CollectiveEventsDapperExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
-      applyEntries,
+      sp.GetCollectiveApplyEntries(handPassed),
       [.. sp.GetServices<ICollectiveScopeResolver>()],
       [.. sp.GetServices<ICollectiveEventExecutor>()],
       sp.GetService<EventCategoryMetrics>()));
@@ -68,7 +89,7 @@ public static class CollectiveEventsDapperExtensions {
     // mutation survives a perspective rebuild. Driver-neutral applier (Whizbang.Data.Postgres); scoped for the
     // request-scoped event-store query.
     services.TryAddScoped<ICollectiveReplayApplier>(sp => new CollectiveReplayApplier(
-      applyEntries,
+      sp.GetCollectiveApplyEntries(handPassed),
       sp,
       sp.GetRequiredService<IEventStore>(),
       sp.GetRequiredService<IEventStoreQuery>(),
