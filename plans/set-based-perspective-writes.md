@@ -121,8 +121,32 @@ are the starting inventory.
    (SetBased default), `[PerspectiveWriteMode]` read by the generator, and `PerspectiveWriteModes` (every generated runner
    registers its declared mode; an unregistered perspective is per stream). `IApplyBatchStrategy` is the flush-policy
    seam (`FlushEveryBatchStrategy`), registered with the worker; the old unwired strategy is deleted.
+   **Batched reads (after review, 2026-11-11):** the commit sequences a batch records are read with one statement
+   (`IEventStore.GetCommitSequencesAsync`). A claimed batch reads its set-based pairs' cursors with one statement and
+   their streams' events with one read (`IEventStore.ReadPolymorphicManyAsync`, at most two statements in the EF Core
+   store); each runner selects its events (`IPerspectiveRunner.SelectEvents`), and the processed events after the write
+   come from the same read. A new claimed stream costs one cursor read, one event read, one commit-sequence read, no
+   row read and one insert per table for the whole batch (`NewStreams_OnTheClaimedPath_...`). The drain skips the cursor
+   read of a pair its batched cursor read found none for. Both trust the batched cursor read only when the coordinator
+   says it reads cursors (`IWorkCoordinator.ReadsCursorsInBatches`, true in the EF Core and Dapper drivers), since the
+   interface default returns nothing; the upcasting decorator declines a type change and the archive decorator a
+   stream whose first events are archived, so those pairs read their own.
 7. Conformance suite across both modes.
+   **Done** (`PerspectiveWriteModeConformanceTests`, 7 cases x 2 modes): new and existing streams with Extracted and
+   Split physical fields, a first event that finds a row, a row changed after the read (row version conflict), a row
+   moved past the batch (ordering guard, rewind, late event, idempotency), purge, a throwing apply next to a row the
+   database rejects, and sync. Concurrent writers are injected through the flush policy. Not yet in the suite:
+   snapshots and rewind from a snapshot, collectives on the same rows, lifecycle receptors, rebuild (covered for the
+   set-based path by focused prepare/complete tests).
 8. Measure: a 100k-stream fan-out, round trips and rows per second, before and after.
+   **Done** (`Measure_FanOutOfNewStreamsAsync`, explicit; 2026-11-12): 100,000 new streams, four consumers, claim batch
+   1,000. Per-stream: 574,928 statements on the table (100,000 inserts, 474,928 row reads), 1,255,840 in total, 683.6 s,
+   146 rows/s. Set-based: 2,915 on the table (709 inserts, 2,206 row reads), 662,087 in total, 764.0 s, 131 rows/s.
+   Rows per second do not move: both modes are bound by per-pair completion (`complete_perspective_cursor_work` and its
+   read, about three per stream with the harness's per-pair completion reporting), then claim and drain round trips.
+   Follow-ups: batch completion reports for a fan-out; find why the set-based run still reads rows (2,206 reads for
+   new streams, likely re-laps or re-claims) and why both modes report more cursor work than streams (re-claims under
+   load).
 
 ## Decisions after step 2 (2026-11-10)
 

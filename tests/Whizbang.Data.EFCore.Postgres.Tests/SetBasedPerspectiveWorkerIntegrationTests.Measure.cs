@@ -28,18 +28,21 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// database as a whole, and the rows applied per second. A measurement, not a gate: it runs only when asked for by name.
 /// </summary>
 /// <remarks>
-/// The stream count is <c>WHIZBANG_FANOUT_STREAMS</c> (100,000 by default), and <c>WHIZBANG_MEASURE_REPORT</c> names a
-/// file the results are appended to. Completions are written to the coordinator
-/// in batches, as the completion flush worker writes them, so the harness does not add a round trip per row to either
-/// mode. The results are written to standard output (and the report file), one <c>MEASURE</c> line per mode.
+/// The stream count is <c>WHIZBANG_FANOUT_STREAMS</c> (100,000 by default). Completions are written to the coordinator in
+/// batches, as the completion flush worker writes them, so the harness does not add a round trip per row to either mode.
+/// The results, one <c>MEASURE</c> line per mode and the most frequent statement shapes, go to standard output and are
+/// appended to the file <c>WHIZBANG_MEASURE_REPORT</c> names (by default <c>fan-out-measurement.txt</c> beside the test
+/// assembly), since a passing test's output is captured.
 /// </remarks>
 public partial class SetBasedPerspectiveWorkerIntegrationTests {
   [Test]
   [Explicit]
+  // One mode at a time, so neither measures the other's load; 100,000 streams take tens of minutes per mode.
+  [NotInParallel("fan-out-measurement")]
+  [Timeout(4 * 60 * 60 * 1000)]
   [Arguments(PerspectiveWriteMode.PerStream)]
   [Arguments(PerspectiveWriteMode.SetBased)]
-  public async Task Measure_FanOutOfNewStreamsAsync(PerspectiveWriteMode mode) {
-    var ct = CancellationToken.None;
+  public async Task Measure_FanOutOfNewStreamsAsync(PerspectiveWriteMode mode, CancellationToken ct) {
     var count = int.TryParse(Environment.GetEnvironmentVariable("WHIZBANG_FANOUT_STREAMS"), out var configured) ? configured : 100_000;
     await using var conn = await _openAsync(ct);
     var probe = _composePipeline(mode);
@@ -81,10 +84,10 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
     foreach (var reported in report) {
       Console.WriteLine(reported);
     }
-    var reportPath = Environment.GetEnvironmentVariable("WHIZBANG_MEASURE_REPORT");
-    if (!string.IsNullOrEmpty(reportPath)) {
-      await File.AppendAllLinesAsync(reportPath, report, ct);
-    }
+    var reportPath = Environment.GetEnvironmentVariable("WHIZBANG_MEASURE_REPORT") is { Length: > 0 } named
+      ? named
+      : Path.Combine(AppContext.BaseDirectory, "fan-out-measurement.txt");
+    await File.AppendAllLinesAsync(reportPath, report, ct);
     await Assert.That(await _countAsync(conn, ct)).IsGreaterThanOrEqualTo(count);
   }
 
