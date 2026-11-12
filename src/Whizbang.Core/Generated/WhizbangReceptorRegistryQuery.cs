@@ -161,7 +161,7 @@ public static class WhizbangReceptorRegistryQuery {
       any.UnionWith(contribution.AnyConsumerTypes);
       inbox.UnionWith(contribution.InboxHandlerTypes);
       _addStageTypes(stages, contribution.StageTypes);
-      // Dedupe by type name across assemblies (first contribution wins — the same type
+      // Dedupe by type name across assemblies (first contribution wins: the same type
       // handled in two assemblies carries identical namespace/kind metadata anyway).
       _addFirst(handledByName, contribution.HandledMessages, static handled => handled.MessageTypeName);
       _addFirst(consumedByName, contribution.ConsumedMessages, static consumed => consumed.TypeName);
