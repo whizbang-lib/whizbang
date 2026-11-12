@@ -20,7 +20,9 @@ namespace Whizbang.Generators.Tests;
 /// <para>
 /// A host replays the registrations module initializers left in process-wide lists. One handed over without its
 /// assembly (assigned to a slot, or passed to a registry that takes no assembly) is replayed into every host in the
-/// process, which is the failure #2243 removes. This runs every generator in the generator assemblies over a source
+/// process, which is the failure #2243 removes. A per-assembly table that no module initializer hands over at all
+/// (the collective handler table was passed to the registration by hand, #2238) is caught by the expected list: the
+/// source declares a handler of every kind, so each kind's hand-over must be found. This runs every generator in the generator assemblies over a source
 /// that declares every kind of per-assembly item, finds every delegate over an <c>IServiceCollection</c> in a
 /// generated <c>[ModuleInitializer]</c>, and requires it to be passed to one of the scoped sinks with the compilation's
 /// own assembly name as the first argument.
@@ -79,6 +81,13 @@ public class ServiceScopedRegistrationGuardTests {
       public ValueTask HandleAsync(OrderPlaced message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
     }
 
+    public sealed record OrdersRepriced(CollectiveScope Scope) : ICollectiveEvent;
+
+    public class OrderRepricing {
+      [CollectiveApplyFor]
+      public ICollectiveSpec<OrderModel> Apply(OrdersRepriced e) => null!;
+    }
+
     public class OrderRawReceptor : IRawReceptor {
       public string TargetMessageTypeName => "GuardApp.OrderPlaced, GuardApp";
       public Task HandleAsync(JsonElement payload, CancellationToken ct) => Task.CompletedTask;
@@ -93,6 +102,7 @@ public class ServiceScopedRegistrationGuardTests {
     "ServiceRegistrationCallbacks.RegisterRawReceptors",
     "ServiceRegistrationCallbacks.RegisterPinnedIdRegistry",
     "ServiceRegistrationCallbacks.RegisterMessageTypeCatalog",
+    "ServiceRegistrationCallbacks.RegisterCollectiveApplyRegistry",
     "PerspectiveRunnerCallbackRegistry.RegisterCallback",
     "ModelRegistrationRegistry.RegisterModels",
   };
@@ -183,9 +193,9 @@ public class ServiceScopedRegistrationGuardTests {
       .Because("found: " + string.Join(" | ", handOvers.Select(h => $"{h.Sink}={h.Ok}")));
   }
 
-  [Test]
+  /// <summary>Every generator in the generator assemblies, run over <see cref="SOURCE"/>: its name and its generated trees.</summary>
   [RequiresAssemblyFiles()]
-  public async Task EveryServiceRegistrationAModuleInitializerHandsOver_NamesItsAssemblyAsync() {
+  private static List<(string Generator, List<(SyntaxTree Tree, SemanticModel? Model)> Trees)> _runEveryGenerator() {
     var generatorTypes = new[] {
       typeof(ReceptorDiscoveryGenerator).Assembly,
       typeof(Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator).Assembly,
@@ -195,22 +205,34 @@ public class ServiceScopedRegistrationGuardTests {
       .Where(t => !t.IsAbstract && typeof(IIncrementalGenerator).IsAssignableFrom(t)
         && t.GetCustomAttributes(typeof(GeneratorAttribute), inherit: false).Length > 0)
       .ToList();
-    var handOvers = new List<(string Sink, bool Ok)>();
+    var runs = new List<(string Generator, List<(SyntaxTree Tree, SemanticModel? Model)> Trees)>();
     foreach (var type in generatorTypes) {
       var generator = (IIncrementalGenerator)Activator.CreateInstance(type)!;
       var (result, output) = GeneratorTestHelper.RunGeneratorWithFullReferences(generator, SOURCE, ASSEMBLY);
+      var trees = new List<(SyntaxTree Tree, SemanticModel? Model)>();
       foreach (var tree in result.GeneratedTrees) {
         var outputTree = output.SyntaxTrees.FirstOrDefault(t => t.FilePath == tree.FilePath) ?? tree;
-        var model = output.SyntaxTrees.Contains(outputTree) ? output.GetSemanticModel(outputTree) : null;
-        handOvers.AddRange(_handOvers(outputTree, model));
+        trees.Add((outputTree, output.SyntaxTrees.Contains(outputTree) ? output.GetSemanticModel(outputTree) : null));
       }
+      runs.Add((type.Name, trees));
     }
+    return runs;
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task EveryServiceRegistrationAModuleInitializerHandsOver_NamesItsAssemblyAsync() {
+    var handOvers = _runEveryGenerator()
+      .SelectMany(run => run.Trees)
+      .SelectMany(tree => _handOvers(tree.Tree, tree.Model))
+      .ToList();
 
     string[] expected = [
       "ServiceRegistrationCallbacks.RegisterDispatcher",
       "ServiceRegistrationCallbacks.RegisterRawReceptors",
       "ServiceRegistrationCallbacks.RegisterPinnedIdRegistry",
       "ServiceRegistrationCallbacks.RegisterMessageTypeCatalog",
+      "ServiceRegistrationCallbacks.RegisterCollectiveApplyRegistry",
       "PerspectiveRunnerCallbackRegistry.RegisterCallback",
     ];
     foreach (var sink in expected) {
@@ -221,5 +243,78 @@ public class ServiceScopedRegistrationGuardTests {
     await Assert.That(unscoped).IsEmpty()
       .Because("a registration handed over without its assembly is replayed into every host in the process; pass the "
              + "assembly name first to a scoped sink instead (#2243). Found: " + string.Join(" | ", unscoped));
+  }
+
+  /// <summary>Generators that emit a public static table no registration needs, with the reason.</summary>
+  private static readonly Dictionary<string, string> _tablesNotRegistered = new(StringComparer.Ordinal);
+
+  /// <summary>
+  /// The public static tables (a <c>static readonly</c> list, dictionary or array on a public static class) in
+  /// <paramref name="tree"/>: the shape a per-assembly table takes when a consumer is expected to pass it by hand.
+  /// </summary>
+  private static IEnumerable<string> _publicStaticTables(SyntaxTree tree) =>
+    tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>()
+      .Where(c => c.Modifiers.Any(SyntaxKind.PublicKeyword) && c.Modifiers.Any(SyntaxKind.StaticKeyword))
+      .SelectMany(c => c.Members.OfType<FieldDeclarationSyntax>()
+        .Where(f => f.Modifiers.Any(SyntaxKind.PublicKeyword) && f.Modifiers.Any(SyntaxKind.StaticKeyword)
+          && f.Modifiers.Any(SyntaxKind.ReadOnlyKeyword) && _isTable(f.Declaration.Type))
+        .SelectMany(f => f.Declaration.Variables.Select(v => $"{c.Identifier.Text}.{v.Identifier.Text}")));
+
+  private static bool _isTable(TypeSyntax type) {
+    var text = type.ToString();
+    return type is ArrayTypeSyntax
+      || text.Contains("IReadOnlyList<", StringComparison.Ordinal)
+      || text.Contains("IReadOnlyDictionary<", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The guard against a per-assembly table a consumer has to pass by hand (#2238): a generator that emits a public
+  /// static table also hands a registration to a module initializer, so the table reaches the host's container through
+  /// the contribution mechanism and never through a consumer remembering to pass it.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task EveryGeneratorThatEmitsAPerAssemblyTable_AlsoRegistersItAsync() {
+    var unregistered = new List<string>();
+    var tablesFound = 0;
+    foreach (var (generator, trees) in _runEveryGenerator()) {
+      var tables = trees.SelectMany(t => _publicStaticTables(t.Tree)).ToList();
+      tablesFound += tables.Count;
+      var registers = trees.Any(t => _handOvers(t.Tree, t.Model).Any(h => h.Ok));
+      if (tables.Count > 0 && !registers && !_tablesNotRegistered.ContainsKey(generator)) {
+        unregistered.Add($"{generator}: {string.Join(", ", tables)}");
+      }
+    }
+
+    await Assert.That(tablesFound).IsGreaterThan(0)
+      .Because("precondition: the collective handler table is a public static table, so the detector must find it");
+    await Assert.That(unregistered).IsEmpty()
+      .Because("a per-assembly table only a consumer's hand can deliver reaches one assembly's host at most; register "
+             + "it through a module initializer and the contribution mechanism (#2238). Found: " + string.Join(" | ", unregistered));
+  }
+
+  /// <summary>The positive control for the table detector.</summary>
+  [Test]
+  public async Task TheTableDetector_FindsPublicStaticTables_AndNothingElseAsync() {
+    const string code = """
+      public static class Registry {
+        public static readonly System.Collections.Generic.IReadOnlyList<int> Entries = new int[0];
+        public static readonly int[] Raw = new int[0];
+        public static readonly System.Collections.Generic.IReadOnlyDictionary<int, int> Map = null!;
+        public static readonly int NotATable = 1;
+        private static readonly int[] _hidden = new int[0];
+        public static System.Collections.Generic.IReadOnlyList<int> NotReadOnly = null!;
+      }
+      internal static class Internal {
+        public static readonly int[] Raw = new int[0];
+      }
+      public class NotStatic {
+        public static readonly int[] Raw = new int[0];
+      }
+      """;
+
+    var tables = _publicStaticTables(CSharpSyntaxTree.ParseText(code)).ToList();
+
+    await Assert.That(tables).IsEquivalentTo(["Registry.Entries", "Registry.Raw", "Registry.Map"]);
   }
 }

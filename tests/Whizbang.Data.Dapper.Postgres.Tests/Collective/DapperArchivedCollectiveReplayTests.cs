@@ -27,6 +27,14 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
   private const string TENANT = "tenant-a";
 
+  /// <summary>The probe models' handlers, contributed the way a generated assembly contributes its own (#2238).</summary>
+  private sealed class ProbeHandlers : ICollectiveApplyRegistry {
+    public IReadOnlyList<CollectiveApplyEntry> Entries { get; } = [
+      _entry(typeof(ProbeModel), typeof(ResetCollective)),
+      _entry(typeof(OtherModel), typeof(OtherModelCollective)),
+    ];
+  }
+
   [Test]
   public async Task AddCollectiveEventsDapper_TheReplayReadsTheTenantsArchivedCollectiveStreams_ListedFromTheLedgerAsync() {
     var ownType = (Guid)TrackedGuid.New();
@@ -47,10 +55,9 @@ public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
     var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
     services.AddSingleton<IEventStore>(reads);
     services.AddSingleton<IEventStoreQuery>(new NoHotEvents());
-    services.AddCollectiveEventsDapper([
-      _entry(typeof(ProbeModel), typeof(ResetCollective)),
-      _entry(typeof(OtherModel), typeof(OtherModelCollective)),
-    ]);
+    services.AddSingleton<ProbeHandlers>();
+    services.AddCollectiveApplyRegistryContribution<ProbeHandlers>();
+    services.AddCollectiveEventsDapper();
     await using var provider = services.BuildServiceProvider();
     await using var scope = provider.CreateAsyncScope();
     var applier = scope.ServiceProvider.GetRequiredService<ICollectiveReplayApplier>();
