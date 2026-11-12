@@ -33,7 +33,10 @@ namespace Whizbang.Core.Workers;
 /// <para>
 /// The housekeeping activities are prioritized rather than merely serialized. Integrity work is
 /// correctness-bearing and runs on a far tighter cadence, so it is never held back by a cleanup
-/// sweep; a sweep deferred behind it simply runs on the next tick.
+/// sweep; a sweep deferred behind it simply runs on the next tick. A refusal behind a higher rank
+/// still spends the refused activity's deferral budget (#2287), so a long integrity audit cannot
+/// hold cleanup back past <see cref="Settings.MaxDeferral"/>: the rank decides who holds the slot,
+/// and the ceiling decides that the first ask to find it free is forced through.
 /// </para>
 /// <para>
 /// Integrity work is idle-gated like dead-letter recovery (#2001): deferred while the service is
@@ -132,6 +135,16 @@ public sealed class HousekeepingCoordinator {
     ServiceCoolingDown,
 
     /// <summary>A higher-priority housekeeping activity holds the slot.</summary>
+    /// <remarks>
+    /// Spends the refused activity's deferral budget like <see cref="ServiceBusy"/> does (#2287): time
+    /// held back behind a higher rank counts toward <see cref="Settings.MaxDeferral"/>, so the first ask
+    /// that finds the slot free once the ceiling has passed is forced through. The higher activity is
+    /// never interrupted.
+    /// </remarks>
+    /// <docs>operations/workers/housekeeping-arbitration#a-higher-rank-spends-the-ceiling</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:ARefusalBehindIntegrity_StartsTheCeiling_SoTheFirstFreeAskPastItIsForcedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:PastTheCeiling_IntegrityIsStillNeverInterruptedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:IntegrityRefusedByRecovery_SpendsItsOwnRequestersBudgetOnlyAsync</tests>
     HigherPriorityRunning,
 
     /// <summary>This activity is already running and must not stack a second copy.</summary>
@@ -429,45 +442,65 @@ public sealed class HousekeepingCoordinator {
 
       // Ranked, not merely serialized: an activity yields only to a STRICTLY higher rank, so
       // recovery never waits behind integrity or cleanup, and integrity never waits behind cleanup.
+      var budget = _budgetFor(activity, requester);
       var rank = _rank(activity);
       if ((_dlqRunning && rank > _rank(Activity.DeadLetterRecovery))
           || (_integrityRunning && rank > _rank(Activity.Integrity))) {
+        // Time held back behind a higher rank is time held back (#2287): the refusal spends this activity's budget, so a
+        // long integrity audit cannot keep cleanup waiting past its ceiling. The rank still wins while the slot is held;
+        // the ceiling only decides that the first ask to find it free is forced through.
+        _ = _spend(budget);
         return new Decision(false, Verdict.HigherPriorityRunning);
       }
 
       // Recovery, integrity and cleanup ask the same question of the service and differ only in
       // which budget they spend and which slot they take, so they share one admission rule rather
       // than copies of it that can drift.
-      if (activity == Activity.Integrity) {
-        // Gated since #2001, with the rule recovery uses: the receive-side integrity work competes
-        // for the same database as the traffic it verifies. The checkpoint path keeps its own
-        // second rule on top (a lagging consumer is not a deficit).
-        if (!_integrityDeferrals.TryGetValue(requester, out var budget)) {
-          budget = new DeferralBudget();
-          _integrityDeferrals[requester] = budget;
-        }
-        var integrity = _admitWhenQuiet(backlog, budget);
-        if (integrity.Granted) {
-          _integrityRunning = true;
-          _integrityHolder = requester;
-        }
-        return integrity;
+      var decision = _admitWhenQuiet(backlog, budget);
+      if (decision.Granted) {
+        _claim(activity, requester);
       }
-
-      if (activity == Activity.DeadLetterRecovery) {
-        var recovery = _admitWhenQuiet(backlog, _recoveryDeferrals);
-        if (recovery.Granted) {
-          _dlqRunning = true;
-        }
-        return recovery;
-      }
-
-      var maintenance = _admitWhenQuiet(backlog, _maintenanceDeferrals);
-      if (maintenance.Granted) {
-        _maintenanceRunning = true;
-      }
-      return maintenance;
+      return decision;
     }
+  }
+
+  // Caller holds _gate. The budget an ask spends: one per activity, and one per requester for integrity (#2001), because
+  // the integrity requesters share one slot and one shared budget would let whichever asked first after the ceiling take
+  // the forced pass and re-arm the ceiling for all of them.
+  private DeferralBudget _budgetFor(Activity activity, string requester) {
+    if (activity == Activity.DeadLetterRecovery) {
+      return _recoveryDeferrals;
+    }
+    if (activity == Activity.Maintenance) {
+      return _maintenanceDeferrals;
+    }
+    if (!_integrityDeferrals.TryGetValue(requester, out var budget)) {
+      budget = new DeferralBudget();
+      _integrityDeferrals[requester] = budget;
+    }
+    return budget;
+  }
+
+  // Caller holds _gate. Takes the slot for an admitted activity.
+  private void _claim(Activity activity, string requester) {
+    if (activity == Activity.DeadLetterRecovery) {
+      _dlqRunning = true;
+    } else if (activity == Activity.Integrity) {
+      _integrityRunning = true;
+      _integrityHolder = requester;
+    } else {
+      _maintenanceRunning = true;
+    }
+  }
+
+  // Caller holds _gate. Records one deferral against the budget; true when that deferral reaches the ceiling.
+  private bool _spend(DeferralBudget deferrals) {
+    var now = _timeProvider.GetUtcNow();
+    deferrals.Count++;
+    var firstDeferredAt = deferrals.FirstDeferredAt ??= now;
+    return _settings.CeilingIsCount
+      ? deferrals.Count > _settings.MaxConsecutiveDeferrals
+      : now - firstDeferredAt >= _settings.MaxDeferral;
   }
 
   /// <summary>
@@ -502,13 +535,7 @@ public sealed class HousekeepingCoordinator {
       return new Decision(true, Verdict.Proceed);
     }
 
-    var now = _timeProvider.GetUtcNow();
-    deferrals.Count++;
-    var firstDeferredAt = deferrals.FirstDeferredAt ??= now;
-    var ceilingReached = _settings.CeilingIsCount
-      ? deferrals.Count > _settings.MaxConsecutiveDeferrals
-      : now - firstDeferredAt >= _settings.MaxDeferral;
-    return ceilingReached
+    return _spend(deferrals)
       ? new Decision(true, Verdict.ProceedDeferralLimit)
       : new Decision(false, reason);
   }
