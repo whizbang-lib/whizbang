@@ -7,32 +7,42 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Offloads;
-using Whizbang.Core.Transports;
 
 namespace Whizbang.Core.Minting;
 
 /// <summary>
-/// The service-wide default byte limit of a composite batch (#2285): three quarters of the smaller of the body-offload
-/// threshold and the transport's largest message, so a composite is neither offloaded nor refused for its size. Applied
-/// when <c>Whizbang:CompositeBatches:MaxBufferedBytes</c> is not set, and reported with its inputs.
+/// The service-wide default byte limit of a composite batch (#2285): three quarters of the body-offload threshold, so a
+/// composite is not offloaded for its size and, since the threshold is set below the transport's largest message, not
+/// refused for it either. Applied when <c>Whizbang:CompositeBatches:MaxBufferedBytes</c> is not set, and reported with
+/// its input.
 /// </summary>
+/// <remarks>
+/// The transport's own limit is not read here: resolving the transport initializes it (an Azure Service Bus transport
+/// connects), which options must never do.
+/// </remarks>
 /// <param name="offload">The body-offload settings.</param>
-/// <param name="transport">The transport, or null when the host has none.</param>
 /// <docs>fundamentals/messaging/composite-events#streaming-events-into-composites</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/CompositeBatchDefaultsTests.cs</tests>
-internal sealed class CompositeBatchDefaults(IOptions<MessageBodyOffloadOptions> offload, ITransport? transport)
+internal sealed class CompositeBatchDefaults(IOptions<MessageBodyOffloadOptions> offload)
     : IPostConfigureOptions<CompositeBatchOptions> {
   private const string MAX_BYTES_KEY = CompositeBatchOptions.SECTION + ":MaxBufferedBytes";
 
   /// <summary>The byte limit this derived, or null when the setting was configured.</summary>
-  public DerivedSetting<long>? Derived { get; }
+  public DerivedSetting<long>? Derived { get; private set; }
 
   /// <inheritdoc />
-  public void PostConfigure(string? name, CompositeBatchOptions options) => _ = (name, options, offload, transport);
+  public void PostConfigure(string? name, CompositeBatchOptions options) {
+    if (options.MaxBufferedBytes is not null) {
+      return;
+    }
+    Derived = Derive(offload.Value.SizeThresholdBytes);
+    options.MaxBufferedBytes = Derived.Value;
+  }
 
-  /// <summary>Three quarters of the smaller of the offload threshold and the transport's largest message (when it has one).</summary>
-  internal static DerivedSetting<long> Derive(long offloadThreshold, long? transportMax) =>
-    DerivedSetting.Of(MAX_BYTES_KEY, offloadThreshold + (transportMax ?? 0), "stub");
+  /// <summary>Three quarters of the body-offload threshold, leaving room for the composite's own envelope.</summary>
+  internal static DerivedSetting<long> Derive(long offloadThreshold) =>
+    DerivedSetting.Of(MAX_BYTES_KEY, offloadThreshold * 3 / 4, "0.75 x SizeThresholdBytes",
+      SettingInput.Of("SizeThresholdBytes", offloadThreshold));
 }
 
 /// <summary>Supplies the derived byte limit to the startup settings report, once the options have been built.</summary>
@@ -80,8 +90,7 @@ internal static class CompositeBatchServiceCollectionExtensions {
     services.AddOptions<CompositeBatchOptions>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<CompositeBatchOptions>, ConfigureCompositeBatchOptions>(
       sp => new ConfigureCompositeBatchOptions(sp.GetService<IConfiguration>())));
-    services.TryAddSingleton(sp => new CompositeBatchDefaults(
-      sp.GetRequiredService<IOptions<MessageBodyOffloadOptions>>(), sp.GetService<ITransport>()));
+    services.TryAddSingleton(sp => new CompositeBatchDefaults(sp.GetRequiredService<IOptions<MessageBodyOffloadOptions>>()));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<CompositeBatchOptions>, CompositeBatchDefaults>(
       sp => sp.GetRequiredService<CompositeBatchDefaults>()));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IDerivedSettingSource, CompositeBatchDerivedSettings>(

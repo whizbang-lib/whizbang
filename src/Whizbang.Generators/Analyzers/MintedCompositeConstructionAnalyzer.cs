@@ -41,6 +41,8 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   private const string MINT_REQUEST_BUILDER = "BuildComposite";
   private const string COALESCE_POLICY_OPTIONS_TYPE = "Whizbang.Core.Tags.CoalescePolicyOptions";
   private const string COALESCE_POLICY_BUILDER = "CompositeFactory";
+  private const string BATCH_EXTENSIONS_TYPE = "Whizbang.Core.Minting.CompositeBatchExtensions";
+  private const string BATCH_FACTORY_PARAMETER = "factory";
 
   /// <summary>
   /// WHIZ150: Warning — a minted composite type is constructed outside the mint's internals and
@@ -146,6 +148,10 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
             && _isBuilderSeam(property.Property)) {
           return true;
         }
+        // The factory of the composite batch helpers (#2285), which enforce the count cap and the byte budget.
+        if (outer is IArgumentOperation { Parameter: { } parameter } && _isBatchFactory(parameter)) {
+          return true;
+        }
         // Stop climbing once past the expression that consumes the lambda.
         if (outer is IAnonymousFunctionOperation or IBlockOperation) {
           break;
@@ -153,6 +159,15 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
       }
     }
     return false;
+  }
+
+  /// <summary>True when <paramref name="parameter"/> is the <c>factory</c> of a <c>CompositeBatchExtensions</c> method.</summary>
+  private static bool _isBatchFactory(IParameterSymbol parameter) {
+    if (parameter.Name != BATCH_FACTORY_PARAMETER) {
+      return false;
+    }
+    var containingType = parameter.ContainingSymbol.ContainingType.OriginalDefinition;
+    return $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}" == BATCH_EXTENSIONS_TYPE;
   }
 
   /// <summary>True when <paramref name="property"/> is one of the sanctioned builder seams.</summary>

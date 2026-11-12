@@ -319,28 +319,51 @@ public class ConfigurationKeyManifestTests {
   /// <summary>Composes the library and records, for every manifest key it reads, the value its options type holds.</summary>
   private static async Task<SortedDictionary<string, string>> _recordDefaultsAsync(HashSet<string> manifested) {
     var defaults = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    var resolved = new List<(object Instance, IReadOnlyCollection<string> Keys)>();
     // Each options type is resolved over a configuration that holds nothing, so what it holds is what the service runs
-    // with when nothing is set; each key it read is found on it by the longest property path that ends the key.
-    _resolvedOptions = (instance, keys) => {
+    // with when nothing is set.
+    _resolvedOptions = (instance, keys) => resolved.Add((instance, keys));
+    try {
+      await RecordKeysTheLibraryReadsAsync();
+    } finally {
+      _resolvedOptions = null;
+    }
+    // A key is found on the instance whose resolution read it first, by the longest property path that ends the key. An
+    // options type resolved while another was being built (one configure step reading another options type) has its keys
+    // read during the other's resolution and reads none of its own when its turn comes: such a key is looked for on
+    // those instances.
+    var late = resolved.Where(r => r.Keys.Count == 0).Select(r => r.Instance).ToList();
+    foreach (var (instance, keys) in resolved) {
       foreach (var key in keys.Where(k => manifested.Contains(k) && !k.Contains('*', StringComparison.Ordinal))) {
-        var segments = key.Split(':');
-        for (var start = 1; start < segments.Length; start++) {
-          if (_walk(instance, segments[start..], out var value)) {
-            if (_format(value) is { } formatted) {
+        foreach (var candidate in late.Prepend(instance)) {
+          if (_tryDefaultOf(candidate, key, out var formatted)) {
+            if (formatted is not null) {
               defaults.TryAdd(key, formatted);
             }
             break;
           }
         }
       }
-    };
-    try {
-      await RecordKeysTheLibraryReadsAsync();
-    } finally {
-      _resolvedOptions = null;
     }
     return defaults;
   }
+
+  /// <summary>
+  /// The key's value on <paramref name="instance"/> as configuration spells it (null for no single value); false when no
+  /// property path ending the key exists there.
+  /// </summary>
+  private static bool _tryDefaultOf(object instance, string key, out string? formatted) {
+    var segments = key.Split(':');
+    for (var start = 1; start < segments.Length; start++) {
+      if (_walk(instance, segments[start..], out var value)) {
+        formatted = _format(value);
+        return true;
+      }
+    }
+    formatted = null;
+    return false;
+  }
+
 
   /// <summary>
   /// Follows <paramref name="segments"/> through public properties (by name or configuration key name); false when a

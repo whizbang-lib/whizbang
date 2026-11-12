@@ -62,6 +62,10 @@ Whizbang:CircuitBreakers:*:FailureThreshold
 Whizbang:CircuitBreakers:*:InitialCooldownSeconds
 Whizbang:CircuitBreakers:*:MaxCooldownSeconds
 Whizbang:CircuitBreakers:*:SuccessCacheDurationSeconds
+Whizbang:CompositeBatches:DebounceInterval
+Whizbang:CompositeBatches:MaxBufferedBytes
+Whizbang:CompositeBatches:MaxBufferedMessages
+Whizbang:CompositeBatches:MaxWait
 Whizbang:Configuration:UnknownKeys
 Whizbang:Core:DefaultQueryScope
 Whizbang:Core:EmptyStreamIdPolicy
