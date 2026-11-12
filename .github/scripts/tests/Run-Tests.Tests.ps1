@@ -18,13 +18,13 @@ BeforeAll {
 
   # A repository holding the real Run-Tests.ps1 and its modules, and one Unit test project in the solution.
   # Returns the repository path; the fakes live in <repo>/.fake.
-  function New-FakeRepo {
+  function New-FakeRepo([string]$TestType = 'Unit') {
     $repo = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $repo 'scripts'), (Join-Path $repo 'tests' 'A.Tests'), (Join-Path $repo '.fake' 'bin') | Out-Null
     Copy-Item -LiteralPath (Join-Path $Root 'scripts' 'Run-Tests.ps1') -Destination (Join-Path $repo 'scripts')
     Copy-Item -LiteralPath (Join-Path $Root 'scripts' 'lib') -Destination (Join-Path $repo 'scripts') -Recurse
     Set-Content -LiteralPath (Join-Path $repo 'Whizbang.slnx') -Value '<Solution><Project Path="tests/A.Tests/A.Tests.csproj" /></Solution>'
-    Set-Content -LiteralPath (Join-Path $repo 'tests' 'A.Tests' 'A.Tests.csproj') -Value '<Project><PropertyGroup><IsTestProject>true</IsTestProject><WhizbangTestType>Unit</WhizbangTestType><WhizbangTestTags>Fake</WhizbangTestTags></PropertyGroup></Project>'
+    Set-Content -LiteralPath (Join-Path $repo 'tests' 'A.Tests' 'A.Tests.csproj') -Value "<Project><PropertyGroup><IsTestProject>true</IsTestProject><WhizbangTestType>$TestType</WhizbangTestType><WhizbangTestTags>Fake</WhizbangTestTags></PropertyGroup></Project>"
 
     $bin = Join-Path $repo '.fake' 'bin'
     # `dotnet build` writes A.Tests.dll under the configuration it was given (Debug when none, as the real
@@ -228,6 +228,55 @@ Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
     $calls | Should -Match "(?m)^reportgenerator -reports:\S*tests/A\.Tests/bin/$Configuration/net10\.0/TestResults/run\.cobertura\.xml"
     $r.Output | Should -Not -Match 'No cobertura XML files found'
     $r.ExitCode | Should -Be 0
+  }
+}
+
+# -Coverage runs each project on its own and merges their cobertura reports. A project cut short mid-run leaves a
+# truncated report whose unrun tests' lines would read as uncovered, so it is dropped from the merge: a project the
+# script killed (143), any failure under fail-fast, and a crashed test process (#2231), which is cut short by
+# definition. A project whose tests all ran and some failed still measured every line, so its report is kept.
+# -NoFailFast throughout: under fail-fast every failure is dropped already, which would prove nothing here.
+Describe 'Run-Tests.ps1 -Coverage drops the report of a crashed project (#2231)' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Ran = @'
+  total: 10
+  failed: 0
+  succeeded: 10
+  skipped: 0
+'@
+    $script:FailedTest = @'
+failed A.Tests.SomeTest (12ms)
+  total: 10
+  failed: 1
+  succeeded: 9
+  skipped: 0
+'@
+    $script:StackOverflow = "Stack overflow.`nRepeat 2000 times:`n   at A.Tests.Recursive.Next()`n"
+  }
+
+  It 'drops a <Type> project''s report when <Case>' -ForEach @(
+    @{ Type = 'Unit'; Mode = 'AiUnit'; Case = 'it exited with code 7'; Exit = 7; Crash = $false }
+    @{ Type = 'Unit'; Mode = 'AiUnit'; Case = 'it printed a crash line and exited 1'; Exit = 1; Crash = $true }
+    @{ Type = 'Unit'; Mode = 'AiUnit'; Case = 'it printed a crash line and exited 0'; Exit = 0; Crash = $true }
+    @{ Type = 'Integration'; Mode = 'AiIntegrations'; Case = 'it exited with code 7'; Exit = 7; Crash = $false }
+    @{ Type = 'Integration'; Mode = 'AiIntegrations'; Case = 'it printed a crash line and exited 1'; Exit = 1; Crash = $true }
+  ) {
+    $repo = New-FakeRepo -TestType $Type
+    $out = if ($Crash) { $StackOverflow + $Ran } else { $Ran }
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Coverage', '-NoFailFast', '-Configuration', 'Release') -TestOutput $out -TestExitCode $Exit
+    ($r.Calls -join "`n") | Should -Match '(?m)^dotnet run --project ' -Because 'the project must have run, or a dropped report would prove nothing'
+    $r.Output | Should -Match 'Excluded 1 truncated cobertura file\(s\) \(project cut short mid-run\): A\.Tests'
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^reportgenerator ' -Because 'its report was the only one, so nothing is left to merge'
+    $r.ExitCode | Should -Be 1 -Because 'a crashed project failed, whatever its exit code'
+  }
+
+  It 'keeps a <Type> project''s report when its tests ran and one failed' -ForEach @(
+    @{ Type = 'Unit'; Mode = 'AiUnit' }, @{ Type = 'Integration'; Mode = 'AiIntegrations' }) {
+    $repo = New-FakeRepo -TestType $Type
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Coverage', '-NoFailFast', '-Configuration', 'Release') -TestOutput $FailedTest -TestExitCode 2
+    $r.Output | Should -Not -Match 'truncated cobertura'
+    ($r.Calls -join "`n") | Should -Match '(?m)^reportgenerator -reports:\S*tests/A\.Tests/bin/Release/net10\.0/TestResults/run\.cobertura\.xml'
+    $r.ExitCode | Should -Be 1
   }
 }
 
