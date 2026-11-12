@@ -329,6 +329,22 @@ public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task SetBasedClaimed_ARewindFlagWithNoTrigger_IsBatched_AndAReadThatThrows_FailsOnlyItsPairAsync(CancellationToken cancellationToken) {
+    var flagged = Guid.NewGuid();
+    var broken = Guid.NewGuid();
+    var healthy = Guid.NewGuid();
+    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { RewindFlagWithoutTriggerFor = flagged, ReadThrowsFor = broken };
+
+    await rig.ClaimExpectingAsync([flagged, broken, healthy], expectedReports: 2, expectedFailures: 1, cancellationToken);
+
+    await Assert.That(rig.Runners.Rewound).IsEmpty().Because("a rewind needs the event that triggered it");
+    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { flagged, healthy });
+    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo(new[] { broken })
+      .Because("a pair whose read throws is failed as the per-pair path fails it, and the batch goes on");
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task SetBasedClaimed_ABatchedReadThatFails_LeavesEachPairToItsOwnReadsAsync(CancellationToken cancellationToken) {
     var streams = new[] { Guid.NewGuid(), Guid.NewGuid() };
     var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { BatchedReads = true, BatchedReadFails = true };
@@ -411,6 +427,8 @@ public partial class PerspectiveWorkerDrainModeTests {
     public bool NoEventStore { get; init; }
     public bool WithReceptors { get; init; }
     public bool CursorsPerPair { get; init; }
+    public Guid? RewindFlagWithoutTriggerFor { get; init; }
+    public Guid? ReadThrowsFor { get; init; }
     public Guid? ResumesAfterCursor { get; init; }
     public Guid? CaughtUp { get; init; }
     public DrainModeEventStore Store { get; private set; } = null!;
@@ -508,6 +526,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         OnPrepare = onPrepare,
         HoldPrepare = HoldPrepare,
         RewindThrows = RewindThrows,
+        ReadThrowsFor = ReadThrowsFor,
         OnRewind = RewindOutlivesLease ? () => time.Advance(TimeSpan.FromHours(1)) : null,
       };
       Coordinator.Expect(expectedReports, expectedFailures);
@@ -525,6 +544,14 @@ public partial class PerspectiveWorkerDrainModeTests {
           LastEventId = Guid.CreateVersion7(),
           Status = PerspectiveProcessingStatus.RewindRequired,
           RewindTriggerEventId = events[rewind].MessageId.Value,
+        };
+      }
+      if (RewindFlagWithoutTriggerFor is { } flagged) {
+        Coordinator.Cursors[flagged] = new PerspectiveCursorInfo {
+          StreamId = flagged,
+          PerspectiveName = SET_BASED,
+          LastEventId = behindEvents,
+          Status = PerspectiveProcessingStatus.RewindRequired,
         };
       }
       if (ResumesAfterCursor is { } resumes) {
@@ -646,6 +673,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public bool HoldPrepare { get; init; }
     public bool RewindThrows { get; init; }
     public Action? OnRewind { get; init; }
+    public Guid? ReadThrowsFor { get; init; }
     public ConcurrentQueue<Guid> Rewound { get; } = new();
     private int _runCalls;
     public int RunCalls => Volatile.Read(ref _runCalls);
@@ -686,6 +714,9 @@ public partial class PerspectiveWorkerDrainModeTests {
       public Type PerspectiveType => typeof(Runner);
 
       public Task<IReadOnlyList<MessageEnvelope<IEvent>>?> ReadEventsAsync(Guid streamId, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
+        if (streamId == owner.ReadThrowsFor) {
+          throw new InvalidOperationException("the read threw");
+        }
         owner.EventsRead.Enqueue(streamId);
         return Task.FromResult<IReadOnlyList<MessageEnvelope<IEvent>>?>(owner.ReadsNothing ? null : [owner._eventsOf(streamId)]);
       }

@@ -169,6 +169,11 @@ public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
     await Assert.That(await store.StreamsWithEventsBeforeAsync([], types)).IsEmpty();
     await Assert.That(await store.StreamsWithEventsBeforeAsync(probes, [])).IsEmpty()
       .Because("a perspective that folds nothing can have folded nothing");
+    await using (var transaction = await context.Database.BeginTransactionAsync()) {
+      await Assert.That(await store.StreamsWithEventsBeforeAsync(probes, types)).IsEquivalentTo(perStream)
+        .Because("inside the context's transaction the probe runs on it, and answers the same");
+      await transaction.RollbackAsync();
+    }
   }
 
   [Test]

@@ -131,9 +131,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: Register IPerspectiveStateSource, the read seam of set-based perspective writes (#2246): a batch's
         // rows are read with one statement per perspective table, no row is read for a stream known to be new, and the
         // purge-marker and history probes of missing rows are asked once per perspective. TryAdd, so a service's own
-        // state source still wins.
-        selector.Services.TryAddSingleton<IPerspectiveStateSource>(sp =>
-            new BatchedPerspectiveStateSource(sp.GetService<ILogger<BatchedPerspectiveStateSource>>()));
+        // state source still wins. The container takes the logging constructor when logging is registered, and the
+        // parameterless one when it is not.
+        selector.Services.TryAddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
 
         // TURNKEY: Register IPerspectiveRowDigest so a rebuild of named streams can record what those rows
         // looked like before and after it ran. Without this the rebuild still happens and still reports its

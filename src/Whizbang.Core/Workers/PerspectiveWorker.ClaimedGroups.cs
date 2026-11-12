@@ -375,7 +375,8 @@ public partial class PerspectiveWorker {
   private async Task<bool> _beginClaimedApplyAsync(ClaimedBatchContext batch, ClaimedGroup group, CancellationToken ct) {
     var checkpoint = group.Checkpoint;
     var cursorStatus = checkpoint?.Status ?? PerspectiveProcessingStatus.None;
-    if (cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired) && checkpoint?.RewindTriggerEventId is not null) {
+    // A status that asks for a rewind comes only with a cursor.
+    if (cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired) && checkpoint!.RewindTriggerEventId is not null) {
       // A rewind replays the stream on its own; it is the per-pair path's, as it always was.
       _markAffinityPhase(group.StreamId, group.PerspectiveName, "apply");
       var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(

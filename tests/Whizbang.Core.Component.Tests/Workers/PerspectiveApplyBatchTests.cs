@@ -146,12 +146,15 @@ public class PerspectiveApplyBatchTests {
     var log = new ConcurrentQueue<string>();
     var keyless = _pair(Guid.NewGuid(), new FakeRunner(log) { WriteKey = _contextB });
     var unkeyed = _pair(Guid.NewGuid(), new FakeRunner(log) { WriteKey = null });
+    // A DbContext type, as the driver keys a context's sink: named by its type's display name.
+    var typed = _pair(Guid.NewGuid(), new FakeRunner(log) { WriteKey = typeof(PerspectiveApplyBatchTests) });
 
-    await PerspectiveApplyBatch.RunAsync([keyless, unkeyed], _services(null, sinks: _sinks()), CancellationToken.None);
+    await PerspectiveApplyBatch.RunAsync([keyless, unkeyed, typed], _services(null, sinks: _sinks()), CancellationToken.None);
 
     await Assert.That(_runner(keyless).CompletedWith!.Value.Status).IsEqualTo(PerspectiveWriteStatus.Failed);
     await Assert.That(_runner(keyless).CompletedWith!.Value.Error!.Message).Contains("context-b");
     await Assert.That(_runner(unkeyed).CompletedWith!.Value.Error!.Message).Contains("the default write sink");
+    await Assert.That(_runner(typed).CompletedWith!.Value.Error!.Message).Contains(nameof(PerspectiveApplyBatchTests));
   }
 
   [Test]

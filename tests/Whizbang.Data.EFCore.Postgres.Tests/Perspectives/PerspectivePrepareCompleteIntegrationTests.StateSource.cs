@@ -208,6 +208,20 @@ public partial class PerspectivePrepareCompleteIntegrationTests {
     await context.Database.CloseConnectionAsync();
   }
 
+  [Test]
+  public async Task ABatchedRead_InsideATransaction_ReadsOnItAsync() {
+    // Npgsql refuses a command that is not on the connection's open transaction, so the read must enlist in it.
+    await using var context = CreateDbContext();
+    IPerspectiveStore<ActionTestModel> store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, ACTION_TABLE);
+    await using var transaction = await context.Database.BeginTransactionAsync();
+
+    var batched = await store.ReadForApplyManyAsync([Guid.CreateVersion7()]);
+
+    await Assert.That(batched).IsNotNull();
+    await Assert.That(batched).IsEmpty().Because("a stream with no row is left out, inside a transaction as outside one");
+    await transaction.RollbackAsync();
+  }
+
   // ---------------------------------------------------------------------------------------------------------------
 
   /// <summary>A context on a provider other than Npgsql, mapping the one row type the test reads.</summary>

@@ -567,9 +567,7 @@ public partial class PerspectiveWorker {
       DrainBatchContext context,
       ParallelOptions parallel,
       CancellationToken cancellationToken) {
-    if (pairs.Count == 0) {
-      return;
-    }
+    // An empty lap takes no gate and begins nothing: there is nothing to batch.
     var gates = await AcquireAffinityGatesInOrderAsync(pairs.Select(p => (p.StreamId, p.PerspectiveName)), "drain", cancellationToken).ConfigureAwait(false);
     var candidates = new ConcurrentQueue<DrainPair>();
     try {

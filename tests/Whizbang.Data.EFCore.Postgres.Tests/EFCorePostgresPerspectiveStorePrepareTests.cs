@@ -54,6 +54,20 @@ public class EFCorePostgresPerspectiveStorePrepareTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task PrepareWrite_OnAnotherProvider_DeclinesAsync() {
+    var options = new DbContextOptionsBuilder<InMemoryContext>().UseInMemoryDatabase($"prepare-{Guid.NewGuid()}").Options;
+    await using var context = new InMemoryContext(options);
+    IPerspectiveStore<ActionTestModel> store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+
+    var write = store.PrepareWrite(
+      Guid.CreateVersion7(), new ActionTestModel(), new PerspectiveScope(), forceUpdateScope: false,
+      _metadata(), PerspectiveRowVersion.Absent, physicalFieldValues: null);
+
+    await Assert.That(write).IsNull()
+      .Because("the set-based write runs PostgreSQL statements, so another provider writes through the per-stream path");
+  }
+
+  [Test]
   public async Task PreparePurge_OnPostgres_DeletesFromTheMappedTableAsync() {
     await using var context = CreateDbContext();
     IPerspectiveStore<ActionTestModel> store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);

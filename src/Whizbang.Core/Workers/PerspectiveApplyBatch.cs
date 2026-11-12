@@ -111,7 +111,8 @@ internal static partial class PerspectiveApplyBatch {
   /// <summary>Writes the prepared rows, one sink per DbContext, and records each pair's outcome.</summary>
   private static async Task _flushAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) {
     var bySink = pairs
-      .Where(p => p.Failure is null && p.Prepared?.Write is not null)
+      // A pair whose prepare did not throw has its prepared apply.
+      .Where(p => p.Failure is null && p.Prepared!.Write is not null)
       .GroupBy(p => p.Prepared!.Write!.SinkKey ?? _defaultSink);
     foreach (var group in bySink) {
       var members = group.ToList();
