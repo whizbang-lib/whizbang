@@ -499,20 +499,21 @@ public partial class PerspectiveWorkerDrainModeTests {
     }
 
     private async Task _runAsync(Guid[] streams, bool drain, int expectedReports, int expectedFailures, CancellationToken ct) {
-      // A minute before every event, and a minute after: version 7 ids made in the same millisecond carry random bits
-      // after the timestamp, so only a different timestamp orders a cursor before or after an event for certain.
-      var now = DateTimeOffset.UtcNow; // review-checks:allow: the events are minted at the real time, so the cursors are placed a minute either side of it; nothing waits on time
+      // Every timestamp comes from the fake clock. A cursor sits a minute before every event, or a minute after:
+      // version 7 ids made in the same millisecond carry random bits after the timestamp, so only a different
+      // timestamp orders a cursor before or after an event for certain.
+      var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+      var now = time.GetUtcNow();
       var behindEvents = Guid.CreateVersion7(now.AddMinutes(-1));
       var aheadOfEvents = Guid.CreateVersion7(now.AddMinutes(1));
       var events = streams.ToDictionary(s => s, s => new MessageEnvelope<IEvent> {
-        MessageId = new MessageId(Guid.CreateVersion7()),
+        MessageId = new MessageId(Guid.CreateVersion7(now)),
         Payload = new DrainModeTestEvent($"set-based-{s}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         IsFirstInLocalStream = true,
       });
       _events = events;
-      var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
       var prepareEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       Action? onPrepare = null;
       if (OutliveLease) {
