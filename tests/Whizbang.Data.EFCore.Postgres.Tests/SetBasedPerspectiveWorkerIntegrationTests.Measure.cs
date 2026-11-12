@@ -52,7 +52,7 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
     completion.ScopeFactory = pipeline.Services.GetRequiredService<IServiceScopeFactory>();
     var streams = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).ToList();
     for (var i = 0; i < streams.Count; i += 500) {
-      await _commitManyAsync(conn, instance, streams.Skip(i).Take(500).ToList(), ct);
+      await _commitManyAsync(conn, instance, [.. streams.Skip(i).Take(500)], ct);
     }
 
     using var statements = new NpgsqlStatementLog(ConnectionString);

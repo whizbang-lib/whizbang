@@ -57,7 +57,7 @@ public class UpcastingEventStoreDecoratorTests {
 
     var read = await sut.ReadPolymorphicManyAsync([(first, null), (second, Guid.NewGuid())], [typeof(OldEvent)]);
 
-    await Assert.That(read!.Keys).IsEquivalentTo(new[] { first, second });
+    await Assert.That(read!.Keys).IsEquivalentTo([first, second]);
     await Assert.That(read[first].Single().Payload).IsTypeOf<NewEvent>();
     await Assert.That(read[second].Single().Payload).IsTypeOf<NewEvent>();
   }

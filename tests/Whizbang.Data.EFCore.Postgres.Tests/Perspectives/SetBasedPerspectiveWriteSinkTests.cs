@@ -174,7 +174,7 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
     await using var context = CreateDbContext();
 
     var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync(
-      ids.Select((id, i) => _action(context, id, $"after-{i}", 2, PerspectiveRowVersion.Of(versions[i]), commitSequence: 2)).ToList());
+      [.. ids.Select((id, i) => _action(context, id, $"after-{i}", 2, PerspectiveRowVersion.Of(versions[i]), commitSequence: 2))]);
 
     await Assert.That(outcomes.Select(o => o.Status)).All().Satisfy(s => s.IsEqualTo(PerspectiveWriteStatus.Written));
     await Assert.That(await _statementsAsync(ACTION_TABLE, "UPDATE")).IsEqualTo(1);
@@ -542,12 +542,12 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
   [Test]
   public async Task Documents_AreByteIdenticalToTheSingleRowWrite_OnEveryShapeAsync() {
     var id = Guid.CreateVersion7();
-    var single = await _writeTwiceAsync(id, useSink: false);
+    var (Inserted, Updated) = await _writeTwiceAsync(id, useSink: false);
     await _executeAsync($"DELETE FROM {SPLIT_TABLE} WHERE id = @id", id);
     var sink = await _writeTwiceAsync(id, useSink: true);
 
-    await Assert.That(sink.Inserted).IsEqualTo(single.Inserted);
-    await Assert.That(sink.Updated).IsEqualTo(single.Updated);
+    await Assert.That(sink.Inserted).IsEqualTo(Inserted);
+    await Assert.That(sink.Updated).IsEqualTo(Updated);
   }
 
   /// <summary>Inserts a row and then updates it on its read version, by one path, and reads the row after each.</summary>

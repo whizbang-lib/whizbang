@@ -48,7 +48,7 @@ public partial class PerspectiveWorker {
     // _perspectivesPerEventType, select the collective events directly. _processCollectiveSinkAsync
     // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
     perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
-      ? events.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
+      ? [.. events.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId()]
       : [.. events
           .Where(e => _perspectivesFor(context.TypeNameCache, e.Payload).Contains(perspectiveName))
           .OrderByMessageId()];

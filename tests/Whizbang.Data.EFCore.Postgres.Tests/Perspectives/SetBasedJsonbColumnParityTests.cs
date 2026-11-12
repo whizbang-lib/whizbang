@@ -50,13 +50,13 @@ public class SetBasedJsonbColumnParityTests {
   [Test]
   public async Task JsonbAndTimestampColumns_AreByteIdenticalToTheSingleRowWriteAsync() {
     var id = Guid.Parse("01890000-0000-7000-8000-000000002246");
-    var single = await _writeTwiceAsync(id, useSink: false);
+    var (Inserted, Updated) = await _writeTwiceAsync(id, useSink: false);
     await _executeAsync($"DELETE FROM {TABLE} WHERE id = '{id}'");
     var sink = await _writeTwiceAsync(id, useSink: true);
 
-    await Assert.That(sink.Inserted).IsEqualTo(single.Inserted);
-    await Assert.That(sink.Updated).IsEqualTo(single.Updated);
-    await Assert.That(single.Inserted).Contains("\"north\"")
+    await Assert.That(sink.Inserted).IsEqualTo(Inserted);
+    await Assert.That(sink.Updated).IsEqualTo(Updated);
+    await Assert.That(Inserted).Contains("\"north\"")
       .Because("the snapshot holds the promoted columns, so equal snapshots compare the columns and not only the document");
   }
 

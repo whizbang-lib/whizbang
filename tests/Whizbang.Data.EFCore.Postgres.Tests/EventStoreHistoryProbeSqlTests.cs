@@ -163,17 +163,16 @@ public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
     var batched = await store.StreamsWithEventsBeforeAsync(probes, types);
 
     await Assert.That(batched).IsEquivalentTo(perStream).Because("the batched probe answers each stream as the per-stream probe does");
-    await Assert.That(batched).IsEquivalentTo(new[] { handledHistory, archived });
+    await Assert.That(batched).IsEquivalentTo([handledHistory, archived]);
     await Assert.That(statements.Matching("wh_event_store")).Count().IsEqualTo(1)
       .Because("every stream is answered by one statement");
     await Assert.That(await store.StreamsWithEventsBeforeAsync([], types)).IsEmpty();
     await Assert.That(await store.StreamsWithEventsBeforeAsync(probes, [])).IsEmpty()
       .Because("a perspective that folds nothing can have folded nothing");
-    await using (var transaction = await context.Database.BeginTransactionAsync()) {
-      await Assert.That(await store.StreamsWithEventsBeforeAsync(probes, types)).IsEquivalentTo(perStream)
-        .Because("inside the context's transaction the probe runs on it, and answers the same");
-      await transaction.RollbackAsync();
-    }
+    await using var transaction = await context.Database.BeginTransactionAsync();
+    await Assert.That(await store.StreamsWithEventsBeforeAsync(probes, types)).IsEquivalentTo(perStream)
+      .Because("inside the context's transaction the probe runs on it, and answers the same");
+    await transaction.RollbackAsync();
   }
 
   [Test]

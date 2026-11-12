@@ -75,7 +75,7 @@ public class PerspectivePurgeMarkerStoreTests : EFCoreTestBase {
     using var statements = new NpgsqlStatementLog(ConnectionString);
     var purged = await markers.PurgedAmongAsync([perspectiveOnly, wholeStream, otherPerspective, live], PERSPECTIVE_NAME);
 
-    await Assert.That(purged).IsEquivalentTo(new[] { perspectiveOnly, wholeStream });
+    await Assert.That(purged).IsEquivalentTo([perspectiveOnly, wholeStream]);
     await Assert.That(statements.Matching("wh_stream_purge_markers")).Count().IsEqualTo(1);
     await Assert.That(await markers.PurgedAmongAsync([], PERSPECTIVE_NAME)).IsEmpty();
   }

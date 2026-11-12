@@ -47,14 +47,10 @@ public class CoalescingOutboxBatchStrategyTests {
   private static FakeDbException _transient() =>
     FakeDbException.WithSqlState(null, message: "The connection pool has been exhausted", inner: new TimeoutException());
 
-  private sealed class RecordingFlush {
-    private readonly int _expectedBatches;
+  private sealed class RecordingFlush(int expectedBatches) {
+    private readonly int _expectedBatches = expectedBatches;
     public ConcurrentQueue<OutboxMessage[]> Batches { get; } = new();
     public TaskCompletionSource AllFlushed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public RecordingFlush(int expectedBatches) {
-      _expectedBatches = expectedBatches;
-    }
 
     public Task FlushAsync(OutboxMessage[] messages, CancellationToken cancellationToken) {
       cancellationToken.ThrowIfCancellationRequested();

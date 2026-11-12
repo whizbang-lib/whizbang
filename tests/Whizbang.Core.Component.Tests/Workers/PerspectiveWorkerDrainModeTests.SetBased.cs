@@ -74,10 +74,10 @@ public partial class PerspectiveWorkerDrainModeTests {
 
     await rig.DrainAsync([inverted, healthy], cancellationToken);
 
-    await Assert.That(rig.Runners.Rewound).IsEquivalentTo(new[] { inverted })
+    await Assert.That(rig.Runners.Rewound).IsEquivalentTo([inverted])
       .Because("an event at or below the cursor rewinds its stream, as the per-pair path does");
-    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { healthy });
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { inverted, healthy });
+    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo([healthy]);
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([inverted, healthy]);
   }
 
   [Test]
@@ -89,8 +89,8 @@ public partial class PerspectiveWorkerDrainModeTests {
 
     await rig.DrainExpectingAsync([broken, healthy], expectedReports: 1, expectedFailures: 1, cancellationToken);
 
-    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo(new[] { broken });
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { healthy });
+    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo([broken]);
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([healthy]);
   }
 
   [Test]
@@ -195,9 +195,9 @@ public partial class PerspectiveWorkerDrainModeTests {
 
     await rig.ClaimAsync([rewound, healthy], cancellationToken);
 
-    await Assert.That(rig.Runners.Rewound).IsEquivalentTo(new[] { rewound });
-    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { healthy });
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { rewound, healthy });
+    await Assert.That(rig.Runners.Rewound).IsEquivalentTo([rewound]);
+    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo([healthy]);
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([rewound, healthy]);
   }
 
   [Test]
@@ -223,8 +223,8 @@ public partial class PerspectiveWorkerDrainModeTests {
 
     await rig.ClaimExpectingAsync([badPrepare, badFinish, healthy], expectedReports: 1, expectedFailures: 2, cancellationToken);
 
-    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo(new[] { badPrepare, badFinish });
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { healthy });
+    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo([badPrepare, badFinish]);
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([healthy]);
   }
 
   [Test]
@@ -238,7 +238,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(streams);
     await Assert.That(rig.Runners.RunCalls).IsEqualTo(1)
       .Because("the per-stream perspective's claimed pair runs RunAsync, as before set-based writes");
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.PerspectiveName)).IsEquivalentTo(new[] { SET_BASED, PER_STREAM })
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.PerspectiveName)).IsEquivalentTo([SET_BASED, PER_STREAM])
       .Because("a perspective whose runner cannot be resolved ends without a report, as on the per-pair path");
   }
 
@@ -276,7 +276,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     await Assert.That(rig.Sink.Calls).IsEqualTo(0);
     await Assert.That(rig.Runners.Completed.ContainsKey(stream)).IsTrue()
       .Because("the runner completes a pair it handed back, which runs it per pair under the batch's lock");
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { stream });
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([stream]);
   }
 
   [Test]
@@ -317,14 +317,14 @@ public partial class PerspectiveWorkerDrainModeTests {
     await Assert.That(rig.Coordinator.BatchCursorReads).IsEqualTo(1);
     await Assert.That(rig.Coordinator.SingleCursorReads).IsEqualTo(0);
     await Assert.That(rig.Runners.EventsRead).IsEmpty().Because("each runner selects its events from the batch's read");
-    await Assert.That(rig.Runners.Selected).IsEquivalentTo(new[] { rig.EventOf(fresh), rig.EventOf(resumed) });
-    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { fresh, resumed });
+    await Assert.That(rig.Runners.Selected).IsEquivalentTo([rig.EventOf(fresh), rig.EventOf(resumed)]);
+    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo([fresh, resumed]);
     await Assert.That(rig.Runners.RunCalls).IsEqualTo(1)
       .Because("the caught-up pair's cursor is past its stream's event, so it has none to batch and runs per pair");
-    await Assert.That(rig.Processed[fresh]).IsEquivalentTo(new[] { rig.EventOf(fresh) })
+    await Assert.That(rig.Processed[fresh]).IsEquivalentTo([rig.EventOf(fresh)])
       .Because("the processed events the post-perspective stages see are the batch's read, not a second read");
-    await Assert.That(rig.Processed[resumed]).IsEquivalentTo(new[] { rig.EventOf(resumed) });
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { fresh, resumed, caughtUp });
+    await Assert.That(rig.Processed[resumed]).IsEquivalentTo([rig.EventOf(resumed)]);
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([fresh, resumed, caughtUp]);
   }
 
   [Test]
@@ -338,8 +338,8 @@ public partial class PerspectiveWorkerDrainModeTests {
     await rig.ClaimExpectingAsync([flagged, broken, healthy], expectedReports: 2, expectedFailures: 1, cancellationToken);
 
     await Assert.That(rig.Runners.Rewound).IsEmpty().Because("a rewind needs the event that triggered it");
-    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { flagged, healthy });
-    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo(new[] { broken })
+    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo([flagged, healthy]);
+    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo([broken])
       .Because("a pair whose read throws is failed as the per-pair path fails it, and the batch goes on");
   }
 
@@ -399,10 +399,10 @@ public partial class PerspectiveWorkerDrainModeTests {
 
     await rig.DrainExpectingAsync([broken, healthy], expectedReports: 1, expectedFailures: 1, cancellationToken);
 
-    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(new[] { healthy });
-    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo(new[] { broken })
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([healthy]);
+    await Assert.That(rig.Coordinator.Failed.Select(f => f.StreamId)).IsEquivalentTo([broken])
       .Because("a pair whose apply threw is failed as the per-pair path fails it; its batch's other pairs are written");
-    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { healthy });
+    await Assert.That(rig.Sink.Written.Select(w => w.StreamId)).IsEquivalentTo([healthy]);
   }
 
   /// <summary>A worker over fakes, with the set-based seams registered and one fake runner for <see cref="SET_BASED"/>.</summary>
@@ -649,7 +649,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         if (drain) {
           await harness.EnqueueDrainStreamAsync(stream, ct);
         } else {
-          foreach (var perspective in perspectives.Concat(AlsoUnresolvable ? new[] { NO_RUNNER } : Array.Empty<string>())) {
+          foreach (var perspective in perspectives.Concat(AlsoUnresolvable ? [NO_RUNNER] : Array.Empty<string>())) {
             await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = perspective }, ct);
           }
         }

@@ -68,9 +68,9 @@ public class PerspectiveApplyBatchTests {
       _services(null, sinks: _sinks((_contextA, sinkA), (_contextB, sinkB)), defaultSink: sinkDefault), CancellationToken.None);
 
     await Assert.That(sinkA.Calls).IsEqualTo(1).Because("one write per context, whatever the batch's size");
-    await Assert.That(sinkA.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { a1.StreamId, a2.StreamId });
-    await Assert.That(sinkB.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { b1.StreamId });
-    await Assert.That(sinkDefault.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { unkeyed.StreamId })
+    await Assert.That(sinkA.Written.Select(w => w.StreamId)).IsEquivalentTo([a1.StreamId, a2.StreamId]);
+    await Assert.That(sinkB.Written.Select(w => w.StreamId)).IsEquivalentTo([b1.StreamId]);
+    await Assert.That(sinkDefault.Written.Select(w => w.StreamId)).IsEquivalentTo([unkeyed.StreamId])
       .Because("a write that names no context goes to the sink registered without a key");
     await Assert.That(_runner(a1).CompletedWith!.Value.Status).IsEqualTo(PerspectiveWriteStatus.Written);
     await Assert.That(_runner(a2).CompletedWith!.Value.Status).IsEqualTo(PerspectiveWriteStatus.Written);
@@ -93,7 +93,7 @@ public class PerspectiveApplyBatchTests {
 
     await Assert.That(_runner(perPair).Completed).IsTrue();
     await Assert.That(_runner(perPair).CompletedWith).IsNull();
-    await Assert.That(sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { written.StreamId });
+    await Assert.That(sink.Written.Select(w => w.StreamId)).IsEquivalentTo([written.StreamId]);
   }
 
   [Test]
@@ -108,7 +108,7 @@ public class PerspectiveApplyBatchTests {
     await Assert.That(broken.Failure).IsTypeOf<InvalidOperationException>();
     await Assert.That(broken.Result).IsNull();
     await Assert.That(_runner(broken).Completed).IsFalse().Because("a pair whose prepare threw has nothing to complete");
-    await Assert.That(sink.Written.Select(w => w.StreamId)).IsEquivalentTo(new[] { healthy.StreamId });
+    await Assert.That(sink.Written.Select(w => w.StreamId)).IsEquivalentTo([healthy.StreamId]);
     await Assert.That(healthy.Result).IsNotNull();
   }
 

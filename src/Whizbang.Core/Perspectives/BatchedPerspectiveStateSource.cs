@@ -49,7 +49,7 @@ public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspec
     private readonly ILogger _logger;
     private readonly Dictionary<string, Perspective> _perspectives = new(StringComparer.Ordinal);
     private readonly HashSet<Guid> _events = [];
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private Task<IReadOnlyDictionary<Guid, long?>?>? _commitSequences;
 
     public Batch(IReadOnlyList<PerspectiveStateRequest> pairs, ILogger logger) {
@@ -178,7 +178,7 @@ public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspec
 
   /// <summary>One perspective's pairs in a batch, and the reads made for them, each made once.</summary>
   private sealed class Perspective(string name) {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private Task<object?>? _rows;
     private Task<IReadOnlySet<Guid>?>? _purged;
     private Task<IReadOnlySet<Guid>?>? _history;

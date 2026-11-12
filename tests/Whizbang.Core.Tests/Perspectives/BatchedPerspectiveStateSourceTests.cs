@@ -57,7 +57,7 @@ public class BatchedPerspectiveStateSourceTests {
     var missingRow = await batch.ReadRowAsync(store, missing, PERSPECTIVE);
 
     await Assert.That(store.Reads).Count().IsEqualTo(1).Because("one read serves every pair of the perspective");
-    await Assert.That(store.Reads[0]).IsEquivalentTo(new[] { present, missing });
+    await Assert.That(store.Reads[0]).IsEquivalentTo([present, missing]);
     await Assert.That(presentRow!.Model!.Name).IsEqualTo("present");
     await Assert.That(missingRow!.Model).IsNull();
     await Assert.That(missingRow.ApplyRead.Version).IsEqualTo(PerspectiveRowVersion.Absent);
@@ -126,7 +126,7 @@ public class BatchedPerspectiveStateSourceTests {
       .Because("a row the read found is never probed");
 
     await Assert.That(markers.Queries).Count().IsEqualTo(1);
-    await Assert.That(markers.Queries[0]).IsEquivalentTo(new[] { purged, live });
+    await Assert.That(markers.Queries[0]).IsEquivalentTo([purged, live]);
   }
 
   [Test]
@@ -163,7 +163,7 @@ public class BatchedPerspectiveStateSourceTests {
       .Because("the batch asked before the event it planned; any other question is the stream's own");
 
     await Assert.That(events.Queries).Count().IsEqualTo(1);
-    await Assert.That(events.Queries[0]).IsEquivalentTo(new[] { (woken, wokenFirst), (fresh, freshFirst) });
+    await Assert.That(events.Queries[0]).IsEquivalentTo([(woken, wokenFirst), (fresh, freshFirst)]);
     await Assert.That(events.TypesAsked[0]).IsSameReferenceAs(types);
   }
 
@@ -207,7 +207,7 @@ public class BatchedPerspectiveStateSourceTests {
       .Because("an event the batch did not plan is the pair's own read");
 
     await Assert.That(events.SequenceQueries).Count().IsEqualTo(1).Because("one read serves every pair of the batch");
-    await Assert.That(events.SequenceQueries[0]).IsEquivalentTo(new[] { first, second, unstamped });
+    await Assert.That(events.SequenceQueries[0]).IsEquivalentTo([first, second, unstamped]);
   }
 
   [Test]
@@ -254,7 +254,7 @@ public class BatchedPerspectiveStateSourceTests {
 
     var answer = await markers.PurgedAmongAsync([purged, Guid.NewGuid()], PERSPECTIVE);
 
-    await Assert.That(answer).IsEquivalentTo(new[] { purged });
+    await Assert.That(answer).IsEquivalentTo([purged]);
   }
 
   [Test]
@@ -265,7 +265,7 @@ public class BatchedPerspectiveStateSourceTests {
     var answer = await events.StreamsWithEventsBeforeAsync(
       [(withHistory, Guid.NewGuid()), (Guid.NewGuid(), Guid.NewGuid())], [typeof(string)]);
 
-    await Assert.That(answer).IsEquivalentTo(new[] { withHistory });
+    await Assert.That(answer).IsEquivalentTo([withHistory]);
   }
 
   [Test]
