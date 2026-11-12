@@ -247,4 +247,18 @@ public class ReceptorRegistryContributionTests {
     await Assert.That(() => new CompositeReceptorRegistry(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => new CompositeReceptorRegistry([])).Throws<ArgumentException>();
   }
+
+  /// <summary>
+  /// When every contribution's implementation was removed, the host still builds (#2243): the receptor registry is the
+  /// null registry, as for a host that declares no receptors, never a composite that throws for having none.
+  /// </summary>
+  [Test]
+  public async Task EveryContributionRemoved_ServesTheNullRegistry_InsteadOfThrowingAsync() {
+    var services = new ServiceCollection();
+    _add<OrdersRegistry>(services);
+    services.Remove(services.Single(d => d.ServiceType == typeof(OrdersRegistry)));
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IReceptorRegistry>()).IsSameReferenceAs(NullReceptorRegistry.Instance);
+  }
 }

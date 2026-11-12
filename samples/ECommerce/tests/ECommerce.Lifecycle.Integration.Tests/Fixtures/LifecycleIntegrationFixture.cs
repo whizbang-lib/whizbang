@@ -156,10 +156,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
       new TestRoutingStrategy(_testId));
 
     // Database readiness (schema created before host starts)
-    // Clear static callbacks to avoid contamination from other assemblies
-    ServiceRegistrationCallbacks.Dispatcher = null;
-    ServiceRegistrationCallbacks.PerspectiveServices = null;
-
     // Explicitly call module initializer (may not run automatically in test context)
     Generated.GeneratedModelRegistration.Initialize();
 
@@ -173,7 +169,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Generated registrations (receptors, dispatcher, lifecycle deserializer)
-    builder.Services.AddReceptors();
     builder.Services.AddWhizbangLifecycleMessageDeserializer();
     builder.Services.AddSingleton<IEventTypeProvider, MockEventTypeProvider>();
 
@@ -184,9 +179,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     // Topic registry
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(
       new Generated.TopicRegistry());
-
-    // Dispatcher
-    builder.Services.AddWhizbangDispatcher();
 
     // Perspective stores (manual registration to avoid ModelRegistrationRegistry issues)
     _registerPerspectiveStore<MockBatchModelA>(builder.Services, "wh_per_mock_batch_model_a");

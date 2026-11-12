@@ -410,8 +410,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("internal static class MessageTypeCatalogModuleInitializer {");
     source.AppendLine("  [System.Runtime.CompilerServices.ModuleInitializer]");
     source.AppendLine("  internal static void Initialize() {");
-    source.AppendLine("    ServiceRegistrationCallbacks.MessageTypeCatalog = static services =>");
-    source.AppendLine("      services.AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>();");
+    // #2243: named by this assembly, so a host's catalog unions only its own service's
+    source.AppendLine($"    ServiceRegistrationCallbacks.RegisterMessageTypeCatalog({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, static services =>");
+    source.AppendLine("      services.AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>());");
     // Message-type [DefaultRouting], registered without DI so the cascade can read it without
     // reflection from any dispatcher, however it was built.
     foreach (var info in ordered.Where(i => i.DefaultRouting is not null)) {

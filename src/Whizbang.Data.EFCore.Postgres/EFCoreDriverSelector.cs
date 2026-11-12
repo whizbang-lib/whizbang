@@ -64,12 +64,17 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
   /// Optional connection string name to use. When specified, overrides the ConnectionStringName
   /// from the [WhizbangDbContext] attribute on the DbContext class.
   /// </param>
+  /// <remarks>Anchors the host's service on the DbContext's assembly (<see cref="Whizbang.Core.ServiceAssemblyScope"/>).</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ServiceScopedModelRegistrationTests.cs:WithEFCore_AnchorsTheHostOnTheDbContextsAssemblyAsync</tests>
   internal EFCoreDriverSelector(IServiceCollection services, Type dbContextType, string? connectionStringName) {
     ArgumentNullException.ThrowIfNull(services);
     Services = services;
     ArgumentNullException.ThrowIfNull(dbContextType);
     DbContextType = dbContextType;
     ConnectionStringName = connectionStringName;
+    // #2243: the DbContext names the host's service, so the host replays its own service's generated registrations
+    // and not those of every service loaded in the process.
+    Whizbang.Core.WhizbangServiceScopeExtensions.AddWhizbangServiceAnchor(services, dbContextType.Assembly.GetName().Name!);
   }
 
   /// <summary>

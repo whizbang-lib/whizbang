@@ -30,11 +30,19 @@ namespace Whizbang.Core;
 /// The composite is added only when no registration of the service exists other than a framework null default, so
 /// a service the host registers itself before the contributions is left alone.
 /// </para>
+/// <para>
+/// <strong>A contribution never requires its implementation.</strong> Each contribution entry resolves its
+/// implementation with <c>GetService</c>, and one the host does not register contributes nothing: removing an
+/// assembly's implementation from the collection used to leave the entry behind and fail the host with "No service
+/// for type" (#2243). Hosts get their own service's contributions only (<see cref="ServiceAssemblyScope"/>), so
+/// nothing needs removing in the first place.
+/// </para>
 /// </remarks>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AContributionWhoseRegistryWasRemoved_IsSkipped_AndTheHostStillBuildsAsync</tests>
 internal static class ContributionServiceCollectionExtensions {
   /// <summary>
   /// Adds <typeparamref name="TContribution"/> under <paramref name="contributionKey"/> and serves
@@ -57,7 +65,7 @@ internal static class ContributionServiceCollectionExtensions {
       where TContribution : class, TService {
     ArgumentNullException.ThrowIfNull(services);
     services.TryAddEnumerable(ServiceDescriptor.KeyedSingleton<TService, TContribution>(
-      contributionKey, static (sp, _) => sp.GetRequiredService<TContribution>()));
+      contributionKey, static (sp, _) => _resolve<TService, TContribution>(sp)));
     services.TryAddSingletonOverNullDefault<TService>(sp => compose(_latestFirst(sp.GetKeyedServices<TService>(contributionKey))));
     if (items is not null) {
       services.TryAddEnumerable(ServiceDescriptor.Singleton<IRegistrationCollisionSource, ContributionCollisionSource<TService>>(
@@ -83,13 +91,23 @@ internal static class ContributionServiceCollectionExtensions {
       where TContribution : class, TService {
     ArgumentNullException.ThrowIfNull(services);
     services.TryAddEnumerable(ServiceDescriptor.KeyedScoped<TService, TContribution>(
-      contributionKey, static (sp, _) => sp.GetRequiredService<TContribution>()));
+      contributionKey, static (sp, _) => _resolve<TService, TContribution>(sp)));
     services.TryAddScoped(sp => compose(_latestFirst(sp.GetKeyedServices<TService>(contributionKey))));
     return services;
   }
 
-  private static TService[] _latestFirst<TService>(IEnumerable<TService> contributions) {
-    var ordered = contributions.ToArray();
+  /// <summary>
+  /// The contribution's implementation, or <see langword="null"/> when the host does not register it: a contribution
+  /// whose implementation was removed from the collection contributes nothing, and never stops the host building
+  /// (#2243). The composite and the collisions report skip the null.
+  /// </summary>
+  private static TContribution _resolve<TService, TContribution>(IServiceProvider services)
+      where TService : class
+      where TContribution : class, TService =>
+    services.GetService<TContribution>()!;
+
+  private static TService[] _latestFirst<TService>(IEnumerable<TService?> contributions) where TService : class {
+    TService[] ordered = [.. contributions.OfType<TService>()];
     Array.Reverse(ordered);
     return ordered;
   }
@@ -100,6 +118,7 @@ internal static class ContributionServiceCollectionExtensions {
       where TService : class {
     public IReadOnlyList<RegistrationCollision> GetCollisions() =>
       RegistrationCollisions.Find(typeof(TService).Name, services.GetKeyedServices<TService>(contributionKey)
+        .OfType<TService>()
         .Select(contribution => (contribution.GetType().Assembly.GetName().Name!, items(contribution))));
   }
 }

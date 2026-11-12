@@ -203,7 +203,7 @@ public static class PerTestDatabaseFactory {
   }
 
   /// <summary>
-  /// How long a setup statement may run before it is treated as hung: far above the longest honest wait measured
+  /// How long a setup statement, or the open of a setup connection, may run before it is treated as hung: far above the longest honest wait measured
   /// on the shared test container, so it is a hang guard and never the wait.
   /// </summary>
   /// <remarks>
@@ -218,7 +218,10 @@ public static class PerTestDatabaseFactory {
   /// database, whose duration is the shared server's load rather than anything about the code under test.
   /// </summary>
   /// <param name="connectionString">The connection string to the fixture's database.</param>
-  /// <returns>The same connection string with the command timeout set to <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>.</returns>
+  /// <returns>
+  /// The same connection string with the command timeout and the connect timeout set to
+  /// <see cref="SETUP_STATEMENT_GUARD_SECONDS"/>.
+  /// </returns>
   /// <remarks>
   /// <para>
   /// Every test process on a machine shares one container, and a statement that takes seconds on an idle one takes
@@ -229,6 +232,13 @@ public static class PerTestDatabaseFactory {
   /// <c>[Timeout]</c> or the hook's still bounds them first through the token the statement is given.
   /// </para>
   /// <para>
+  /// Opening the connection is setup too, and is guarded the same way. Npgsql bounds a whole open (socket, startup,
+  /// authentication and, on the first open of a connection string, the type load) by its connect timeout, 15 seconds by
+  /// default. The first connection to a fresh copy is unpooled and reaches a database nobody has opened yet, so it pays
+  /// every one of those steps, and beside another shard's load one overran: the test failed in its <c>[Before(Test)]</c> with Npgsql's
+  /// "The operation has timed out" before any of its code ran.
+  /// </para>
+  /// <para>
   /// Use it for setup only. A query a test makes of the code under test keeps the ordinary connection string.
   /// </para>
   /// </remarks>
@@ -237,6 +247,7 @@ public static class PerTestDatabaseFactory {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     return new NpgsqlConnectionStringBuilder(connectionString) {
       CommandTimeout = SETUP_STATEMENT_GUARD_SECONDS,
+      Timeout = SETUP_STATEMENT_GUARD_SECONDS,
     }.ConnectionString;
   }
 
