@@ -229,7 +229,37 @@ public sealed class HousekeepingCoordinator {
   /// <summary>The outcome of one admission request.</summary>
   /// <param name="Granted">Whether the activity may start.</param>
   /// <param name="Reason">Why, for logs and metrics.</param>
-  public readonly record struct Decision(bool Granted, Verdict Reason);
+  public readonly record struct Decision(bool Granted, Verdict Reason) {
+    /// <summary>
+    /// The first deferral of a run of deferrals, for the caller to record in the service's store
+    /// (<see cref="IWorkCoordinator.RecordHousekeepingDeferralAsync"/>); null when there is nothing new to record (#2288).
+    /// </summary>
+    /// <remarks>
+    /// Reported only for a refusal judged on a backlog that carried <see cref="ServiceBacklog.HousekeepingDeferrals"/>
+    /// without this budget: the store already holding it, or not holding the figure at all, leaves nothing to write.
+    /// </remarks>
+    /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheFirstDeferral_IsReportedForTheStore_AndOnlyOnceItHoldsNoneAsync</tests>
+    public DeferralRecord? DeferralToRecord { get; init; }
+
+    /// <summary>
+    /// The budget whose stored first deferral the caller clears once the granted pass has ended
+    /// (<see cref="IWorkCoordinator.ClearHousekeepingDeferralAsync"/>); null when the store held none (#2288).
+    /// </summary>
+    /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AGrantWhileTheStoreHoldsTheBudget_AsksForItToBeClearedOnceThePassEndsAsync</tests>
+    public string? DeferralToClear { get; init; }
+  }
+
+  /// <summary>When a housekeeping deferral budget was first deferred, for the service's store (#2288).</summary>
+  /// <param name="BudgetKey">
+  /// The budget: <c>maintenance</c>, <c>dead-letter-recovery</c>, or <c>integrity:&lt;requester&gt;</c>. A stored key, so
+  /// renaming one orphans the rows already written under it.
+  /// </param>
+  /// <param name="FirstDeferredAt">The first deferral of the current run of deferrals.</param>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:EachIntegrityRequester_HasItsOwnStoredBudgetAsync</tests>
+  public readonly record struct DeferralRecord(string BudgetKey, DateTimeOffset FirstDeferredAt);
 
   private readonly Settings _settings;
   private readonly TimeProvider _timeProvider;
