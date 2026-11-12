@@ -121,6 +121,45 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase 
     }
   }
 
+  [Test]
+  public async Task NewStreams_CompletedAsAServiceCompletesThem_CostAFewBatchedCallsNotOnePerStreamAsync() {
+    // #2246: with the service's default completion path (the batched completion strategy and the completion flush
+    // worker), a batch's completions reach the database in a few batched calls, never one call per pair.
+    const int streamCount = 200;
+    var ct = CancellationToken.None;
+    await using var conn = await _openAsync(ct);
+    var completion = new CountingCompletionChannel(streamCount);
+    await using var pipeline = _composePipeline(PerspectiveWriteMode.SetBased, completionOverride: completion, claimBatch: 1000,
+      productionCompletion: true);
+    var flusher = new PerspectiveCompletionFlushWorker(
+      pipeline.Services.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveCompletionFlushWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<PerspectiveCompletionFlushWorker>.Instance,
+      NoOpPinnedConnectionPool.Instance);
+    completion.Inner = flusher;
+    await pipeline.RegisterAsync(conn, ct);
+    var streams = Enumerable.Range(0, streamCount).Select(_ => (Guid)TrackedGuid.New()).ToList();
+    for (var i = 0; i < streams.Count; i++) {
+      await pipeline.CommitAsync(conn, streams[i], amount: i + 1, ct);
+    }
+    await pipeline.HandOffAsync(streams, ct);
+
+    using var statements = new NpgsqlStatementLog(ConnectionString);
+    await flusher.StartAsync(ct);
+    await pipeline.StartWorkerAsync(ct);
+    await completion.All.WaitAsync(_signalDeadline, ct);
+    await flusher.StopAsync(ct);
+
+    await Assert.That(statements.Matching("complete_perspective_cursor_work")).IsEmpty()
+      .Because("no pair reports its own completion");
+    await Assert.That(statements.Matching("complete_perspective(").Count).IsLessThan(streamCount / 10)
+      .Because("the completions are written in batches by the flush worker");
+    for (var i = 0; i < streams.Count; i++) {
+      await Assert.That(await _amountAsync(conn, streams[i], ct)).IsEqualTo(i + 1m);
+    }
+  }
+
   /// <summary>The reads of the commit sequences rows record: of the event store's sequences, not a cursor read's join.</summary>
   private static List<string> _commitSequenceReads(NpgsqlStatementLog statements) =>
     [.. statements.Matching("commit_sequence", "wh_event_store")
@@ -240,7 +279,7 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase 
 
   private Pipeline _composePipeline(
       PerspectiveWriteMode mode, ServiceInstanceProvider? instance = null, IPerspectiveCompletionChannel? completionOverride = null,
-      int consumers = 1, int claimBatch = 100) {
+      int consumers = 1, int claimBatch = 100, bool productionCompletion = false) {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     var services = new ServiceCollection();
@@ -301,7 +340,10 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase 
       scopeFactory: scopeFactory,
       options: Options.Create(workerOptions),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      // The service's default completion strategy (batched) when asked for; else the instant one the signal waits read.
+      completionStrategy: productionCompletion
+        ? provider.GetRequiredService<IPerspectiveCompletionStrategy>()
+        : new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),

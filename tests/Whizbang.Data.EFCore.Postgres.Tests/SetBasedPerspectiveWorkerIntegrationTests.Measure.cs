@@ -28,8 +28,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// database as a whole, and the rows applied per second. A measurement, not a gate: it runs only when asked for by name.
 /// </summary>
 /// <remarks>
-/// The stream count is <c>WHIZBANG_FANOUT_STREAMS</c> (100,000 by default). Completions are written to the coordinator in
-/// batches, as the completion flush worker writes them, so the harness does not add a round trip per row to either mode.
+/// The stream count is <c>WHIZBANG_FANOUT_STREAMS</c> (100,000 by default). Completions take the path a service runs:
+/// the default (batched) completion strategy and the completion flush worker.
 /// The results, one <c>MEASURE</c> line per mode and the most frequent statement shapes, go to standard output and are
 /// appended to the file <c>WHIZBANG_MEASURE_REPORT</c> names (by default <c>fan-out-measurement.txt</c> beside the test
 /// assembly), since a passing test's output is captured.
@@ -50,9 +50,17 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
     var instance = probe.InstanceProvider;
     await probe.DisposeAsync();
 
-    var completion = new BatchingCompletionChannel(count);
-    await using var pipeline = _composePipeline(mode, instance, completion, consumers: 4, claimBatch: 1000);
-    completion.ScopeFactory = pipeline.Services.GetRequiredService<IServiceScopeFactory>();
+    // The completion path a service runs: the default (batched) completion strategy and the completion flush worker.
+    var completion = new CountingCompletionChannel(count);
+    await using var pipeline = _composePipeline(mode, instance, completion, consumers: 4, claimBatch: 1000, productionCompletion: true);
+    var flusher = new PerspectiveCompletionFlushWorker(
+      pipeline.Services.GetRequiredService<IServiceScopeFactory>(),
+      Microsoft.Extensions.Options.Options.Create(new PerspectiveCompletionFlushWorkerOptions()),
+      Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorOptions()),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveCompletionFlushWorker>.Instance,
+      NoOpPinnedConnectionPool.Instance);
+    completion.Inner = flusher;
+    await flusher.StartAsync(ct);
     var streams = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).ToList();
     for (var i = 0; i < streams.Count; i += 500) {
       await _commitManyAsync(conn, instance, [.. streams.Skip(i).Take(500)], ct);
@@ -64,7 +72,7 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
     await pipeline.StartWorkerAsync(ct);
     await completion.All.WaitAsync(TimeSpan.FromHours(2), ct);
     clock.Stop();
-    await completion.FlushAsync(ct);
+    await flusher.StopAsync(ct);
 
     var touching = statements.Matching(TABLE);
     var line = $"MEASURE mode={mode} streams={count} seconds={clock.Elapsed.TotalSeconds:F1} rows_per_second={count / clock.Elapsed.TotalSeconds:F0} "
@@ -136,56 +144,29 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests {
   }
 
   /// <summary>
-  /// Counts completed work rows, signaling when all of them are in, and writes them to the coordinator in batches of
-  /// 500, as the completion flush worker does.
+  /// Passes every completion to the completion flush worker, and signals once every work row of the run has been
+  /// reported complete.
   /// </summary>
-  private sealed class BatchingCompletionChannel(int expected) : IPerspectiveCompletionChannel {
+  private sealed class CountingCompletionChannel(int expected) : IPerspectiveCompletionChannel {
     private readonly Lock _lock = new();
-    private readonly List<Guid> _workIds = [];
-    private readonly List<PerspectiveCursorCompletion> _cursors = [];
     private readonly HashSet<Guid> _seen = [];
     private readonly TaskCompletionSource _all = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public IServiceScopeFactory? ScopeFactory { get; set; }
+    public IPerspectiveCompletionChannel? Inner { get; set; }
 
     public Task All => _all.Task;
 
     public async ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default) {
-      bool flush;
+      await Inner!.EnqueueEventWorkIdAsync(eventWorkId, cancellationToken);
       lock (_lock) {
-        _workIds.Add(eventWorkId);
         _seen.Add(eventWorkId);
-        flush = _workIds.Count >= 500;
         if (_seen.Count >= expected) {
           _all.TrySetResult();
         }
       }
-      if (flush) {
-        await FlushAsync(cancellationToken);
-      }
     }
 
-    public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default) {
-      lock (_lock) {
-        _cursors.Add(cursor);
-      }
-      return ValueTask.CompletedTask;
-    }
-
-    public async Task FlushAsync(CancellationToken ct) {
-      Guid[] workIds;
-      PerspectiveCursorCompletion[] cursors;
-      lock (_lock) {
-        workIds = [.. _workIds];
-        cursors = [.. _cursors];
-        _workIds.Clear();
-        _cursors.Clear();
-      }
-      if (workIds.Length == 0 && cursors.Length == 0) {
-        return;
-      }
-      await using var scope = ScopeFactory!.CreateAsyncScope();
-      await scope.ServiceProvider.GetRequiredService<IWorkCoordinator>().CompletePerspectiveAsync(cursors, workIds, debugMode: false, ct);
-    }
+    public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default) =>
+      Inner!.EnqueueCursorAsync(cursor, cancellationToken);
   }
 }
