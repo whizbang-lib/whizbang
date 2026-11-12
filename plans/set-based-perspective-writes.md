@@ -139,14 +139,34 @@ are the starting inventory.
    snapshots and rewind from a snapshot, collectives on the same rows, lifecycle receptors, rebuild (covered for the
    set-based path by focused prepare/complete tests).
 8. Measure: a 100k-stream fan-out, round trips and rows per second, before and after.
-   **Done** (`Measure_FanOutOfNewStreamsAsync`, explicit; 2026-11-12): 100,000 new streams, four consumers, claim batch
-   1,000. Per-stream: 574,928 statements on the table (100,000 inserts, 474,928 row reads), 1,255,840 in total, 683.6 s,
-   146 rows/s. Set-based: 2,915 on the table (709 inserts, 2,206 row reads), 662,087 in total, 764.0 s, 131 rows/s.
-   Rows per second do not move: both modes are bound by per-pair completion (`complete_perspective_cursor_work` and its
-   read, about three per stream with the harness's per-pair completion reporting), then claim and drain round trips.
-   Follow-ups: batch completion reports for a fan-out; find why the set-based run still reads rows (2,206 reads for
-   new streams, likely re-laps or re-claims) and why both modes report more cursor work than streams (re-claims under
-   load).
+   **Done** (`Measure_FanOutOfNewStreamsAsync`, explicit; 2026-11-12), with the completion path a service runs (the
+   batched completion strategy and the completion flush worker), four consumers, claim batch 1,000, one mode at a time:
+
+   | | Per-stream 10k | Set-based 10k | Per-stream 100k | Set-based 100k |
+   |---|---|---|---|---|
+   | Table statements (inserts) | 116,676 (10,000) | 179 (33) | 905,956 (100,000) | 1,907 (355) |
+   | `complete_perspective` calls | 269 | 217 | 2,154 | 2,010 |
+   | Statements in total | 128,971 | 1,244 | 1,020,247 | 15,297 |
+   | Wall time / rows per second | 47.8 s / 209 | 25.7 s / 389 | 1,284.1 s / 78 | 1,190.2 s / 84 |
+
+   Where the "three completion calls per stream" of the first measurement came from: that harness used the
+   instant completion strategy (`complete_perspective_cursor_work` plus a diagnostic read, per pair), which a service
+   never runs (its default is `BatchedCompletionStrategy`), and its completion channel deleted work rows only 500 at a
+   time, so drains re-fetched rows already applied and reported them again (325k cursor-work calls for 100k streams)
+   and re-read their rows (2,206 batched row reads for new streams). The default path already writes completions with
+   one `complete_perspective` per flush; the measurement now runs it, and
+   `NewStreams_CompletedAsAServiceCompletesThem_CostAFewBatchedCallsNotOnePerStreamAsync` locks it (200 new streams: no
+   per-pair completion call, fewer than 20 batched ones).
+
+   Why 100k is not faster: at 10k set-based is 1.86x per-stream; at 100k both slow by the same amount per 1,000
+   streams claimed (set-based 2.6 s to 11.9 s, per-stream 4.8 s to 12.8 s), and the set-based run issues 15,297
+   statements in 1,190 s. The cost is per work-queue call (claim, `get_stream_events`, `complete_perspective`,
+   `cleanup_completed_streams`, orphan reaping) over a 100k backlog, the same in both modes.
+
+   Follow-ups (not in this PR): time each work-queue statement over a large backlog (the statement log records counts,
+   not durations) and find which call grows with the backlog; the remaining batched row reads for new streams at 100k
+   (776 against 355 inserts) come from drain laps over rows applied but not yet deleted, a small cost recorded rather
+   than fixed.
 
 ## Decisions after step 2 (2026-11-10)
 
