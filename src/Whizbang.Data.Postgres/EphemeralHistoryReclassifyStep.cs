@@ -33,6 +33,12 @@ public readonly record struct EphemeralHistoryReclassifyResult(
   /// <docs>fundamentals/events/ephemeral-events#releasing-a-blocking-type</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Release_StampsTheBlockingEvents_OnlyInStreamsHoldingTheEphemeralType_AndTheDigestsEqualARecountAsync</tests>
   public long EventsReleased { get; init; }
+
+  /// <summary>Events of the other declared-ephemeral types reclassified with the walked type in its streams, so each
+  /// stream becomes ephemeral whole (#2278).</summary>
+  /// <docs>fundamentals/events/ephemeral-events#a-stream-becomes-ephemeral-whole</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralStreamByStreamSqlTests.cs:OneWalk_ConvertsEveryDeclaredEphemeralTypeInTheStream_Together_AndTheDigestsEqualARecountAsync</tests>
+  public long EventsReclassifiedWithStream { get; init; }
 }
 
 /// <summary>
