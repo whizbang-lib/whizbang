@@ -5,6 +5,7 @@ using System.Linq.Expressions;
 using HotChocolate.Data.Filters;
 using HotChocolate.Language;
 using HotChocolate.Types;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.HotChocolate.Types;
 
