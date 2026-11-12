@@ -82,7 +82,9 @@ public class MaintenanceMetricsPendingTests {
 
     public Readings(TestMeterFactory factory) {
       _listener.InstrumentPublished = (instrument, listener) => {
-        if (factory.CreatedMeters.Contains(instrument.Meter) && instrument.Meter.Name == MaintenanceMetrics.METER_NAME) {
+        // Only the two gauges: the meter's passive counters are observable too, and read zero.
+        if (factory.CreatedMeters.Contains(instrument.Meter)
+            && instrument.Name is "whizbang.maintenance.pending_rows" or "whizbang.ephemeral.history_walk_remaining") {
           listener.EnableMeasurementEvents(instrument);
         }
       };

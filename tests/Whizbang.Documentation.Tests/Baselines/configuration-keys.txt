@@ -373,6 +373,8 @@ Whizbang:TableStatistics:EventTypeSampleInterval
 Whizbang:TableStatistics:EventTypeSamplePercent
 Whizbang:TableStatistics:MaxEventTypes
 Whizbang:TableStatistics:MaxTrackedTables
+Whizbang:TableStatistics:PendingReclamationCountCap
+Whizbang:TableStatistics:PendingReclamationSampleInterval
 Whizbang:Tags
 Whizbang:Tags:Coalesce
 Whizbang:Tags:Coalesce:*:Atomicity

@@ -410,6 +410,53 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
     return _fold(perType, request);
   }
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// <para>
+  /// The window is claimed in <c>wh_unique_emission_claims</c> on the connection the reading goes through, as the
+  /// event-type sample's is. The reading is one statement over two functions (migration 401):
+  /// <c>wh_pending_reclamation</c>, one bounded count per index-served maintenance task, and
+  /// <c>wh_ephemeral_history_walk_remaining</c>, from the walks' stored progress. A walk's type is normalized as every
+  /// stored type name is before it is reported.
+  /// </para>
+  /// </remarks>
+  /// <exception cref="ArgumentOutOfRangeException">The cap is less than 1.</exception>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PendingReclamationSqlTests.cs:EachTask_CountsWhatItWouldRemove_AndNothingElseAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PendingReclamationSqlTests.cs:AWindowAnotherInstanceTook_ReadsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs:ADapperHost_ReportsWhatCleanupHasLeftAsync</tests>
+  public async Task<PendingReclamation?> SamplePendingReclamationAsync(
+      PendingReclamationRequest request, CancellationToken ct = default) {
+    ArgumentOutOfRangeException.ThrowIfLessThan(request.CountCap, 1);
+
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    var quotedSchema = _schema is null
+      ? await _currentSchemaAsync(connection, ct).ConfigureAwait(false)
+      : SqlText.Identifier(_schema);
+    if (!await PhysicalColumnFill.TryClaimAsync(connection, quotedSchema, request.ClaimKey, ct).ConfigureAwait(false)) {
+      return null;
+    }
+
+    var tasks = new Dictionary<string, PendingRows>(StringComparer.Ordinal);
+    var walks = new Dictionary<string, long>(StringComparer.Ordinal);
+    await using var cmd = new NpgsqlCommand($"""
+      SELECT TRUE, p.task_name, p.pending, p.capped FROM {quotedSchema}.wh_pending_reclamation(@cap) p
+      UNION ALL
+      SELECT FALSE, w.event_type, w.remaining, FALSE FROM {quotedSchema}.wh_ephemeral_history_walk_remaining() w
+      """, connection);
+    cmd.Parameters.AddWithValue("cap", request.CountCap);
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      if (reader.GetBoolean(0)) {
+        tasks[reader.GetString(1)] = new PendingRows(reader.GetInt64(2), reader.GetBoolean(3));
+      } else {
+        // Stored names of one type that differ only in assembly version are one type: their walks add up.
+        var type = EventTypeMatchingHelper.NormalizeTypeName(reader.GetString(1));
+        walks[type] = walks.GetValueOrDefault(type) + reader.GetInt64(2);
+      }
+    }
+    return new PendingReclamation(tasks, walks);
+  }
+
   /// <summary>The largest types by bytes under their names, the rest summed under the other name.</summary>
   private static Dictionary<string, EventTypeBytes> _fold(Dictionary<string, PartSums> perType, EventTypeSampleRequest request) {
     var folded = new Dictionary<string, PartSums>(StringComparer.Ordinal);
