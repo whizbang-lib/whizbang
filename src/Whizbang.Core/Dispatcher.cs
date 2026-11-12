@@ -3557,7 +3557,9 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs:EachRefusedPairOfTypes_IsLoggedOnceAsync</tests>
   private void _logRefusedInheritanceOnce(Type sourceType, Type messageType) {
     if (_refusedStreamInheritances.TryAdd((sourceType, messageType), 0)) {
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
       Log.StreamIdInheritanceRefused(CascadeLogger, TypeNameFormatter.ForLog(sourceType), TypeNameFormatter.ForLog(messageType));
+#pragma warning restore CA1873
     }
   }
 
