@@ -341,7 +341,8 @@ Set-StrictMode -Version Latest
 # Import shared PR readiness module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 # The run's pass/fail verdict, including a crashed test process (#2231)
-Import-Module (Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1") -Force
+$testRunVerdictModule = Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1"
+Import-Module $testRunVerdictModule -Force
 
 # Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
 $fastBuildArgs = @()
@@ -1182,6 +1183,8 @@ try {
             return [PSCustomObject]@{
                 ProjectName = $projName
                 ExitCode = $proc.ExitCode
+                # From the full output, before it is cut down to the failure signal (#2231).
+                CrashLines = @(Select-TestProcessCrashLine -Line ($output -split "`n"))
                 Output = (_selectFailureSignal ($output -split "`n")) -join "`n"
                 TestsPassed = $counts.Passed
                 TestsFailed = $counts.Failed
@@ -1271,6 +1274,8 @@ try {
                     $reportTrx = $using:ReportTrx
                     $resultsBag = $using:results
                     $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
+                    # A parallel runspace sees none of the script's functions or modules; this one it needs.
+                    Import-Module $using:testRunVerdictModule -Force
 
                     if ($IsLinux -or $IsMacOS) {
                         $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
@@ -1329,9 +1334,12 @@ try {
                         }
                     }
 
+                    $exitCode = $LASTEXITCODE
                     $resultsBag.Add([PSCustomObject]@{
                         ProjectName = $projectName
-                        ExitCode = $LASTEXITCODE
+                        ExitCode = $exitCode
+                        # From the full output, before it is cut down to the failure signal (#2231).
+                        CrashLines = @(Select-TestProcessCrashLine -Line ($fullOutput -split "`n"))
                         Output = $failureSignal -join "`n"
                         TestsPassed = $tPassed
                         TestsFailed = $tFailed
@@ -1392,7 +1400,9 @@ try {
             $totalTestsFailed += if ($result.PSObject.Properties['TestsFailed']) { $result.TestsFailed } else { 0 }
             $totalTestsSkipped += if ($result.PSObject.Properties['TestsSkipped']) { $result.TestsSkipped } else { 0 }
 
-            if ($result.ExitCode -eq 0) {
+            # A crashed test process (#2231) failed whatever its exit code said, and was cut short.
+            $crashed = $result.ExitCode -eq 7 -or @($result.CrashLines).Count -gt 0
+            if ($result.ExitCode -eq 0 -and -not $crashed) {
                 $totalProjectsPassed++
                 if ($useAiOutput) {
                     Write-Host "  ✓ $($result.ProjectName) passed" -ForegroundColor Green
@@ -1404,9 +1414,14 @@ try {
                 # COMPLETE cobertura, and dropping it would discard real coverage. Only a project
                 # that was cut short mid-run produces a truncated one. Exit code 143 is the
                 # SIGTERM from this script's own stall/hang Kill($true); under fail-fast any
-                # failure also cancels the rest of that project's run.
-                if ($result.ExitCode -eq 143 -or $FailFast) {
+                # failure also cancels the rest of that project's run; and a crashed test process
+                # (exit code 7, or a crash line in its output) never ran the tests after the crash.
+                if ($result.ExitCode -eq 143 -or $FailFast -or $crashed) {
                     $truncatedProjects += $result.ProjectName
+                }
+                if ($crashed) {
+                    $reason = if (@($result.CrashLines).Count -gt 0) { @($result.CrashLines) -join '; ' } else { "exit code $($result.ExitCode)" }
+                    Write-Host "  TEST PROCESS CRASHED: $($result.ProjectName): $reason" -ForegroundColor Red
                 }
                 if ($useAiOutput) {
                     Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
