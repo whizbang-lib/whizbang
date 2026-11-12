@@ -109,10 +109,11 @@ public sealed class WhizbangNotificationOptions {
   public TimeSpan SignalRetention { get; set; } = TimeSpan.FromDays(7);
 
   /// <summary>
-  /// Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s. It is also the
-  /// timeout of the connection's wait for notifications, so it bounds how long a subscription made
-  /// after the connection came up can wait to be listened on when its wake-up is lost (#2155). Must be
-  /// greater than zero: Npgsql reads a zero timeout as none, so zero or less is refused at startup.
+  /// Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s. It bounds how long a
+  /// dead connection goes unnoticed. A subscription made after the connection came up whose wake-up is
+  /// lost does not wait for it: the connection's wait for notifications also times out at a short resync
+  /// recheck (1 s), which runs no round trip (#2155, #2291). Must be greater than zero: zero or less is
+  /// refused at startup.
   /// </summary>
   public TimeSpan ListenKeepaliveInterval { get; set; } = TimeSpan.FromSeconds(30);
 

@@ -37,7 +37,13 @@ public sealed class TableStatisticsOptions {
 
   /// <summary>The default for <see cref="EventTypeSamplePercent"/>.</summary>
   public const double DEFAULT_EVENT_TYPE_SAMPLE_PERCENT = 1;
+
+  /// <summary>The default for <see cref="PendingReclamationCountCap"/>.</summary>
+  public const int DEFAULT_PENDING_RECLAMATION_COUNT_CAP = 10_000;
 #pragma warning restore CA1707
+
+  /// <summary>The default for <see cref="PendingReclamationSampleInterval"/>: five minutes.</summary>
+  public static readonly TimeSpan DefaultPendingReclamationSampleInterval = TimeSpan.FromMinutes(5);
 
   /// <summary>The default for <see cref="CollectionInterval"/>: thirty seconds.</summary>
   public static readonly TimeSpan DefaultCollectionInterval = TimeSpan.FromSeconds(30);
@@ -105,4 +111,28 @@ public sealed class TableStatisticsOptions {
   /// <c>Whizbang__TableStatistics__MaxEventTypes</c>. Default 50.
   /// </remarks>
   public int MaxEventTypes { get; set; } = DEFAULT_MAX_EVENT_TYPES;
+
+  /// <summary>
+  /// How often how much storage cleanup has left to do is read into the <c>Whizbang.Maintenance</c> meter (#2289). One
+  /// instance of the fleet reads per interval; <see cref="TimeSpan.Zero"/> turns the reading off. Must not be negative.
+  /// </summary>
+  /// <remarks>
+  /// Configuration key <c>Whizbang:TableStatistics:PendingReclamationSampleInterval</c>, environment variable
+  /// <c>Whizbang__TableStatistics__PendingReclamationSampleInterval</c>. Default <c>00:05:00</c>.
+  /// </remarks>
+  /// <docs>operations/observability/metrics#pending-reclamation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:ThePendingReclamationReading_BindsFromTheTableStatisticsSectionAsync</tests>
+  public TimeSpan PendingReclamationSampleInterval { get; set; } = DefaultPendingReclamationSampleInterval;
+
+  /// <summary>
+  /// The most rows one cleanup task's pending count reads (#2289). A count that reaches it is reported as at least this
+  /// many, so a reading costs the same however large the backlog is. Must be at least 1.
+  /// </summary>
+  /// <remarks>
+  /// Configuration key <c>Whizbang:TableStatistics:PendingReclamationCountCap</c>, environment variable
+  /// <c>Whizbang__TableStatistics__PendingReclamationCountCap</c>. Default 10000.
+  /// </remarks>
+  /// <docs>operations/observability/metrics#pending-reclamation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:WithoutConfiguration_PendingReclamationIsReadEveryFiveMinutes_CountingUpToTenThousandAsync</tests>
+  public int PendingReclamationCountCap { get; set; } = DEFAULT_PENDING_RECLAMATION_COUNT_CAP;
 }

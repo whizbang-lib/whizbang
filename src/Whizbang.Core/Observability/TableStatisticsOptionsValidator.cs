@@ -37,6 +37,13 @@ public sealed class TableStatisticsOptionsValidator : IValidateOptions<TableStat
     if (options.MaxEventTypes < 1) {
       failures.Add(_failure(nameof(options.MaxEventTypes), "must be at least 1", options.MaxEventTypes));
     }
+    if (options.PendingReclamationSampleInterval < TimeSpan.Zero) {
+      failures.Add(_failure(nameof(options.PendingReclamationSampleInterval),
+        "must not be negative; 00:00:00 turns the reading off", options.PendingReclamationSampleInterval));
+    }
+    if (options.PendingReclamationCountCap < 1) {
+      failures.Add(_failure(nameof(options.PendingReclamationCountCap), "must be at least 1", options.PendingReclamationCountCap));
+    }
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 

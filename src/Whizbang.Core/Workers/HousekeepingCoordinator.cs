@@ -33,7 +33,10 @@ namespace Whizbang.Core.Workers;
 /// <para>
 /// The housekeeping activities are prioritized rather than merely serialized. Integrity work is
 /// correctness-bearing and runs on a far tighter cadence, so it is never held back by a cleanup
-/// sweep; a sweep deferred behind it simply runs on the next tick.
+/// sweep; a sweep deferred behind it simply runs on the next tick. A refusal behind a higher rank
+/// still spends the refused activity's deferral budget (#2287), so a long integrity audit cannot
+/// hold cleanup back past <see cref="Settings.MaxDeferral"/>: the rank decides who holds the slot,
+/// and the ceiling decides that the first ask to find it free is forced through.
 /// </para>
 /// <para>
 /// Integrity work is idle-gated like dead-letter recovery (#2001): deferred while the service is
@@ -48,6 +51,8 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/workers/housekeeping-arbitration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
 public sealed class HousekeepingCoordinator {
@@ -132,6 +137,16 @@ public sealed class HousekeepingCoordinator {
     ServiceCoolingDown,
 
     /// <summary>A higher-priority housekeeping activity holds the slot.</summary>
+    /// <remarks>
+    /// Spends the refused activity's deferral budget like <see cref="ServiceBusy"/> does (#2287): time
+    /// held back behind a higher rank counts toward <see cref="Settings.MaxDeferral"/>, so the first ask
+    /// that finds the slot free once the ceiling has passed is forced through. The higher activity is
+    /// never interrupted.
+    /// </remarks>
+    /// <docs>operations/workers/housekeeping-arbitration#a-higher-rank-spends-the-ceiling</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:ARefusalBehindIntegrity_StartsTheCeiling_SoTheFirstFreeAskPastItIsForcedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:PastTheCeiling_IntegrityIsStillNeverInterruptedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:IntegrityRefusedByRecovery_SpendsItsOwnRequestersBudgetOnlyAsync</tests>
     HigherPriorityRunning,
 
     /// <summary>This activity is already running and must not stack a second copy.</summary>
@@ -182,12 +197,17 @@ public sealed class HousekeepingCoordinator {
     /// </summary>
     /// <remarks>
     /// Measured on the coordinator's <see cref="TimeProvider"/>, per activity, and re-armed when a
-    /// pass completes. Takes precedence over <see cref="MaxConsecutiveDeferrals"/>.
+    /// pass completes. Takes precedence over <see cref="MaxConsecutiveDeferrals"/>. A refusal behind a
+    /// higher-ranked activity counts toward it (#2287), and when the backlog reading carries
+    /// <see cref="ServiceBacklog.HousekeepingDeferrals"/> it is measured from the earlier of the stored
+    /// first deferral and this process's own, so it survives a restart (#2288).
     /// </remarks>
     /// <docs>operations/workers/housekeeping-arbitration#tick-idle-gate-and-forced-ceiling</docs>
     /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AShortTick_DoesNotForceTheSweepBeforeMaxDeferralAsync</tests>
     /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheSweepIsNotForcedOneMomentBeforeMaxDeferral_AndIsForcedAtItAsync</tests>
     /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheEarlierOfTheStoredAndTheInMemoryFirstDeferral_GovernsAsync</tests>
     public TimeSpan MaxDeferral {
       get => _maxDeferral;
       set {
@@ -216,7 +236,37 @@ public sealed class HousekeepingCoordinator {
   /// <summary>The outcome of one admission request.</summary>
   /// <param name="Granted">Whether the activity may start.</param>
   /// <param name="Reason">Why, for logs and metrics.</param>
-  public readonly record struct Decision(bool Granted, Verdict Reason);
+  public readonly record struct Decision(bool Granted, Verdict Reason) {
+    /// <summary>
+    /// The first deferral of a run of deferrals, for the caller to record in the service's store
+    /// (<see cref="IWorkCoordinator.RecordHousekeepingDeferralAsync"/>); null when there is nothing new to record (#2288).
+    /// </summary>
+    /// <remarks>
+    /// Reported only for a refusal judged on a backlog that carried <see cref="ServiceBacklog.HousekeepingDeferrals"/>
+    /// without this budget: the store already holding it, or not holding the figure at all, leaves nothing to write.
+    /// </remarks>
+    /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheFirstDeferral_IsReportedForTheStore_AndOnlyOnceItHoldsNoneAsync</tests>
+    public DeferralRecord? DeferralToRecord { get; init; }
+
+    /// <summary>
+    /// The budget whose stored first deferral the caller clears once the granted pass has ended
+    /// (<see cref="IWorkCoordinator.ClearHousekeepingDeferralAsync"/>); null when the store held none (#2288).
+    /// </summary>
+    /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AGrantWhileTheStoreHoldsTheBudget_AsksForItToBeClearedOnceThePassEndsAsync</tests>
+    public string? DeferralToClear { get; init; }
+  }
+
+  /// <summary>When a housekeeping deferral budget was first deferred, for the service's store (#2288).</summary>
+  /// <param name="BudgetKey">
+  /// The budget: <c>maintenance</c>, <c>dead-letter-recovery</c>, or <c>integrity:&lt;requester&gt;</c>. A stored key, so
+  /// renaming one orphans the rows already written under it.
+  /// </param>
+  /// <param name="FirstDeferredAt">The first deferral of the current run of deferrals.</param>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:EachIntegrityRequester_HasItsOwnStoredBudgetAsync</tests>
+  public readonly record struct DeferralRecord(string BudgetKey, DateTimeOffset FirstDeferredAt);
 
   private readonly Settings _settings;
   private readonly TimeProvider _timeProvider;
@@ -429,45 +479,96 @@ public sealed class HousekeepingCoordinator {
 
       // Ranked, not merely serialized: an activity yields only to a STRICTLY higher rank, so
       // recovery never waits behind integrity or cleanup, and integrity never waits behind cleanup.
+      var budget = _budgetFor(activity, requester);
+      var budgetKey = _budgetKey(activity, requester);
+      // The store's first deferral (#2288), read with the backlog: the earlier of it and this process's own governs.
+      var stored = backlog?.HousekeepingDeferrals;
+      var storedAt = _storedFirstDeferral(stored, budgetKey);
+      if (storedAt < (budget.FirstDeferredAt ?? DateTimeOffset.MaxValue)) {
+        budget.FirstDeferredAt = storedAt;
+      }
+
       var rank = _rank(activity);
+      Decision decision;
       if ((_dlqRunning && rank > _rank(Activity.DeadLetterRecovery))
           || (_integrityRunning && rank > _rank(Activity.Integrity))) {
-        return new Decision(false, Verdict.HigherPriorityRunning);
-      }
-
-      // Recovery, integrity and cleanup ask the same question of the service and differ only in
-      // which budget they spend and which slot they take, so they share one admission rule rather
-      // than copies of it that can drift.
-      if (activity == Activity.Integrity) {
-        // Gated since #2001, with the rule recovery uses: the receive-side integrity work competes
-        // for the same database as the traffic it verifies. The checkpoint path keeps its own
-        // second rule on top (a lagging consumer is not a deficit).
-        if (!_integrityDeferrals.TryGetValue(requester, out var budget)) {
-          budget = new DeferralBudget();
-          _integrityDeferrals[requester] = budget;
+        // Time held back behind a higher rank is time held back (#2287): the refusal spends this activity's budget, so a
+        // long integrity audit cannot keep cleanup waiting past its ceiling. The rank still wins while the slot is held;
+        // the ceiling only decides that the first ask to find it free is forced through.
+        _ = _spend(budget);
+        decision = new Decision(false, Verdict.HigherPriorityRunning);
+      } else {
+        // Recovery, integrity and cleanup ask the same question of the service and differ only in
+        // which budget they spend and which slot they take, so they share one admission rule rather
+        // than copies of it that can drift.
+        decision = _admitWhenQuiet(backlog, budget);
+        if (decision.Granted) {
+          _claim(activity, requester);
         }
-        var integrity = _admitWhenQuiet(backlog, budget);
-        if (integrity.Granted) {
-          _integrityRunning = true;
-          _integrityHolder = requester;
-        }
-        return integrity;
       }
-
-      if (activity == Activity.DeadLetterRecovery) {
-        var recovery = _admitWhenQuiet(backlog, _recoveryDeferrals);
-        if (recovery.Granted) {
-          _dlqRunning = true;
-        }
-        return recovery;
-      }
-
-      var maintenance = _admitWhenQuiet(backlog, _maintenanceDeferrals);
-      if (maintenance.Granted) {
-        _maintenanceRunning = true;
-      }
-      return maintenance;
+      return stored is null ? decision : _withStoreChange(decision, budgetKey, budget, storedAt);
     }
+  }
+
+  // The stored key of a budget (#2288). A persisted contract: renaming one orphans the rows already written under it.
+  private static string _budgetKey(Activity activity, string requester) => activity switch {
+    Activity.DeadLetterRecovery => "dead-letter-recovery",
+    Activity.Integrity => "integrity:" + requester,
+    _ => "maintenance",
+  };
+
+  private static DateTimeOffset? _storedFirstDeferral(IReadOnlyDictionary<string, DateTimeOffset>? stored, string budgetKey) =>
+    stored is not null && stored.TryGetValue(budgetKey, out var at) ? at : null;
+
+  // What the caller changes in the store after a decision judged on a reading that carried the figure (#2288): a refusal
+  // while the store held no first deferral records this process's; a grant while it held one clears it once the pass
+  // ends. Every refusal reaching here has spent the budget, so its first deferral is set.
+  private static Decision _withStoreChange(Decision decision, string budgetKey, DeferralBudget budget, DateTimeOffset? storedAt) {
+    if (storedAt is not null) {
+      return decision.Granted ? decision with { DeferralToClear = budgetKey } : decision;
+    }
+    return decision.Granted
+      ? decision
+      : decision with { DeferralToRecord = new DeferralRecord(budgetKey, budget.FirstDeferredAt!.Value) };
+  }
+
+  // Caller holds _gate. The budget an ask spends: one per activity, and one per requester for integrity (#2001), because
+  // the integrity requesters share one slot and one shared budget would let whichever asked first after the ceiling take
+  // the forced pass and re-arm the ceiling for all of them.
+  private DeferralBudget _budgetFor(Activity activity, string requester) {
+    if (activity == Activity.DeadLetterRecovery) {
+      return _recoveryDeferrals;
+    }
+    if (activity == Activity.Maintenance) {
+      return _maintenanceDeferrals;
+    }
+    if (!_integrityDeferrals.TryGetValue(requester, out var budget)) {
+      budget = new DeferralBudget();
+      _integrityDeferrals[requester] = budget;
+    }
+    return budget;
+  }
+
+  // Caller holds _gate. Takes the slot for an admitted activity.
+  private void _claim(Activity activity, string requester) {
+    if (activity == Activity.DeadLetterRecovery) {
+      _dlqRunning = true;
+    } else if (activity == Activity.Integrity) {
+      _integrityRunning = true;
+      _integrityHolder = requester;
+    } else {
+      _maintenanceRunning = true;
+    }
+  }
+
+  // Caller holds _gate. Records one deferral against the budget; true when that deferral reaches the ceiling.
+  private bool _spend(DeferralBudget deferrals) {
+    var now = _timeProvider.GetUtcNow();
+    deferrals.Count++;
+    var firstDeferredAt = deferrals.FirstDeferredAt ??= now;
+    return _settings.CeilingIsCount
+      ? deferrals.Count > _settings.MaxConsecutiveDeferrals
+      : now - firstDeferredAt >= _settings.MaxDeferral;
   }
 
   /// <summary>
@@ -502,13 +603,7 @@ public sealed class HousekeepingCoordinator {
       return new Decision(true, Verdict.Proceed);
     }
 
-    var now = _timeProvider.GetUtcNow();
-    deferrals.Count++;
-    var firstDeferredAt = deferrals.FirstDeferredAt ??= now;
-    var ceilingReached = _settings.CeilingIsCount
-      ? deferrals.Count > _settings.MaxConsecutiveDeferrals
-      : now - firstDeferredAt >= _settings.MaxDeferral;
-    return ceilingReached
+    return _spend(deferrals)
       ? new Decision(true, Verdict.ProceedDeferralLimit)
       : new Decision(false, reason);
   }

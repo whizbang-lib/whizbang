@@ -24,7 +24,7 @@ public class CollectiveApplyOptionsRegistrationTests {
   [Test]
   public async Task ApplyOptions_DefaultWithoutPostgresOptions_HostValuesWithThemAsync() {
     var unconfigured = new ServiceCollection();
-    unconfigured.AddCollectiveEventsEFCore<PolicyContext>([]);
+    unconfigured.AddCollectiveEventsEFCore<PolicyContext>();
     await using var unconfiguredProvider = unconfigured.BuildServiceProvider();
 
     var configured = new ServiceCollection();
@@ -32,7 +32,7 @@ public class CollectiveApplyOptionsRegistrationTests {
       CollectiveApplyBatchSize = 7,
       CollectiveApplyStatementTimeoutSeconds = 9,
     }));
-    configured.AddCollectiveEventsEFCore<PolicyContext>([]);
+    configured.AddCollectiveEventsEFCore<PolicyContext>();
     await using var configuredProvider = configured.BuildServiceProvider();
 
     var fallback = unconfiguredProvider.GetRequiredService<CollectiveApplyOptions>();

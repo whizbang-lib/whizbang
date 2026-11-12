@@ -1105,6 +1105,78 @@ public static class DiagnosticDescriptors {
       description: "A derived type with its own [StreamId] and no [GenerateStreamId] opts out of its base's stream id generation, but only when the base is compiled in the same assembly. A base in another assembly is matched by that assembly's extractor first, so its [GenerateStreamId] still applies to the derived type."
   );
   /// <summary>
+  /// WHIZ018: Error - <c>[StreamId(InheritFrom = ...)]</c> lists a type that is not a strong id (#2072).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz018</docs>
+  /// <remarks>
+  /// A source message's stream-id type is reported only for a strong id, so a listed Guid, string or other type can
+  /// never match and the entry does nothing.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdInheritFromAnalyzerTests.cs:AListedTypeThatIsNotAStrongId_ReportsWhiz018Async</tests>
+  public static readonly DiagnosticDescriptor InheritFromNotAStrongId = new(
+      id: "WHIZ018",
+      title: "Stream ID Inherits From A Type That Is Not A Strong ID",
+      messageFormat: "InheritFrom on {1}.{2} lists '{0}', which is not a strong id ([WhizbangId] or IWhizbangId); a source's stream-id type is only ever a strong id, so this entry never matches. List only strong-id types.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "[StreamId(InheritFrom = ...)] names the strong-id types whose stream a cascaded message may inherit. A source whose stream id is not a strong id is always accepted, so only strong-id types belong in the list."
+  );
+
+  /// <summary>
+  /// WHIZ019: Error - <c>[StreamId(InheritFrom = ...)]</c> on a stream id that is not a strong id (#2072).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz019</docs>
+  /// <remarks>
+  /// Only a strong-id stream id refuses a source of another id type; a Guid stream id inherits any source's stream, so
+  /// the option would have no effect.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdInheritFromAnalyzerTests.cs:InheritFromOnAStreamIdThatIsNotAStrongId_ReportsWhiz019Async</tests>
+  public static readonly DiagnosticDescriptor InheritFromOnAStreamIdThatIsNotAStrongId = new(
+      id: "WHIZ019",
+      title: "InheritFrom On A Stream ID That Is Not A Strong ID",
+      messageFormat: "{0}.{1} sets InheritFrom, but its type '{2}' is not a strong id; a stream id that is not a strong id inherits any source's stream, so InheritFrom has no effect. Remove InheritFrom, or make {1} a [WhizbangId] type.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "[StreamId(InheritFrom = ...)] lets a strong-id stream id inherit the stream of a source with another id type. On a stream id that is not a strong id it does nothing."
+  );
+
+  /// <summary>
+  /// WHIZ034: Warning - <c>[StreamId(InheritFrom = ...)]</c> lists the stream id's own type (#2072).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz034</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdInheritFromAnalyzerTests.cs:ListingTheStreamIdsOwnType_ReportsWhiz034Async</tests>
+  public static readonly DiagnosticDescriptor InheritFromListsTheStreamIdsOwnType = new(
+      id: "WHIZ034",
+      title: "InheritFrom Lists The Stream ID's Own Type",
+      messageFormat: "InheritFrom on {0}.{1} lists '{2}', the stream id's own type, which is always accepted. Remove it from the list.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A strong-id stream id always inherits the stream of a source with the same id type, so listing its own type in InheritFrom changes nothing."
+  );
+
+  /// <summary>
+  /// WHIZ035: Warning - a message implements <c>IHasStreamId</c> and its <c>[StreamId]</c> is a strong id (#2072).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz035</docs>
+  /// <remarks>
+  /// The dispatcher writes a generated or inherited stream id through <c>IHasStreamId</c> when a message implements it,
+  /// so the strong-id <c>[StreamId]</c> is never written by the dispatcher and its <c>InheritFrom</c> never applies.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdInheritFromAnalyzerTests.cs:IHasStreamIdWithAStrongIdStreamId_ReportsWhiz035Async</tests>
+  public static readonly DiagnosticDescriptor HasStreamIdOverStrongIdStreamId = new(
+      id: "WHIZ035",
+      title: "IHasStreamId Is Written Instead Of A Strong-ID Stream ID",
+      messageFormat: "{0} implements IHasStreamId and its [StreamId] '{1}' is a strong id; the dispatcher writes generated and inherited stream ids through IHasStreamId, so '{1}' is not written and its InheritFrom does not apply. Remove IHasStreamId, or make the [StreamId] a Guid.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "IHasStreamId is the explicit runtime contract and wins over the generated setter. With a strong-id [StreamId] the two disagree: the stream id the dispatcher writes is not the one the message is routed by."
+  );
+
+  /// <summary>
   /// WHIZ099: Info - MessageJsonContextGenerator ran, and how many message types it found.
   /// </summary>
   /// <docs>operations/diagnostics/whiz099</docs>

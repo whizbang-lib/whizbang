@@ -121,14 +121,20 @@ internal static class CoordinatorFleetSql {
   /// missing. Every write path's form of the name (the stored form, or the dispatcher's versioned one) is compared
   /// through <c>normalize_event_type</c>.
   /// </para>
+  /// <para>
+  /// The last two columns (#2288) are the housekeeping deferral budgets' stored first deferrals, from a table of at most a
+  /// handful of rows, so the forced-pass ceiling reaches the coordinator with the reading it judges and survives a restart.
+  /// </para>
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CountServiceBacklogSqlTests.cs:IntegrityTraffic_IsBacklog_ButNotWorkBesidesIntegrityAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CountServiceBacklogSqlTests.cs:ApplicationWork_IsWorkBesidesIntegrity_InEachTableAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:NothingDeferred_IsReadAsAnEmptyFigure_NotAMissingOneAsync</tests>
   internal static async Task<ServiceBacklog?> CountServiceBacklogAsync(DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     // The work state and the message row it joins to for the type (#2253): one line, a join across the split.
     var (inbox, inboxMessages) = (prefix + "wh_inbox_state", prefix + "wh_inbox");
     var outbox = prefix + "wh_outbox";
     var perspectiveEvents = prefix + "wh_perspective_events";
+    var deferrals = prefix + "wh_housekeeping_deferrals";
     const int idleBandStart = WorkPriority.BACKGROUND_BAND_END;
     cmd.CommandText = $@"
       SELECT
@@ -172,7 +178,9 @@ internal static class CoordinatorFleetSql {
              AND (scheduled_for IS NULL OR scheduled_for <= now())
              AND priority <= {idleBandStart}
              AND NOT ({prefix}normalize_event_type(message_type) = ANY(@p_integrity_types))
-           LIMIT 1) f)";
+           LIMIT 1) f),
+        ARRAY(SELECT budget_key FROM {deferrals} ORDER BY budget_key),
+        ARRAY(SELECT first_deferred_at FROM {deferrals} ORDER BY budget_key)";
     cmd.Parameters.Add(new NpgsqlParameter<string[]>("p_integrity_types", [.. SteadyIntegrityTraffic.StoredNames]));
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     return !await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? null : new ServiceBacklog {
@@ -184,7 +192,45 @@ internal static class CoordinatorFleetSql {
       PendingPerspectiveRows = reader.GetInt64(4),
       PendingIdleRows = reader.GetInt64(5),
       NonIntegrityWorkRows = reader.GetInt64(6),
+      HousekeepingDeferrals = _housekeepingDeferrals(reader.GetFieldValue<string[]>(7), reader.GetFieldValue<DateTime[]>(8)),
     };
+  }
+
+  // The two arrays are read in one statement, under one snapshot, and in the same order, so they pair up by position.
+  private static Dictionary<string, DateTimeOffset> _housekeepingDeferrals(string[] keys, DateTime[] firstDeferredAt) {
+    var deferrals = new Dictionary<string, DateTimeOffset>(keys.Length, StringComparer.Ordinal);
+    for (var i = 0; i < keys.Length; i++) {
+      deferrals[keys[i]] = new DateTimeOffset(DateTime.SpecifyKind(firstDeferredAt[i], DateTimeKind.Utc));
+    }
+    return deferrals;
+  }
+
+  /// <summary>
+  /// Records when a housekeeping deferral budget was first deferred, unless a moment is already held for it (#2288).
+  /// </summary>
+  /// <remarks>
+  /// The first writer wins: two instances deferring at once keep the earlier write, and a later deferral of the same run
+  /// never moves the moment later. One single-row statement, issued once per run of deferrals, not once per tick.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFleetRecoveryTests.cs:HousekeepingDeferral_IsReadWithTheBacklog_KeepsTheFirstWriter_AndClearsAsync</tests>
+  internal static async Task<int> RecordHousekeepingDeferralAsync(
+      DbCommand cmd, string prefix, string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken) {
+    cmd.CommandText = $"INSERT INTO {prefix}wh_housekeeping_deferrals (budget_key, first_deferred_at) VALUES (@p_key, @p_at) "
+      + "ON CONFLICT (budget_key) DO NOTHING";
+    cmd.Parameters.Add(new NpgsqlParameter("p_key", NpgsqlDbType.Text) { Value = budgetKey });
+    cmd.Parameters.Add(new NpgsqlParameter("p_at", NpgsqlDbType.TimestampTz) { Value = firstDeferredAt.UtcDateTime });
+    return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>Clears the stored first deferral of a housekeeping budget once a pass of its activity has ended (#2288).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:AClear_RemovesOnlyItsOwnBudgetAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFleetRecoveryTests.cs:HousekeepingDeferral_IsReadWithTheBacklog_KeepsTheFirstWriter_AndClearsAsync</tests>
+  internal static async Task<int> ClearHousekeepingDeferralAsync(
+      DbCommand cmd, string prefix, string budgetKey, CancellationToken cancellationToken) {
+    cmd.CommandText = $"DELETE FROM {prefix}wh_housekeeping_deferrals WHERE budget_key = @p_key";
+    cmd.Parameters.Add(new NpgsqlParameter("p_key", NpgsqlDbType.Text) { Value = budgetKey });
+    return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>

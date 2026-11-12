@@ -68,7 +68,7 @@ public class EFCoreCollectiveDiUnitTests {
   public async Task AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync() {
     var services = new ServiceCollection();
     services.AddSingleton(_newCtx());
-    services.AddCollectiveEventsEFCore<Ctx>([]);
+    services.AddCollectiveEventsEFCore<Ctx>();
     services.AddCollectiveExecutorEFCore<JobModel>();
     var sp = services.BuildServiceProvider();
 
@@ -80,7 +80,9 @@ public class EFCoreCollectiveDiUnitTests {
 
   [Test]
   public async Task AddCollectiveEventsEFCore_NullEntries_ThrowsAsync() {
+#pragma warning disable CS0618 // the hand-passed overload is obsolete; its guard still holds
     await Assert.That(() => new ServiceCollection().AddCollectiveEventsEFCore<Ctx>(null!))
       .Throws<ArgumentNullException>();
+#pragma warning restore CS0618
   }
 }

@@ -27,6 +27,23 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
   private const string TENANT = "tenant-a";
 
+  /// <summary>The probe models' handlers, contributed the way a generated assembly contributes its own (#2238).</summary>
+  private sealed class ProbeHandlers : ICollectiveApplyRegistry {
+    public IReadOnlyList<CollectiveApplyEntry> Entries { get; } = [
+      _entry(typeof(ProbeModel), typeof(ResetCollective)),
+      _entry(typeof(OtherModel), typeof(OtherModelCollective)),
+    ];
+
+    private static CollectiveApplyEntry _entry(Type model, Type collective) => new(
+      ModelType: model,
+      EventType: collective,
+      HandlerType: typeof(object),
+      MethodName: "Apply",
+      ScopeHandling: default,
+      SpecKind: default,
+      Invoker: (_, _, _) => new object());
+  }
+
   [Test]
   public async Task AddCollectiveEventsDapper_TheReplayReadsTheTenantsArchivedCollectiveStreams_ListedFromTheLedgerAsync() {
     var ownType = (Guid)TrackedGuid.New();
@@ -47,10 +64,9 @@ public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
     var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
     services.AddSingleton<IEventStore>(reads);
     services.AddSingleton<IEventStoreQuery>(new NoHotEvents());
-    services.AddCollectiveEventsDapper([
-      _entry(typeof(ProbeModel), typeof(ResetCollective)),
-      _entry(typeof(OtherModel), typeof(OtherModelCollective)),
-    ]);
+    services.AddSingleton<ProbeHandlers>();
+    services.AddCollectiveApplyRegistryContribution<ProbeHandlers>();
+    services.AddCollectiveEventsDapper();
     await using var provider = services.BuildServiceProvider();
     await using var scope = provider.CreateAsyncScope();
     var applier = scope.ServiceProvider.GetRequiredService<ICollectiveReplayApplier>();
@@ -77,15 +93,6 @@ public class DapperArchivedCollectiveReplayTests : PostgresTestBase {
       "INSERT INTO wh_stream_lifecycle (stream_id, stream_type, tenant, first_appended_at, last_appended_bucket, last_version, state) " +
       "VALUES (@stream, @type, @tenant, NOW(), date_trunc('hour', NOW()), 1, @state)",
       new { stream, type = firstEvent.FullName, tenant, state });
-
-  private static CollectiveApplyEntry _entry(Type model, Type collective) => new(
-    ModelType: model,
-    EventType: collective,
-    HandlerType: typeof(object),
-    MethodName: "Apply",
-    ScopeHandling: default,
-    SpecKind: default,
-    Invoker: (_, _, _) => new object());
 
   // One event of the replayed stream, carrying its tenant.
   private static List<MessageEnvelope<IEvent>> _tenantEvent() => [
