@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,7 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
 
   private PgSharedNotifyConnection _sharedConnection(
-      ILogger<PgSharedNotifyConnection> logger, IServiceInstanceProvider? instanceProvider = null) {
+      ILogger<PgSharedNotifyConnection> logger, IServiceInstanceProvider? instanceProvider = null,
+      TimeProvider? timeProvider = null) {
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     return new PgSharedNotifyConnection(
       Options.Create(new WhizbangNotificationOptions {
@@ -38,7 +40,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
       instanceProvider ?? new ServiceInstanceProvider(cfg),
       logger,
       connectionStringFallback: null,
-      timeProvider: null);
+      timeProvider: timeProvider);
   }
 
   /// <summary>
@@ -251,8 +253,10 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
   // #2155: a resync wakes the parked wait by canceling its token, and Npgsql can lose that cancel
   // the same way it lost the stop (#2150). The wait then sat on the idle socket, so a subscription
   // made after the connection came up was never LISTENed and every notification on it was lost.
-  // The wait now carries the keepalive interval as a timeout, which Npgsql cannot lose, and the pass
-  // after it times out drains the resync latch: a lost wake costs at most one keepalive interval.
+  // The wait carries a timeout, which Npgsql cannot lose, and the pass after it times out drains the
+  // resync latch. #2291: that timeout was the keepalive interval (30 s by default), and every channel
+  // subscribed behind the lost wake waited that long. It is now the short resync recheck, so a lost
+  // wake costs at most one recheck, whatever the keepalive interval is.
   [Test]
   [Timeout(60000)]
   public async Task Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync(
@@ -275,8 +279,9 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
 
       await Assert.That(listenedWhileParked).IsFalse()
         .Because("the wait ignores its token, so the resync's cancel is lost and nothing has LISTENed yet");
-      await Assert.That(firstWait.Timeout).IsEqualTo(TimeSpan.FromSeconds(30))
-        .Because("the wait is bounded by the keepalive interval, so a lost wake waits at most that long");
+      await Assert.That(firstWait.Timeout).IsEqualTo(PgSharedNotifyConnection.ResyncRecheckInterval)
+        .Because("with the default 30 s keepalive the wait is bounded by the resync recheck, so a lost wake "
+               + "waits one recheck rather than a whole keepalive interval");
       await Assert.That(gate.ListenedChannelsForTesting).Contains(channel)
         .Because("the pass after the timeout drains the resync latch and LISTENs the late subscription");
     } finally {
@@ -286,8 +291,10 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
   }
 
   // #2155: the keepalive used to be a token cancel on the wait too, so the same lost cancel left a
-  // dead connection undetected until something else arrived on it. A wait that times out is the
-  // keepalive now: the connection is checked with SELECT 1 before the loop parks again.
+  // dead connection undetected until something else arrived on it. A wait that times out once the
+  // keepalive interval has passed is the keepalive now: the connection is checked with SELECT 1
+  // before the loop parks again. #2291: the wait also times out at the shorter resync recheck, so the
+  // keepalive is due by the clock, which this test drives, not by every timeout.
   [Test]
   [Timeout(60000)]
   public async Task Keepalive_WhoseWakeIsLost_RunsSelectOneOnceTheWaitTimesOutAsync(
@@ -295,7 +302,8 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     var instanceProvider = new ServiceInstanceProvider(
       Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
     var logger = new CapturingLogger();
-    using var gate = _sharedConnection(logger, instanceProvider);
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    using var gate = _sharedConnection(logger, instanceProvider, clock);
     var waits = new ScriptedWaits();
     gate.WaitForMessageAsync = waits.WaitAsync;
     var appName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
@@ -305,6 +313,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
       var firstWait = await waits.NextParkedAsync(cancellationToken);
       var beforeTimeout = await _lastStatementAsync(appName, cancellationToken);
 
+      clock.Advance(new WhizbangNotificationOptions().ListenKeepaliveInterval);
       firstWait.Completion.SetResult(false);
       // The loop parks again only once the keepalive round trip has completed.
       _ = await waits.NextParkedAsync(cancellationToken);
@@ -320,6 +329,63 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
       await gate.StopAsync(CancellationToken.None);
       waits.ReleaseAll();
     }
+  }
+
+  // #2291: the wait now times out at the resync recheck as well as the keepalive, many times per
+  // keepalive interval. A recheck is free only if it stays free: a SELECT 1 on every one of them would
+  // put a round trip per recheck on every pod's LISTEN connection. The clock here never moves, so the
+  // keepalive is never due, and a timed-out wait must park again without touching the connection.
+  [Test]
+  [Timeout(60000)]
+  public async Task Recheck_BeforeTheKeepaliveIsDue_DoesNotRunSelectOneAsync(
+      CancellationToken cancellationToken) {
+    var instanceProvider = new ServiceInstanceProvider(
+      Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
+    var logger = new CapturingLogger();
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    using var gate = _sharedConnection(logger, instanceProvider, clock);
+    var waits = new ScriptedWaits();
+    gate.WaitForMessageAsync = waits.WaitAsync;
+    var appName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+    await gate.StartAsync(cancellationToken);
+    try {
+      await _awaitAvailableAsync(gate, cancellationToken);
+      var firstWait = await waits.NextParkedAsync(cancellationToken);
+      var beforeTimeout = await _lastStatementAsync(appName, cancellationToken);
+
+      firstWait.Completion.SetResult(false);
+      // The loop parks again only once whatever the timeout led to has completed.
+      var secondWait = await waits.NextParkedAsync(cancellationToken);
+      var afterTimeout = await _lastStatementAsync(appName, cancellationToken);
+
+      await Assert.That(beforeTimeout).IsNotEqualTo("SELECT 1")
+        .Because("no keepalive has run before the wait timed out, so the check below is not satisfied in advance");
+      await Assert.That(afterTimeout).IsEqualTo(beforeTimeout)
+        .Because("a recheck timeout before the keepalive interval has passed runs nothing on the connection");
+      await Assert.That(secondWait.Timeout).IsEqualTo(PgSharedNotifyConnection.ResyncRecheckInterval)
+        .Because("the next wait is bounded by the recheck again while the keepalive is still far off");
+      await Assert.That(gate.IsAvailable).IsTrue();
+    } finally {
+      await gate.StopAsync(CancellationToken.None);
+      waits.ReleaseAll();
+    }
+  }
+
+  // #2291: the bound the loop parks on is the recheck, or what is left of the keepalive interval when
+  // that is shorter, so a short keepalive still fires on time. Npgsql reads a timeout of zero
+  // milliseconds as no timeout at all, so a keepalive already overdue still waits a millisecond rather
+  // than parking forever, and part of a millisecond rounds up rather than down to zero.
+  [Test]
+  [Arguments(30_000.0, 1_000.0)]
+  [Arguments(200.0, 200.0)]
+  [Arguments(0.4, 1.0)]
+  [Arguments(0.0, 1.0)]
+  [Arguments(-5_000.0, 1.0)]
+  public async Task ListenWaitTimeout_IsTheRecheckOrTheKeepaliveRemainder_NeverZeroAsync(
+      double untilKeepaliveMs, double expectedMs) {
+    var timeout = PgSharedNotifyConnection.ListenWaitTimeout(TimeSpan.FromMilliseconds(untilKeepaliveMs));
+
+    await Assert.That(timeout).IsEqualTo(TimeSpan.FromMilliseconds(expectedMs));
   }
 
   private async Task<string> _lastStatementAsync(string appName, CancellationToken cancellationToken) {

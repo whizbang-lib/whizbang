@@ -642,6 +642,14 @@ public sealed partial class PgSharedNotifyConnection(
     }
   }
 
+  /// <summary>The longest the dispatch loop parks before it rechecks the resync latch (#2291).</summary>
+  internal static readonly TimeSpan ResyncRecheckInterval = TimeSpan.FromSeconds(1);
+
+  /// <summary>The timeout of the dispatch loop's next wait (#2291).</summary>
+  /// <param name="untilKeepalive">What is left of the keepalive interval.</param>
+  /// <returns>The timeout.</returns>
+  internal static TimeSpan ListenWaitTimeout(TimeSpan untilKeepalive) => untilKeepalive;
+
   /// <summary>
   /// Awaits the dispatch loop's wait, or the stop when the wait does not see it.
   /// </summary>
