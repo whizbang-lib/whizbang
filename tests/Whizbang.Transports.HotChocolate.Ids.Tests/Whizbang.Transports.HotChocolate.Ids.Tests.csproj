@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Unit tests of AddWhizbangIds, against [WhizbangId] types the generators produce. They live apart from
+       Whizbang.Transports.HotChocolate.Tests because running the generators emits public registries (such as
+       Whizbang.Core.Generated.CollectiveApplyRegistry) into the test assembly, and
+       Whizbang.Transports.HotChocolate.Integration.Tests references that project and Whizbang.Core together,
+       so it would see each registry twice (CS0433). Nothing references this project. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
+    <!-- Unit: Fast tests, no external infrastructure needed -->
+    <WhizbangTestType>Unit</WhizbangTestType>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Exclude generated files from compilation (they're already compiled via the generator pipeline) -->
+    <Compile Remove=".whizbang/cache/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- Ids in an assembly no code has run in when the schema is built (WhizbangIdSchemaTimingTests). -->
+    <ProjectReference Include="../Whizbang.Transports.HotChocolate.Ids.Fixtures/Whizbang.Transports.HotChocolate.Ids.Fixtures.csproj" />
+    <!-- Generates the [WhizbangId] types the GraphQL id tests take as arguments and input fields. -->
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <!-- WhizbangIdFilterTranslationTests: the SQL a strong-id filter translates to for PostgreSQL, built without a
+         database. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+</Project>

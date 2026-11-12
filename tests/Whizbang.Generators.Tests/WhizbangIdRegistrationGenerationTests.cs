@@ -69,6 +69,36 @@ public class WhizbangIdRegistrationGenerationTests {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_RegistrationRegistersEachIdsGuidConversionAsync() {
+    // Arrange
+    const string source = @"
+      using Whizbang.Core;
+
+      namespace MyApp.Ids {
+        [WhizbangId]
+        public readonly partial struct OrderId;
+
+        [WhizbangId(AcceptAnyVersion = true)]
+        public readonly partial struct ExternalUserId;
+      }
+    ";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+
+    // Assert
+    var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
+    await Assert.That(registrationSource).IsNotNull();
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.OrderId>(global::MyApp.Ids.OrderId.From);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.ExternalUserId>(global::MyApp.Ids.ExternalUserId.From);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::MyApp.Ids.OrderId>(static id => id.Value);");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_RegistrationHasRegisterAllMethodAsync() {
     // Arrange
     const string source = @"

@@ -67,6 +67,7 @@ public static class ServiceRegistrationCallbacks {
   private static readonly AccumulatedCallbacks<Action<IServiceCollection, ServiceRegistrationOptions>> _perspectiveServices = new(_lock);
   private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _pinnedIdRegistry = new(_lock);
   private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _rawReceptors = new(_lock);
+  private static readonly AccumulatedCallbacks<Action<IServiceCollection>> _collectiveApplyRegistry = new(_lock);
 
   /// <summary>
   /// One startup slot every assembly sets: each assignment adds a callback, null clears them, and the combined
@@ -279,6 +280,16 @@ public static class ServiceRegistrationCallbacks {
   public static void RegisterPinnedIdRegistry(string assembly, Action<IServiceCollection> register) =>
     _pinnedIdRegistry.Add(assembly, register);
 
+  /// <summary>
+  /// Registers <paramref name="assembly"/>'s collective apply handlers as its contribution to the registry the
+  /// collective dispatcher reads. Called from generated code (#2238).
+  /// </summary>
+  /// <param name="assembly">The registering assembly's name.</param>
+  /// <param name="register">The registration.</param>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/ServiceScopedRegistrationTests.cs:EverySlot_ReplaysOnlyTheHostsOwnServiceAsync</tests>
+  public static void RegisterCollectiveApplyRegistry(string assembly, Action<IServiceCollection> register) =>
+    _collectiveApplyRegistry.Add(assembly, register);
+
   /// <summary>Registers <paramref name="assembly"/>'s message-type catalog. Called from generated code (#2243).</summary>
   /// <param name="assembly">The registering assembly's name.</param>
   /// <param name="register">The registration.</param>
@@ -398,7 +409,7 @@ public static class ServiceRegistrationCallbacks {
     foreach (var (_, callback) in _perspectiveServices.Entries.Where(e => scope.Includes(e.Assembly))) {
       steps.Add((callback, services => callback(services, options)));
     }
-    foreach (var slot in (AccumulatedCallbacks<Action<IServiceCollection>>[])[_dispatcher, _rawReceptors, _pinnedIdRegistry]) {
+    foreach (var slot in (AccumulatedCallbacks<Action<IServiceCollection>>[])[_dispatcher, _rawReceptors, _pinnedIdRegistry, _collectiveApplyRegistry]) {
       foreach (var (_, callback) in slot.Entries.Where(e => scope.Includes(e.Assembly))) {
         steps.Add((callback, callback));
       }
@@ -445,6 +456,7 @@ public static class ServiceRegistrationCallbacks {
       var dispatcher = _dispatcher.Entries;
       var raw = _rawReceptors.Entries;
       var pinned = _pinnedIdRegistry.Entries;
+      var collective = _collectiveApplyRegistry.Entries;
       var catalog = _messageTypeCatalog.Entries;
       Reset();
       return new SlotRestore(() => {
@@ -453,6 +465,7 @@ public static class ServiceRegistrationCallbacks {
         _dispatcher.Restore(dispatcher);
         _rawReceptors.Restore(raw);
         _pinnedIdRegistry.Restore(pinned);
+        _collectiveApplyRegistry.Restore(collective);
         _messageTypeCatalog.Restore(catalog);
       });
     }
@@ -477,6 +490,7 @@ public static class ServiceRegistrationCallbacks {
       Dispatcher = null;
       PinnedIdRegistry = null;
       MessageTypeCatalog = null;
+      _collectiveApplyRegistry.Set(null);
       HostingIntegration = null;
     }
   }

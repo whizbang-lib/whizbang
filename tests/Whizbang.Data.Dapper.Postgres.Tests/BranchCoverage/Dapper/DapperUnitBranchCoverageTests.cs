@@ -165,7 +165,7 @@ public class DapperUnitBranchCoverageTests {
   [Test]
   public async Task AddCollectiveEventsDapper_NoPostgresOptions_ResolvesDefaultApplyOptionsAsync() {
     var services = new ServiceCollection();
-    services.AddCollectiveEventsDapper([]);
+    services.AddCollectiveEventsDapper();
     await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<CollectiveApplyOptions>();
@@ -181,7 +181,7 @@ public class DapperUnitBranchCoverageTests {
       o.CollectiveApplyBatchSize = 77;
       o.CollectiveApplyStatementTimeoutSeconds = 12;
     });
-    services.AddCollectiveEventsDapper([]);
+    services.AddCollectiveEventsDapper();
     await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<CollectiveApplyOptions>();

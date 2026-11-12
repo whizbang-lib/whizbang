@@ -20,12 +20,13 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// <remarks>
 /// <para>
-/// Constructor-injectable. Wire up in <c>IServiceCollection</c>:
+/// Registered by the driver's collective registration (<c>AddCollectiveEventsEFCore</c>, <c>AddCollectiveEventsDapper</c>),
+/// which hands it every assembly's handlers from the container (#2238). Wired by hand, it reads the same:
 /// </para>
 /// <code>
 /// services.AddSingleton&lt;ICollectiveDispatcher&gt;(sp =&gt; new CollectiveDispatcher(
 ///   sp,
-///   CollectiveApplyRegistry.Entries,
+///   sp.GetCollectiveApplyEntries(),
 ///   sp.GetServices&lt;ICollectiveScopeResolver&gt;().ToList(),
 ///   sp.GetServices&lt;ICollectiveEventExecutor&gt;().ToList(),
 ///   sp.GetService&lt;EventCategoryMetrics&gt;()));
@@ -55,7 +56,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
   /// Creates a dispatcher.
   /// </summary>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
-  /// <param name="entries">Compile-time registry from <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <param name="entries">The handlers, normally every assembly's (<see cref="CollectiveApplyRegistryServiceCollectionExtensions.GetCollectiveApplyEntries"/>).</param>
   /// <param name="resolvers">All <see cref="ICollectiveScopeResolver"/> instances registered in DI.</param>
   /// <param name="executors">All <see cref="ICollectiveEventExecutor"/> instances registered in DI (one per <c>TModel</c>).</param>
   /// <param name="metrics">Optional cross-cutting metrics. When null, recording is a no-op.</param>

@@ -3512,25 +3512,57 @@ public abstract partial class Dispatcher(
   /// generated setter) and returned; null when there is no source, no extractor, or the source names no stream. The
   /// dispatcher's cascade, outbox and no-strategy paths each carried a copy of it.
   /// </summary>
+  /// <remarks>
+  /// A strong-id <c>[StreamId]</c> refuses a source of another id type, unless its <c>InheritFrom</c> lists it, and a
+  /// value its <c>From</c> refuses (#2072). The setter is told the source's stream-id type; when a message whose stream
+  /// id is a strong id is not written, the inherited id is not used either, so the envelope never carries a stream the
+  /// message does not name. The message then goes on as a cascade whose source names no stream: a message with
+  /// <c>[GenerateStreamId]</c> mints its own id, and one without it has none. Each refused pair of types is logged once.
+  /// </remarks>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs</tests>
   private Guid? _inheritSourceStreamId(object message, Type messageType, IMessageEnvelope? sourceEnvelope) {
     if (sourceEnvelope is null || _streamIdExtractor is null) {
       return null;
     }
-    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
+    var sourceType = sourceEnvelope.Payload.GetType();
+    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceType);
     if (sourceStreamId is not { } inherited || inherited == Guid.Empty) {
       return null;
     }
     if (message is IHasStreamId hasStreamId) {
       hasStreamId.StreamId = inherited;
-    } else {
-      _streamIdExtractor.SetStreamId(message, inherited);
+    } else if (!_streamIdExtractor.SetStreamId(message, inherited, _streamIdExtractor.GetStreamIdType(sourceType))
+        && _isStrongIdStreamId(messageType)) {
+      _logRefusedInheritanceOnce(sourceType, messageType);
+      return null;
     }
 #pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
-    Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, TypeNameFormatter.ForLog(sourceEnvelope.Payload.GetType()), TypeNameFormatter.ForLog(messageType));
+    Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, TypeNameFormatter.ForLog(sourceType), TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1873
     return inherited;
   }
+
+  /// <summary>
+  /// Whether <paramref name="messageType"/>'s <c>[StreamId]</c> is a strong id: the extractor reports its type, and it
+  /// is not <see cref="Guid"/>, which the generated extractor reports for a stream id that is not a strong id (#2072).
+  /// </summary>
+  private bool _isStrongIdStreamId(Type messageType) =>
+    _streamIdExtractor!.GetStreamIdType(messageType) is { } type && type != typeof(Guid);
+
+  /// <summary>
+  /// Logs, the first time only, that a message of <paramref name="messageType"/> did not inherit the stream of a
+  /// <paramref name="sourceType"/> source because its strong-id stream id refused it (#2072).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs:EachRefusedPairOfTypes_IsLoggedOnceAsync</tests>
+  private void _logRefusedInheritanceOnce(Type sourceType, Type messageType) {
+    if (_refusedStreamInheritances.TryAdd((sourceType, messageType), 0)) {
+      Log.StreamIdInheritanceRefused(CascadeLogger, TypeNameFormatter.ForLog(sourceType), TypeNameFormatter.ForLog(messageType));
+    }
+  }
+
+  /// <summary>The pairs of source and message types whose refused stream inheritance has been logged (#2072).</summary>
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<(Type Source, Type Message), byte> _refusedStreamInheritances = new();
 
   /// <summary>
   /// Tracks an emitted event in the scoped event tracker for same-request sync coordination.
@@ -6704,6 +6736,15 @@ public abstract partial class Dispatcher(
       Level = LogLevel.Debug,
       Message = "[STREAM_ID] Propagated StreamId={StreamId} from source {SourceType} to cascaded {EventType}")]
     public static partial void StreamIdPropagatedFromSource(ILogger logger, Guid streamId, string sourceType, string eventType);
+
+    /// <summary>Logs, once per pair of types, that a cascaded message's strong-id stream id refused its source's stream (#2072).</summary>
+    [LoggerMessage(
+      EventId = 15,
+      Level = LogLevel.Warning,
+      Message = "[STREAM_ID] The stream of {SourceType} was not inherited by the cascaded {MessageType}: its strong-id [StreamId] " +
+                "does not accept the source's id type or value, so it goes on as if its source named no stream. List the " +
+                "source's id type in [StreamId(InheritFrom = ...)] or set the stream id in the receptor. Logged once per pair of types.")]
+    public static partial void StreamIdInheritanceRefused(ILogger logger, string sourceType, string messageType);
 
     /// <summary>Logs a warning when outbox delivery is skipped because no IWorkCoordinatorStrategy is registered.</summary>
     [LoggerMessage(

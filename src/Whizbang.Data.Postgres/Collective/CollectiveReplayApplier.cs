@@ -57,7 +57,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   private readonly ConditionalWeakTable<IEvent, CollectiveApplyReach> _reaches = [];
 
   /// <summary>Creates a replay applier that finds collective streams through the hot event store only.</summary>
-  /// <param name="entries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
   /// <param name="eventStore">Reads the collective events (deserialized) by stream id.</param>
   /// <param name="eventStoreQuery">Finds the collective event stream ids for a tenant.</param>
@@ -77,7 +77,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   /// <paramref name="eventStore"/>, whose archive seam serves its events. Both Postgres drivers register the applier
   /// this way.
   /// </summary>
-  /// <param name="entries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
   /// <param name="eventStore">Reads the collective events (deserialized) by stream id, archived ones included.</param>
   /// <param name="eventStoreQuery">Finds the hot collective event stream ids for a tenant.</param>
@@ -104,7 +104,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   }
 
   /// <summary>Creates a replay applier whose archived collective streams come from <paramref name="archivedStreams"/>.</summary>
-  /// <param name="entries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
   /// <param name="eventStore">Reads the collective events (deserialized) by stream id.</param>
   /// <param name="eventStoreQuery">Finds the hot collective event stream ids for a tenant.</param>

@@ -16,11 +16,11 @@ namespace CollectiveEvents.Sample.Wiring;
 ///   <item><description>The <see cref="ICollectiveScopeResolver"/> for every scope kind a handler accepts. The sample uses tenant scope, so it registers <see cref="TenantCollectiveScopeResolver"/>.</description></item>
 /// </list>
 /// <remarks>
-/// The Slice 5-generated <c>CollectiveApplyRegistry</c> is consumed
-/// automatically by the projection runner (Slice 7+ wiring) — the
-/// consumer doesn't register entries by hand. That's the AOT story: the
-/// registry is a static <c>readonly</c> field in generated code,
-/// reachable via direct static access, never via type scanning.
+/// The generated collective apply registry is registered automatically: each assembly's module
+/// initializer contributes its <c>[CollectiveApplyFor]</c> handlers, <c>AddWhizbang()</c> registers
+/// them, and the driver's collective registration hands the dispatcher every assembly's (#2238). The
+/// consumer never passes entries by hand. That's the AOT story: the table is a static
+/// <c>readonly</c> field in generated code, reachable via direct static access, never via type scanning.
 /// </remarks>
 public static class ServiceRegistration {
   public static IServiceCollection AddCollectiveEventsSample(this IServiceCollection services) {
