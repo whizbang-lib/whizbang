@@ -12,6 +12,7 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Fingerprint;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Tests.Fingerprint;
 
@@ -115,6 +116,64 @@ public class TypeDefinitionReconcilerCoverageTests {
     await Assert.That(coordinator.Recorded.Value.To).IsEqualTo(2);
   }
 
+  // #2254: the reaper joins the per-type rewind grace to wh_event_store.event_type, which holds the stored form
+  // (Ns.Type, Assembly). Synced under the bare CLR name, the override matched no event and every type fell back to the
+  // global grace. Former names are the same type's events, so they carry the grace too, in the stored form.
+  [Test]
+  public async Task ReconcileAsync_RewindGraceOverrides_AreKeyedByTheStoredName_TheEventStoreHoldsAsync() {
+    var type = typeof(TypeDefinitionReconcilerCoverageTests);
+    var catalog = new FakeCatalog(
+      new MessageTypeCatalogEntry(type, TypeNameFormatter.FormatClrTypeName(type), "event", null) {
+        Ephemeral = new EphemeralInfo(default, default, RewindGraceSeconds: 30),
+        FormerNames = ["Old.Contracts.Pinged", " "],
+      },
+      new MessageTypeCatalogEntry(typeof(string), "System.String", "event", null) {
+        Ephemeral = new EphemeralInfo(default, default),
+      });
+    var coordinator = new GraceCapturingCoordinator();
+
+    await _reconciler(coordinator, catalog).ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Graces.Select(g => (g.EventTypeName, g.GraceSeconds)))
+      .IsEquivalentTo([(TypeNameFormatter.Format(type), 30), ("Old.Contracts.Pinged, Whizbang.Core.Tests", 30)])
+      .Because("each override names the type as the append path stores it; a blank ledger name and a type with no override send none");
+  }
+
+  // #2255: the pairs allowed to share a stream reach the store at startup, under every stored name of each type, and
+  // only those every read model applying both allows. With no registry nothing is allowed, and the sync still runs, so a
+  // read model that dropped the opt-in refuses mixing again.
+  [Test]
+  public async Task ReconcileAsync_SyncsTheAllowedMixedStreamPairs_UnderEveryStoredNameAsync() {
+    var pinged = typeof(TypeDefinitionReconcilerCoverageTests);
+    var opened = typeof(GraceCapturingCoordinator);
+    var closed = typeof(FakeCatalog);
+    var catalog = new FakeCatalog(
+      new MessageTypeCatalogEntry(pinged, TypeNameFormatter.FormatClrTypeName(pinged), "event", null) {
+        Ephemeral = new EphemeralInfo(default, default),
+        FormerNames = ["Old.Contracts.Pinged"],
+      });
+    var registry = new FakeRegistry(
+      new PerspectiveRegistrationInfo("App.Board", "global::App.Board", "global::App.Model", [TypeNameFormatter.Format(pinged), TypeNameFormatter.Format(opened)]) {
+        MixedStreams = MixedStreams.Allow,
+        MixedStreamPairs = [new MixedStreamPair(TypeNameFormatter.Format(pinged), TypeNameFormatter.Format(opened)), new MixedStreamPair(TypeNameFormatter.Format(pinged), TypeNameFormatter.Format(closed))],
+      },
+      new PerspectiveRegistrationInfo("App.Timeline", "global::App.Timeline", "global::App.Model", [TypeNameFormatter.Format(pinged), TypeNameFormatter.Format(closed)]) {
+        MixedStreamPairs = [new MixedStreamPair(TypeNameFormatter.Format(pinged), TypeNameFormatter.Format(closed))],
+      });
+    var coordinator = new GraceCapturingCoordinator();
+
+    await _reconciler(coordinator, catalog, registry: registry).ReconcileAsync(CancellationToken.None);
+    var withoutRegistry = new GraceCapturingCoordinator();
+    await _reconciler(withoutRegistry, catalog).ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Allowances).IsEquivalentTo([
+      new MixedStreamPair("Old.Contracts.Pinged, Whizbang.Core.Tests", TypeNameFormatter.Format(opened)),
+      new MixedStreamPair(TypeNameFormatter.Format(pinged), TypeNameFormatter.Format(opened)),
+    ]).Because("App.Timeline applies (pinged, closed) without the opt-in, so only (pinged, opened) is allowed, under both of pinged's names");
+    await Assert.That(withoutRegistry.AllowanceSyncs).IsEqualTo(1).Because("an empty allowance is synced too, clearing any earlier one");
+    await Assert.That(withoutRegistry.Allowances).IsEmpty();
+  }
+
   // #2206: startup reclassifies nothing, whatever the flag says; the maintenance cycle's ephemeral-history-reclassify
   // step does it in bounded batches, on every cycle with the flag on (which keeps #1578: a type that turned ephemeral
   // on an earlier boot with the flag off is still reclassified once the flag is on).
@@ -157,9 +216,12 @@ public class TypeDefinitionReconcilerCoverageTests {
 
   private static TypeDefinitionReconciler _reconciler(
       IWorkCoordinator coordinator, IMessageTypeCatalog catalog, ILogger<TypeDefinitionReconciler>? logger = null,
-      bool reconcileHistorical = false) {
+      bool reconcileHistorical = false, IPerspectiveRunnerRegistry? registry = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
+    if (registry is not null) {
+      services.AddSingleton(registry);
+    }
     var provider = services.BuildServiceProvider();
     return new TypeDefinitionReconciler(
       provider.GetRequiredService<IServiceScopeFactory>(),
@@ -172,6 +234,13 @@ public class TypeDefinitionReconcilerCoverageTests {
   /// <c>FullName</c> is null) is registered, standing in for a malformed registry entry.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "An open generic type is the shape under test; the parameter carries no data by design.")]
   private sealed class GenericPerspectiveModel<T>;
+
+  private sealed class FakeRegistry(params PerspectiveRegistrationInfo[] perspectives) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => perspectives;
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
+    public IReadOnlyList<Type> GetEventTypes() => [];
+  }
 
   private sealed class FakeCatalog(params MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
@@ -237,6 +306,23 @@ public class TypeDefinitionReconcilerCoverageTests {
         IReadOnlyList<string> eventTypeNames, CancellationToken cancellationToken = default) {
       Reclassified.Add([.. eventTypeNames]);
       return Task.FromResult(new EphemeralReclassificationResult(EventsReclassified: 3, StreamsReclassified: 1, StreamsBlocked: 0));
+    }
+  }
+
+  private sealed class GraceCapturingCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+    public List<EphemeralTypeGrace> Graces { get; } = [];
+    public List<MixedStreamPair> Allowances { get; } = [];
+    public int AllowanceSyncs { get; private set; }
+
+    public Task SyncMixedStreamAllowancesAsync(IReadOnlyList<MixedStreamPair> pairs, CancellationToken cancellationToken = default) {
+      AllowanceSyncs++;
+      Allowances.AddRange(pairs);
+      return Task.CompletedTask;
+    }
+
+    public Task SyncEphemeralTypeGraceAsync(IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
+      Graces.AddRange(graceOverrides);
+      return Task.CompletedTask;
     }
   }
 

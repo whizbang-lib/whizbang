@@ -127,7 +127,8 @@ public class DapperEventTypeRenameToolTests : IAsyncDisposable {
 
     await tool.ExecuteAsync();
 
-    var eventRows = await _countAsync("wh_event_store", "event_type", newClr);
+    // event_type takes the target type's stored form, as the append path writes it (#2265); the other columns take the name.
+    var eventRows = await _countAsync("wh_event_store", "event_type", TypeNameFormatter.Format(typeof(SampleType)));
     var aggregateRows = await _countAsync("wh_event_store", "aggregate_type", newClr);
     var inboxRows = await _countAsync("wh_inbox", "message_type", newClr);
     var outboxMessageRows = await _countAsync("wh_outbox", "message_type", newClr);
@@ -165,7 +166,7 @@ public class DapperEventTypeRenameToolTests : IAsyncDisposable {
     await tool.ExecuteAsync();
     await tool.ExecuteAsync();
 
-    var afterTwoRuns = await _countAsync("wh_event_store", "event_type", newClr);
+    var afterTwoRuns = await _countAsync("wh_event_store", "event_type", TypeNameFormatter.Format(typeof(SampleType)));
     await Assert.That(afterTwoRuns).IsEqualTo(1);
   }
 
