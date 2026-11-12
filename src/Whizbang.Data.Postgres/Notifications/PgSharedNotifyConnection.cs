@@ -83,6 +83,9 @@ public sealed partial class PgSharedNotifyConnection(
   private bool _aliveLockHeld;
   // #1636: the connection opened before the alive-lock function existed, so the claim is made on a later keepalive.
   private volatile bool _aliveLockAwaitsSchema;
+  // #2291: when the dispatch loop's next keepalive is due. Set when the connection comes up and moved on by a
+  // keepalive or a message from the server; read and written only by the dispatch loop.
+  private DateTimeOffset _keepaliveDueAt;
   private bool _hasDedicatedConnection;
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
@@ -525,11 +528,13 @@ public sealed partial class PgSharedNotifyConnection(
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
         _emitMode(SignalingModeName.LISTEN_NOTIFY, reason: $"connected; LISTENing on {channelCount} channel(s)");
+        _keepaliveDueAt = _timeProvider.GetUtcNow() + _options.ListenKeepaliveInterval;
 
         // Slice 33.3 — real dispatch loop. WaitAsync blocks on the conn until either a
         // notification arrives (the lifetime's handler runs synchronously and
-        // delivers to subscribers), the keepalive timeout fires (issue SELECT 1), or a
-        // late Subscribe/Dispose triggers a resync (issue LISTEN/UNLISTEN to match registry).
+        // delivers to subscribers), its timeout fires (the resync recheck, or the keepalive
+        // when it is due: issue SELECT 1), or a late Subscribe/Dispose triggers a resync
+        // (issue LISTEN/UNLISTEN to match registry).
         // The shared _resyncSignal CTS is what _signalResync() cancels.
         while (KeepListening(conn.State, stoppingToken)) {
           await _listenOnceAsync(conn, lifetime, stoppingToken).ConfigureAwait(false);
@@ -579,8 +584,8 @@ public sealed partial class PgSharedNotifyConnection(
 
   /// <summary>
   /// One pass of the dispatch loop: resyncs the LISTEN set if asked, waits for a notification, a
-  /// resync or the keepalive interval to pass, and on a keepalive checks the connection with
-  /// <c>SELECT 1</c>.
+  /// resync or the wait's timeout, and when the timeout finds the keepalive due checks the connection
+  /// with <c>SELECT 1</c>.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -591,15 +596,22 @@ public sealed partial class PgSharedNotifyConnection(
   /// </para>
   /// <list type="bullet">
   /// <item>A stop ends the pass on the stopping token itself (see <see cref="AwaitWaitOrStopAsync"/>).</item>
-  /// <item>The keepalive is the wait's own timeout, <see cref="WhizbangNotificationOptions.ListenKeepaliveInterval"/>.
-  /// Npgsql arms its timeout afresh on every read, after the reset that loses a cancel, so it cannot be
-  /// lost; a wait that times out returns false and leaves the connection open (#2155).</item>
+  /// <item>Every wait carries a timeout (<see cref="ListenWaitTimeout"/>): the resync recheck,
+  /// <see cref="ResyncRecheckInterval"/>, or what is left of
+  /// <see cref="WhizbangNotificationOptions.ListenKeepaliveInterval"/> when that is shorter. Npgsql arms its timeout
+  /// afresh on every read, after the reset that loses a cancel, so it cannot be lost; a wait that times out returns
+  /// false and leaves the connection open (#2155), so a recheck costs no round trip.</item>
+  /// <item>The keepalive runs on a timeout that finds it due by the clock: the keepalive interval has passed since the
+  /// connection came up, its last keepalive, or the last message from the server. A recheck before then runs nothing
+  /// (#2291).</item>
   /// <item>A resync still cancels the wait, which usually works and syncs at once. When the cancel is
-  /// lost, the wait times out within one keepalive interval, and the next pass drains the resync latch
-  /// before it parks again, so the late subscription is listened on by then (#2155).</item>
+  /// lost, the wait times out within one recheck, and the next pass drains the resync latch before it
+  /// parks again, so the late subscription, and every one made behind it, is listened on by then,
+  /// whatever the keepalive interval is (#2155, #2291).</item>
   /// </list>
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Recheck_BeforeTheKeepaliveIsDue_DoesNotRunSelectOneAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Keepalive_WhoseWakeIsLost_RunsSelectOneOnceTheWaitTimesOutAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Keepalive_DuringIdlePeriod_IssuesSelectOneAndStaysAvailableAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NpgsqlWaitTimeoutTests.cs:WaitAsync_TimeoutElapses_ReturnsFalseAndLeavesTheSameSessionOpenAsync</tests>
@@ -616,13 +628,16 @@ public sealed partial class PgSharedNotifyConnection(
       await SyncListensAsync(conn, stoppingToken).ConfigureAwait(false);
     }
 
-    var keepaliveDue = false;
+    var ended = WaitEnd.Woken;
     try {
-      var wait = WaitForMessageAsync(conn, _options.ListenKeepaliveInterval, combined.Token);
+      var timeout = ListenWaitTimeout(_keepaliveDueAt - _timeProvider.GetUtcNow());
+      var wait = WaitForMessageAsync(conn, timeout, combined.Token);
       lifetime.PendingWait = wait;
       // True: a notification arrived (or another backend message); the handler ran synchronously
-      // inside the wait. False: the keepalive interval passed with nothing to read.
-      keepaliveDue = !await AwaitWaitOrStopAsync(wait, lifetime, stoppingToken).ConfigureAwait(false);
+      // inside the wait. False: the timeout passed with nothing to read.
+      ended = await AwaitWaitOrStopAsync(wait, lifetime, stoppingToken).ConfigureAwait(false)
+        ? WaitEnd.Message
+        : WaitEnd.TimedOut;
     } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested && combined.Token.IsCancellationRequested) {
       // A resync woke the wait: not a stop, and our own token. Asked in this order so the stop,
       // the case that matters, is the decision; a cancellation from none of our tokens still
@@ -630,25 +645,59 @@ public sealed partial class PgSharedNotifyConnection(
     } finally {
       Volatile.Write(ref _resyncSignal, null);
     }
-    if (keepaliveDue) {
+    if (ended == WaitEnd.Message) {
+      // The server just spoke on this connection, which is what the keepalive would prove.
+      _keepaliveDueAt = _timeProvider.GetUtcNow() + _options.ListenKeepaliveInterval;
+    } else if (ended == WaitEnd.TimedOut && _timeProvider.GetUtcNow() >= _keepaliveDueAt) {
       // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
-      // the outer catch and reconnect.
+      // the outer catch and reconnect. A timeout before this is only the resync recheck (#2291).
       await using var ping = new NpgsqlCommand("SELECT 1", conn);
       _ = await ping.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
       if (_aliveLockAwaitsSchema) {
         // #1636: the connection opened before the migration that creates the alive-lock function ran.
         await ClaimAliveLockAsync(conn, stoppingToken).ConfigureAwait(false);
       }
+      _keepaliveDueAt = _timeProvider.GetUtcNow() + _options.ListenKeepaliveInterval;
     }
   }
 
-  /// <summary>The longest the dispatch loop parks before it rechecks the resync latch (#2291).</summary>
+  /// <summary>How one wait of the dispatch loop ended.</summary>
+  private enum WaitEnd {
+    /// <summary>A resync canceled it.</summary>
+    Woken,
+    /// <summary>A message from the server arrived.</summary>
+    Message,
+    /// <summary>Its timeout passed with nothing to read.</summary>
+    TimedOut,
+  }
+
+  /// <summary>
+  /// The longest the dispatch loop parks before it rechecks the resync latch: the bound on how long a
+  /// subscription whose wake Npgsql lost waits to be listened on (#2291).
+  /// </summary>
+  /// <remarks>
+  /// A constant rather than an option: a recheck that times out costs a timer and no round trip
+  /// (NpgsqlWaitTimeoutTests), so there is nothing to trade it against, and the keepalive, which does cost a
+  /// round trip, keeps its own <see cref="WhizbangNotificationOptions.ListenKeepaliveInterval"/>.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:Resync_WhoseWakeIsLost_IsListenedOnceTheWaitTimesOutAsync</tests>
   internal static readonly TimeSpan ResyncRecheckInterval = TimeSpan.FromSeconds(1);
 
-  /// <summary>The timeout of the dispatch loop's next wait (#2291).</summary>
-  /// <param name="untilKeepalive">What is left of the keepalive interval.</param>
-  /// <returns>The timeout.</returns>
-  internal static TimeSpan ListenWaitTimeout(TimeSpan untilKeepalive) => untilKeepalive;
+  /// <summary>
+  /// The timeout of the dispatch loop's next wait: the resync recheck, or what is left of the keepalive
+  /// interval when that is shorter, in whole milliseconds rounded up and never less than one (#2291).
+  /// </summary>
+  /// <param name="untilKeepalive">What is left of the keepalive interval; zero or less when it is due.</param>
+  /// <returns>The timeout to hand the wait.</returns>
+  /// <remarks>
+  /// Npgsql reads a timeout of zero milliseconds as no timeout at all, so a keepalive already due waits one
+  /// millisecond, and part of a millisecond rounds up, rather than parking the loop for good.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgSharedNotifyConnectionCoverageTests.cs:ListenWaitTimeout_IsTheRecheckOrTheKeepaliveRemainder_NeverZeroAsync</tests>
+  internal static TimeSpan ListenWaitTimeout(TimeSpan untilKeepalive) {
+    var bound = untilKeepalive < ResyncRecheckInterval ? untilKeepalive : ResyncRecheckInterval;
+    return TimeSpan.FromMilliseconds(Math.Max(1, Math.Ceiling(bound.TotalMilliseconds)));
+  }
 
   /// <summary>
   /// Awaits the dispatch loop's wait, or the stop when the wait does not see it.
