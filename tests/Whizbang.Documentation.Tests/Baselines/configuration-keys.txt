@@ -696,6 +696,7 @@ Whizbang:Workers:Perspective:RetryOptions:BackoffMultiplier
 Whizbang:Workers:Perspective:RetryOptions:EnableExponentialBackoff
 Whizbang:Workers:Perspective:RetryOptions:MaxBackoffSeconds
 Whizbang:Workers:Perspective:RetryOptions:RetryTimeoutSeconds
+Whizbang:Workers:Perspective:WriteMode
 Whizbang:Workers:PerspectiveAffinity:IdleEvictionWindow
 Whizbang:Workers:PerspectiveAffinity:LongHoldWarning
 Whizbang:Workers:PerspectiveAffinity:SweepInterval

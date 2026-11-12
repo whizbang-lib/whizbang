@@ -457,6 +457,7 @@ Whizbang:Workers:Perspective:RetryOptions:BackoffMultiplier=2
 Whizbang:Workers:Perspective:RetryOptions:EnableExponentialBackoff=true
 Whizbang:Workers:Perspective:RetryOptions:MaxBackoffSeconds=60
 Whizbang:Workers:Perspective:RetryOptions:RetryTimeoutSeconds=1
+Whizbang:Workers:Perspective:WriteMode=SetBased
 Whizbang:Workers:PerspectiveAffinity:IdleEvictionWindow=00:15:00
 Whizbang:Workers:PerspectiveAffinity:LongHoldWarning=00:01:00
 Whizbang:Workers:PerspectiveAffinity:SweepInterval=00:01:00
