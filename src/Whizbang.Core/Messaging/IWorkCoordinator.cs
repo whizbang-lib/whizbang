@@ -102,6 +102,45 @@ public sealed record ServiceBacklog {
   /// can afford to wait, because its own deferral budget already bounds how long it will.
   /// </remarks>
   public bool IsQuiescent => IsSettled && PendingIdleRows == 0;
+
+  /// <summary>
+  /// Rows of the inbox, lease and outbox figures above that are NOT the framework's steady-state integrity traffic
+  /// (<see cref="SteadyIntegrityTraffic"/>): answered only as zero or not (a bound of one), or null when the backend
+  /// does not measure it.
+  /// </summary>
+  /// <remarks>
+  /// Every peer publishes an integrity checkpoint on its own cadence, and the redelivery requests and answers it sets off
+  /// arrive as background-band rows, so a service with no application work at all still reads a row or two every half
+  /// minute. Those are work for the figures above, and stay so: the integrity receptors read them to tell a row in flight
+  /// from a row missing. The housekeeping dwell reads this one instead (<see cref="IsQuiescentApartFromIntegrity"/>), so
+  /// the framework's own chatter never keeps an idle service from reading idle (#2253).
+  /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  public long? NonIntegrityWorkRows { get; init; }
+
+  /// <summary>
+  /// <see cref="IsQuiescent"/> with the framework's steady-state integrity traffic not counted as work: what the
+  /// housekeeping dwell waits for. Falls back to <see cref="IsQuiescent"/> when <see cref="NonIntegrityWorkRows"/> was not
+  /// measured.
+  /// </summary>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
+  public bool IsQuiescentApartFromIntegrity => IsSettledApartFromIntegrity && PendingIdleRows == 0;
+
+  /// <summary>
+  /// <see cref="IsSettled"/> with the framework's steady-state integrity traffic not counted as work: what admits the idle
+  /// drain (#2263). Falls back to <see cref="IsSettled"/> when <see cref="NonIntegrityWorkRows"/> was not measured.
+  /// </summary>
+  /// <remarks>Settled, not quiescent: the idle band is admitted BECAUSE it still holds rows, so its rows are not counted
+  /// (see <see cref="PendingIdleRows"/>).</remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToSettledAsync</tests>
+  public bool IsSettledApartFromIntegrity => NonIntegrityWorkRows is { } work
+    ? work == 0 && PendingPerspectiveRows == 0
+    : IsSettled;
 }
 
 
@@ -984,6 +1023,41 @@ public interface IWorkCoordinator {
   Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
     IReadOnlyList<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Guid>>([]);
+
+  /// <summary>
+  /// <see cref="GetStateBasedStreamIdsAsync(IReadOnlyList{Guid}, CancellationToken)"/> for a rebuild that may pass over
+  /// some ephemeral types: an event of one of <paramref name="ignoredEphemeralTypes"/> does not make its stream
+  /// state-based (a compaction origin always does). The rebuild passes the ephemeral side of each pair allowed to share a
+  /// stream (<see cref="Perspectives.MixedStreamAllowance"/>) that the rebuilt read model does not apply, so a read model
+  /// applying only the Sourced type rebuilds a mixed stream from its Sourced events (#2255). The default ignores
+  /// nothing: an engine that does not implement it refuses every stream holding an ephemeral event, as before.
+  /// </summary>
+  /// <param name="streamIds">Candidate stream ids to classify.</param>
+  /// <param name="ignoredEphemeralTypes">Ephemeral event types, as stored, that do not count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ids among <paramref name="streamIds"/> that are StateBased.</returns>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:StateBased_IgnoringTheAllowedEphemeralType_LeavesTheMixedStreamRebuildableAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync</tests>
+  Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds,
+    IReadOnlyList<string> ignoredEphemeralTypes,
+    CancellationToken cancellationToken = default) => GetStateBasedStreamIdsAsync(streamIds, cancellationToken);
+
+  /// <summary>
+  /// Replaces the (ephemeral type, Sourced type) pairs allowed to share a stream with <paramref name="pairs"/> (#2255):
+  /// the store's mixed-stream refusal (WHIZ133) lets either kind of an allowed pair join a stream holding the other.
+  /// Called once at startup by the type-definition reconciler, from the registered read models
+  /// (<see cref="Perspectives.MixedStreamAllowance"/>); an empty list allows nothing. No-op on engines without the
+  /// refusal.
+  /// </summary>
+  /// <param name="pairs">The allowed pairs, under every stored name of each type.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Sync_ReplacesThePairs_AndAnEmptyListClearsThemAsync</tests>
+  Task SyncMixedStreamAllowancesAsync(
+    IReadOnlyList<Perspectives.MixedStreamPair> pairs,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
   /// Replaces the per-type rewind-grace overrides (from <c>[Ephemeral(RewindGraceSeconds = …)]</c>): upserts
@@ -2225,6 +2299,29 @@ public interface IWorkCoordinator {
   Task<int> IntegrityMarkAnswerPendingAsync(
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
     DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
+  /// #2223: takes back the answer-pending record of repair requests whose send failed. The paced drain records a request's
+  /// buckets as awaiting their answer before it sends the request, so an origin that answers before the send returns
+  /// finds them awaiting it; when the send then fails, the request never left, and this clears the wait and returns the
+  /// attempt the drain's claim stamped at <paramref name="now"/>, so a failed send costs no attempt. Applies only to a
+  /// bucket still awaiting the answer that mark recorded (<see cref="IntegrityMarkAnswerPendingAsync"/> with the same
+  /// <paramref name="now"/> and <paramref name="timeout"/>) and claimed at that instant: an answer that landed meanwhile,
+  /// or a later request, stands. Best-effort: 0 = nothing withdrawn or unsupported. Default: 0.
+  /// </summary>
+  /// <param name="originServiceId">The origin the request was for.</param>
+  /// <param name="keys">The buckets the request covered.</param>
+  /// <param name="now">The drain's instant: when the buckets were claimed and marked.</param>
+  /// <param name="timeout">The answer timeout the mark recorded.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows withdrawn.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RepairDrainRecordsBeforeSendingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync</tests>
+  Task<int> IntegrityWithdrawAnswerPendingAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+    CancellationToken cancellationToken = default) =>
     Task.FromResult(0);
 
   /// <summary>

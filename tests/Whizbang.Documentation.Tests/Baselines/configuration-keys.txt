@@ -130,10 +130,12 @@ Whizbang:DebuggerAwareClock:FrozenThreshold
 Whizbang:DebuggerAwareClock:Mode
 Whizbang:DebuggerAwareClock:SamplingInterval
 Whizbang:DisableGuidTracking
+Whizbang:Ephemeral:BlockerReport:Enabled
 Whizbang:Ephemeral:PointerPrune:Enabled
 Whizbang:Ephemeral:PointerPrune:IntervalDays
 Whizbang:Ephemeral:PointerPrune:RetentionDays
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup
+Whizbang:Ephemeral:ReleaseBlockers:*:*
 Whizbang:Ephemeral:RewindGraceSeconds
 Whizbang:EventStore:Metadata:ConvertHistory
 Whizbang:EventStore:Metadata:FullFor:*

@@ -84,6 +84,8 @@ public sealed class RunPermitAuditTests {
     "RegistrationCollisionStartupValidator",
     // The startup settings report (#2251) writes one log entry per settings section when the host is up, and nothing else.
     "StartupSettingsReportService",
+    // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
+    "ServiceAssemblyScopeStartupReporter",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer", "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar",

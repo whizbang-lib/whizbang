@@ -32,6 +32,12 @@ Which columns hold which form:
   `PerspectiveRegistrationInfo.ClrTypeName`.
 - Wire form: `wh_event_store.event_type`, `wh_outbox.message_type`, `wh_inbox.message_type`,
   envelope type names on the wire.
+- Anything matched against `event_type` must be in the wire form too: the history walks
+  (`wh_type_history_walks.event_type`) and the per-type rewind grace (`wh_ephemeral_type_grace`).
+  `MessageTypeCatalogEntry.ClrTypeName` and the ledger's former names are the CLR form, so a key built from
+  them needs `TypeNameFormatter.Format(entry.Type)` and `TypeNameFormatter.FormatFormerName(entry.Type, name)`.
+  Issue #2254 is the bypass that made both silently match nothing; the guard is
+  `HistoryWalkTargetNamingTests`.
 
 The two helpers on each row are documented mirrors of each other, and
 `tests/Whizbang.Generators.Tests/TypeNameMirrorContractTests.cs` pins them to each other on one

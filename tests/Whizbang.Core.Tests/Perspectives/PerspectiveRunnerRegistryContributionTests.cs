@@ -227,4 +227,25 @@ public class PerspectiveRunnerRegistryContributionTests {
   public async Task CompositePerspectiveRunnerRegistry_NullRegistries_ThrowsAsync() {
     await Assert.That(() => new CompositePerspectiveRunnerRegistry(null!)).Throws<ArgumentNullException>();
   }
+
+  /// <summary>
+  /// Removing one assembly's registry from the collection leaves its contribution entry behind; building the served
+  /// registry must skip it, not throw "No service for type" (#2243), and the other assemblies' runners still answer.
+  /// </summary>
+  [Test]
+  public async Task AContributionWhoseRegistryWasRemoved_IsSkipped_AndTheHostStillBuildsAsync() {
+    var services = new ServiceCollection();
+    _add<OrdersAssemblyRegistry>(services);
+    _add<BillingAssemblyRegistry>(services);
+    services.Remove(services.Single(d => d.ServiceType == typeof(BillingAssemblyRegistry)));
+    await using var provider = services.BuildServiceProvider();
+
+    var registry = provider.GetRequiredService<IPerspectiveRunnerRegistry>();
+    var eventTypes = provider.GetRequiredService<IEventTypeProvider>().GetEventTypes();
+
+    await Assert.That(registry.GetRunner(ORDERS_PERSPECTIVE, provider)).IsNotNull();
+    await Assert.That(registry.GetRunner(BILLING_PERSPECTIVE, provider)).IsNull()
+      .Because("the removed registry contributes nothing");
+    await Assert.That(eventTypes).DoesNotContain(typeof(InvoiceIssued));
+  }
 }

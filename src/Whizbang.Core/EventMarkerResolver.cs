@@ -51,10 +51,13 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
   /// ledger's rename history) is indexed as an alias key to the same flags: persisted rows and
   /// in-flight envelopes written under a pre-rename CLR name must keep resolving, or the receive
   /// path's flag-driven gates (e.g. the composite no-consumer exemption) silently drop them.
-  /// A living entry's own name wins over another entry's former name (never shadow a live type).
+  /// A living entry's own name wins over another entry's former name (never shadow a live type). A former name is
+  /// indexed by its bare CLR name, the form <see cref="Resolve(string)"/> is asked by, also when the ledger records it
+  /// with the assembly the type moved from (#2264).
   /// </summary>
   /// <param name="catalog">The generated message-type catalog (the compile-time authority).</param>
   /// <tests>tests/Whizbang.Core.Tests/Minting/MintedTypeRenameCompatibilityTests.cs:EventMarkerResolver_OldClrName_ResolvesCompositeFlagAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/FormerNameFromAnotherAssemblyTests.cs:TheMarkerResolver_ResolvesTheBareFormerNameAsync</tests>
   public EventMarkerResolver(IMessageTypeCatalog catalog) {
     ArgumentNullException.ThrowIfNull(catalog);
     var entries = catalog.GetAll();
@@ -81,7 +84,7 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
     // own CLR name (name reuse) must not overwrite the live registration.
     foreach (var entry in entries) {
       var flags = _byClrTypeName[entry.ClrTypeName];
-      foreach (var formerName in entry.FormerNames.Where(n => !string.IsNullOrEmpty(n))) {
+      foreach (var formerName in entry.FormerClrTypeNames()) {
         _byClrTypeName.TryAdd(formerName, flags);
       }
     }

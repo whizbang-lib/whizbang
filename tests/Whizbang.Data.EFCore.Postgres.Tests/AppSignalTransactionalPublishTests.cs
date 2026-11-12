@@ -39,6 +39,33 @@ public class AppSignalTransactionalPublishTests : EFCoreTestBase {
   private const string TOPIC = "orders_changed";
   private const string SENTINEL = "sentinel";
 
+  /// <summary>
+  /// The whole of a TransactionScope test. One run in a merge queue hung for the 30 minute default with nothing to say
+  /// where; a bound this size fails a hang while the shard still has work to do.
+  /// </summary>
+  private const int TEST_BOUND_MS = 120_000;
+
+  /// <summary>The longest one step of a TransactionScope test may take before it fails, naming the step.</summary>
+  private static readonly TimeSpan _stepBound = TimeSpan.FromSeconds(45);
+
+  /// <summary>Awaits <paramref name="work"/>, failing with the step's name if it is not done within the step bound.</summary>
+  private static async Task _stepAsync(string step, Task work) {
+    try {
+      await work.WaitAsync(_stepBound);
+    } catch (TimeoutException ex) {
+      throw new TimeoutException($"Step '{step}' did not finish within {_stepBound.TotalSeconds:0} s.", ex);
+    }
+  }
+
+  /// <inheritdoc cref="_stepAsync(string, Task)"/>
+  private static async Task<T> _stepAsync<T>(string step, Task<T> work) {
+    try {
+      return await work.WaitAsync(_stepBound);
+    } catch (TimeoutException ex) {
+      throw new TimeoutException($"Step '{step}' did not finish within {_stepBound.TotalSeconds:0} s.", ex);
+    }
+  }
+
   private sealed class SingletonPublisher(IAppSignalChannel channel) {
     public IAppSignalChannel Channel { get; } = channel;
   }
@@ -197,28 +224,36 @@ public class AppSignalTransactionalPublishTests : EFCoreTestBase {
   }
 
   [Test]
+  [Timeout(TEST_BOUND_MS)]
   public async Task InsideATransactionScope_OnEFCore_IsHeardOnlyAfterCommitAsync(CancellationToken cancellationToken) {
-    await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
+    await using var probe = await _stepAsync("open the listening probe",
+      AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken));
     using var transport = _transport();
     await using var provider = _host(transport);
     await using var scope = provider.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
 
-    using (var ambient = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled)) {
+    // The scope's Dispose commits synchronously; run on its own task so the step bound covers it.
+    var heldBack = await _stepAsync("publish inside a TransactionScope and commit it", Task.Run(async () => {
+      using var ambient = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled);
       _ = await db.Database.ExecuteSqlRawAsync("SELECT 1", cancellationToken);
       await scope.ServiceProvider.GetRequiredService<IAppSignalChannel>().PublishAsync(TOPIC, "scoped", cancellationToken);
       await probe.SendSentinelAsync(SENTINEL, cancellationToken);
-      await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo(SENTINEL)
-        .Because("inside a TransactionScope the notification waits for the scope to commit");
+      var first = await probe.NextAsync(cancellationToken);
       ambient.Complete();
-    }
+      return first;
+    }, cancellationToken));
+    await Assert.That(heldBack).IsEqualTo(SENTINEL)
+      .Because("inside a TransactionScope the notification waits for the scope to commit");
 
     await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo("scoped");
   }
 
   [Test]
+  [Timeout(TEST_BOUND_MS)]
   public async Task InsideARolledBackTransactionScope_OnEFCore_IsNeverHeardAsync(CancellationToken cancellationToken) {
-    await using var probe = await AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken);
+    await using var probe = await _stepAsync("open the listening probe",
+      AppSignalNotifyProbe.ListenAsync(ConnectionString, TOPIC, cancellationToken));
     using var transport = _transport();
     var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     transport.DeferredTopicSettled = (_, delivered) => settled.TrySetResult(delivered);
@@ -226,14 +261,17 @@ public class AppSignalTransactionalPublishTests : EFCoreTestBase {
     await using var scope = provider.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
 
-    using (new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled)) {
-      _ = await db.Database.ExecuteSqlRawAsync("SELECT 1", cancellationToken);
-      await scope.ServiceProvider.GetRequiredService<IAppSignalChannel>().PublishAsync(TOPIC, "rolled-back", cancellationToken);
-    }
+    // The scope's Dispose rolls back synchronously; run on its own task so the step bound covers it.
+    await _stepAsync("publish inside a TransactionScope and dispose it without Complete", Task.Run(async () => {
+      using (new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled)) {
+        _ = await db.Database.ExecuteSqlRawAsync("SELECT 1", cancellationToken);
+        await scope.ServiceProvider.GetRequiredService<IAppSignalChannel>().PublishAsync(TOPIC, "rolled-back", cancellationToken);
+      }
+    }, cancellationToken));
 
     await Assert.That(await settled.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken)).IsFalse()
       .Because("a scope disposed without Complete rolls back, and its notification is dropped");
-    await probe.SendSentinelAsync(SENTINEL, cancellationToken);
+    await _stepAsync("send the sentinel", probe.SendSentinelAsync(SENTINEL, cancellationToken));
     await Assert.That(await probe.NextAsync(cancellationToken)).IsEqualTo(SENTINEL);
   }
 

@@ -8,6 +8,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -170,9 +171,37 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         RunnerName: $"{simpleName.Replace(".", "")}Runner",
         ModelType: TypeNameUtilities.FullyQualified(modelType),
         EventTypes: [.. eventTypes.Distinct()],
-        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
+        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()],
+        AllowsMixed: _allowsMixedEphemeralAndSourced(classSymbol),
+        AllowsMixedStreams: MixedStreamOptIn.AllowsStreams(classSymbol),
+        MixedStreamPairs: _mixedStreamPairs(singleStreamInterfaces, globalInterfaces)
     );
   }
+
+  /// <summary>
+  /// Every (ephemeral, Sourced) pair the perspective applies, as the stored names the runtime compares (#2255), or null
+  /// when it applies one kind only. Carried for every perspective that applies both, opted in or not: one without
+  /// <c>Streams = MixedStreams.Allow</c> keeps its pairs refused for every read model.
+  /// </summary>
+  private static EquatableArray<string>? _mixedStreamPairs(
+      List<INamedTypeSymbol> singleStreamInterfaces, List<INamedTypeSymbol> globalInterfaces) {
+    var events = singleStreamInterfaces.SelectMany(i => i.TypeArguments.Skip(1))
+      .Concat(globalInterfaces.SelectMany(i => i.TypeArguments.Skip(2)))
+      .Distinct<ITypeSymbol>(SymbolEqualityComparer.Default);
+    string[] pairs = [.. MixedStreamOptIn.Pairs(events)
+      .Select(p => $"new global::Whizbang.Core.Perspectives.MixedStreamPair(\"{TypeNameUtilities.FormatTypeNameForRuntime(p.Ephemeral)}\", \"{TypeNameUtilities.FormatTypeNameForRuntime(p.Durable)}\")")
+      .Distinct()];
+    return pairs.Length == 0 ? null : pairs;
+  }
+
+  /// <summary>
+  /// True when the perspective carries <c>[DangerouslyAllowMixedEphemeralAndSourcedEvents]</c> (#2250), matched by the
+  /// attribute's simple name as the ephemeral analyzer matches it, so the registry and WHIZ130 agree on which read models
+  /// opted in. The registry is generated only for a compilation that binds the attribute.
+  /// </summary>
+  private static bool _allowsMixedEphemeralAndSourced(INamedTypeSymbol perspective) =>
+    perspective.GetAttributes().Any(a => string.Equals(
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass), "DangerouslyAllowMixedEphemeralAndSourcedEventsAttribute", StringComparison.Ordinal));
 
   /// <summary>
   /// Checks if the model type has a property with the [StreamId] attribute.
@@ -248,7 +277,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     _appendFileHeader(source, namespaceName);
     _appendRegistryClass(source, perspectives, collectiveEventTypes);
     _appendExtensionsClass(source, perspectives);
-    _appendModuleInitializerClass(source, perspectives.Length);
+    _appendModuleInitializerClass(source, perspectives.Length, assemblyName);
 
     context.AddSource("PerspectiveRunnerRegistry.g.cs", source.ToString());
 
@@ -343,7 +372,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       source.AppendLine($"      \"{perspective.ClassName}\",");
       source.AppendLine($"      \"{perspective.ModelType}\",");
       source.AppendLine($"      [{eventTypesArray}]");
-      source.AppendLine("    ),");
+      source.AppendLine(_initializer(perspective));
     }
     source.AppendLine("  ];");
     source.AppendLine();
@@ -387,6 +416,24 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  public IReadOnlySet<global::Whizbang.Core.Messaging.LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<global::Whizbang.Core.Messaging.LifecycleStage>();");
     source.AppendLine("}");
     source.AppendLine();
+  }
+
+  /// <summary>
+  /// The close of one registration with its object initializer: the mixing opt-in (#2250), the stream allowance and the
+  /// mixed pairs it applies (#2255), each only when set.
+  /// </summary>
+  private static string _initializer(PerspectiveRegistryInfo perspective) {
+    var members = new List<string>(3);
+    if (perspective.AllowsMixed) {
+      members.Add("AllowsMixedEphemeralAndSourced = true");
+    }
+    if (perspective.AllowsMixedStreams) {
+      members.Add("MixedStreams = global::Whizbang.Core.Attributes.MixedStreams.Allow");
+    }
+    if (perspective.MixedStreamPairs is { } pairs) {
+      members.Add($"MixedStreamPairs = [{string.Join(", ", pairs)}]");
+    }
+    return members.Count == 0 ? "    )," : $"    ) {{ {string.Join(", ", members)} }},";
   }
 
   /// <summary>
@@ -447,7 +494,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Appends the PerspectiveRunnerInitializer module initializer class.
   /// </summary>
-  private static void _appendModuleInitializerClass(StringBuilder source, int perspectiveCount) {
+  private static void _appendModuleInitializerClass(StringBuilder source, int perspectiveCount, string assemblyName) {
     source.AppendLine("/// <summary>");
     source.AppendLine($"/// Auto-generated module initializer for registering {perspectiveCount} perspective runner(s).");
     source.AppendLine("/// Runs at module load time and registers with PerspectiveRunnerCallbackRegistry (AOT-compatible).");
@@ -464,7 +511,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("    // Register callback with the library's registry");
     source.AppendLine("    // When .WithDriver.Postgres (or similar) is called, this callback will be invoked");
     source.AppendLine("    // Wrap in lambda because AddPerspectiveRunners returns IServiceCollection (fluent API)");
-    source.AppendLine("    PerspectiveRunnerCallbackRegistry.RegisterCallback(services => {");
+    // #2243: named by this assembly, so a host runs only its own service's runner registrations
+    source.AppendLine($"    PerspectiveRunnerCallbackRegistry.RegisterCallback({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, services => {{");
     source.AppendLine("      _ = PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(services);");
     source.AppendLine("    });");
     source.AppendLine("  }");
@@ -483,6 +531,9 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 /// <param name="ModelType">Fully qualified model type from IPerspectiveFor&lt;TModel, TEvent&gt;</param>
 /// <param name="EventTypes">Runtime-format event types ("FullName, AssemblyName") for string matching in PerspectiveRegistrationInfo</param>
 /// <param name="EventTypesCodeGen">Code-generation-format event types ("global::FullName") for typeof() in generated code</param>
+/// <param name="AllowsMixed">Whether the perspective carries [DangerouslyAllowMixedEphemeralAndSourcedEvents] (#2250)</param>
+/// <param name="AllowsMixedStreams">Whether that attribute sets Streams = MixedStreams.Allow (#2255)</param>
+/// <param name="MixedStreamPairs">The generated MixedStreamPair constructions of the (ephemeral, Sourced) pairs it applies, or null (#2255)</param>
 internal sealed record PerspectiveRegistryInfo(
     string ClassName,
     string SimpleName,
@@ -490,5 +541,8 @@ internal sealed record PerspectiveRegistryInfo(
     string RunnerName,
     string ModelType,
     EquatableArray<string> EventTypes,
-    EquatableArray<string> EventTypesCodeGen
+    EquatableArray<string> EventTypesCodeGen,
+    bool AllowsMixed = false,
+    bool AllowsMixedStreams = false,
+    EquatableArray<string>? MixedStreamPairs = null
 );

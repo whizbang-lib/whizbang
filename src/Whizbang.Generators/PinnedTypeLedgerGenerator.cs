@@ -61,10 +61,13 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
     var enabled = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) =>
         !ConfigurationUtilities.IsTurnedOff(provider.GlobalOptions, INCLUDE_PROPERTY));
 
-    context.RegisterSourceOutput(pinnedTypes.Combine(existingLedger).Combine(enabled),
+    // The assembly the types are compiled in, which the ledger records so a type that moves assemblies is seen (#2264).
+    var assemblyName = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName);
+
+    context.RegisterSourceOutput(pinnedTypes.Combine(existingLedger).Combine(assemblyName).Combine(enabled),
         static (ctx, data) => {
           if (data.Right) {
-            _emit(ctx, data.Left.Left, data.Left.Right);
+            _emit(ctx, data.Left.Left.Left, data.Left.Left.Right, data.Left.Right);
           }
         });
   }
@@ -111,7 +114,8 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
   private static void _emit(
       SourceProductionContext context,
       ImmutableArray<DiscoveredPinnedType> discovered,
-      ImmutableArray<string?> ledgerTexts) {
+      ImmutableArray<string?> ledgerTexts,
+      string? assemblyName) {
 
     if (discovered.IsDefaultOrEmpty) {
       return; // no pinned types → don't materialize a ledger for this assembly
@@ -125,7 +129,7 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
 
     var existingJson = ledgerTexts.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
     var existing = PinnedTypeLedger.TryParse(existingJson);
-    var merged = PinnedTypeLedger.Merge(existing, byPinnedId.Values);
+    var merged = PinnedTypeLedger.Merge(existing, byPinnedId.Values, assemblyName);
 
     context.AddSource("PinnedTypeLedger.g.cs", _wrap(merged.ToJson()));
   }

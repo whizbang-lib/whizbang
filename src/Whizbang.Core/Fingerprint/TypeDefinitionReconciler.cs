@@ -68,13 +68,26 @@ public sealed partial class TypeDefinitionReconciler(
 
     // Sync per-type rewind-grace overrides ([Ephemeral(RewindGraceSeconds >= 0)]) so the reaper resolves
     // COALESCE(type grace, global default) per event. Full replace — declaring set upserted, rest pruned.
+    // The reaper joins the override to wh_event_store.event_type, so it is keyed by the stored form the append path
+    // writes, under the type's current name and every former one (#2254); the bare CLR name matched no event.
     var graceOverrides = new List<EphemeralTypeGrace>();
     foreach (var e in _catalog.GetAll()) {
       if (e.Ephemeral is { RewindGraceSeconds: >= 0 } eph) {
-        graceOverrides.Add(new EphemeralTypeGrace(e.ClrTypeName, eph.RewindGraceSeconds));
+        graceOverrides.Add(new EphemeralTypeGrace(TypeNameFormatter.Format(e.Type), eph.RewindGraceSeconds));
+        graceOverrides.AddRange(e.FormerNames
+          .Where(n => !string.IsNullOrWhiteSpace(n))
+          .Select(n => new EphemeralTypeGrace(TypeNameFormatter.FormatFormerName(e.Type, n), eph.RewindGraceSeconds)));
       }
     }
     await coordinator.SyncEphemeralTypeGraceAsync(graceOverrides, cancellationToken).ConfigureAwait(false);
+
+    // #2255: the (ephemeral, Sourced) pairs allowed to share a stream, from the registered read models, under every stored
+    // name of each type, so the store's mixed-stream refusal lets them mix. A full replace: with no read model allowing
+    // mixing (or no registry) the set is emptied, so a read model that drops the opt-in refuses mixing again.
+    var allowed = Whizbang.Core.Perspectives.MixedStreamAllowance.Stored(
+      Whizbang.Core.Perspectives.MixedStreamAllowance.Allowed(scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>()),
+      _catalog);
+    await coordinator.SyncMixedStreamAllowancesAsync(allowed, cancellationToken).ConfigureAwait(false);
 
     // Carry each perspective's row-retention declaration into the perspective registry, so the reaper
     // resolves enrolment and windows from SQL instead of having them threaded in every cycle.
