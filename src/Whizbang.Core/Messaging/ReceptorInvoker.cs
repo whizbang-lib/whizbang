@@ -210,6 +210,15 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
           ReceptorInterceptorGate.ReceptorScopeContext(_scopedProvider), _scopedProvider, cancellationToken);
 
   /// <inheritdoc/>
+  public ValueTask InvokeEveryReceptorAsync(
+      IMessageEnvelope envelope,
+      LifecycleStage stage,
+      ILifecycleContext? context,
+      IReceptorFailureSink failures,
+      CancellationToken cancellationToken = default) =>
+    InvokeAsync(envelope, stage, context, cancellationToken);
+
+  /// <inheritdoc/>
   public async ValueTask InvokeAsync(
       IMessageEnvelope envelope,
       LifecycleStage stage,

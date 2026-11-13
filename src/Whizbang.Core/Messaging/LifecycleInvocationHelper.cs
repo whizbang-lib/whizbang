@@ -33,7 +33,28 @@ public readonly record struct DistributeLifecycleContext(
   ILogger? Logger,
   bool EnableLifecycleTracing = true,
   LifecycleMetrics? Metrics = null,
-  DetachedLifecycleWork? DetachedWork = null);
+  DetachedLifecycleWork? DetachedWork = null) {
+  /// <summary>
+  /// What the inline stage does when a receptor throws. The default stops at the first failure and throws it, as an
+  /// inline stage that can still refuse the write always has.
+  /// </summary>
+  internal InlineStageFailureHandling InlineFailures { get; init; }
+}
+
+/// <summary>
+/// What an inline Distribute stage does when a receptor throws (#2310).
+/// </summary>
+/// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
+internal enum InlineStageFailureHandling {
+  /// <summary>The first failure stops the stage and is thrown: the stage can still refuse the write.</summary>
+  StopAtFirstFailure = 0,
+
+  /// <summary>Every receptor of every message runs and each failure is logged; the first is thrown once all have run.</summary>
+  RunEveryReceptorThenThrowFirst = 1,
+
+  /// <summary>Every receptor of every message runs and each failure is logged; nothing is thrown.</summary>
+  RunEveryReceptorAndLog = 2,
+}
 
 /// <summary>
 /// Static helper for invoking lifecycle receptors at async and inline stages.

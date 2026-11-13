@@ -163,6 +163,47 @@ public class WorkerPipelineExtensionsCoverageTests {
       .Because("the post-store failure has to say the store already happened, or a reader retries a batch that is safely persisted");
   }
 
+  [Test]
+  public async Task OutboxBulkFlushCallback_OneMessagesReceptorThrows_EveryOtherMessageStillRunsBothDistributeStagesAsync() {
+    // #2310: the batch coalesces messages from many streams (#2220), and one message's failing receptor used to skip the
+    // Pre/Distribute and PostDistributeInline stages for every message after it in the batch, logged as one error that
+    // named none of them. Now the failure is logged against its own message and every other message still runs.
+    var failing = _buildOutboxMessage();
+    var healthy = _buildOutboxMessage();
+    var invoker = new FailingForMessageInvoker(failing.MessageId);
+    var coordinator = new NoOpWorkCoordinator();
+    var loggerProvider = new RecordingLoggerProvider();
+
+    var services = _composeWorkerPipeline();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ILifecycleMessageDeserializer>(new ProbeLifecycleMessageDeserializer());
+    services.AddSingleton<ILoggerFactory>(new LoggerFactory([loggerProvider]));
+    services.AddSingleton<ISchemaReadyGate>(SchemaReadyGate.AlreadyReady());
+    services.AddScoped<IReceptorInvoker>(_ => invoker);
+
+    await using var provider = services.BuildServiceProvider();
+    var callback = provider.GetRequiredService<OutboxBulkFlushCallback>();
+
+    await callback([failing, healthy], CancellationToken.None);
+
+    await Assert.That(coordinator.StoredOutboxMessages.Count).IsEqualTo(2)
+      .Because("the store still happens for the whole batch");
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo(new[] { failing.MessageId, healthy.MessageId })
+      .Because("the healthy message's pre-store receptors run although the failing message's threw");
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { failing.MessageId, healthy.MessageId })
+      .Because("the healthy message's post-store receptors run although the failing message's threw");
+
+    var failures = loggerProvider.Snapshot()
+      .Where(e => e.Level == LogLevel.Error && e.Category == "Whizbang.Core.Workers.OutboxBatchFlush")
+      .ToList();
+    await Assert.That(failures.Count).IsEqualTo(2)
+      .Because("one entry per failure, at each inline stage it happened");
+    await Assert.That(failures.All(e => e.Message.Contains(failing.MessageId.ToString(), StringComparison.Ordinal))).IsTrue()
+      .Because("each entry names the message whose receptor failed");
+    await Assert.That(failures.Any(e => e.Message.Contains(healthy.MessageId.ToString(), StringComparison.Ordinal))).IsFalse()
+      .Because("no entry blames a message whose receptors succeeded");
+  }
+
   // ========================================
   // Helper Methods
   // ========================================
@@ -240,6 +281,31 @@ public class WorkerPipelineExtensionsCoverageTests {
 
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) =>
       throw new InvalidOperationException("Simulated lifecycle deserialize failure");
+  }
+
+  /// <summary>
+  /// Records each (stage, message) it runs and throws at the inline Distribute stages for one message.
+  /// </summary>
+  private sealed class FailingForMessageInvoker(Guid failFor) : IReceptorInvoker {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(LifecycleStage Stage, Guid MessageId)> _invoked = new();
+
+    public Guid[] InvokedAt(LifecycleStage stage) => [.. _invoked.Where(i => i.Stage == stage).Select(i => i.MessageId)];
+
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      _invoked.Enqueue((stage, envelope.MessageId.Value));
+      if (envelope.MessageId.Value == failFor && stage is LifecycleStage.PreDistributeInline or LifecycleStage.PostDistributeInline) {
+        throw new InvalidOperationException($"receptor failed for {failFor}");
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>Reads every payload as a <see cref="PipelineFlushCoverageTestEvent"/>.</summary>
+  private sealed class ProbeLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new PipelineFlushCoverageTestEvent();
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new PipelineFlushCoverageTestEvent();
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new PipelineFlushCoverageTestEvent();
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new PipelineFlushCoverageTestEvent();
   }
 
   /// <summary>
@@ -327,8 +393,8 @@ public class WorkerPipelineExtensionsCoverageTests {
 }
 
 /// <summary>
-/// Test event used only for the envelope-type string in WorkerPipelineExtensionsCoverageTests'
-/// outbox flush callback test; never actually deserialized (the fake deserializer always throws).
+/// Test event for WorkerPipelineExtensionsCoverageTests' outbox flush callback tests: the envelope-type string, and
+/// what the probe deserializer returns for every payload.
 /// </summary>
 public record PipelineFlushCoverageTestEvent : IEvent {
   [StreamId]
