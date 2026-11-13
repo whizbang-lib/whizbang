@@ -601,7 +601,31 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           : null,
         DeclaredConverters: declaredConverters,
         KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol),
-        IsRecursive: MappedPathDiscovery.IsRecursive(modelType as INamedTypeSymbol));
+        IsRecursive: MappedPathDiscovery.IsRecursive(modelType as INamedTypeSymbol),
+        StreamIdPropertyName: _guidStreamIdProperty(modelType));
+  }
+
+  /// <summary>
+  /// The model's <c>[StreamId]</c> property when it is a <see cref="System.Guid"/> or nullable one, so a
+  /// filter on it can also be answered by the row's primary key; null otherwise.
+  /// </summary>
+  /// <remarks>
+  /// Looks at the model's own members only, as the perspective runner does when it seeds a new model with
+  /// its stream id. A string or strongly-typed key is left out: the row's id is a <see cref="System.Guid"/>,
+  /// and there is no comparison between the two the database could serve with its primary key.
+  /// </remarks>
+  /// <param name="modelType">The perspective's model type.</param>
+  private static string? _guidStreamIdProperty(ITypeSymbol modelType) {
+    foreach (var property in modelType.GetMembers().OfType<IPropertySymbol>()) {
+      if (property.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute"))) {
+        var type = property.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+          ? nullable.TypeArguments[0]
+          : property.Type;
+        return TypeNameUtilities.IsNamed(type, "System.Guid") ? property.Name : null;
+      }
+    }
+
+    return null;
   }
 
   /// <summary>
@@ -710,7 +734,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelCopy: candidate.ModelCopy,
         DeclaredConverters: candidate.DeclaredConverters,
         KeptObjects: candidate.KeptObjects,
-        IsRecursive: candidate.IsRecursive);
+        IsRecursive: candidate.IsRecursive,
+        StreamIdPropertyName: candidate.StreamIdPropertyName);
   }
 
 
@@ -1938,6 +1963,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // registrations are needed whenever either kind is present.
       if (model.PhysicalFields.Length > 0 || model.JsonIndexes.Length > 0) {
         _appendPhysicalFieldRegistrations(sb, model);
+      }
+    }
+
+    foreach (var model in group.Models) {
+      // A filter on the model's stream id is also answered by the row's primary key (#2302).
+      if (model.StreamIdPropertyName is { } streamIdProperty) {
+        sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.StreamIdRegistry.Register<{model.ModelTypeName}>(\"{streamIdProperty}\");");
       }
     }
 
@@ -3943,6 +3975,7 @@ internal sealed record DbContextInfo(
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 /// <param name="PerspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c>): the name its work rows carry</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the hydrators copy it; null otherwise</param>
+/// <param name="StreamIdPropertyName">The model's <c>Guid</c> <c>[StreamId]</c> property, registered so a filter on it can use the primary key (#2302); null otherwise</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3965,7 +3998,8 @@ internal sealed record PerspectiveModelInfo(
     ModelCopyInfo? ModelCopy = null,
     ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
     ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default,
-    bool IsRecursive = false);
+    bool IsRecursive = false,
+    string? StreamIdPropertyName = null);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3991,6 +4025,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 /// <param name="PerspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c>): the name its work rows carry</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the hydrators copy it; null otherwise</param>
+/// <param name="StreamIdPropertyName">The model's <c>Guid</c> <c>[StreamId]</c> property, registered so a filter on it can use the primary key (#2302); null otherwise</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -4013,7 +4048,8 @@ internal sealed record PerspectiveModelCandidate(
     ModelCopyInfo? ModelCopy = null,
     ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
     ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default,
-    bool IsRecursive = false);
+    bool IsRecursive = false,
+    string? StreamIdPropertyName = null);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.
