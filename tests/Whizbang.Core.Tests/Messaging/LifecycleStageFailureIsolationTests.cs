@@ -45,7 +45,7 @@ public class LifecycleStageFailureIsolationTests {
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId, third.MessageId])
       .Because("the first message's failure must not skip the inline stage for the messages after it in the flush");
-    var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Error);
+    var failure = _errorsAt(logger, LifecycleStage.PostDistributeInline).Single();
     await Assert.That(failure.Message).Contains(first.MessageId.ToString())
       .Because("the log entry must name the message whose stage failed");
     await Assert.That(failure.Message).Contains(MESSAGE_TYPE)
@@ -74,7 +74,7 @@ public class LifecycleStageFailureIsolationTests {
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId])
       .Because("inbox messages in the same flush are isolated the same way");
-    await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(1);
+    await Assert.That(_errorsAt(logger, LifecycleStage.PostDistributeInline).Count).IsEqualTo(1);
   }
 
   [Test]
@@ -101,7 +101,7 @@ public class LifecycleStageFailureIsolationTests {
       .Because("the exception thrown is the first failure's own, so a caller sees what it always saw");
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId, third.MessageId])
       .Because("every message's receptors run before the first failure is thrown");
-    await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(2)
+    await Assert.That(_errorsAt(logger, LifecycleStage.PostDistributeInline).Count).IsEqualTo(2)
       .Because("each failure is logged, including the ones that are not thrown");
   }
 
@@ -142,7 +142,7 @@ public class LifecycleStageFailureIsolationTests {
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([readable.MessageId])
       .Because("a payload that cannot be read costs only its own message");
-    var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Error);
+    var failure = _errorsAt(logger, LifecycleStage.PostDistributeInline).Single();
     await Assert.That(failure.Message).Contains(unreadable.MessageId.ToString());
     await Assert.That(failure.Message).Contains(MESSAGE_TYPE);
   }
@@ -187,7 +187,7 @@ public class LifecycleStageFailureIsolationTests {
     await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId]);
-    await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(1);
+    await Assert.That(_errorsAt(logger, LifecycleStage.PostDistributeInline).Count).IsEqualTo(1);
   }
 
   [Test]
@@ -374,6 +374,13 @@ public class LifecycleStageFailureIsolationTests {
   // ========================================
   // Helpers
   // ========================================
+
+  /// <summary>
+  /// The Error entries logged for <paramref name="stage"/>. The call under test also starts the detached stage, which logs
+  /// to the same logger in the background, so a test reads only the stage it asserts on.
+  /// </summary>
+  private static List<FakeLogRecord> _errorsAt(FakeLogger logger, LifecycleStage stage) =>
+    [.. logger.Collector.GetSnapshot().Where(r => r.Level == LogLevel.Error && r.Message.Contains(stage.ToString(), StringComparison.Ordinal))];
 
   private static ServiceProvider _provider(IReceptorInvoker invoker) {
     var services = new ServiceCollection();
