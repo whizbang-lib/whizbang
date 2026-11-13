@@ -312,7 +312,7 @@ public partial class PerspectiveWorkerDrainModeTests {
   public async Task SetBasedDrain_APairWhoseRunnerCannotBeResolved_IsLeftOut_AndTheStreamsOtherPairRunsAsync(CancellationToken cancellationToken) {
     // A set-based pair the drain cannot begin (its runner is not resolved here) is left out of the lap's batch, as the
     // per-pair path leaves it; the stream's per-stream pair is applied and reported as usual.
-    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { AlsoPerStream = true, SetBasedUnresolvable = true };
+    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { AlsoPerStream = true, SetBasedUnresolvable = true, WaitForBatchEnd = true };
     var stream = Guid.NewGuid();
 
     await rig.DrainExpectingAsync([stream], expectedReports: 1, expectedFailures: 0, cancellationToken);
@@ -458,6 +458,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public bool CursorsPerPair { get; init; }
     public Guid? RewindFlagWithoutTriggerFor { get; init; }
     public bool SetBasedUnresolvable { get; init; }
+    public bool WaitForBatchEnd { get; init; }
     public Guid? ReadThrowsFor { get; init; }
     public Guid? ResumesAfterCursor { get; init; }
     public Guid? CaughtUp { get; init; }
@@ -689,9 +690,16 @@ public partial class PerspectiveWorkerDrainModeTests {
           }
         }
       }
+      var firstCycle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      worker.OnBatchCycleComplete += () => firstCycle.TrySetResult();
       using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
       await worker.StartAsync(cts.Token);
       await (_stopOnPrepare ? prepareEntered.Task : Coordinator.AllReported).WaitAsync(ct);
+      if (WaitForBatchEnd) {
+        // The reports can all be in before the batch has ended (a per-stream pair reports before the set-based lap
+        // begins): the worker is stopped only once the batch has run to its end.
+        await firstCycle.Task.WaitAsync(ct);
+      }
       await cts.CancelAsync();
       await worker.ExecuteTask!.WaitAsync(ct).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
       await provider.DisposeAsync();
