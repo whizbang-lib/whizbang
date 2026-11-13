@@ -75,6 +75,40 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     await Assert.That(await sp.GetRequiredService<IPerspectiveRebuilder>().GetRebuildStatusAsync(PERSPECTIVE)).IsNull();
   }
 
+  /// <summary>
+  /// #2299: a blue-green rebuild keeps the live table's storage settings. The swap installs the shadow table under the
+  /// live name, and <c>LIKE … INCLUDING ALL</c> copies no storage parameters, so before #2299 the rebuilt table came out
+  /// with none: its fillfactor and autovacuum settings, and its TOAST relation's, were lost until the next start.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_TheSwappedTable_KeepsTheLiveTablesStorageSettingsAsync() {
+    var stream = Guid.NewGuid();
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask);
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 10m });
+    await _registerTableAsync();
+    await using (var conn = await _openAsync()) {
+      await conn.ExecuteAsync($"""
+        ALTER TABLE {TABLE} SET (fillfactor = 90, autovacuum_vacuum_threshold = 500, toast.autovacuum_vacuum_scale_factor = 0.05)
+        """);
+    }
+
+    var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    await Assert.That(await _liveBalancesAsync()).IsEquivalentTo(new Dictionary<Guid, decimal> { [stream] = 10m });
+    await using var verify = await _openAsync();
+    await using var cmd = verify.CreateCommand();
+    cmd.CommandText = $"""
+      SELECT array_to_string(c.reloptions, ','), array_to_string(t.reloptions, ',')
+      FROM pg_class c LEFT JOIN pg_class t ON t.oid = c.reltoastrelid WHERE c.oid = '{TABLE}'::regclass
+      """;
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    await Assert.That(reader.GetString(0)).IsEqualTo("fillfactor=90,autovacuum_vacuum_threshold=500")
+      .Because("the rebuilt table is the one now live, and it holds the settings the live table had.");
+    await Assert.That(reader.GetString(1)).IsEqualTo("autovacuum_vacuum_scale_factor=0.05");
+  }
+
   [Test]
   public async Task Store_InARedirectedFlow_ReadsWritesAndPurgesTheShadowTableOnlyAsync() {
     await using (var conn = await _openAsync()) {

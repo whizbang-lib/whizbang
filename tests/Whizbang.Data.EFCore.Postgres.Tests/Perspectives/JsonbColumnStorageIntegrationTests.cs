@@ -340,6 +340,51 @@ public class JsonbColumnStorageIntegrationTests {
     await Assert.That(await _reloptionsAsync()).Contains("fillfactor=65");
   }
 
+  /// <summary>
+  /// #2299: a blue-green swap of a table whose model declares <c>FillFactor = 90</c>, an autovacuum threshold and a
+  /// TOAST autovacuum threshold leaves all three on the table that is live after the swap, so the next start finds it
+  /// in line and the rebuilt rows sit on pages filled at the declared fillfactor.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#blue-green-storage-settings</docs>
+  [Test]
+  public async Task ABlueGreenSwap_KeepsTheDeclaredStorageSettingsAsync() {
+    await _swapAsync();
+
+    await Assert.That(await _reloptionsAsync()).Contains("fillfactor=90").And.Contains("autovacuum_vacuum_threshold=500");
+    await Assert.That(await _toastReloptionsAsync()).IsEqualTo("autovacuum_vacuum_threshold=300");
+  }
+
+  /// <summary>
+  /// #2299: a table managed by hand keeps the values it holds through a blue-green swap. The swapper copies what is
+  /// live, never the model's values, so a DBA's tuning is not replaced by the declaration the start deliberately
+  /// leaves unapplied.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#blue-green-storage-settings</docs>
+  [Test]
+  public async Task ABlueGreenSwap_OfAManuallyManagedTable_KeepsItsLiveSettingsAsync() {
+    await _execAsync($"""
+      UPDATE wh_settings SET setting_value = '{TABLE}' WHERE setting_key = '{PerspectiveStorageParameters.MANUAL_TABLES_SETTING}';
+      ALTER TABLE {TABLE} SET (fillfactor = 70, autovacuum_vacuum_insert_threshold = 1234);
+      """);
+
+    await _swapAsync();
+
+    var held = await _reloptionsAsync();
+    await Assert.That(held).Contains("fillfactor=70").And.Contains("autovacuum_vacuum_insert_threshold=1234")
+      .Because("the live table's hand-set values are what the swapped table keeps, not the model's fillfactor 90.");
+  }
+
+  private async Task _swapAsync() {
+    var swapper = new Whizbang.Data.Postgres.Perspectives.PostgresPerspectiveTableSwapper(async ct => {
+      var connection = new NpgsqlConnection(_connectionString);
+      await connection.OpenAsync(ct);
+      return connection;
+    }, "public");
+    var shadow = await swapper.CreateShadowAsync(TABLE, CancellationToken.None);
+    await swapper.SwapAsync(new Whizbang.Core.Perspectives.PerspectiveTableSwap(TABLE, shadow, false, TimeSpan.FromSeconds(10)),
+      _ => Task.CompletedTask, CancellationToken.None);
+  }
+
   /// <summary>A reconcile whose own connection cannot be opened logs a warning and returns; it never fails the start.</summary>
   /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
   [Test]
