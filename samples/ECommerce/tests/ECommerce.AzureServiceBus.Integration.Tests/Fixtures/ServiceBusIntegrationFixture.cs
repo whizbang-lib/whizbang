@@ -984,7 +984,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
           break; // Success
         } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
-          // 40P01 = deadlock_detected — workers still hold locks, retry after delay
+          // 40P01 = deadlock_detected: workers still hold locks, retry after delay
           Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
           await Task.Delay(500 * attempt, cancellationToken);
         } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
