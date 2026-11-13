@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -337,11 +338,12 @@ public class IntegrityAuditWorkerTests {
   [Arguments(true)]
   public async Task EveryCycle_NamesTheRecordedOriginGenerationAsync(bool sweep) {
     var coordinator = new AuditCoordinator { SealedThrough = 123, SealGeneration = 41 };
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock.GetUtcNow(), "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = sweep ? 1 : 0 }, tracker);
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = sweep ? 1 : 0 }, tracker, clock: clock);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -353,10 +355,11 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task FirstContact_NamesNoOriginGenerationAsync() {
     var coordinator = new AuditCoordinator();
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock.GetUtcNow(), "origin-a.requests");
     var transport = new CaptureTransport();
-    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker, clock: clock);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -658,8 +661,12 @@ public class IntegrityAuditWorkerTests {
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegritySweepScheduleState? sweepState = null,
-      ILogger<IntegrityAuditWorker>? logger = null) {
+      ILogger<IntegrityAuditWorker>? logger = null,
+      TimeProvider? clock = null) {
     var services = new ServiceCollection();
+    if (clock is not null) {
+      services.AddSingleton(clock);
+    }
     if (sweepState is not null) {
       services.AddSingleton(sweepState);
     }
