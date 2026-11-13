@@ -100,11 +100,11 @@ public class WorkerPipelineExtensionsCoverageTests {
   [Test]
   public async Task OutboxBulkFlushCallback_WhenLifecycleStagesThrow_StillStoresAndLogsBothFailuresAsync() {
     // The call site's own comment is explicit: "The storage call MUST happen; without it the
-    // message is permanently lost." Both the Pre/Distribute (before store) and Post-Distribute
-    // (after store) lifecycle invocations are wrapped in their own try/catch specifically so a
-    // misbehaving deserializer or receptor can never block — or silently skip logging — the
-    // actual outbox storage write.
+    // message is permanently lost." A misbehaving deserializer or receptor at either inline stage
+    // (before store and after it) must never block -- or silently skip logging -- the actual
+    // outbox storage write. Each failure is logged against its own stage and message (#2310).
     var messages = new[] { _buildOutboxMessage() };
+    var messageId = messages[0].MessageId.ToString();
     var coordinator = new NoOpWorkCoordinator();
     var loggerProvider = new RecordingLoggerProvider();
 
@@ -130,37 +130,16 @@ public class WorkerPipelineExtensionsCoverageTests {
     await Assert.That(coordinator.StoredOutboxMessages.Count).IsEqualTo(1)
       .Because("the exact batch handed to the callback must reach storage unchanged");
 
-    // Not a count: the fire-and-forget DistributeDetached stage logs its own failure too, so the
-    // total is three. What matters is that the two the callback catches are individually
-    // distinguishable -- merging or dropping either hides which half of the pipeline broke.
-    // Filtered by level and message only, deliberately not by exception type: the two failures this
-    // test is about carry whatever the deserializer threw, and pinning that would couple the test to
-    // an unrelated implementation detail while silently dropping the very entries it looks for.
-    // Wait for BOTH entries this test asserts on before reading the log. The snapshot below is
-    // thread-safe, but that only stops entries being lost -- it does not make them present. Both
-    // are emitted from stages the callback does not await (the pre-distribute stage is detached
-    // and reports its own failure), so either can still be missing when the callback returns.
-    // Waiting on only one of them left the other decided by scheduling luck.
-    await Task.WhenAll(
-      loggerProvider.WaitForAsync(e => e.Level == LogLevel.Error
-                                    && e.Message.Contains("lifecycle receptors", StringComparison.Ordinal)),
-      loggerProvider.WaitForAsync(e => e.Level == LogLevel.Error
-                                    && e.Message.Contains("after store", StringComparison.Ordinal)))
-      .WaitAsync(TimeSpan.FromSeconds(10));
-
+    // Both inline stages ran on this thread, so their entries exist by now; the detached stages log their own failures
+    // from the background and are not what this test is about.
     var errors = loggerProvider.Snapshot()
       .Where(e => e.Level == LogLevel.Error)
       .Select(e => e.Message)
       .ToList();
-    // The pre-distribute stage reports its own failure and does not rethrow -- observed here as
-    // "Error invoking PreDistributeDetached lifecycle receptors" -- so the callback's pre-store
-    // catch does not see it. That is fine for the invariant under test: what must hold is that a
-    // failing lifecycle stage never blocks the store, and that the post-store failure is
-    // distinguishable from the pre-store one so a reader knows the batch is already persisted.
-    await Assert.That(errors.Any(m => m.Contains("lifecycle receptors", StringComparison.Ordinal))).IsTrue()
-      .Because("a lifecycle stage that fails silently leaves no trace that a receptor never ran");
-    await Assert.That(errors.Any(m => m.Contains("after store", StringComparison.Ordinal))).IsTrue()
-      .Because("the post-store failure has to say the store already happened, or a reader retries a batch that is safely persisted");
+    await Assert.That(errors.Any(m => m.Contains("PreDistributeInline", StringComparison.Ordinal) && m.Contains(messageId, StringComparison.Ordinal))).IsTrue()
+      .Because("a pre-store failure that is not logged leaves no trace that a receptor never ran");
+    await Assert.That(errors.Any(m => m.Contains("PostDistributeInline", StringComparison.Ordinal) && m.Contains(messageId, StringComparison.Ordinal))).IsTrue()
+      .Because("the post-store failure has to name its stage, so a reader knows the batch is already persisted");
   }
 
   [Test]
@@ -309,49 +288,19 @@ public class WorkerPipelineExtensionsCoverageTests {
   }
 
   /// <summary>
-  /// Real ILoggerFactory backed by an in-memory ILoggerProvider so tests can assert on the exact
-  /// error entries recorded — proving a failure was actually logged, not just "did not throw".
-  /// </summary>
-  /// <summary>
-  /// Records every log entry and lets a test wait for one.
+  /// Records every log entry, so a test can assert a failure was actually logged, not just "did not throw".
   /// </summary>
   /// <remarks>
-  /// Both pieces are load-bearing. Some pipeline stages log from work the caller does not await,
-  /// so entries arrive on other threads: the list is guarded rather than handed out raw, and
-  /// <see cref="WaitForAsync"/> replaces reading the list the instant the callback returns — which
-  /// passed or failed on whether the detached stage had gotten there yet.
+  /// The detached lifecycle stages log from background threads while the inline stages log on the test's thread, so
+  /// the list is guarded rather than handed out raw: an unsynchronized add racing across threads can drop an entry.
   /// </remarks>
   private sealed class RecordingLoggerProvider : ILoggerProvider {
-    // The fire-and-forget detached lifecycle stages log from background threads while the inline
-    // stages log on the test's thread. An unsynchronized List<T>.Add racing across threads can
-    // drop an entry, which read here as "the post-store failure was never logged".
     private readonly Lock _sync = new();
     private readonly List<(string Category, LogLevel Level, Exception? Exception, string Message)> _entries = [];
-    private readonly List<(Func<(string Category, LogLevel Level, Exception? Exception, string Message), bool> Match,
-                           TaskCompletionSource Signal)> _waiters = [];
 
     public List<(string Category, LogLevel Level, Exception? Exception, string Message)> Snapshot() {
       lock (_sync) {
         return [.. _entries];
-      }
-    }
-
-    /// <summary>
-    /// Completes once an entry matching <paramref name="predicate"/> has been recorded — including
-    /// one recorded before this call.
-    /// </summary>
-    /// <remarks>
-    /// The lock above keeps entries from being lost; this keeps a test from reading before the
-    /// entry it asserts on exists. Stages the caller does not await log after it returns, so
-    /// snapshotting on return decides the assertion on scheduling luck.
-    /// </remarks>
-    public Task WaitForAsync(
-        Func<(string Category, LogLevel Level, Exception? Exception, string Message), bool> predicate) {
-      lock (_sync) {
-        if (_entries.Any(predicate)) { return Task.CompletedTask; }
-        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _waiters.Add((predicate, signal));
-        return signal.Task;
       }
     }
 
@@ -360,19 +309,9 @@ public class WorkerPipelineExtensionsCoverageTests {
     public void Dispose() { }
 
     private void _record(string category, LogLevel level, Exception? exception, string message) {
-      var entry = (Category: category, Level: level, Exception: exception, Message: message);
-      List<TaskCompletionSource> ready = [];
       lock (_sync) {
-        _entries.Add(entry);
-        for (var i = _waiters.Count - 1; i >= 0; i--) {
-          if (_waiters[i].Match(entry)) {
-            ready.Add(_waiters[i].Signal);
-            _waiters.RemoveAt(i);
-          }
-        }
+        _entries.Add((category, level, exception, message));
       }
-      // Completed outside the lock: a continuation must never run while holding it.
-      foreach (var signal in ready) { signal.TrySetResult(); }
     }
 
     private sealed class RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {

@@ -5,6 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.ExceptionServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -69,8 +71,19 @@ internal enum InlineStageFailureHandling {
 /// <strong>Thread Safety:</strong> Snapshots collections before Task.Run to avoid race conditions
 /// when the main thread modifies collections during background iteration.
 /// </para>
+/// <para>
+/// <strong>Failures (#2310):</strong> a flush holds messages from many streams, so one receptor's exception must cost
+/// only its own message. The detached stage always runs every receptor of every message and logs each failure. The
+/// inline stage does what <see cref="DistributeLifecycleContext"/> asks: stop at the first failure (the default, for a
+/// stage that can still refuse the write), or run every receptor of every message, log each failure, and then either
+/// throw the first one or nothing.
+/// </para>
 /// </remarks>
-public static class LifecycleInvocationHelper {
+/// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
+/// <docs>operations/diagnostics/error-reference#distribute-receptor-failed</docs>
+/// <docs>operations/diagnostics/error-reference#distribute-message-failed</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleStageFailureIsolationTests.cs</tests>
+public static partial class LifecycleInvocationHelper {
   private const string METRIC_STAGE = "stage";
   private const string METRIC_MESSAGE_TYPE = "message_type";
 
@@ -115,13 +128,23 @@ public static class LifecycleInvocationHelper {
     context.Metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, inlineStage.ToString()));
     var stageSw = Stopwatch.StartNew();
 
-    await _processOutboxMessagesAsync(outboxSnapshot, inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, ct);
-    await _processInboxMessagesAsync(inboxSnapshot, inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, ct);
+    // One collector for the whole stage, and only when the stage isolates failures: the default stops at the first
+    // failure and needs none, so a flush that never fails allocates nothing per message for this.
+    var failures = context.InlineFailures == InlineStageFailureHandling.StopAtFirstFailure
+      ? null
+      : new StageFailures(context.Logger, context.Metrics, inlineStage);
+    var stage = new StageInvocation(inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, failures);
+    await _processOutboxMessagesAsync(outboxSnapshot, stage, ct);
+    await _processInboxMessagesAsync(inboxSnapshot, stage, ct);
 
     stageSw.Stop();
     context.Metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
       new KeyValuePair<string, object?>(METRIC_STAGE, inlineStage.ToString()),
       new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"));
+
+    if (context.InlineFailures == InlineStageFailureHandling.RunEveryReceptorThenThrowFirst) {
+      failures!.ThrowFirst();
+    }
   }
 
   /// <summary>
@@ -178,15 +201,12 @@ public static class LifecycleInvocationHelper {
       deps.Metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()));
       var stageSw = Stopwatch.StartNew();
 
+      // Nothing waits on a detached stage, so each failure is logged against its own message and the rest still run.
+      var stage = new StageInvocation(asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics,
+        new StageFailures(deps.Logger, deps.Metrics, asyncStage));
       try {
-        await _processOutboxMessagesAsync(outboxSnapshot, asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics, ct);
-        await _processInboxMessagesAsync(inboxSnapshot, asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics, ct);
-      } catch (Exception ex) {
-        _logLifecycleError(deps.Logger, asyncStage, ex);
-        deps.Metrics?.ReceptorErrors.Add(1,
-          new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
-          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"),
-          new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
+        await _processOutboxMessagesAsync(outboxSnapshot, stage, ct);
+        await _processInboxMessagesAsync(inboxSnapshot, stage, ct);
       } finally {
         stageSw.Stop();
         deps.Metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
@@ -196,67 +216,22 @@ public static class LifecycleInvocationHelper {
     }, ct);
   }
 
-  /// <summary>
-  /// Logs lifecycle invocation errors if a logger is available.
-  /// </summary>
-  private static void _logLifecycleError(ILogger? logger, LifecycleStage stage, Exception ex) {
-    if (logger is null) {
-      return;
-    }
-
-#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-    logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", stage);
-#pragma warning restore CA1848
-  }
+  /// <summary>What every message of one stage of a flush is invoked with.</summary>
+  private sealed record StageInvocation(
+    LifecycleStage Stage,
+    IServiceScopeFactory ScopeFactory,
+    ILifecycleMessageDeserializer Deserializer,
+    bool EnableLifecycleTracing,
+    LifecycleMetrics? Metrics,
+    StageFailures? Failures);
 
   /// <summary>
   /// Processes outbox messages for a given lifecycle stage using scoped IReceptorInvoker.
   /// ReceptorInvoker handles all context establishment (security, message context, trace parenting).
   /// </summary>
-  private static async Task _processOutboxMessagesAsync(
-      OutboxMessage[] messages,
-      LifecycleStage stage,
-      IServiceScopeFactory scopeFactory,
-      ILifecycleMessageDeserializer lifecycleMessageDeserializer,
-      bool enableLifecycleTracing,
-      LifecycleMetrics? metrics,
-      CancellationToken ct) {
+  private static async Task _processOutboxMessagesAsync(OutboxMessage[] messages, StageInvocation stage, CancellationToken ct) {
     foreach (var outboxMsg in messages) {
-      var extracted = EnvelopeContextExtractor.ExtractFromHops(outboxMsg.Envelope.Hops);
-      var parentContext = extracted.TraceContext;
-
-      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-        var context = _createLifecycleContext(stage, MessageSource.Outbox);
-        // Resolve the invoker before deserializing: a host without one has nothing to invoke, so the
-        // payload round trip (and any failure it could raise) is work with no consumer.
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-        if (receptorInvoker is null) {
-          continue;
-        }
-        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-        MessageParseDiagnostics.Record(outboxMsg.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
-        var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-
-        metrics?.ReceptorInvocations.Add(1,
-          new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
-          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
-        var receptorSw = Stopwatch.StartNew();
-        try {
-          await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
-        } catch (Exception ex) {
-          metrics?.ReceptorErrors.Add(1,
-            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
-            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType),
-            new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
-          throw;
-        } finally {
-          receptorSw.Stop();
-          metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
-            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
-            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
-        }
-      }
+      await _invokeMessageAsync(outboxMsg.Envelope, outboxMsg.MessageType, outboxMsg.MessageId, MessageSource.Outbox, stage, ct);
     }
   }
 
@@ -264,51 +239,132 @@ public static class LifecycleInvocationHelper {
   /// Processes inbox messages for a given lifecycle stage using scoped IReceptorInvoker.
   /// ReceptorInvoker handles all context establishment (security, message context, trace parenting).
   /// </summary>
-  private static async Task _processInboxMessagesAsync(
-      InboxMessage[] messages,
-      LifecycleStage stage,
-      IServiceScopeFactory scopeFactory,
-      ILifecycleMessageDeserializer lifecycleMessageDeserializer,
-      bool enableLifecycleTracing,
-      LifecycleMetrics? metrics,
-      CancellationToken ct) {
+  private static async Task _processInboxMessagesAsync(InboxMessage[] messages, StageInvocation stage, CancellationToken ct) {
     foreach (var inboxMsg in messages) {
-      var extracted = EnvelopeContextExtractor.ExtractFromHops(inboxMsg.Envelope.Hops);
-      var parentContext = extracted.TraceContext;
+      await _invokeMessageAsync(inboxMsg.Envelope, inboxMsg.MessageType, inboxMsg.MessageId, MessageSource.Inbox, stage, ct);
+    }
+  }
 
-      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-        var context = _createLifecycleContext(stage, MessageSource.Inbox);
-        // Resolve the invoker before deserializing: a host without one has nothing to invoke, so the
-        // payload round trip (and any failure it could raise) is work with no consumer.
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-        if (receptorInvoker is null) {
-          continue;
-        }
-        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-        MessageParseDiagnostics.Record(inboxMsg.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
-        var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+  /// <summary>
+  /// Runs one message of a flush through the stage. With no collector the first failure is thrown, as an inline stage
+  /// that can refuse the write needs; with one, a failure is recorded against this message and the flush goes on to the
+  /// next (#2310). A cancellation of the flush is always thrown.
+  /// </summary>
+  private static async Task _invokeMessageAsync(
+      IMessageEnvelope<JsonElement> envelope,
+      string messageType,
+      Guid messageId,
+      MessageSource source,
+      StageInvocation stage,
+      CancellationToken ct) {
+    if (stage.Failures is null) {
+      await _invokeMessageCoreAsync(envelope, messageType, messageId, source, stage, ct);
+      return;
+    }
+    try {
+      await _invokeMessageCoreAsync(envelope, messageType, messageId, source, stage, ct);
+    } catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) {
+      // Thrown before any receptor ran (the payload could not be read), or by an invoker that does not isolate its
+      // receptors: either way it is this message's failure, and the rest of the flush still runs.
+      stage.Failures.RecordMessageFailure(messageType, messageId, ex);
+    }
+  }
 
-        metrics?.ReceptorInvocations.Add(1,
-          new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
-          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
-        var receptorSw = Stopwatch.StartNew();
-        try {
-          await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
-        } catch (Exception ex) {
-          metrics?.ReceptorErrors.Add(1,
-            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
-            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType),
-            new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
-          throw;
-        } finally {
-          receptorSw.Stop();
-          metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
-            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
-            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
+  private static async Task _invokeMessageCoreAsync(
+      IMessageEnvelope<JsonElement> envelope,
+      string messageType,
+      Guid messageId,
+      MessageSource source,
+      StageInvocation stage,
+      CancellationToken ct) {
+    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
+    var parentContext = extracted.TraceContext;
+
+    using (stage.EnableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage.Stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
+      var context = _createLifecycleContext(stage.Stage, source);
+      // Resolve the invoker before deserializing: a host without one has nothing to invoke, so the
+      // payload round trip (and any failure it could raise) is work with no consumer.
+      await using var scope = stage.ScopeFactory.CreateAsyncScope();
+      var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+      if (receptorInvoker is null) {
+        return;
+      }
+      var message = stage.Deserializer.DeserializeFromJsonElement(envelope.Payload, messageType);
+      MessageParseDiagnostics.Record(messageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
+      var typedEnvelope = envelope.ReconstructWithPayload(message);
+
+      stage.Metrics?.ReceptorInvocations.Add(1,
+        new KeyValuePair<string, object?>(METRIC_STAGE, stage.Stage.ToString()),
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType));
+      var receptorSw = Stopwatch.StartNew();
+      try {
+        if (stage.Failures is null) {
+          await receptorInvoker.InvokeAsync(typedEnvelope, stage.Stage, context, ct);
+        } else {
+          await receptorInvoker.InvokeEveryReceptorAsync(typedEnvelope, stage.Stage, context, stage.Failures, ct);
         }
+      } catch (Exception ex) when (stage.Failures is null) {
+        // An isolated failure is counted where it is recorded; this one is about to stop the stage.
+        _recordReceptorError(stage.Metrics, stage.Stage, messageType, ex);
+        throw;
+      } finally {
+        receptorSw.Stop();
+        stage.Metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
+          new KeyValuePair<string, object?>(METRIC_STAGE, stage.Stage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType));
       }
     }
+  }
+
+  private static void _recordReceptorError(LifecycleMetrics? metrics, LifecycleStage stage, string messageType, Exception ex) =>
+    metrics?.ReceptorErrors.Add(1,
+      new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+      new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType),
+      new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
+
+  /// <summary>
+  /// The failures of one stage of a flush: each is logged naming its receptor (when a receptor threw), message type and
+  /// message id, counted, and the first is kept for a stage that must still throw it once every message has run.
+  /// </summary>
+  private sealed class StageFailures(ILogger? logger, LifecycleMetrics? metrics, LifecycleStage flushStage) : IReceptorFailureSink {
+    private ExceptionDispatchInfo? _first;
+
+    public void OnReceptorFailed(IMessageEnvelope envelope, LifecycleStage stage, string receptorId, Exception exception) {
+      var messageType = TypeNameFormatter.DisplayName(envelope.Payload.GetType());
+      if (logger is not null) {
+        Log.ReceptorFailed(logger, exception, receptorId, stage, messageType, envelope.MessageId.Value);
+      }
+      _record(messageType, exception);
+    }
+
+    public void RecordMessageFailure(string messageType, Guid messageId, Exception exception) {
+      if (logger is not null) {
+        Log.MessageFailed(logger, exception, flushStage, messageType, messageId);
+      }
+      _record(messageType, exception);
+    }
+
+    /// <summary>Throws the stage's first failure as it was thrown, or returns when none failed.</summary>
+    public void ThrowFirst() => _first?.Throw();
+
+    private void _record(string messageType, Exception exception) {
+      _recordReceptorError(metrics, flushStage, messageType, exception);
+      _first ??= ExceptionDispatchInfo.Capture(exception);
+    }
+  }
+
+  private static partial class Log {
+    [LoggerMessage(
+      EventId = 1,
+      Level = LogLevel.Error,
+      Message = "Lifecycle receptor {ReceptorId} failed at {Stage} for {MessageType} message {MessageId}; every other receptor and message in the flush still ran")]
+    public static partial void ReceptorFailed(ILogger logger, Exception exception, string receptorId, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 2,
+      Level = LogLevel.Error,
+      Message = "Lifecycle stage {Stage} failed for {MessageType} message {MessageId}; every other message in the flush still ran")]
+    public static partial void MessageFailed(ILogger logger, Exception exception, LifecycleStage stage, string messageType, Guid messageId);
   }
 
   /// <summary>

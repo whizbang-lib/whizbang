@@ -217,7 +217,7 @@ public class LifecycleStageFailureIsolationTests {
     // the first failure, as it always has, so its caller learns of it.
     var first = _outbox();
     var second = _outbox();
-    var invoker = new FailingForInvoker(first.MessageId);
+    var invoker = new FailingForInvoker(first.MessageId) { FailOnlyAt = LifecycleStage.PostDistributeInline };
     var coordinator = new Whizbang.Core.Tests.Workers.NoOpWorkCoordinator();
     await using var provider = _flushProvider(invoker, coordinator);
 
@@ -245,6 +245,89 @@ public class LifecycleStageFailureIsolationTests {
 
     await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(0);
     await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo(new[] { first.MessageId });
+  }
+
+  [Test]
+  public async Task InlineStage_AReceptorTheInvokerIsolates_IsLoggedByNameAsync() {
+    // An invoker that isolates its receptors reports each one that threw; the entry names the receptor, the message type
+    // and the message id, and the message's other receptors and the rest of the flush still run.
+    var first = _outbox();
+    var second = _outbox();
+    var invoker = new ReportingInvoker("Probe.FailingReceptor", first.MessageId);
+    var logger = new FakeLogger();
+    await using var provider = _provider(invoker);
+    var context = _context(provider, logger, [first, second], []) with {
+      InlineFailures = InlineStageFailureHandling.RunEveryReceptorAndLog
+    };
+
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+
+    await Assert.That(invoker.Isolated).IsEqualTo(2)
+      .Because("both messages went through the isolating call");
+    var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Error);
+    await Assert.That(failure.Message).Contains("Probe.FailingReceptor");
+    await Assert.That(failure.Message).Contains(nameof(IsolationProbe));
+    await Assert.That(failure.Message).Contains(first.MessageId.ToString());
+  }
+
+  [Test]
+  public async Task InlineStage_IsolatedFailures_WithMetrics_CountEachFailureAsync() {
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var metrics = new LifecycleMetrics(new WhizbangMetrics(factory));
+    using var metricHelper = new Whizbang.Core.Tests.Observability.MetricAssertionHelper(factory.CreatedMeters[0]);
+    var first = _outbox();
+    var second = _outbox();
+    var unreadable = _outbox();
+    var invoker = new ReportingInvoker("Probe.FailingReceptor", first.MessageId);
+    await using var provider = _provider(invoker);
+    var context = _context(provider, new FakeLogger(), [first, second, unreadable], [], new FailingForDeserializer(unreadable.MessageId)) with {
+      Metrics = metrics,
+      InlineFailures = InlineStageFailureHandling.RunEveryReceptorAndLog
+    };
+
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+
+    var errors = metricHelper.GetByName("whizbang.lifecycle.receptor.errors")
+      .Where(m => m.Value > 0 && m.Tags.TryGetValue("stage", out var stage) && stage == nameof(LifecycleStage.PostDistributeInline))
+      .ToList();
+    await Assert.That(errors.Sum(m => m.Value)).IsEqualTo(2d)
+      .Because("the receptor that threw and the payload that could not be read are each counted once");
+  }
+
+  [Test]
+  public async Task InlineStage_IsolatedFailures_WithoutALogger_StillRunEveryMessageAsync() {
+    var first = _outbox();
+    var second = _outbox();
+    var unreadable = _outbox();
+    var invoker = new ReportingInvoker("Probe.FailingReceptor", first.MessageId);
+    await using var provider = _provider(invoker);
+    var context = new DistributeLifecycleContext([first, second, unreadable], [], provider.GetRequiredService<IServiceScopeFactory>(),
+      new FailingForDeserializer(unreadable.MessageId), Logger: null, EnableLifecycleTracing: false) {
+      InlineFailures = InlineStageFailureHandling.RunEveryReceptorAndLog
+    };
+
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+
+    await Assert.That(invoker.Isolated).IsEqualTo(2)
+      .Because("with nothing to log to, a failure still costs only its own message");
+  }
+
+  [Test]
+  public async Task InlineStage_RunEveryReceptorThenThrowFirst_NoFailure_CompletesAsync() {
+    var invoker = new FailingForInvoker();
+    await using var provider = _provider(invoker);
+    var only = _outbox();
+    var context = _context(provider, new FakeLogger(), [only], []) with {
+      InlineFailures = InlineStageFailureHandling.RunEveryReceptorThenThrowFirst
+    };
+
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { only.MessageId });
   }
 
   private static ServiceProvider _flushProvider(IReceptorInvoker invoker, IWorkCoordinator coordinator) {
@@ -339,15 +422,40 @@ public class LifecycleStageFailureIsolationTests {
 
     public Exception? Thrown { get; private set; }
 
+    /// <summary>When set, the messages fail only at this stage.</summary>
+    public LifecycleStage? FailOnlyAt { get; init; }
+
     public Guid[] InvokedAt(LifecycleStage stage) => [.. _invoked.Where(i => i.Stage == stage).Select(i => i.MessageId)];
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       var messageId = envelope.MessageId.Value;
       _invoked.Enqueue((stage, messageId));
-      if (_failFor.Contains(messageId)) {
+      if (_failFor.Contains(messageId) && (FailOnlyAt is null || FailOnlyAt == stage)) {
         var thrown = _toThrow ?? new InvalidOperationException($"receptor failed for {messageId}");
         Thrown ??= thrown;
         throw thrown;
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// An invoker that isolates its receptors: for the message it was told to fail it reports one receptor to the sink,
+  /// as <see cref="ReceptorInvoker"/> does, instead of throwing.
+  /// </summary>
+  private sealed class ReportingInvoker(string receptorId, Guid failFor) : IReceptorInvoker {
+    public int Isolated { get; private set; }
+
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) =>
+      ValueTask.CompletedTask;
+
+    public ValueTask InvokeEveryReceptorAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context, IReceptorFailureSink failures, CancellationToken cancellationToken = default) {
+      if (stage != LifecycleStage.PostDistributeInline) {
+        return ValueTask.CompletedTask;
+      }
+      Isolated++;
+      if (envelope.MessageId.Value == failFor) {
+        failures.OnReceptorFailed(envelope, stage, receptorId, new InvalidOperationException("isolated receptor failed"));
       }
       return ValueTask.CompletedTask;
     }

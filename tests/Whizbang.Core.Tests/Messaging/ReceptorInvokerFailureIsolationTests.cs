@@ -144,6 +144,15 @@ public class ReceptorInvokerFailureIsolationTests {
     await Assert.That(sink.Failures).IsEmpty();
   }
 
+  [Test]
+  public async Task InvokeEveryReceptorAsync_NullSink_ThrowsAsync() {
+    await using var provider = new ServiceCollection().BuildServiceProvider();
+    var invoker = new ReceptorInvoker(new ListRegistry(), provider);
+
+    await Assert.That(async () => await invoker.InvokeEveryReceptorAsync(_envelope(), STAGE, null, null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
   // ========================================
   // Helpers
   // ========================================
