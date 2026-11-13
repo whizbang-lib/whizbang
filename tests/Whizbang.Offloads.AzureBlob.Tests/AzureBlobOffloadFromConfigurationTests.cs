@@ -81,7 +81,7 @@ public class AzureBlobOffloadFromConfigurationTests {
     // Provider options bound — including DefaultAccessTier parsed from the "Cool" string, the bit
     // ConfigurationBinder cannot convert (the reason for explicit binding).
     var blobOptions = provider.GetRequiredService<IOptionsMonitor<AzureBlobOffloadOptions>>().Get("consumer-offload");
-    await Assert.That(blobOptions.ConnectionString).IsEqualTo("UseDevelopmentStorage=true");
+    await Assert.That(blobOptions.ConnectionString?.Reveal()).IsEqualTo("UseDevelopmentStorage=true");
     await Assert.That(blobOptions.ContainerName).IsEqualTo("whizbang-offload-bodies-prod");
     await Assert.That(blobOptions.DefaultAccessTier).IsEqualTo(AccessTier.Cool);
     await Assert.That(blobOptions.MaxDownloadBytes).IsEqualTo(104857600L);

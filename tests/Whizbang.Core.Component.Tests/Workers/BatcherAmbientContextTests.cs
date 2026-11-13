@@ -35,7 +35,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowOutboxBatchStrategy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowInboxBatchStrategy.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowApplyBatchStrategy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PerStreamSerializer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/AmbientFreeTask.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportBatchCollector.cs</code-under-test>
@@ -79,23 +78,6 @@ public class BatcherAmbientContextTests {
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await _asTheFirstAppenderAsync(() => sut.AppendAsync(_inbox(TrackedGuid.New()), cancellationToken));
-    await sut.FlushAndStopAsync(cancellationToken);
-
-    await _assertNothingLeakedAsync(await seen.Task.WaitAsync(cancellationToken));
-  }
-
-  [Test]
-  [Timeout(30000)]
-  public async Task ApplyFlush_DoesNotSeeTheFirstAppendersAmbientContextAsync(CancellationToken cancellationToken) {
-    var seen = new TaskCompletionSource<Seen>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (_, _, _) => {
-        seen.TrySetResult(Seen.Now());
-        return Task.CompletedTask;
-      },
-      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
-
-    await _asTheFirstAppenderAsync(() => sut.AppendAsync(TrackedGuid.New(), cancellationToken));
     await sut.FlushAndStopAsync(cancellationToken);
 
     await _assertNothingLeakedAsync(await seen.Task.WaitAsync(cancellationToken));

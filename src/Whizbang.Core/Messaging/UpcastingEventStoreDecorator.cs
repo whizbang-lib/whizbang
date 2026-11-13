@@ -115,6 +115,24 @@ public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcaste
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// A set-based batch's one read of its pairs' streams (#2246) is upcast as the per-stream read is. A type change widens
+  /// each read by its source types and filters the result back to the types asked for; that is the per-stream read's, so
+  /// when one applies, null is returned and each pair reads its own events.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:ReadPolymorphicManyAsync_UpcastsEveryStreamsEventsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:ReadPolymorphicManyAsync_WhenATypeChangeWidensTheRead_LeavesEachPairToItsOwnReadAsync</tests>
+  public override async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    if (_pipeline.ExtraInputTypesFor(eventTypes).Count > 0) {
+      return null;
+    }
+    var read = await Inner.ReadPolymorphicManyAsync(streams, eventTypes, cancellationToken).ConfigureAwait(false);
+    return read?.ToDictionary(r => r.Key, r => (IReadOnlyList<MessageEnvelope<IEvent>>)[.. r.Value.Select(_upcast)]);
+  }
+
+  /// <inheritdoc />
   public override async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken = default) {

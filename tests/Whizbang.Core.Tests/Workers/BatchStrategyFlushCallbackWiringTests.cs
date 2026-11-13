@@ -191,7 +191,7 @@ public class BatchStrategyFlushCallbackWiringTests {
     });
     await strategy.FlushAndStopAsync();
 
-    await Assert.That(strategy).IsTypeOf<SlidingWindowInboxBatchStrategy>();
+    await Assert.That(((BoundedInboxBatchStrategy)strategy).Inner).IsTypeOf<SlidingWindowInboxBatchStrategy>();
     var (messages, request) = coordinator.DeadLettered.Single();
     await Assert.That(messages.Select(m => m.MessageId)).IsEquivalentTo([msgId]);
     await Assert.That(request.FailureReason).IsEqualTo(MessageFailureReason.InboxStoreFailed);

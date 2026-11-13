@@ -135,6 +135,34 @@ public class IPerspectiveStoreDefaultsTests {
     await Assert.That(store.UpsertByPartitionCalls).IsEqualTo(1);
   }
 
+  [Test]
+  public async Task PrepareWrite_Default_ReturnsNullAsync() {
+    // A store that does not prepare writes keeps every row on the per-stream write: null sends the runner there.
+    IPerspectiveStore<Model> store = new ShortOverloadStore();
+
+    var prepared = store.PrepareWrite(
+      Guid.NewGuid(), new Model(), new PerspectiveScope(), forceUpdateScope: false,
+      new PerspectiveMetadata { EventType = "E", EventId = Guid.NewGuid().ToString(), Timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc) },
+      PerspectiveRowVersion.Unchecked, physicalFieldValues: null);
+
+    await Assert.That(prepared).IsNull();
+  }
+
+  [Test]
+  public async Task PreparePurge_Default_ReturnsNullAsync() {
+    IPerspectiveStore<Model> store = new ShortOverloadStore();
+
+    await Assert.That(store.PreparePurge(Guid.NewGuid())).IsNull();
+  }
+
+  [Test]
+  public async Task ReadForApplyManyAsync_Default_ReturnsNullAsync() {
+    // A store that does not read rows in batches leaves every stream to its own read: null tells the state source so.
+    IPerspectiveStore<Model> store = new ShortOverloadStore();
+
+    await Assert.That(await store.ReadForApplyManyAsync([Guid.NewGuid()])).IsNull();
+  }
+
   private sealed class Model {
     public string Name { get; init; } = "";
   }

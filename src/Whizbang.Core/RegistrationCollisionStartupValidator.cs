@@ -33,6 +33,14 @@ public sealed class WhizbangStartupOptions {
   /// Default <see cref="RegistrationCollisionMode.Warn"/>.
   /// </summary>
   public RegistrationCollisionMode RegistrationCollisions { get; set; } = RegistrationCollisionMode.Warn;
+
+  /// <summary>
+  /// Whether the startup settings report is written once the service is running (<c>Whizbang:Startup:LogSettings</c>).
+  /// Default <see langword="true"/>; when false, only a line saying the report is off is written.
+  /// </summary>
+  /// <docs>operations/configuration/startup-settings-report#turning-it-off</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StartupSettingsReportServiceTests.cs:TurnedOff_WritesOnlyThatTheReportIsOffAsync</tests>
+  public bool LogSettings { get; set; } = true;
 }
 
 /// <summary>

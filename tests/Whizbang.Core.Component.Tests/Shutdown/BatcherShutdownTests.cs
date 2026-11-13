@@ -96,30 +96,6 @@ public class BatcherShutdownTests {
   }
 
   [Test]
-  public async Task AnApplyIdleSweep_EvictingAStreamMidFlush_StopWaitsForTheFlushAsync() {
-    var held = new HeldWork();
-    var time = new FakeTimeProvider();
-    var services = new ServiceCollection().AddSingleton<ProviderLiveness>().BuildServiceProvider();
-    var strategy = new SlidingWindowApplyBatchStrategy(
-      (_, _, _) => held.HoldAsync(services),
-      NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
-      new SlidingWindowApplyOptions { MaxSize = 1, IdleEvictionWindow = _evictAfter, IdleSweepInterval = _sweepInterval },
-      time);
-
-    await strategy.AppendAsync(Guid.CreateVersion7());
-    await held.Entered.Task;
-    time.Advance(_sweepInterval);
-
-    var waited = await HostShutdown.StopWaitsForAsync(async () => {
-      await strategy.FlushAndStopAsync();
-      await services.DisposeAsync();
-    }, strategy.IdleSweeps, held);
-
-    await Assert.That(waited).IsTrue();
-    await Assert.That(await held.Finished.Task).IsTrue();
-  }
-
-  [Test]
   public async Task APerStreamSerializerIdleSweep_EvictingAStreamMidItem_StopWaitsForTheItemAsync() {
     var held = new HeldWork();
     var time = new FakeTimeProvider();

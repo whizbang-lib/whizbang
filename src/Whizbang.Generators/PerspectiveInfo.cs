@@ -61,7 +61,8 @@ internal sealed record PerspectiveInfo(
     EquatableArray<string>? UnconditionalPurgeEventTypes = null,
     bool IsOverwriteOnly = false,
     EquatableArray<string>? OverwriteDecisiveEventTypes = null,
-    string? InterfaceName = null
+    string? InterfaceName = null,
+    int WriteMode = -1
 );
 
 /// <summary>

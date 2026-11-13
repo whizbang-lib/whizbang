@@ -225,6 +225,152 @@ public class PostgresDriverRegistrationTests {
       .Because("the fleet source opens its own scope per call, so one instance serves the whole host");
   }
 
+  /// <summary>
+  /// Set-based perspective writes are the default (#2246), so their write sink is registered by the driver itself: a
+  /// service that registers nothing resolves the Postgres sink over its own DbContext, one per scope.
+  /// </summary>
+  [Test]
+  public async Task Postgres_RegistersThePerspectiveWriteSinkOverTheConsumersDbContextAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddWhizbang();
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    using var first = provider.CreateScope();
+    using var second = provider.CreateScope();
+    var sink = first.ServiceProvider.GetService<IPerspectiveWriteSink>();
+
+    await Assert.That(sink).IsTypeOf<EFCorePostgresPerspectiveWriteSink>()
+      .Because("the set-based write mode resolves its sink here; nothing else may be needed for the default to work");
+    await Assert.That(second.ServiceProvider.GetService<IPerspectiveWriteSink>()).IsNotSameReferenceAs(sink)
+      .Because("the sink writes through the DbContext of the scope that asked for it");
+  }
+
+  /// <summary>A service's own sink, registered first, wins over the driver's default.</summary>
+  [Test]
+  public async Task Postgres_KeepsAServicesOwnPerspectiveWriteSinkAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddWhizbang();
+    var own = new RecordingWriteSink();
+    services.AddSingleton<IPerspectiveWriteSink>(own);
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+
+    await Assert.That(scope.ServiceProvider.GetService<IPerspectiveWriteSink>()).IsSameReferenceAs(own);
+  }
+
+  private sealed class RecordingWriteSink : IPerspectiveWriteSink {
+    public Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
+        IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyList<PerspectiveWriteOutcome>>([]);
+  }
+
+  /// <summary>
+  /// Set-based writes are the default (#2246), so every seam they run on is registered by W! itself: a service that
+  /// registers nothing but its DbContext and the driver resolves the state source, the flush policy and the write sink.
+  /// </summary>
+  [Test]
+  public async Task Postgres_RegistersEverySetBasedWriteSeamAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddWhizbang();
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+
+    await Assert.That(scope.ServiceProvider.GetService<IPerspectiveStateSource>()).IsTypeOf<BatchedPerspectiveStateSource>()
+      .Because("a batch reads its rows with one statement per table only if the state source is there by default");
+    await Assert.That(scope.ServiceProvider.GetService<IApplyBatchStrategy>()).IsTypeOf<FlushEveryBatchStrategy>()
+      .Because("the worker's flush policy is registered with the worker");
+    await Assert.That(scope.ServiceProvider.GetService<IPerspectiveWriteSink>()).IsTypeOf<EFCorePostgresPerspectiveWriteSink>();
+    await Assert.That(scope.ServiceProvider.GetKeyedService<IPerspectiveWriteSink>(typeof(DriverSelectorTestDbContext)))
+      .IsTypeOf<EFCorePostgresPerspectiveWriteSink>()
+      .Because("a prepared write names its context, and the batch resolves that context's sink by its type");
+  }
+
+  /// <summary>A service's own state source and flush policy, registered first, win over W!'s defaults.</summary>
+  [Test]
+  public async Task Postgres_KeepsAServicesOwnStateSourceAndFlushPolicyAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    var source = new BatchedPerspectiveStateSource();
+    var policy = new FlushEveryBatchStrategy();
+    services.AddSingleton<IPerspectiveStateSource>(source);
+    services.AddSingleton<IApplyBatchStrategy>(policy);
+    services.AddWhizbang();
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetService<IPerspectiveStateSource>()).IsSameReferenceAs(source);
+    await Assert.That(provider.GetService<IApplyBatchStrategy>()).IsSameReferenceAs(policy);
+  }
+
+  /// <summary>
+  /// A service with two DbContexts writes each perspective through its own (#2246): each context registered through the
+  /// driver gets a sink of its own, keyed by its type, over that context.
+  /// </summary>
+  [Test]
+  public async Task Postgres_WithTwoContexts_RegistersASinkOverEachAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddWhizbang();
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    services.AddDbContext<SecondDriverTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<DriverSelectorTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<SecondDriverTestDbContext>().WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+    var first = scope.ServiceProvider.GetKeyedService<IPerspectiveWriteSink>(typeof(DriverSelectorTestDbContext));
+    var second = scope.ServiceProvider.GetKeyedService<IPerspectiveWriteSink>(typeof(SecondDriverTestDbContext));
+
+    await Assert.That(first).IsTypeOf<EFCorePostgresPerspectiveWriteSink>();
+    await Assert.That(second).IsTypeOf<EFCorePostgresPerspectiveWriteSink>();
+    await Assert.That(((EFCorePostgresPerspectiveWriteSink)first!).Context)
+      .IsSameReferenceAs(scope.ServiceProvider.GetRequiredService<DriverSelectorTestDbContext>());
+    await Assert.That(((EFCorePostgresPerspectiveWriteSink)second!).Context)
+      .IsSameReferenceAs(scope.ServiceProvider.GetRequiredService<SecondDriverTestDbContext>())
+      .Because("the second context's rows are written through the second context, never the first");
+  }
+
   // The digest is what lets a rebuild of named streams say whether it CHANGED anything, as opposed to merely
   // having run (#1135). It is resolved from the consumer's own DbContext and service identity, so a registration
   // that cannot be constructed would leave every rebuild reporting "not known" with nothing to explain why. The
@@ -257,3 +403,6 @@ public class PostgresDriverRegistrationTests {
   }
 
 }
+
+/// <summary>A second DbContext, for a service that keeps its perspectives in two contexts.</summary>
+public class SecondDriverTestDbContext(DbContextOptions<SecondDriverTestDbContext> options) : DbContext(options);

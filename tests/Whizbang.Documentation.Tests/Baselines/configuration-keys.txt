@@ -34,6 +34,10 @@ Whizbang:AutoGenerateStreamIds
 Whizbang:BacklogAge:AgeThreshold
 Whizbang:BacklogAge:Enabled
 Whizbang:BacklogAge:Interval
+Whizbang:BatchBuffer:MaxBufferedBytes
+Whizbang:BatchBuffer:MaxBufferedBytesFraction
+Whizbang:BatchBuffer:MaxBufferedMessages
+Whizbang:BatchBuffer:TransactionCeilingMultiplier
 Whizbang:BodyOffload
 Whizbang:BodyOffload:ActiveCleanup
 Whizbang:BodyOffload:Cipher:KeyEncryptionKey
@@ -58,6 +62,10 @@ Whizbang:CircuitBreakers:*:FailureThreshold
 Whizbang:CircuitBreakers:*:InitialCooldownSeconds
 Whizbang:CircuitBreakers:*:MaxCooldownSeconds
 Whizbang:CircuitBreakers:*:SuccessCacheDurationSeconds
+Whizbang:CompositeBatches:DebounceInterval
+Whizbang:CompositeBatches:MaxBufferedBytes
+Whizbang:CompositeBatches:MaxBufferedMessages
+Whizbang:CompositeBatches:MaxWait
 Whizbang:Configuration:UnknownKeys
 Whizbang:Core:DefaultQueryScope
 Whizbang:Core:EmptyStreamIdPolicy
@@ -81,8 +89,8 @@ Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse
 Whizbang:Database:RoleAssignment:OwedWorkRetryBase
 Whizbang:Database:RoleAssignment:ProgressWindow
 Whizbang:Database:RoleAssignment:RenewInterval
-Whizbang:Database:SignalRetention
 Whizbang:Database:SignalingMode
+Whizbang:Database:SignalRetention
 Whizbang:Database:Stamper
 Whizbang:Database:Stamper:BatchSize
 Whizbang:Database:Stamper:DisableStamper
@@ -282,6 +290,7 @@ Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
 Whizbang:Startup:AllowLossyRollback
+Whizbang:Startup:LogSettings
 Whizbang:Startup:OverrideIncompatibility
 Whizbang:Startup:RegistrationCollisions
 Whizbang:StartupStatusGraph:IncludeReasons
@@ -521,6 +530,13 @@ Whizbang:Workers:Claim:PartitionCount
 Whizbang:Workers:Claim:PerspectiveOnly
 Whizbang:Workers:Claim:PollingIntervalMilliseconds
 Whizbang:Workers:Claim:PollingMaxIntervalMilliseconds
+Whizbang:Workers:CoalescingOutbox:FlushRetryBackoff
+Whizbang:Workers:CoalescingOutbox:FlushRetryMaxBackoff
+Whizbang:Workers:CoalescingOutbox:MaxFlushAttempts
+Whizbang:Workers:CoalescingOutbox:MaxSize
+Whizbang:Workers:CoalescingOutbox:MaxWait
+Whizbang:Workers:CoalescingOutbox:Partitions
+Whizbang:Workers:CoalescingOutbox:SlidingWindow
 Whizbang:Workers:FailureFlush:Enabled
 Whizbang:Workers:FailureFlush:Flusher:ChannelCapacity
 Whizbang:Workers:FailureFlush:Flusher:CoalesceWindowMs
@@ -688,6 +704,7 @@ Whizbang:Workers:Perspective:RetryOptions:BackoffMultiplier
 Whizbang:Workers:Perspective:RetryOptions:EnableExponentialBackoff
 Whizbang:Workers:Perspective:RetryOptions:MaxBackoffSeconds
 Whizbang:Workers:Perspective:RetryOptions:RetryTimeoutSeconds
+Whizbang:Workers:Perspective:WriteMode
 Whizbang:Workers:PerspectiveAffinity:IdleEvictionWindow
 Whizbang:Workers:PerspectiveAffinity:LongHoldWarning
 Whizbang:Workers:PerspectiveAffinity:SweepInterval

@@ -94,6 +94,35 @@ internal static class PerspectiveRowVersionSql {
   }
 
   /// <summary>
+  /// <see cref="ReadForApplyAsync"/> for many rows in one statement (<c>id = ANY</c>): the batched row read of a
+  /// set-based batch (#2246). An absent row is left out.
+  /// </summary>
+  internal static async Task<IReadOnlyDictionary<Guid, PerspectiveApplyRead>> ReadForApplyManyAsync(
+      DbContext context, string qualifiedTable, Guid[] ids, CancellationToken cancellationToken) {
+    var connection = context.Database.GetDbConnection();
+    var openedHere = connection.State != System.Data.ConnectionState.Open;
+    if (openedHere) {
+      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+    IReadOnlyDictionary<Guid, PerspectiveApplyRead> result;
+    try {
+      await using var command = connection.CreateCommand();
+#pragma warning disable S2077, CA2100 // The table is a quoted identifier from the EF model; the ids are a parameter.
+      command.CommandText = PerspectiveRowVersionCommands.ReadForApplyManySql(qualifiedTable);
+#pragma warning restore S2077, CA2100
+      command.Transaction = context.Database.CurrentTransaction?.GetDbTransaction();
+      command.Parameters.Add(new NpgsqlParameter(nameof(ids), NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids });
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      result = await PerspectiveRowVersionCommands.ReadApplyManyAsync(reader, cancellationToken).ConfigureAwait(false);
+    } finally {
+      if (openedHere) {
+        await connection.CloseAsync().ConfigureAwait(false);
+      }
+    }
+    return result;
+  }
+
+  /// <summary>
   /// Read the row's current version. With <paramref name="lockRow"/>, the row is locked for the rest of the
   /// caller's transaction (<c>FOR UPDATE</c>), so no writer can move it between this check and the write
   /// that follows: a collective arriving meanwhile waits, then applies on top of the row that write leaves.

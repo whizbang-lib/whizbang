@@ -35,7 +35,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// atomic-UPSERT path (Path 1) can issue a raw <c>INSERT … ON CONFLICT DO UPDATE</c>
   /// against the right table without re-querying EF's model metadata.
   /// </summary>
-  private readonly record struct UpsertRowArgs<TModel>(
+  internal readonly record struct UpsertRowArgs<TModel>(
     string TableName,
     Guid Id,
     TModel Model,
@@ -225,46 +225,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
       where TModel : class {
-    // A row version is a PostgreSQL row's xmin; another provider has none to compare against (and the store
-    // never hands one out there), so a version passed in is ignored rather than failing the write.
-    if (args.ExpectedVersion.IsChecked && !PerspectiveRowVersionSql.Supports(context)) {
-      args = args with { ExpectedVersion = PerspectiveRowVersion.Unchecked };
-    }
-
-    // Per-event apply hooks: resolve once, mutate the row's data object (SetProperty) in place, and carry the
-    // updated_at / version-bump decision to both write paths below. The default whizbang.timestamps hook yields
-    // updated_at = now + a version bump — identical to the prior hardcoded stamping, now overridable.
-    // ApplyTimestamp is BUSINESS time — the applied event's own timestamp — because the timestamps
-    // hook's job is to stamp the business axis. Feeding it the wall clock would make every hook
-    // decision (including the default) replay-variant, which is the defect this split removes.
-    // Direct callers with no event metadata (fixtures, seeds) fall back to now.
-    var applyAnchor = args.Metadata.Timestamp == default
-      ? DateTimeOffset.UtcNow
-      : new DateTimeOffset(DateTime.SpecifyKind(args.Metadata.Timestamp, DateTimeKind.Utc));
-    var hookPlan = PerEventApplyHooks.Resolve(new ApplyHookContext {
-      ModelType = typeof(TModel),
-      Scope = args.Scope,
-      ApplyTimestamp = applyAnchor,
-    });
-    if (hookPlan.ModelFieldSetters.Count > 0) {
-      PerEventApplyHooks.ApplyModelSetters(args.Model, hookPlan.ModelFieldSetters);
-    }
-
-    // Row TTL expiry: a perspective registered in PerspectiveTtlRegistry gets a sliding row TTL. The
-    // window ANCHORS TO EVENT TIME — expires_at = the applied event's timestamp (metadata.Timestamp,
-    // threaded by the runner) + ttl — never the wall clock at apply time. Event-time anchoring is what
-    // makes the stamp replay-safe: re-applying old history (rebuild/rewind) reproduces the original
-    // window, so an idle-past-TTL stream rebuilds BORN-EXPIRED instead of resurrecting with a fresh
-    // window. Direct callers with no event metadata (fixtures/seeds pass default Timestamp) fall back
-    // to now + ttl. An unregistered model resolves to -1 and its rows never expire (expires_at NULL).
-    var ttlSeconds = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(TModel));
-    var expiryAnchor = applyAnchor;
-    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? expiryAnchor.AddSeconds(ttlSeconds) : null;
-
-    // A blue-green rebuild redirects this flow's writes to its shadow table. Only the atomic path takes the table
-    // by name; the Entity Framework paths write the mapped (live) table, which the rebuild must never touch.
-    var mappedTable = args.TableName;
-    args = args with { TableName = PerspectiveTableRedirect.Resolve(args.TableName) };
+    var (planned, hookPlan, expiresAt, businessTime, mappedTable) = _planRowWrite(context, args);
+    args = planned;
 
     // Path 1 atomic upsert. When this strategy uses it (see UsesAtomicUpsert) and it applies
     // (Npgsql, plain identifiers, a resolvable model), this single round-trip replaces
@@ -272,7 +234,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // race that slice 19's retry loop was built to recover from. Returns false to signal
     // the caller should fall back to the retry loop (another provider, an unresolvable type,
     // or any other unsupported case).
-    if (UsesAtomicUpsert && await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken) is bool atomicLanded) {
+    if (UsesAtomicUpsert
+        && _tryPrepareAtomicWrite(context, args, hookPlan, expiresAt, businessTime) is { } prepared
+        && await _tryAtomicUpsertAsync<TModel>(context, prepared, cancellationToken) is bool atomicLanded) {
       return atomicLanded;
     }
     if (!string.Equals(args.TableName, mappedTable, StringComparison.Ordinal)) {
@@ -312,24 +276,78 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   }
 
   /// <summary>
-  /// Attempts the Path 1 atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> against the
-  /// underlying Npgsql connection. Returns null (no-op, no SQL issued) when the path is
-  /// not applicable so the caller can fall back to the legacy retry loop; otherwise whether the
-  /// write landed (false when the ordering guard refused it).
+  /// What every write of a row decides before it chooses a path: the version check a provider without row versions
+  /// drops, the per-event apply hooks (applied to the model in place), the row's expiry, and the table a blue-green
+  /// rebuild redirects the write to.
+  /// </summary>
+  /// <returns>The arguments to write with, the hook decisions, the expiry, the business time, and the mapped table.</returns>
+  private static (UpsertRowArgs<TModel> Args, PerEventApplyHookPlan Hooks, DateTimeOffset? ExpiresAt, DateTime BusinessTime, string MappedTable)
+      _planRowWrite<TModel>(DbContext context, UpsertRowArgs<TModel> args) where TModel : class {
+    // A row version is a PostgreSQL row's xmin; another provider has none to compare against (and the store
+    // never hands one out there), so a version passed in is ignored rather than failing the write.
+    if (args.ExpectedVersion.IsChecked && !PerspectiveRowVersionSql.Supports(context)) {
+      args = args with { ExpectedVersion = PerspectiveRowVersion.Unchecked };
+    }
+
+    // Per-event apply hooks: resolve once, mutate the row's data object (SetProperty) in place, and carry the
+    // updated_at / version-bump decision to both write paths below. The default whizbang.timestamps hook yields
+    // updated_at = now + a version bump, identical to the prior hardcoded stamping, now overridable.
+    // ApplyTimestamp is BUSINESS time, the applied event's own timestamp, because the timestamps
+    // hook's job is to stamp the business axis. Feeding it the wall clock would make every hook
+    // decision (including the default) replay-variant, which is the defect this split removes.
+    // Direct callers with no event metadata (fixtures, seeds) fall back to now.
+    var applyAnchor = args.Metadata.Timestamp == default
+      ? DateTimeOffset.UtcNow
+      : new DateTimeOffset(DateTime.SpecifyKind(args.Metadata.Timestamp, DateTimeKind.Utc));
+    var hookPlan = PerEventApplyHooks.Resolve(new ApplyHookContext {
+      ModelType = typeof(TModel),
+      Scope = args.Scope,
+      ApplyTimestamp = applyAnchor,
+    });
+    if (hookPlan.ModelFieldSetters.Count > 0) {
+      PerEventApplyHooks.ApplyModelSetters(args.Model, hookPlan.ModelFieldSetters);
+    }
+
+    // Row TTL expiry: a perspective registered in PerspectiveTtlRegistry gets a sliding row TTL. The
+    // window ANCHORS TO EVENT TIME, expires_at = the applied event's timestamp (metadata.Timestamp,
+    // threaded by the runner) + ttl, never the wall clock at apply time. Event-time anchoring is what
+    // makes the stamp replay-safe: re-applying old history (rebuild/rewind) reproduces the original
+    // window, so an idle-past-TTL stream rebuilds BORN-EXPIRED instead of resurrecting with a fresh
+    // window. Direct callers with no event metadata (fixtures/seeds pass default Timestamp) fall back
+    // to now + ttl. An unregistered model resolves to -1 and its rows never expire (expires_at NULL).
+    var ttlSeconds = Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(TModel));
+    DateTimeOffset? expiresAt = ttlSeconds >= 0 ? applyAnchor.AddSeconds(ttlSeconds) : null;
+
+    // A blue-green rebuild redirects this flow's writes to its shadow table. Only the atomic path takes the table
+    // by name; the Entity Framework paths write the mapped (live) table, which the rebuild must never touch.
+    var mappedTable = args.TableName;
+    args = args with { TableName = PerspectiveTableRedirect.Resolve(args.TableName) };
+    return (args, hookPlan, expiresAt, applyAnchor.UtcDateTime, mappedTable);
+  }
+
+  /// <summary>
+  /// The row a write puts in place, prepared once for whichever statement writes it: the per-stream atomic upsert
+  /// below, or a set-based write of a whole batch (<see cref="IPerspectiveWriteSink"/>). Null when the atomic form
+  /// does not apply and the Entity Framework path writes the row instead.
   /// </summary>
   /// <remarks>
-  /// Fall-back conditions: the caller didn't supply a non-empty table name, the provider is not
-  /// Npgsql, a table or physical-field name is not a plain identifier, the persistence union
-  /// cannot resolve the model, or Npgsql cannot bind a value.
+  /// <para>
+  /// One preparation for both statements is what keeps the one writer rule (<c>ai-docs/perspective-stored-forms.md</c>):
+  /// the document, the metadata and the scope are serialized here, with the persistence profile, and the physical
+  /// values converted here, so a set-based write stores the same bytes the per-stream write does.
+  /// </para>
+  /// <para>
+  /// It declines when the caller didn't supply a non-empty table name, the provider is not Npgsql, a table or
+  /// physical-field name is not a plain identifier, or the persistence union cannot resolve the model.
+  /// </para>
   /// </remarks>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single atomic UPSERT contains all the JSONB serialization + physical-field interpolation + retry-or-fallback control flow on purpose; splitting would force passing 6+ pieces of state across helpers and obscure the SQL composition.")]
-  private static async Task<bool?> _tryAtomicUpsertAsync<TModel>(
+  /// <returns>The prepared write, or null.</returns>
+  private static PendingPerspectiveWrite? _tryPrepareAtomicWrite<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
       DateTimeOffset? expiresAt,
-      DateTime businessTime,
-      CancellationToken cancellationToken)
+      DateTime businessTime)
       where TModel : class {
     if (string.IsNullOrEmpty(args.TableName)) {
       return null;
@@ -375,52 +393,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       return null;
     }
 
-    var dataJson = JsonSerializer.Serialize(args.Model, modelInfo);
-    var metadataJson = JsonSerializer.Serialize(args.Metadata, metadataInfo);
-    var scopeJson = JsonSerializer.Serialize(args.Scope, scopeInfo);
-
-    // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause:
-    // the INSERT path always sets scope so a new row carries the caller's scope verbatim,
-    // while the UPDATE path preserves the existing row's scope unless the event is an
-    // IScopeEvent.
-    var scopeUpdateClause = args.ForceUpdateScope ? ", scope = EXCLUDED.scope" : string.Empty;
-
-    // Physical-field columns (vector embeddings, denormalized scalars, etc.) ride
-    // alongside the JSONB columns in the same atomic statement. Column names come from
-    // EF model metadata via the caller's dictionary; we double-quote them to handle
-    // mixed case + reserved-word collisions and bind values as ordinary parameters
-    // (Vector + scalar types are handled natively by Npgsql once UseVector is on).
-    var pfColumnsClause = string.Empty;
-    var pfValuesClause = string.Empty;
-    var pfUpdateClause = string.Empty;
-    var pfCount = args.PhysicalFieldValues?.Count ?? 0;
-    if (pfCount > 0) {
-      var pfColumns = new StringBuilder();
-      var pfValues = new StringBuilder();
-      var pfUpdates = new StringBuilder();
-      var i = 0;
-      foreach (var columnName in args.PhysicalFieldValues!.Keys) {
-        if (i > 0) {
-          pfColumns.Append(", ");
-          pfValues.Append(", ");
-          pfUpdates.Append(", ");
-        }
-        // Double-quote the column to preserve case and dodge keyword collisions.
-        var quoted = "\"" + columnName.Replace("\"", "\"\"") + "\"";
-        pfColumns.Append(quoted);
-        pfValues.Append("@pf_").Append(i);
-        pfUpdates.Append(quoted).Append(" = EXCLUDED.").Append(quoted);
-        i++;
-      }
-      pfColumnsClause = ", " + pfColumns;
-      pfValuesClause = ", " + pfValues;
-      pfUpdateClause = ", " + pfUpdates;
-    }
-
     // Resolve schema from the EF Core model (set via HasDefaultSchema on the DbContext) and
     // schema-qualify the raw-SQL target. Without this, multi-tenant deployments that put
     // perspective tables in a service-specific schema ("bff", "inventory", ...) get
-    // 42P01 "relation does not exist" because raw SQL doesn't honor EF's default schema —
+    // 42P01 "relation does not exist" because raw SQL doesn't honor EF's default schema,
     // the connection's search_path determines what unqualified names resolve to, and that
     // isn't set per-service in all deployments. PerspectiveRow<TModel> is the EF entity
     // registered for the perspective table; its schema comes from HasDefaultSchema().
@@ -430,53 +406,149 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       ? args.TableName
       : $"{Whizbang.Data.Postgres.PgIdentifier.Quote(schema)}.{args.TableName}";
 
+    // Physical-field columns (vector embeddings, denormalized scalars, etc.) ride alongside the JSONB columns in
+    // the same statement, in the dictionary's order, each in the form its column is written with.
+    var physicalValues = new List<PerspectivePhysicalValue>(args.PhysicalFieldValues?.Count ?? 0);
+    if (args.PhysicalFieldValues is not null) {
+      foreach (var (columnName, value) in args.PhysicalFieldValues) {
+        physicalValues.Add(PhysicalColumnValue(columnName, entityType?.FindProperty(columnName), value));
+      }
+    }
+
     // Opt-in via IVersionedApplyTarget: a model that implements the marker gets a stricter
     // WHERE clause that adds a UUIDv7 EventId tie-breaker on top of the legacy CommitSequence
     // comparison. The legacy permissive contract (null-CommitSeq lets the write through
-    // unconditionally) remains the default — see
-    // CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync
-    // — so existing consumers that depend on stamper-lag forwarding keep working.
+    // unconditionally) remains the default, so existing consumers that depend on stamper-lag forwarding keep
+    // working (see
+    // CrossPodStaleReadRegressionRaceTests.StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync).
     // Models that need strand prevention beyond the v0.740 stream-affinity gate (the first
     // is SagaItemModel) opt in by implementing IVersionedApplyTarget. A production saga
     // showed a small fraction of per-item rows survived the affinity gate and reverted to
-    // State=Running — this marker closes that gap at the storage layer.
+    // State=Running, this marker closes that gap at the storage layer.
     // A rebuild's write is the exception (#1819): it re-derived the row from every event and ends on the stream's
     // last event by version, whose id can sort below the stored one, so it is not ordered on the event id.
     var ordersOnEventId = Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrdersOnEventId(
       typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel)),
       Whizbang.Core.Messaging.ProcessingModeAccessor.Current);
+
+    var row = new PerspectiveRowValues(
+      Data: JsonSerializer.Serialize(args.Model, modelInfo),
+      Metadata: JsonSerializer.Serialize(args.Metadata, metadataInfo),
+      Scope: JsonSerializer.Serialize(args.Scope, scopeInfo),
+      ForceUpdateScope: args.ForceUpdateScope,
+      OrdersOnEventId: ordersOnEventId,
+      // created_at is written only on insert. A row whose stream no longer holds its first event is dated at the
+      // stream's recorded start, which the runner begins for this row (#2152); otherwise at the applied event's
+      // business time.
+      CreatedAt: Whizbang.Core.Perspectives.PerspectiveRowStart.For(args.Id) ?? businessTime,
+      // The timestamps hook may override business time explicitly; its default now yields the
+      // applied event's own timestamp rather than the clock.
+      UpdatedAt: hookPlan.UpdatedAt?.UtcDateTime ?? businessTime,
+      SuppressActivity: hookPlan.SuppressActivity,
+      BumpVersion: hookPlan.BumpVersion,
+      ExpiresAt: expiresAt?.UtcDateTime,
+      PhysicalValues: physicalValues);
+    return PendingPerspectiveWrite.Write(qualifiedTable, args.Id, args.ExpectedVersion, row);
+  }
+
+  /// <summary>
+  /// Prepares a row write for a set-based write of a batch (<see cref="IPerspectiveWriteSink"/>), deciding and
+  /// serializing everything exactly as this strategy's per-stream write would.
+  /// </summary>
+  /// <returns>The pending write, or null when the row must take the per-stream write (see <see cref="UsesAtomicUpsert"/>).</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SetBasedPerspectiveWriteSinkTests.cs</tests>
+  internal PendingPerspectiveWrite? PreparePendingWrite<TModel>(DbContext context, UpsertRowArgs<TModel> row)
+      where TModel : class {
+    if (!UsesAtomicUpsert) {
+      return null;
+    }
+    var (args, hookPlan, expiresAt, businessTime, _) = _planRowWrite(context, row);
+    return _tryPrepareAtomicWrite(context, args, hookPlan, expiresAt, businessTime);
+  }
+
+  /// <summary>
+  /// Writes a prepared row with the Path 1 atomic statement against the underlying Npgsql connection: an upsert for
+  /// an unchecked version, a conditional update for a present one, an insert-if-missing for an absent one. Returns
+  /// whether the write landed (false when the ordering guard refused it), or null when Npgsql could not bind a value,
+  /// so the caller falls back to the Entity Framework path.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single atomic UPSERT contains the physical-field interpolation + retry-or-fallback control flow on purpose; splitting would force passing several pieces of state across helpers and obscure the SQL composition.")]
+  private static async Task<bool?> _tryAtomicUpsertAsync<TModel>(
+      DbContext context,
+      PendingPerspectiveWrite write,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    var row = write.Row!;
+    var qualifiedTable = write.Table;
+
+    // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause:
+    // the INSERT path always sets scope so a new row carries the caller's scope verbatim,
+    // while the UPDATE path preserves the existing row's scope unless the event is an
+    // IScopeEvent.
+    var scopeUpdateClause = row.ForceUpdateScope ? ", scope = EXCLUDED.scope" : string.Empty;
+
+    // Physical-field columns (vector embeddings, denormalized scalars, etc.) ride
+    // alongside the JSONB columns in the same atomic statement. We double-quote the column names
+    // to handle mixed case + reserved-word collisions and bind values as ordinary parameters
+    // (Vector + scalar types are handled natively by Npgsql once UseVector is on).
+    var pfColumnsClause = string.Empty;
+    var pfValuesClause = string.Empty;
+    var pfUpdateClause = string.Empty;
+    var pfCount = row.PhysicalValues.Count;
+    if (pfCount > 0) {
+      var pfColumns = new StringBuilder();
+      var pfValues = new StringBuilder();
+      var pfUpdates = new StringBuilder();
+      for (var i = 0; i < pfCount; i++) {
+        if (i > 0) {
+          pfColumns.Append(", ");
+          pfValues.Append(", ");
+          pfUpdates.Append(", ");
+        }
+        // Double-quote the column to preserve case and dodge keyword collisions.
+        var quoted = Whizbang.Data.Postgres.Perspectives.PerspectiveWriteSql.QuoteColumn(row.PhysicalValues[i].Column);
+        pfColumns.Append(quoted);
+        pfValues.Append("@pf_").Append(i);
+        pfUpdates.Append(quoted).Append(" = EXCLUDED.").Append(quoted);
+      }
+      pfColumnsClause = ", " + pfColumns;
+      pfValuesClause = ", " + pfValues;
+      pfUpdateClause = ", " + pfUpdates;
+    }
+
     // The ordering guard, written against the incoming metadata: EXCLUDED.metadata in the upsert, the bound
     // parameter in the conditional UPDATE. The unconditional text is byte-identical to what it always was.
     string guard(string incoming) =>
       Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrderingGuard(
-        qualifiedTable, incoming, ordersOnEventId);
+        qualifiedTable, incoming, row.OrdersOnEventId);
     var whereClause = $@"
         WHERE {guard("EXCLUDED.metadata")}";
 
     // updated_at + the version bump come from the resolved per-event hook plan (default whizbang.timestamps:
     // updated_at = now, bump = 1). created_at is always the real now on insert (a hook cannot rewrite it).
-    // expires_at is TtlRow-only (E2-4d). For a non-TtlRow model (expiresAt == null) the clause is omitted
+    // expires_at is TtlRow-only (E2-4d). For a non-TtlRow model (no expiry) the clause is omitted
     // entirely, so the SQL is byte-identical to the pre-E2-4d form — a perspective table that never carries
     // the column (the common case + hand-written test schemas) is unaffected. A TtlRow perspective uses the
     // generated schema, which has the column.
-    var expiresColumn = expiresAt.HasValue ? ", expires_at" : "";
-    var expiresValue = expiresAt.HasValue ? ", @wb_expires" : "";
-    var expiresUpdate = expiresAt.HasValue ? "\n          expires_at = EXCLUDED.expires_at," : "";
+    var hasExpiry = row.ExpiresAt.HasValue;
+    var expiresColumn = hasExpiry ? ", expires_at" : "";
+    var expiresValue = hasExpiry ? ", @wb_expires" : "";
+    var expiresUpdate = hasExpiry ? "\n          expires_at = EXCLUDED.expires_at," : "";
     var insert = $@"
         INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version{expiresColumn}{pfColumnsClause})
         VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, @wb_syscreated, @wb_sysupdated, 1{expiresValue}{pfValuesClause})";
     // Issue #928: a checked write lands only on the version the apply read. An existing row is updated in
     // place on that exact version; a missing one is inserted only if it is still missing. Either affects no
     // row when the row moved, which the refusal check below turns into a conflict.
-    var expected = args.ExpectedVersion;
+    var expected = write.ExpectedVersion;
     var sql = expected.State switch {
       PerspectiveRowVersionState.Present => $@"
         UPDATE {qualifiedTable} SET
           data = @data::jsonb,
           metadata = @metadata::jsonb,
           updated_at = CASE WHEN @wb_suppressactivity THEN {qualifiedTable}.updated_at ELSE @wb_updated END,
-          sys_updated_at = @wb_sysupdated,{(expiresAt.HasValue ? "\n          expires_at = @wb_expires," : "")}
-          version = {qualifiedTable}.version + @wb_versionbump{(args.ForceUpdateScope ? ", scope = @scope::jsonb" : "")}{_physicalFieldAssignments(args.PhysicalFieldValues)}
+          sys_updated_at = @wb_sysupdated,{(hasExpiry ? "\n          expires_at = @wb_expires," : "")}
+          version = {qualifiedTable}.version + @wb_versionbump{(row.ForceUpdateScope ? ", scope = @scope::jsonb" : "")}{_physicalFieldAssignments(row.PhysicalValues)}
         WHERE {qualifiedTable}.id = @id AND {qualifiedTable}.xmin = @wb_expected_version
           AND ({guard("@metadata::jsonb")})",
       PerspectiveRowVersionState.Absent => insert + @"
@@ -504,40 +576,32 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       if (currentTx is not null) {
         cmd.Transaction = currentTx.GetDbTransaction();
       }
-      cmd.Parameters.Add(new NpgsqlParameter("id", args.Id));
-      cmd.Parameters.Add(new NpgsqlParameter("data", dataJson));
-      cmd.Parameters.Add(new NpgsqlParameter("metadata", metadataJson));
-      cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
+      cmd.Parameters.Add(new NpgsqlParameter("id", write.StreamId));
+      cmd.Parameters.Add(new NpgsqlParameter("data", row.Data));
+      cmd.Parameters.Add(new NpgsqlParameter("metadata", row.Metadata));
+      cmd.Parameters.Add(new NpgsqlParameter("scope", row.Scope));
       var writeClock = DateTime.UtcNow;
       if (expected.State == PerspectiveRowVersionState.Present) {
         cmd.Parameters.Add(PerspectiveRowVersionSql.ExpectedVersionParameter("wb_expected_version", expected));
       }
-      // created_at is written only on insert. A row whose stream no longer holds its first event is dated at the stream's
-      // recorded start, which the runner begins for this row (#2152); otherwise at the applied event's business time.
-      cmd.Parameters.Add(new NpgsqlParameter("wb_created", Whizbang.Core.Perspectives.PerspectiveRowStart.For(args.Id) ?? businessTime));
-      // The timestamps hook may override business time explicitly; its default now yields the
-      // applied event's own timestamp rather than the clock.
-      cmd.Parameters.Add(new NpgsqlParameter("wb_updated", hookPlan.UpdatedAt?.UtcDateTime ?? businessTime));
-      cmd.Parameters.Add(new NpgsqlParameter("wb_suppressactivity", hookPlan.SuppressActivity));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_created", row.CreatedAt));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_updated", row.UpdatedAt));
+      cmd.Parameters.Add(new NpgsqlParameter("wb_suppressactivity", row.SuppressActivity));
       cmd.Parameters.Add(new NpgsqlParameter("wb_syscreated", writeClock));
       cmd.Parameters.Add(new NpgsqlParameter("wb_sysupdated", writeClock));
-      if (expiresAt.HasValue) {
-        cmd.Parameters.Add(new NpgsqlParameter("wb_expires", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = expiresAt.Value.UtcDateTime });
+      if (hasExpiry) {
+        cmd.Parameters.Add(new NpgsqlParameter("wb_expires", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = row.ExpiresAt!.Value });
       }
-      cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", hookPlan.BumpVersion ? 1 : 0));
-      if (pfCount > 0) {
-        var i = 0;
-        foreach (var (columnName, value) in args.PhysicalFieldValues!) {
-          // value is what the consumer's source generator already coerced to the
-          // EF-mapped CLR type (Vector for embedding columns, string/decimal/etc.
-          // for scalars). Null values bind as DBNull so nullable columns work.
-          cmd.Parameters.Add(PhysicalColumnParameter("pf_" + i, entityType?.FindProperty(columnName), value));
-          i++;
-        }
+      cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", row.BumpVersion ? 1 : 0));
+      for (var i = 0; i < pfCount; i++) {
+        // The value is what the consumer's source generator already coerced to the EF-mapped CLR type (Vector for
+        // embedding columns, string/decimal/etc. for scalars), or a jsonb column's converted document. Null values
+        // bind as DBNull so nullable columns work.
+        cmd.Parameters.Add(Whizbang.Data.Postgres.Perspectives.PerspectiveWriteSql.PhysicalParameter("pf_" + i, row.PhysicalValues[i]));
       }
       var affected = await cmd.ExecuteNonQueryAsync(cancellationToken);
       if (affected == 0 && expected.IsChecked) {
-        await _explainRefusedWriteAsync<TModel>(context, qualifiedTable, args.Id, expected, cancellationToken);
+        await _explainRefusedWriteAsync<TModel>(context, qualifiedTable, write.StreamId, expected, cancellationToken);
       }
       // No row affected and no conflict thrown: the ordering guard refused the write (#1342).
       return affected > 0;
@@ -575,29 +639,38 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <param name="property">The column's property in the model, if the model has one.</param>
   /// <param name="value">The value.</param>
   /// <returns>The parameter.</returns>
-  internal static NpgsqlParameter PhysicalColumnParameter(string name, IReadOnlyProperty? property, object? value) {
+  internal static NpgsqlParameter PhysicalColumnParameter(string name, IReadOnlyProperty? property, object? value) =>
+    Whizbang.Data.Postgres.Perspectives.PerspectiveWriteSql.PhysicalParameter(name, PhysicalColumnValue(name, property, value));
+
+  /// <summary>
+  /// One physical column's value in the form both the per-stream and the set-based statement write it: a jsonb
+  /// column's value as the jsonb text its own converter produces, any other value as it is, with the column's store
+  /// type for a statement that has to name it.
+  /// </summary>
+  /// <param name="column">The column name.</param>
+  /// <param name="property">The column's property in the model, if the model has one.</param>
+  /// <param name="value">The value.</param>
+  /// <returns>The value to write.</returns>
+  internal static PerspectivePhysicalValue PhysicalColumnValue(string column, IReadOnlyProperty? property, object? value) {
+    var storeType = property?.GetColumnType();
     if (value is not null
         && property?.GetValueConverter() is { } converter
-        && string.Equals(property.GetColumnType(), "jsonb", StringComparison.OrdinalIgnoreCase)) {
-      return new NpgsqlParameter(name, NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = converter.ConvertToProvider(value)! };
+        && string.Equals(storeType, "jsonb", StringComparison.OrdinalIgnoreCase)) {
+      return new PerspectivePhysicalValue(column, converter.ConvertToProvider(value), storeType, IsJsonDocument: true);
     }
 
-    return new NpgsqlParameter(name, value ?? DBNull.Value);
+    return new PerspectivePhysicalValue(column, value, storeType, IsJsonDocument: false);
   }
 
   /// <summary>
   /// The physical-column assignments of the conditional <c>UPDATE</c>: <c>, "col" = @pf_i</c> per value, in
-  /// the dictionary's order, bound to the same <c>@pf_i</c> parameters the insert form binds.
+  /// column order, bound to the same <c>@pf_i</c> parameters the insert form binds.
   /// </summary>
-  private static string _physicalFieldAssignments(IDictionary<string, object?>? physicalFieldValues) {
-    if (physicalFieldValues is null) {
-      return string.Empty;
-    }
+  private static string _physicalFieldAssignments(IReadOnlyList<PerspectivePhysicalValue> physicalValues) {
     var assignments = new StringBuilder();
-    var i = 0;
-    foreach (var columnName in physicalFieldValues.Keys) {
-      assignments.Append(", \"").Append(columnName.Replace("\"", "\"\"")).Append("\" = @pf_").Append(i);
-      i++;
+    for (var i = 0; i < physicalValues.Count; i++) {
+      assignments.Append(", ").Append(Whizbang.Data.Postgres.Perspectives.PerspectiveWriteSql.QuoteColumn(physicalValues[i].Column))
+        .Append(" = @pf_").Append(i);
     }
     return assignments.ToString();
   }

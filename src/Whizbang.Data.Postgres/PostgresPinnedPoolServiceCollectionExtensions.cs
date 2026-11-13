@@ -85,6 +85,6 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
         return PostgresCommandTimeouts.ApplyTo(configuration, opts.ConnectionStringName, resolved);
       }
     }
-    return opts.ConnectionString;
+    return opts.ConnectionString?.Reveal();
   }
 }
