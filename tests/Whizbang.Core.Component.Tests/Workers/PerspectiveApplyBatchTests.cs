@@ -182,11 +182,30 @@ public class PerspectiveApplyBatchTests {
     var planned = source.Planned!.Single(r => r.StreamId == newStream.StreamId);
     await Assert.That(planned with { EventIds = null })
       .IsEqualTo(new PerspectiveStateRequest(newStream.StreamId, PERSPECTIVE, first.MessageId.Value, KnownNew: true));
-    await Assert.That(planned.EventIds).IsEquivalentTo(new[] { first.MessageId.Value })
+    await Assert.That(planned.EventIds).IsEquivalentTo([first.MessageId.Value])
       .Because("the batch plans the commit-sequence read of every event the pair folds");
     await Assert.That(source.Planned!.Single(r => r.StreamId == oldStream.StreamId).KnownNew).IsFalse();
     await Assert.That(_runner(newStream).BatchState).IsSameReferenceAs(source.Batch);
     await Assert.That(_runner(oldStream).BatchState).IsSameReferenceAs(source.Batch);
+  }
+
+  [Test]
+  public async Task APair_HasEnded_OnceItHasAResultOrAFailureAsync() {
+    var log = new ConcurrentQueue<string>();
+    var open = _pair(Guid.NewGuid(), new FakeRunner(log));
+    var completed = _pair(Guid.NewGuid(), new FakeRunner(log));
+    completed.Result = new PerspectiveCursorCompletion {
+      StreamId = completed.StreamId,
+      PerspectiveName = completed.PerspectiveName,
+      LastEventId = Guid.NewGuid(),
+      Status = PerspectiveProcessingStatus.Completed,
+    };
+    var failed = _pair(Guid.NewGuid(), new FakeRunner(log));
+    failed.Failure = new InvalidOperationException("the fold threw");
+
+    await Assert.That(open.Ended).IsFalse().Because("a pair a batch cut short before it ended is still to be failed");
+    await Assert.That(completed.Ended).IsTrue();
+    await Assert.That(failed.Ended).IsTrue();
   }
 
   [Test]

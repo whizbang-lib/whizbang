@@ -20,6 +20,9 @@ namespace Whizbang.Core.Workers;
 /// three in a row for one group; the set-based path runs each phase for every group of the batch before the next.
 /// </summary>
 public partial class PerspectiveWorker {
+  /// <summary>The affinity phase a pair is in while its events are applied, on every path that applies them.</summary>
+  private const string APPLY_PHASE = "apply";
+
   /// <summary>What every group of one claimed batch shares.</summary>
   private sealed record ClaimedBatchContext(
       Activity? BatchActivity,
@@ -87,7 +90,7 @@ public partial class PerspectiveWorker {
     }
     await using (group.ConfigureAwait(false)) {
       try {
-        _markAffinityPhase(group.StreamId, group.PerspectiveName, "apply");
+        _markAffinityPhase(group.StreamId, group.PerspectiveName, APPLY_PHASE);
         var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
           group.Work, group.Runner!, group.Checkpoint, group.StreamContext, group.EnablePerspectiveSpans, ct).ConfigureAwait(false);
         if (rewindLockSkipped) {
@@ -189,52 +192,15 @@ public partial class PerspectiveWorker {
       CancellationToken ct) {
     var streamId = group.StreamId;
     var perspectiveName = group.PerspectiveName;
-    var lastProcessedEventId = group.Checkpoint?.LastEventId;
     if (result.Status == PerspectiveProcessingStatus.Completed) {
       _storedFormFailures.Recovered(perspectiveName, streamId);
     }
 
     _markAffinityPhase(streamId, perspectiveName, "load-processed");
-    var processedEvents = await _loadAndLogProcessedEventsAsync(
-      group.ReceptorInvoker, group.EventStore, result, streamId, perspectiveName,
-      lastProcessedEventId, ct, group.Prefetched).ConfigureAwait(false);
+    var processedEvents = await _loadAndLogProcessedEventsAsync(group, result, ct).ConfigureAwait(false);
 
-    // Rewind path: the range-based load above covers events above the pre-rewind
-    // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
-    // that accumulated during the rewind window) live in the perspective work queue;
-    // IPerspectiveReplayReader is the authoritative source for that "is_new" set.
-    // When registered, we use it to pull every pending event the rewind should fire
-    // handlers for. When not registered, we fall back to the narrow trigger-only
-    // lookup so existing deployments keep working.
     if (processingMode == ProcessingMode.Replay) {
-      // Replay is returned only for a checkpoint that carries a rewind trigger
-      // (_executePerspectiveRunnerAsync).
-      var triggerId = group.Checkpoint!.RewindTriggerEventId!.Value;
-      var replayReader = group.Scope.ServiceProvider.GetService<IPerspectiveReplayReader>();
-      if (replayReader is not null && _eventTypeProvider.IsAvailable) {
-        var eventTypes = _eventTypeProvider.GetEventTypes();
-        var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
-        await foreach (var annotated in replayReader.ReadReplayEventsAsync(
-            streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct).ConfigureAwait(false)) {
-          if (annotated.IsNew && seen.Add(annotated.Envelope.MessageId.Value)) {
-            processedEvents.Insert(0, annotated.Envelope);
-          }
-        }
-      } else if (group.EventStore is not null
-                 && _eventTypeProvider.IsAvailable
-                 && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
-        var envelopesUpToTrigger = await group.EventStore.GetEventsBetweenPolymorphicAsync(
-          streamId,
-          afterEventId: null,
-          upToEventId: triggerId,
-          _eventTypeProvider.GetEventTypes(),
-          ct).ConfigureAwait(false);
-        var triggerEnvelope = envelopesUpToTrigger
-          .FirstOrDefault(e => e.MessageId.Value == triggerId);
-        if (triggerEnvelope is not null) {
-          processedEvents.Insert(0, triggerEnvelope);
-        }
-      }
+      await _addReplayedEventsAsync(group, processedEvents, ct).ConfigureAwait(false);
     }
 
     foreach (var envelope in processedEvents) {
@@ -263,6 +229,45 @@ public partial class PerspectiveWorker {
     _metrics?.StreamsUpdated.Add(1);
     if (processedEvents.Count > 0) {
       _metrics?.EventsProcessed.Add(processedEvents.Count);
+    }
+  }
+
+  /// <summary>
+  /// A rewound group's processed events also hold the events below the pre-rewind cursor. The range read covers only
+  /// the events above it; the rewind trigger and any other late arrivals that accumulated during the rewind window live
+  /// in the perspective work queue, and <see cref="IPerspectiveReplayReader"/> is the authoritative source for that
+  /// "is_new" set. When none is registered, the narrow trigger-only lookup keeps existing deployments working.
+  /// </summary>
+  private async Task _addReplayedEventsAsync(ClaimedGroup group, List<MessageEnvelope<IEvent>> processedEvents, CancellationToken ct) {
+    var streamId = group.StreamId;
+    var perspectiveName = group.PerspectiveName;
+    // Replay is returned only for a checkpoint that carries a rewind trigger
+    // (_executePerspectiveRunnerAsync).
+    var triggerId = group.Checkpoint!.RewindTriggerEventId!.Value;
+    var replayReader = group.Scope.ServiceProvider.GetService<IPerspectiveReplayReader>();
+    if (replayReader is not null && _eventTypeProvider.IsAvailable) {
+      var eventTypes = _eventTypeProvider.GetEventTypes();
+      var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
+      await foreach (var annotated in replayReader.ReadReplayEventsAsync(
+          streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct).ConfigureAwait(false)) {
+        if (annotated.IsNew && seen.Add(annotated.Envelope.MessageId.Value)) {
+          processedEvents.Insert(0, annotated.Envelope);
+        }
+      }
+    } else if (group.EventStore is not null
+               && _eventTypeProvider.IsAvailable
+               && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
+      var envelopesUpToTrigger = await group.EventStore.GetEventsBetweenPolymorphicAsync(
+        streamId,
+        afterEventId: null,
+        upToEventId: triggerId,
+        _eventTypeProvider.GetEventTypes(),
+        ct).ConfigureAwait(false);
+      var triggerEnvelope = envelopesUpToTrigger
+        .FirstOrDefault(e => e.MessageId.Value == triggerId);
+      if (triggerEnvelope is not null) {
+        processedEvents.Insert(0, triggerEnvelope);
+      }
     }
   }
 
@@ -315,47 +320,17 @@ public partial class PerspectiveWorker {
         var prefetched = await _prefetchClaimedAsync(
           [.. groupedWork.Select(g => g.Key).Where(k => _writeModeOf(k.PerspectiveName) == PerspectiveWriteMode.SetBased)],
           cancellationToken).ConfigureAwait(false);
-        await Parallel.ForEachAsync(groupedWork, parallel, async (work, ct) => {
-          if (_writeModeOf(work.Key.PerspectiveName) != PerspectiveWriteMode.SetBased) {
-            await _runClaimedGroupAsync(batch, work, ct).ConfigureAwait(false);
-            return;
-          }
-          var group = await _beginClaimedGroupAsync(batch, work, ct, prefetched?.GetValueOrDefault(work.Key)).ConfigureAwait(false);
-          if (group is null) {
-            return;
-          }
-          var queued = false;
-          try {
-            queued = await _beginClaimedApplyAsync(batch, group, ct).ConfigureAwait(false);
-            if (queued) {
-              candidates.Enqueue(group);
-            }
-          } catch (Exception ex) when (ex is not OperationCanceledException) {
-            await _failClaimedGroupAsync(group, ex, ct).ConfigureAwait(false);
-          } finally {
-            if (!queued) {
-              await group.DisposeAsync().ConfigureAwait(false);
-            }
-          }
-        }).ConfigureAwait(false);
+        await Parallel.ForEachAsync(groupedWork, parallel, (work, ct) =>
+          new ValueTask(_beginClaimedForBatchAsync(batch, work, prefetched?.GetValueOrDefault(work.Key), candidates, ct))).ConfigureAwait(false);
 
         var pairs = candidates.Select(g => g.BatchPair!).ToList();
         foreach (var group in candidates) {
-          _markAffinityPhase(group.StreamId, group.PerspectiveName, "apply");
+          _markAffinityPhase(group.StreamId, group.PerspectiveName, APPLY_PHASE);
         }
         await PerspectiveApplyBatch.RunAsync(pairs, _batchServices(), cancellationToken).ConfigureAwait(false);
 
-        await Parallel.ForEachAsync(candidates, parallel, async (group, ct) => {
-          try {
-            if (group.BatchPair!.Failure is { } failure) {
-              await _failClaimedGroupAsync(group, failure, ct).ConfigureAwait(false);
-            } else {
-              await _finishClaimedGroupAsync(batch, group, group.BatchPair.Result!, processingMode: null, ct).ConfigureAwait(false);
-            }
-          } catch (Exception ex) when (ex is not OperationCanceledException) {
-            await _failClaimedGroupAsync(group, ex, ct).ConfigureAwait(false);
-          }
-        }).ConfigureAwait(false);
+        await Parallel.ForEachAsync(candidates, parallel, (group, ct) =>
+          new ValueTask(_endClaimedBatchPairAsync(batch, group, ct))).ConfigureAwait(false);
       } finally {
         foreach (var group in candidates) {
           await group.DisposeAsync().ConfigureAwait(false);
@@ -363,6 +338,53 @@ public partial class PerspectiveWorker {
       }
     } finally {
       gates.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// One group of a claimed set-based batch up to the batch: a per-stream pair runs the per-pair path in full; a
+  /// set-based one is begun and, unless it ran its own apply (a rewind, a bootstrap, no read), queued as a candidate.
+  /// A group that is not queued is disposed here; a failure is the group's own.
+  /// </summary>
+  private async Task _beginClaimedForBatchAsync(
+      ClaimedBatchContext batch,
+      IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork> work,
+      ClaimedPrefetch? prefetched,
+      ConcurrentQueue<ClaimedGroup> candidates,
+      CancellationToken ct) {
+    if (_writeModeOf(work.Key.PerspectiveName) != PerspectiveWriteMode.SetBased) {
+      await _runClaimedGroupAsync(batch, work, ct).ConfigureAwait(false);
+      return;
+    }
+    var group = await _beginClaimedGroupAsync(batch, work, ct, prefetched).ConfigureAwait(false);
+    if (group is null) {
+      return;
+    }
+    var queued = false;
+    try {
+      queued = await _beginClaimedApplyAsync(batch, group, ct).ConfigureAwait(false);
+      if (queued) {
+        candidates.Enqueue(group);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      await _failClaimedGroupAsync(group, ex, ct).ConfigureAwait(false);
+    } finally {
+      if (!queued) {
+        await group.DisposeAsync().ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>A batched group after the batch: failed with its pair's failure, else finished with its result.</summary>
+  private async Task _endClaimedBatchPairAsync(ClaimedBatchContext batch, ClaimedGroup group, CancellationToken ct) {
+    try {
+      if (group.BatchPair!.Failure is { } failure) {
+        await _failClaimedGroupAsync(group, failure, ct).ConfigureAwait(false);
+      } else {
+        await _finishClaimedGroupAsync(batch, group, group.BatchPair.Result!, processingMode: null, ct).ConfigureAwait(false);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      await _failClaimedGroupAsync(group, ex, ct).ConfigureAwait(false);
     }
   }
 
@@ -378,7 +400,7 @@ public partial class PerspectiveWorker {
     // A status that asks for a rewind comes only with a cursor.
     if (cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired) && checkpoint!.RewindTriggerEventId is not null) {
       // A rewind replays the stream on its own; it is the per-pair path's, as it always was.
-      _markAffinityPhase(group.StreamId, group.PerspectiveName, "apply");
+      _markAffinityPhase(group.StreamId, group.PerspectiveName, APPLY_PHASE);
       var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
         group.Work, group.Runner!, checkpoint, group.StreamContext, group.EnablePerspectiveSpans, ct).ConfigureAwait(false);
       if (!rewindLockSkipped) {
@@ -393,7 +415,7 @@ public partial class PerspectiveWorker {
       ? selected
       : await group.Runner!.ReadEventsAsync(group.StreamId, group.StreamContext.LastProcessedEventId, ct).ConfigureAwait(false);
     if (events is not { Count: > 0 }) {
-      _markAffinityPhase(group.StreamId, group.PerspectiveName, "apply");
+      _markAffinityPhase(group.StreamId, group.PerspectiveName, APPLY_PHASE);
       var result = await _executeNormalPathAsync(
         group.Runner, group.StreamId, group.PerspectiveName, group.StreamContext.LastProcessedEventId,
         group.EnablePerspectiveSpans, ct).ConfigureAwait(false);

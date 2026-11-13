@@ -4491,14 +4491,10 @@ public partial class PerspectiveWorker(
   /// Only loads when receptor invoker and event store are available and processing completed.
   /// </summary>
   private async Task<List<MessageEnvelope<IEvent>>> _loadAndLogProcessedEventsAsync(
-      IReceptorInvoker? receptorInvoker,
-      IEventStore? eventStore,
-      PerspectiveCursorCompletion result,
-      Guid streamId,
-      string perspectiveName,
-      Guid? lastProcessedEventId,
-      CancellationToken cancellationToken,
-      ClaimedPrefetch? prefetched = null) {
+      ClaimedGroup group, PerspectiveCursorCompletion result, CancellationToken cancellationToken) {
+    var (receptorInvoker, eventStore, streamId, perspectiveName) = (group.ReceptorInvoker, group.EventStore, group.StreamId, group.PerspectiveName);
+    var lastProcessedEventId = group.Checkpoint?.LastEventId;
+    var prefetched = group.Prefetched;
 
     var shouldLoadEvents = receptorInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
     if (_logger.IsEnabled(LogLevel.Debug)) {

@@ -51,6 +51,10 @@ internal static partial class PerspectiveApplyBatch {
 
     internal PreparedPerspectiveApply? Prepared { get; set; }
     internal PerspectiveWriteOutcome? Outcome { get; set; }
+
+    /// <summary>Whether the pair's apply has ended, with a result or a failure; a batch cut short leaves the rest open.</summary>
+    /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveApplyBatchTests.cs:APair_HasEnded_OnceItHasAResultOrAFailureAsync</tests>
+    internal bool Ended => Result is not null || Failure is not null;
   }
 
   /// <summary>The services one batch runs with.</summary>

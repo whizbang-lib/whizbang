@@ -171,6 +171,20 @@ public partial class PerspectiveWorkerDrainModeTests {
   }
 
   [Test]
+  public async Task IsLeaseExpiry_IsTheLeaseCanceledWhileTheWorkerRunsAsync() {
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+    var running = CancellationToken.None;
+
+    await Assert.That(PerspectiveWorker.IsLeaseExpiry(canceled.Token, running)).IsTrue()
+      .Because("the lease ran out while the worker runs: the pair is failed and its rows re-issued");
+    await Assert.That(PerspectiveWorker.IsLeaseExpiry(canceled.Token, canceled.Token)).IsFalse()
+      .Because("the worker is stopping: the cancellation is let through, not recorded as a failure");
+    await Assert.That(PerspectiveWorker.IsLeaseExpiry(running, running)).IsFalse()
+      .Because("a cancellation from elsewhere, with the lease still live, is not an expiry");
+  }
+
+  [Test]
   [Timeout(30000)]
   public async Task AffinityGates_TakenForABatch_AreReleased_WhenTakingOneIsCanceledAsync(CancellationToken cancellationToken) {
     var worker = SetBasedRig.BareWorker();
@@ -291,6 +305,21 @@ public partial class PerspectiveWorkerDrainModeTests {
     await Assert.That(rig.Sink.Calls).IsEqualTo(0);
     await Assert.That(rig.Runners.RunWithEventsCalls).IsEqualTo(2).Because("the per-stream mode is the path before set-based writes");
     await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo(streams);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task SetBasedDrain_APairWhoseRunnerCannotBeResolved_IsLeftOut_AndTheStreamsOtherPairRunsAsync(CancellationToken cancellationToken) {
+    // A set-based pair the drain cannot begin (its runner is not resolved here) is left out of the lap's batch, as the
+    // per-pair path leaves it; the stream's per-stream pair is applied and reported as usual.
+    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { AlsoPerStream = true, SetBasedUnresolvable = true };
+    var stream = Guid.NewGuid();
+
+    await rig.DrainExpectingAsync([stream], expectedReports: 1, expectedFailures: 0, cancellationToken);
+
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.PerspectiveName)).IsEquivalentTo([PER_STREAM]);
+    await Assert.That(rig.Runners.Prepared).IsEmpty();
+    await Assert.That(rig.Sink.Calls).IsEqualTo(0);
   }
 
   [Test]
@@ -428,6 +457,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public bool WithReceptors { get; init; }
     public bool CursorsPerPair { get; init; }
     public Guid? RewindFlagWithoutTriggerFor { get; init; }
+    public bool SetBasedUnresolvable { get; init; }
     public Guid? ReadThrowsFor { get; init; }
     public Guid? ResumesAfterCursor { get; init; }
     public Guid? CaughtUp { get; init; }
@@ -531,6 +561,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         HoldPrepare = HoldPrepare,
         RewindThrows = RewindThrows,
         ReadThrowsFor = ReadThrowsFor,
+        SetBasedUnresolvable = SetBasedUnresolvable,
         OnRewind = RewindOutlivesLease ? () => time.Advance(TimeSpan.FromHours(1)) : null,
       };
       Coordinator.Expect(expectedReports, expectedFailures);
@@ -689,8 +720,10 @@ public partial class PerspectiveWorkerDrainModeTests {
     private int _runWithEvents;
     public int RunWithEventsCalls => Volatile.Read(ref _runWithEvents);
 
+    public bool SetBasedUnresolvable { get; init; }
+
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
-      perspectiveName is SET_BASED or PER_STREAM ? new Runner(this, perspectiveName) : null;
+      (perspectiveName == PER_STREAM || (perspectiveName == SET_BASED && !SetBasedUnresolvable)) ? new Runner(this, perspectiveName) : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => AlsoPerStream
       ? [_info(SET_BASED), _info(PER_STREAM)]

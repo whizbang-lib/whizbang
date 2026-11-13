@@ -127,7 +127,7 @@ public partial class PerspectiveWorker {
     using var lease = _drainLease(streamId, ct);
 
     pair.StartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-    _markAffinityPhase(streamId, perspectiveName, "apply");
+    _markAffinityPhase(streamId, perspectiveName, APPLY_PHASE);
     // The apply as a task of its own: when the lease runs out (or the worker stops) the executor stops
     // waiting for it, but it keeps running, so the finally below hands it to the affinity gate.
     var apply = Task.CompletedTask;
@@ -141,7 +141,7 @@ public partial class PerspectiveWorker {
               streamId, perspectiveName, pair.LastProcessedEventId, pair.FilteredEvents, leaseCt).ConfigureAwait(false);
         await _finishDrainModePerspectiveAsync(pair, result, leaseCt).ConfigureAwait(false);
       }
-    } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
+    } catch (OperationCanceledException leaseExpired) when (IsLeaseExpiry(lease.Token, ct)) {
       await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, ct).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       await _failDrainPairAsync(pair, ex, ct).ConfigureAwait(false);
@@ -572,62 +572,10 @@ public partial class PerspectiveWorker {
     var candidates = new ConcurrentQueue<DrainPair>();
     try {
       try {
-        await Parallel.ForEachAsync(pairs, parallel, async (work, ct) => {
-          var pair = await _beginDrainModePerspectiveAsync(work.StreamId, work.PerspectiveName, work.Events, context, ct).ConfigureAwait(false);
-          if (pair is null) {
-            return;
-          }
-          if (pair.InversionAnchor is null) {
-            pair.StartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-            pair.BatchPair = new PerspectiveApplyBatch.Pair(
-              pair.StreamId, pair.PerspectiveName, pair.Runner, pair.LastProcessedEventId, pair.FilteredEvents);
-            candidates.Enqueue(pair);
-            return;
-          }
-          // A rewind replays the stream on its own, under its own lease, as the per-pair path runs it.
-          await using (pair.ScopeLifetime.ConfigureAwait(false)) {
-            using var lease = _drainLease(pair.StreamId, ct);
-            pair.StartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-            _markAffinityPhase(pair.StreamId, pair.PerspectiveName, "apply");
-            try {
-              var result = await _rewindDrainPairAsync(pair, lease.Token).ConfigureAwait(false);
-              await _finishDrainModePerspectiveAsync(pair, result, lease.Token).ConfigureAwait(false);
-            } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
-              await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, ct).ConfigureAwait(false);
-            } catch (Exception ex) when (ex is not OperationCanceledException) {
-              await _failDrainPairAsync(pair, ex, ct).ConfigureAwait(false);
-            }
-          }
-        }).ConfigureAwait(false);
-
-        if (candidates.IsEmpty) {
-          return;
-        }
-        // One lease for the batch: its token cancels the prepare, the write and the completions when the batch outlives
-        // the lease, and every pair of the batch is then routed to the failure path, as one pair's would be.
-        using var lease = _drainLease(candidates.First().StreamId, cancellationToken);
-        try {
-          foreach (var pair in candidates) {
-            _markAffinityPhase(pair.StreamId, pair.PerspectiveName, "apply");
-          }
-          await PerspectiveApplyBatch.RunAsync([.. candidates.Select(p => p.BatchPair!)], _batchServices(), lease.Token).ConfigureAwait(false);
-          await Parallel.ForEachAsync(candidates, parallel, async (pair, _) => {
-            try {
-              if (pair.BatchPair!.Failure is { } failure) {
-                await _failDrainPairAsync(pair, failure, cancellationToken).ConfigureAwait(false);
-              } else {
-                await _finishDrainModePerspectiveAsync(pair, pair.BatchPair.Result!, lease.Token).ConfigureAwait(false);
-              }
-            } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested) {
-              await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
-            } catch (Exception ex) when (ex is not OperationCanceledException) {
-              await _failDrainPairAsync(pair, ex, cancellationToken).ConfigureAwait(false);
-            }
-          }).ConfigureAwait(false);
-        } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested) {
-          foreach (var pair in candidates.Where(p => p.BatchPair!.Result is null && p.BatchPair.Failure is null)) {
-            await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
-          }
+        await Parallel.ForEachAsync(pairs, parallel, (work, ct) =>
+          new ValueTask(_beginDrainForBatchAsync(work, context, candidates, ct))).ConfigureAwait(false);
+        if (!candidates.IsEmpty) {
+          await _applyDrainBatchAsync(candidates, parallel, cancellationToken).ConfigureAwait(false);
         }
       } finally {
         foreach (var pair in candidates) {
@@ -638,4 +586,85 @@ public partial class PerspectiveWorker {
       gates.Dispose();
     }
   }
+
+  /// <summary>
+  /// One pair of a drain lap up to the batch: begun, and queued as a candidate unless it needs a rewind, which replays
+  /// the stream on its own, under its own lease, as the per-pair path runs it.
+  /// </summary>
+  private async Task _beginDrainForBatchAsync(
+      (Guid StreamId, string PerspectiveName, List<MessageEnvelope<IEvent>> Events) work,
+      DrainBatchContext context,
+      ConcurrentQueue<DrainPair> candidates,
+      CancellationToken ct) {
+    var pair = await _beginDrainModePerspectiveAsync(work.StreamId, work.PerspectiveName, work.Events, context, ct).ConfigureAwait(false);
+    if (pair is null) {
+      return;
+    }
+    if (pair.InversionAnchor is null) {
+      pair.StartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+      pair.BatchPair = new PerspectiveApplyBatch.Pair(
+        pair.StreamId, pair.PerspectiveName, pair.Runner, pair.LastProcessedEventId, pair.FilteredEvents);
+      candidates.Enqueue(pair);
+      return;
+    }
+    await using (pair.ScopeLifetime.ConfigureAwait(false)) {
+      using var lease = _drainLease(pair.StreamId, ct);
+      pair.StartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+      _markAffinityPhase(pair.StreamId, pair.PerspectiveName, APPLY_PHASE);
+      try {
+        var result = await _rewindDrainPairAsync(pair, lease.Token).ConfigureAwait(false);
+        await _finishDrainModePerspectiveAsync(pair, result, lease.Token).ConfigureAwait(false);
+      } catch (OperationCanceledException leaseExpired) when (IsLeaseExpiry(lease.Token, ct)) {
+        await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, ct).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        await _failDrainPairAsync(pair, ex, ct).ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>
+  /// The lap's candidates applied together under one lease for the batch: its token cancels the prepare, the write and
+  /// the completions when the batch outlives the lease, and every pair of the batch that has not ended is then routed
+  /// to the failure path, as one pair's would be.
+  /// </summary>
+  private async Task _applyDrainBatchAsync(
+      ConcurrentQueue<DrainPair> candidates, ParallelOptions parallel, CancellationToken cancellationToken) {
+    using var lease = _drainLease(candidates.First().StreamId, cancellationToken);
+    try {
+      foreach (var pair in candidates) {
+        _markAffinityPhase(pair.StreamId, pair.PerspectiveName, APPLY_PHASE);
+      }
+      await PerspectiveApplyBatch.RunAsync([.. candidates.Select(p => p.BatchPair!)], _batchServices(), lease.Token).ConfigureAwait(false);
+      await Parallel.ForEachAsync(candidates, parallel, (pair, _) =>
+        new ValueTask(_endDrainBatchPairAsync(pair, lease.Token, cancellationToken))).ConfigureAwait(false);
+    } catch (OperationCanceledException leaseExpired) when (IsLeaseExpiry(lease.Token, cancellationToken)) {
+      foreach (var pair in candidates.Where(p => !p.BatchPair!.Ended)) {
+        await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>A batched drain pair after the batch: failed with its pair's failure, else finished with its result.</summary>
+  private async Task _endDrainBatchPairAsync(DrainPair pair, CancellationToken leaseToken, CancellationToken cancellationToken) {
+    try {
+      if (pair.BatchPair!.Failure is { } failure) {
+        await _failDrainPairAsync(pair, failure, cancellationToken).ConfigureAwait(false);
+      } else {
+        await _finishDrainModePerspectiveAsync(pair, pair.BatchPair.Result!, leaseToken).ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException leaseExpired) when (IsLeaseExpiry(leaseToken, cancellationToken)) {
+      await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      await _failDrainPairAsync(pair, ex, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Whether a cancellation is a lease's expiry rather than the worker stopping: the lease token is canceled and the
+  /// worker's is not. Only an expiry is routed to the failure path; a stop is let through.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.SetBased.cs:IsLeaseExpiry_IsTheLeaseCanceledWhileTheWorkerRunsAsync</tests>
+  internal static bool IsLeaseExpiry(CancellationToken lease, CancellationToken worker) =>
+    lease.IsCancellationRequested && !worker.IsCancellationRequested;
+
 }
