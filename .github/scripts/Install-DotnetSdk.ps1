@@ -30,8 +30,9 @@
 .PARAMETER InstallDir
     Where the SDK is installed.
 
-.PARAMETER InstallerUrl
-    Where dotnet-install.sh is downloaded from.
+.PARAMETER InstallerUrls
+    Where dotnet-install.sh is downloaded from, tried in order: Microsoft's CDN, then the dot.net redirect, so an
+    outage of either host alone does not stop the job (#2298).
 
 .EXAMPLE
     pwsh .github/scripts/Install-DotnetSdk.ps1 -FallbackChannel 10.0.x
@@ -41,11 +42,36 @@ param(
     [string]$GlobalJsonPath = 'global.json',
     [string]$FallbackChannel = '10.0.x',
     [string]$InstallDir = (Join-Path $HOME '.dotnet'),
-    [string]$InstallerUrl = 'https://dot.net/v1/dotnet-install.sh'
+    [string[]]$InstallerUrls = @(
+        'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh',
+        'https://dot.net/v1/dotnet-install.sh')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$script:InstallerUrls = $InstallerUrls
+
+# Downloads the installer from the first of Urls that answers. Returns Ok and the Url used, or Ok = false and an
+# Error naming every address with its error. Download is replaceable for tests.
+function Save-SdkInstaller {
+  param(
+      [Parameter(Mandatory)][string[]]$Urls,
+      [Parameter(Mandatory)][string]$OutFile,
+      [scriptblock]$Download = { param($Uri, $Path) Invoke-WebRequest -Uri $Uri -OutFile $Path -MaximumRetryCount 2 -RetryIntervalSec 5 }
+  )
+  $failures = [System.Collections.Generic.List[string]]::new()
+  foreach ($url in $Urls) {
+    try {
+      & $Download $url $OutFile
+      return [pscustomobject]@{ Ok = $true; Url = $url; Error = $null }
+    }
+    catch {
+      $failures.Add("${url}: $($_.Exception.Message)")
+    }
+  }
+  return [pscustomobject]@{ Ok = $false; Url = $null; Error = ($failures -join '; ') }
+}
 
 # The dotnet-install.sh channel to install: global.json's feature band (10.0.100 becomes 10.0.1xx), or the
 # fallback channel without a trailing .x.
@@ -104,13 +130,12 @@ $channel = Get-SdkChannel -GlobalJsonPath $GlobalJsonPath -FallbackChannel $Fall
 Write-Output "Installing .NET SDK channel $channel into $InstallDir"
 
 $installer = Join-Path ([IO.Path]::GetTempPath()) "dotnet-install-$PID.sh"
-try {
-  Invoke-WebRequest -Uri $InstallerUrl -OutFile $installer -MaximumRetryCount 2 -RetryIntervalSec 5
-}
-catch {
-  Write-Output "::error title=.NET SDK install::Could not download dotnet-install.sh from ${InstallerUrl}: $($_.Exception.Message)"
+$download = Save-SdkInstaller -Urls $InstallerUrls -OutFile $installer
+if (-not $download.Ok) {
+  Write-Output "::error title=.NET SDK install::Could not download dotnet-install.sh from any address: $($download.Error)"
   exit 1
 }
+Write-Output "Downloaded dotnet-install.sh from $($download.Url)"
 
 $result = Invoke-SdkInstall -InstallerPath $installer -Channel $channel -InstallDir $InstallDir
 if (-not $result.Ok) {

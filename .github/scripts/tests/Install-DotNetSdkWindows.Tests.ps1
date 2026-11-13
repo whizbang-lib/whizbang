@@ -70,7 +70,7 @@ Describe 'Install-DotNetSdk' {
     $dir = Join-Path $TestDrive 'dotnet'
     $out = @(Install-DotNetSdk -GlobalJsonPath $json -FallbackVersion '10.0.x' -InstallDir $dir -TempDir $TestDrive `
         -PathFile $PathFile -EnvFile $EnvFile -Download $Download -Install $Install -GetVersion $Version)
-    $Calls[0] | Should -BeLike 'download https://dot.net/v1/dotnet-install.ps1 -> *dotnet-install.ps1'
+    $Calls[0] | Should -BeLike "download $($script:InstallScriptUris[0]) -> *dotnet-install.ps1"
     $Calls[1] | Should -BeLike "install 10.0.1xx into $dir with *dotnet-install.ps1"
     $Calls[2] | Should -BeLike "version $dir*dotnet*"
     Get-Content -LiteralPath $PathFile | Should -Be @($dir, (Join-Path $dir 'tools'))
