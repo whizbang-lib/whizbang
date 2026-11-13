@@ -185,33 +185,22 @@ public static class CompositeBatchExtensions {
     try {
       while (true) {
         pending ??= enumerator.MoveNextAsync().AsTask();
-        if (batch.Count > 0 && !pending.IsCompleted) {
-          var due = _due(time, firstArrival, lastArrival, options);
-          if (due > TimeSpan.Zero && !await _arrivesWithinAsync(pending, due, time).ConfigureAwait(false)) {
-            due = TimeSpan.Zero;
-          }
-          if (due <= TimeSpan.Zero && !pending.IsCompleted) {
-            // The window closed with no new event: the batch goes, and the read already started is kept for the next.
-            var quiet = _cut(factory, batch);
-            bytes = 0;
-            yield return quiet;
-            continue;
-          }
+        if (await _windowClosesFirstAsync(batch.Count, pending, time, firstArrival, lastArrival, options).ConfigureAwait(false)) {
+          // The window closed with no new event: the batch goes, and the read already started is kept for the next.
+          var quiet = _cut(factory, batch);
+          bytes = 0;
+          yield return quiet;
+          continue;
         }
         bool moved;
-        try {
-          moved = await pending.ConfigureAwait(false);
-        } catch (Exception ex) {
-          failure = ExceptionDispatchInfo.Capture(ex);
-          moved = false;
-        }
+        (moved, failure) = await _readAsync(pending).ConfigureAwait(false);
         pending = null;
         if (!moved) {
           break;
         }
         var evt = enumerator.Current;
-        var size = maxBytes > 0 ? measure(evt) : 0;
-        if (batch.Count > 0 && (batch.Count + 1 > maxMessages || (maxBytes > 0 && bytes + size > maxBytes))) {
+        var size = _sizeOf(evt, maxBytes, measure);
+        if (_wouldOverflow(batch.Count, bytes, size, maxMessages, maxBytes)) {
           var full = _cut(factory, batch);
           bytes = 0;
           yield return full;
@@ -222,7 +211,7 @@ public static class CompositeBatchExtensions {
         batch.Add(evt);
         bytes += size;
         lastArrival = time.GetTimestamp();
-        if (batch.Count >= maxMessages || (maxBytes > 0 && bytes >= maxBytes)) {
+        if (_isFull(batch.Count, bytes, maxMessages, maxBytes)) {
           var reached = _cut(factory, batch);
           bytes = 0;
           yield return reached;
@@ -233,17 +222,82 @@ public static class CompositeBatchExtensions {
         yield return _cut(factory, batch);
       }
     } finally {
-      if (pending is not null) {
-        await stop.CancelAsync().ConfigureAwait(false);
-        try {
-          await pending.ConfigureAwait(false);
-        } catch (OperationCanceledException) {
-          // The read was ended by the stop above: the consumer stopped before the source's next event arrived.
-        }
-      }
+      await _endReadAsync(pending, stop).ConfigureAwait(false);
       await enumerator.DisposeAsync().ConfigureAwait(false);
     }
     failure?.Throw();
+  }
+
+  /// <summary>
+  /// Whether a batch that holds events is cut before its next event arrives: the read is still pending, and the window
+  /// (the debounce after the last event, capped by the wait after the first) closes first. A read that completes as the
+  /// window closes is taken, never lost.
+  /// </summary>
+  private static async Task<bool> _windowClosesFirstAsync(
+      int batched, Task<bool> pending, TimeProvider time, long firstArrival, long lastArrival, CompositeBatchOptions options) {
+    if (batched == 0 || pending.IsCompleted) {
+      return false;
+    }
+    var due = _due(time, firstArrival, lastArrival, options);
+    if (due > TimeSpan.Zero && !await _arrivesWithinAsync(pending, due, time).ConfigureAwait(false)) {
+      due = TimeSpan.Zero;
+    }
+    return due <= TimeSpan.Zero && !pending.IsCompleted;
+  }
+
+  /// <summary>The pending read's answer; a read that failed ends the batches, its failure kept to throw after the last.</summary>
+  private static async Task<(bool Moved, ExceptionDispatchInfo? Failure)> _readAsync(Task<bool> pending) {
+    try {
+      return (await pending.ConfigureAwait(false), null);
+    } catch (Exception ex) {
+      return (false, ExceptionDispatchInfo.Capture(ex));
+    }
+  }
+
+  /// <summary>An event's size, measured only when a byte limit applies.</summary>
+  private static long _sizeOf<TEvent>(TEvent evt, long maxBytes, Func<TEvent, long> measure) => maxBytes > 0 ? measure(evt) : 0;
+
+  /// <summary>Whether adding an event of <paramref name="size"/> would take a batch that holds events past a limit.</summary>
+  private static bool _wouldOverflow(int batched, long bytes, long size, int maxMessages, long maxBytes) {
+    if (batched == 0) {
+      return false;
+    }
+    if (batched + 1 > maxMessages) {
+      return true;
+    }
+    // 0 or less is no byte limit.
+    if (maxBytes <= 0) {
+      return false;
+    }
+    return bytes + size > maxBytes;
+  }
+
+  /// <summary>Whether a batch has reached a limit.</summary>
+  private static bool _isFull(int batched, long bytes, int maxMessages, long maxBytes) {
+    if (batched >= maxMessages) {
+      return true;
+    }
+    // 0 or less is no byte limit.
+    if (maxBytes <= 0) {
+      return false;
+    }
+    return bytes >= maxBytes;
+  }
+
+  /// <summary>
+  /// Ends a read still outstanding when the batches stop (the consumer stopped early), before the source is disposed:
+  /// disposing an enumerator with a read in flight is not allowed.
+  /// </summary>
+  private static async Task _endReadAsync(Task<bool>? pending, CancellationTokenSource stop) {
+    if (pending is null) {
+      return;
+    }
+    await stop.CancelAsync().ConfigureAwait(false);
+    try {
+      await pending.ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      // The read was ended by the stop above: the consumer stopped before the source's next event arrived.
+    }
   }
 
   /// <summary>How long until the batch is due: the debounce after the last event, capped by the wait after the first.</summary>

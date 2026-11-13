@@ -250,6 +250,41 @@ public class CompositeBatchesTests {
     await Assert.That(_rowsOf(batches.Single())).IsEquivalentTo([1, 2], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
+  /// <summary>
+  /// A consumer that stops with a read of the source still outstanding: the read is ended before the source is disposed
+  /// (disposing an enumerator with a read in flight is not allowed), and stopping completes without an error.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task AConsumerThatStopsWhileAReadIsPending_EndsTheRead_ThenDisposesTheSourceAsync(CancellationToken cancellationToken) {
+    var clock = new TimerAdvancingClock(_ignoredDue);
+    var readEnded = false;
+    var disposed = false;
+    async IAsyncEnumerable<RowImported> oneRowThenNothing([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token = default) {
+      try {
+        yield return _row(1);
+        try {
+          // The next event never comes; only the stop ends this read.
+          await new TaskCompletionSource().Task.WaitAsync(token);
+        } catch (OperationCanceledException) {
+          readEnded = true;
+          throw;
+        }
+      } finally {
+        disposed = true;
+      }
+    }
+    var batches = oneRowThenNothing(CancellationToken.None).ToCompositeBatches(_factory(), _options(), clock).GetAsyncEnumerator(cancellationToken);
+    var first = batches.MoveNextAsync().AsTask();
+    clock.Advance(await clock.Created(1).WaitAsync(cancellationToken));
+    await Assert.That(await first.WaitAsync(cancellationToken)).IsTrue();
+
+    await batches.DisposeAsync();
+
+    await Assert.That(readEnded).IsTrue().Because("the outstanding read was ended by the stop");
+    await Assert.That(disposed).IsTrue().Because("the source was disposed once its read had ended");
+  }
+
   [Test]
   [Timeout(60000)]
   public async Task WhenCanceled_WhatWasReadIsSent_ThenTheCancellationSurfacesAsync(CancellationToken cancellationToken) {
