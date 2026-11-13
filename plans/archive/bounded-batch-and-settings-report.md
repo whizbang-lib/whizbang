@@ -1,6 +1,6 @@
 # Bounded batch strategies and the startup settings report (#2220, #2251)
 
-Status: **in progress**, started 2026-11-10. Ships in one PR with #2246 (set-based perspective writes); this branch is merged
+Status: **shipped** 2026-11-13 in PR #2281 (started 2026-11-10). Shipped in one PR with #2246 (set-based perspective writes); this branch is merged
 into `feat/2246-set-based-perspective-writes` before the PR opens.
 
 Decisions are recorded on the issues:

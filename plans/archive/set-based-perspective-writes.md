@@ -1,6 +1,6 @@
 # Set-based perspective writes (#2246)
 
-Status: **in progress**, started 2026-11-10. Phases 1 and 2 of #2246. Later, separate: write-behind (#2247),
+Status: **shipped** 2026-11-13 in PR #2281 (started 2026-11-10). Phases 1 and 2 of #2246; follow-up #2286. Later, separate: write-behind (#2247),
 staging-table rebuilds (#2248).
 
 ## Why
