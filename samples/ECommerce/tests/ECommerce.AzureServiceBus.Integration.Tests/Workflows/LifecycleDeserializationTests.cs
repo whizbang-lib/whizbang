@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
@@ -11,7 +13,10 @@ using ECommerce.Integration.Tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.Integration.Tests.Workflows;
 
@@ -168,6 +173,50 @@ public class LifecycleDeserializationTests {
       // Cleanup
       registry.Unregister<ProductCreatedEvent>(countingReceptor, LifecycleStage.PostDistributeInline);
     }
+  }
+
+  /// <summary>
+  /// Every receptor the compiled registries route a ProductCreatedEvent to at PostDistributeInline must
+  /// be one the inventory host can actually run. A routed entry nothing can resolve throws on every
+  /// flush, and the outbox flush runs a stage for a whole batch, so one throw also skips the receptors
+  /// of every other message coalesced into that batch. That made the multi-event test above lose an
+  /// event whenever its two products' events were flushed together.
+  /// </summary>
+  [Test]
+  public async Task CompiledPostDistributeInlineReceptors_ForProductCreatedEvent_AllRunInTheInventoryHostAsync() {
+    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var registry = fixture.InventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
+    var evt = new ProductCreatedEvent {
+      ProductId = Guid.CreateVersion7(),
+      Name = "Routed receptor probe",
+      Description = "Every compiled entry must resolve",
+      Price = 1m
+    };
+    var envelope = new MessageEnvelope<ProductCreatedEvent> {
+      MessageId = MessageId.New(),
+      Payload = evt,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+
+    var compiled = registry.GetReceptorsFor(typeof(ProductCreatedEvent), LifecycleStage.PostDistributeInline)
+      .Where(r => r.RuntimeInstance is null)
+      .ToList();
+    await Assert.That(compiled).IsNotEmpty()
+      .Because("the shared fixtures route DistributeStageTestReceptor here, so an empty list means the probe saw nothing");
+
+    var failures = new List<string>();
+    using var scope = fixture.InventoryHost.Services.CreateScope();
+    foreach (var entry in compiled) {
+      try {
+        await entry.InvokeAsync(scope.ServiceProvider, evt, envelope, null, CancellationToken.None);
+      } catch (InvalidOperationException ex) {
+        failures.Add($"{entry.ReceptorId}: {ex.Message}");
+      }
+    }
+
+    await Assert.That(failures).IsEmpty()
+      .Because("a compiled route the host cannot resolve throws on every PostDistributeInline flush of the event");
   }
 
   // Helper receptor for counting multiple events
