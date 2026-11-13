@@ -1273,6 +1273,47 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generates the SplitDocumentRegistry.Register call for a model with a Split field (#2304): the projection a query
+  /// whose result is the model's document is rewritten to, reading every promoted column the copy fills beside the
+  /// document, and that copy, by the hydrators' rules. A Split document no longer holds its promoted fields, and a query
+  /// that projects the document materializes no row for a hydrator to fill.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/SplitDocumentProjectionGenerationTests.cs:SplitRecord_RegistersAProjectionThatReadsEveryPromotedColumn_AndACopyWithAWithExpressionAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/SplitDocumentProjectionGenerationTests.cs:ExtractedModel_RegistersNoProjection_ItsDocumentAlreadyHoldsTheFieldsAsync</tests>
+  private static void _generateSplitDocumentRegistration(StringBuilder sb, PerspectiveModelInfo model) {
+    const string REGISTRY = "Whizbang.Data.EFCore.Postgres.SplitDocumentRegistry";
+    var copied = _copiedFields(model);
+    var columns = string.Join(", ", copied.Select(f =>
+      $"global::Microsoft.EntityFrameworkCore.EF.Property<{(f.IsVector ? "global::Pgvector.Vector?" : f.TypeName)}>(r, \"{f.ColumnName}\")"));
+    sb.AppendLine($"        // Register the Split document projection for {model.ModelTypeName} (zero reflection, AOT-safe)");
+    sb.AppendLine($"        {REGISTRY}.Register<{model.ModelTypeName}>(");
+    sb.AppendLine($"          r => {REGISTRY}.WithColumns(r.Data, new object?[] {{ {columns} }}),");
+    sb.AppendLine("          (data, columns) => {");
+    sb.AppendLine($"          var row = new {REGISTRY}.Document<{model.ModelTypeName}>(data);");
+    _appendColumnCopy(sb, model, field => {
+      var index = copied.IndexOf(field);
+      if (field.IsVector) {
+        return $"(global::Pgvector.Vector?)columns[{index}]";
+      }
+      // A value that cannot be null is unwrapped; a nullable one keeps its null for the copy to test.
+      var suppress = _isNullableTypeName(field.TypeName) ? "" : "!";
+      return $"({field.TypeName})columns[{index}]{suppress}";
+    });
+    sb.AppendLine("          return row.Data;");
+    sb.AppendLine("        });");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// The promoted fields a hydrator copies into the model: every one with a setter, except an <c>init</c>-only one of a
+  /// class that is assigned in place (it cannot be assigned once the instance exists).
+  /// </summary>
+  private static List<PhysicalFieldInfo> _copiedFields(PerspectiveModelInfo model) {
+    var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
+    return [.. model.PhysicalFields.Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))];
+  }
+
+  /// <summary>
   /// Emits the body both hydrators share: one local per promoted column, read with
   /// <paramref name="read"/>, then the copy of those locals into <c>row.Data</c>.
   /// </summary>
@@ -1295,9 +1336,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       PerspectiveModelInfo model,
       Func<PhysicalFieldInfo, string> read) {
     var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
-    var copied = model.PhysicalFields
-        .Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))
-        .ToList();
+    var copied = _copiedFields(model);
 
     foreach (var field in copied) {
       sb.AppendLine($"          var _{field.ColumnName} = {read(field)};");
@@ -2003,6 +2042,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _generatePhysicalFieldHydratorRegistration(sb, model);
     _generateChangeTrackerHydratorRegistration(sb, model);
+    if (model.PhysicalFields.Any(f => f.IsSplit)) {
+      _generateSplitDocumentRegistration(sb, model);
+    }
   }
 
   /// <summary>
