@@ -5,6 +5,8 @@
 -- definition, which does not read the reason table, then the two functions and the reason table are dropped (lossy: a
 -- table still queued for a lowered fillfactor then waits for bloat, as it did before).
 
+-- <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteRequestSqlTests.cs:RequestIsIdempotent_AndClearRemovesItAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_clear_table_rewrite(p_table TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
