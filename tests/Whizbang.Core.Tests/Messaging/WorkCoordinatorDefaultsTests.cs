@@ -722,6 +722,45 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegrityLedgerBacklogAsync(0);
+
+    await Assert.That(result.Reported).IsFalse()
+      .Because("an engine with no ledger has no backlog to report, and a zero would read as a healed service");
+  }
+
+  [Test]
+  public async Task IntegrityRecordOriginCheckpointAsync_WithoutProviderSupport_KeepsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityRecordOriginCheckpointAsync(Guid.Empty, "origin", null, DateTimeOffset.UnixEpoch, 10);
+    await task;
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue()
+      .Because("an engine with no store keeps no checkpoint, and says so by doing nothing");
+  }
+
+  [Test]
+  public async Task IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var written = await coordinator.IntegrityAddLedgerTallyAsync(DateTimeOffset.UnixEpoch, 1, 1, DateTimeOffset.UnixEpoch);
+
+    await Assert.That(written).IsFalse().Because("an engine with no ledger keeps no tally, and the caller keeps its counts");
+  }
+
+  [Test]
+  public async Task GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var tally = await coordinator.GetIntegrityLedgerTallyAsync(DateTimeOffset.UnixEpoch);
+
+    await Assert.That(tally).IsNull().Because("no tally is no reading, and a zero would read as no progress");
+  }
+
+  [Test]
   public async Task GetIntegritySettledMaxAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -856,6 +895,29 @@ public class WorkCoordinatorDefaultsTests {
     var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 0L);
 
     await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task EnsureIntegritySealGenerationAsync_WithARewrite_WithoutProviderSupport_FallsBackToTheGenerationOnlyGuardAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 3L, new IntegrityHistoryRewrite(2, 10));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task GetIntegritySealGenerationAsync_WithoutProviderSupport_IsUnknownAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegritySealGenerationAsync(Guid.Empty)).IsNull();
+  }
+
+  [Test]
+  public async Task GetIntegrityHistoryRewriteAsync_WithoutProviderSupport_VouchesForNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegrityHistoryRewriteAsync(0L)).IsNull();
   }
 
   [Test]

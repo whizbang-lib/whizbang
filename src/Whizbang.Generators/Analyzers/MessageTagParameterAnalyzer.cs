@@ -83,7 +83,7 @@ public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
               DiagnosticDescriptors.MessageTagParameterMismatch,
               location,
               parameter.Name,                                    // {0} - parameter name
-              typeSymbol.Name,                                   // {1} - class name
+              TypeNameUtilities.SimpleName(typeSymbol),                                   // {1} - class name
               suggestion?.Name.ToLowerInvariant() ?? "?",        // {2} - suggested parameter name
               suggestion?.Name ?? "?"                            // {3} - property name
           ));

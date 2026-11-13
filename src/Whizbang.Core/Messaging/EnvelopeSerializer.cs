@@ -50,7 +50,9 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     // won't have JsonTypeInfo for MessageEnvelope<IEvent>, only for concrete types.
     // FIX: Always use the payload's runtime type to construct the envelope type name.
     // A payload's runtime type is always closed, so it always has an assembly-qualified name.
+#pragma warning disable RS0030 // versioned on purpose: the serialized envelope's message type, which a receiver resolves the payload from (#2267)
     var messageTypeName = TypeNameFormatter.AssemblyQualifiedName(payloadType);
+#pragma warning restore RS0030
     var envelopeTypeName = EnvelopeTypeNameHelper.Format(messageTypeName);
 
     // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage
@@ -73,6 +75,8 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       // State-only delivery survives the conversion too — losing it would re-fire triggers on
       // backfilled history (stream-integrity Phase S).
       StateOnly = envelope.StateOnly,
+      // A repaired child keeps its receptor restriction through the conversion (#2273).
+      Repaired = envelope.Repaired,
       Priority = envelope.Priority,   // priority step 1: the storage form carries the declaration
       Version = envelope.Version,
       // The producer's origin and the causality pair survive the conversion (#1029). A received typed

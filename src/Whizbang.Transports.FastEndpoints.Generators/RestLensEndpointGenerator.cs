@@ -88,7 +88,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
 
     // Extract attribute properties
     var route = AttributeUtilities.GetStringValue(restLensAttr, "Route")
-                ?? NamingConventionUtilities.ToDefaultRouteName(modelType.Name);
+                ?? NamingConventionUtilities.ToDefaultRouteName(TypeNameUtilities.SimpleName(modelType));
     var enableFiltering = AttributeUtilities.GetBoolValue(restLensAttr, "EnableFiltering", true);
     var enableSorting = AttributeUtilities.GetBoolValue(restLensAttr, "EnableSorting", true);
     var enablePaging = AttributeUtilities.GetBoolValue(restLensAttr, "EnablePaging", true);
@@ -96,7 +96,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     var maxPageSize = AttributeUtilities.GetIntValue(restLensAttr, "MaxPageSize", 100);
 
     // Generate endpoint class name from interface name
-    var endpointClassName = _getEndpointClassName(symbol.Name);
+    var endpointClassName = _getEndpointClassName(TypeNameUtilities.SimpleName(symbol));
 
     return new RestLensInfo(
         InterfaceName: TypeNameUtilities.FullyQualified(symbol),
@@ -107,7 +107,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
         EnablePaging: enablePaging,
         DefaultPageSize: defaultPageSize,
         MaxPageSize: maxPageSize,
-        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
+        Namespace: TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(symbol)),
         EndpointClassName: endpointClassName,
         FilterCases: _renderFilterCases(fields),
         SortCases: _renderSortCases(fields),
@@ -255,7 +255,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   private static bool _hasModelMembers(ITypeSymbol type) =>
     type.TypeKind is TypeKind.Class or TypeKind.Struct
     && type.SpecialType == SpecialType.None
-    && !TypeNameUtilities.NamespaceName(type.ContainingNamespace).StartsWith("System", StringComparison.Ordinal);
+    && !TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(type)).StartsWith("System", StringComparison.Ordinal);
 
   private static string _renderRegistration(IPropertySymbol property, AttributeData attribute) {
     var arguments = attribute.ConstructorArguments;

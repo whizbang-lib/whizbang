@@ -298,6 +298,9 @@ public sealed partial class IntegrityAuditWorker(
       // An origin that predates the protocol ignores the extra fields and answers unwindowed —
       // the comparator then compares legacy and the seal simply stays put.
       var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
+      // #2262: the generation recorded beside the seal, so the origin answers how far its history was rewritten since and
+      // a new generation lowers the seal only that far. A sweep's answer passes the same guard, so it names it too.
+      var knownGeneration = await coordinator.GetIntegritySealGenerationAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.New()),
@@ -310,6 +313,7 @@ public sealed partial class IntegrityAuditWorker(
           UseRecompute = sweep,
           Windowed = !sweep,
           SinceSequence = since,
+          KnownOriginGeneration = knownGeneration,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)

@@ -27,6 +27,7 @@ namespace Whizbang.Core;
 /// - Type.AssemblyQualifiedName (includes version info that changes across builds)</para>
 /// </remarks>
 #pragma warning disable RS0030 // the one place the raw type-name sources (Type.FullName, AssemblyQualifiedName, Assembly.FullName) are allowed (issue #698)
+[TypeNameAuthority]
 public static class TypeNameFormatter {
   // ---------------------------------------------------------------------------------------------
   // The named rendering forms (issue #698). The raw sources of a type name (Type.FullName,
@@ -88,6 +89,65 @@ public static class TypeNameFormatter {
     return type.AssemblyQualifiedName ?? DisplayName(type);
   }
 
+  /// <summary>
+  /// A type as log lines, exception messages, traces and metric tags have always printed it: its simple CLR name
+  /// (<c>OrderPlaced</c>, <c>List`1</c>, <c>Inner</c> for <c>Outer+Inner</c>). Text for a reader, never a key (#2267).
+  /// </summary>
+  /// <param name="type">The type to describe.</param>
+  /// <returns>The type's name as messages print it.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string ForLog(Type type) => SimpleName(type);
+
+  /// <summary>
+  /// The type's simple CLR name (<c>Type.Name</c>): <c>OrderPlaced</c>, <c>List`1</c>, <c>Inner</c> for
+  /// <c>Outer+Inner</c>. Short display text and the simple-name keys the framework has always used (a handler name, a
+  /// collection name); never a cross-service key, which is <see cref="Format"/> (#2267).
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  /// <returns>The simple name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string SimpleName(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.Name;
+  }
+
+  /// <summary>The type's namespace, or null for a type in the global namespace (#2267).</summary>
+  /// <param name="type">The type.</param>
+  /// <returns>The namespace, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string? NamespaceOf(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.Namespace;
+  }
+
+  /// <summary>The assembly's simple name (<c>Whizbang.Core</c>), the prefix of its embedded resource names (#2267).</summary>
+  /// <param name="assembly">The assembly.</param>
+  /// <returns>The simple name, or null when the assembly has none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static string? AssemblySimpleName(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.GetName().Name;
+  }
+
+  /// <summary>The assembly's version, or null when it carries none (#2267).</summary>
+  /// <param name="assembly">The assembly.</param>
+  /// <returns>The version, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static Version? AssemblyVersion(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.GetName().Version;
+  }
+
+  /// <summary>The assembly's full identity (<see cref="System.Reflection.AssemblyName"/>), for a renderer that needs its
+  /// parts (#2267).</summary>
+  /// <param name="assembly">The assembly.</param>
+  /// <returns>The assembly's name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  public static System.Reflection.AssemblyName AssemblyIdentity(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.GetName();
+  }
+
   /// <summary>Display text for an assembly (its full display name, else its simple name).</summary>
   /// <param name="assembly">The assembly to describe.</param>
   public static string AssemblyDisplayName(System.Reflection.Assembly assembly) {
@@ -97,8 +157,14 @@ public static class TypeNameFormatter {
 
   /// <summary>
   /// Formats a type to "TypeName, AssemblyName" format for consistent storage and matching.
-  /// This is the standard format used across Whizbang for type identification.
+  /// This is the standard format used across Whizbang for type identification: the wire form.
   /// </summary>
+  /// <remarks>
+  /// Version-free at every depth (#2267): a generic type's CLR full name carries each type argument's versioned
+  /// assembly-qualified name, which the one string normalizer (<see cref="Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName"/>)
+  /// strips, so the form a type renders is the form any rendering of its name normalizes to, whichever build wrote it.
+  /// A name with no type arguments carries no version and is returned as rendered.
+  /// </remarks>
   /// <param name="type">The type to format</param>
   /// <returns>Type name in format "TypeName, AssemblyName"</returns>
   /// <exception cref="InvalidOperationException">If type doesn't have required metadata</exception>
@@ -108,7 +174,7 @@ public static class TypeNameFormatter {
     var typeName = type.FullName
       ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
 
-    return $"{typeName}, {_assemblyNameOf(type)}";
+    return Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName($"{typeName}, {_assemblyNameOf(type)}");
   }
 
   // The simple assembly name the stored form carries.
@@ -136,6 +202,18 @@ public static class TypeNameFormatter {
     ArgumentNullException.ThrowIfNull(type);
     ArgumentException.ThrowIfNullOrWhiteSpace(formerName);
     return formerName.Contains(',', StringComparison.Ordinal) ? Parse(formerName) : $"{formerName}, {_assemblyNameOf(type)}";
+  }
+
+  /// <summary>
+  /// The wire form (<see cref="Format"/>), or the display name of a type that has no full name (an open generic's
+  /// parameter), for a key built over types a caller did not construct (#2267).
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  /// <returns>The wire form, or the display name when the type has none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/PrioritySugarHooksBranchCoverageTests.cs:DeclarePriority_TaggedTypeWithNoAssemblyQualifiedName_IsKeyedByDisplayNameAsync</tests>
+  public static string FormatOrDisplay(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.FullName is null ? DisplayName(type) : Format(type);
   }
 
   /// <summary>
@@ -223,18 +301,31 @@ public static class TypeNameFormatter {
   public static string Parse(string typeNameString) {
     ArgumentException.ThrowIfNullOrWhiteSpace(typeNameString);
 
-    // Split on commas and trim whitespace
-    var parts = typeNameString.Split(',').Select(p => p.Trim()).ToArray();
-
-    if (parts.Length < 2) {
+    // #2267: the version decorations are stripped by the one string normalizer, at every depth; only the top-level
+    // separators (outside a generic name's brackets) split the type from its assembly and the assembly from the rest.
+    var normalized = Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName(typeNameString);
+    var separators = _topLevelCommas(normalized);
+    if (separators.Count == 0) {
       throw new InvalidOperationException(
         $"Type name '{typeNameString}' does not contain assembly information. " +
         "Expected format: 'TypeName, AssemblyName' or 'TypeName, AssemblyName, Version=...'");
     }
+    var assemblyEnd = separators.Count > 1 ? separators[1] : normalized.Length;
+    return $"{normalized[..separators[0]].Trim()}, {normalized[(separators[0] + 1)..assemblyEnd].Trim()}";
+  }
 
-    // Extract first two parts (TypeName, AssemblyName)
-    // Ignore Version=, Culture=, PublicKeyToken= if present
-    return $"{parts[0]}, {parts[1]}";
+  // The commas of a type name that are not inside a generic name's brackets.
+  private static List<int> _topLevelCommas(string name) {
+    var commas = new List<int>();
+    var depth = 0;
+    for (var i = 0; i < name.Length; i++) {
+      switch (name[i]) {
+        case '[': depth++; break;
+        case ']': depth--; break;
+        case ',' when depth == 0: commas.Add(i); break;
+      }
+    }
+    return commas;
   }
 
   /// <summary>

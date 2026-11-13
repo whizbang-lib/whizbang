@@ -815,7 +815,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     const MessageFailureReason reason = Whizbang.Core.Messaging.MessageFailureReason.SerializationError;
     var cause = refusal.GetBaseException();
     var detail = $"The payload of inbox message {work.MessageId} ({work.MessageType}) could not be deserialized, "
-      + $"which a retry will not change: {cause.GetType().Name}: {cause.Message}";
+      + $"which a retry will not change: {TypeNameFormatter.ForLog(cause.GetType())}: {cause.Message}";
     LogUndeserializablePayload(_logger, work.MessageId, work.MessageType, refusal);
     await _deadLetterOrFailAsync(work, reason, detail, refusal, ct);
   }
@@ -904,7 +904,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   private async Task _discardRepairBundleAsync(
       InboxWork work, ICompositeEvent composite, IServiceProvider scopeProvider, CancellationToken ct) {
-    LogRepairBundleDiscarded(_logger, work.MessageId, composite.GetType().Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    LogRepairBundleDiscarded(_logger, work.MessageId, TypeNameFormatter.ForLog(composite.GetType()));
+#pragma warning restore CA1873
     scopeProvider.GetService<StreamIntegrityMetrics>()?.RepairTrafficDiscarded.Add(
       1, new KeyValuePair<string, object?>("role", "consumer_bundle"));
     var commitRequest = _buildCommitRequest(
@@ -963,6 +965,40 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return MisattributedOrigin.ForBundle(bundle.OriginServiceId, new IntegrityDomainOwnership(claims), ownedDomains);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogBundleOwnershipUnavailable(_logger, bundle.OriginServiceId, ex);
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// #2273: decides, before they are stored, which children of a redelivery bundle run their opted-in receptors: only
+  /// an event inside the repair receptor lookback that the handled ledger proves was never handled here. Every other
+  /// child is stored state only. The ledger is read once per bundle; when it cannot be read nothing is proven, so every
+  /// child is state only and the bundle still lands.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Redelivery_ChildrenRunReceptorsOnlyWhenTheLedgerProvesTheyWereNeverHandledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Redelivery_WhenTheLedgerCannotBeRead_EveryChildIsStateOnlyAsync</tests>
+  private async Task _gateRepairedChildrenAsync(
+      IReadOnlyList<InboxMessage> children, InboxWork work, IServiceProvider scopeProvider, CancellationToken ct) {
+    var coordinator = scopeProvider.GetService<IWorkCoordinator>();
+    var tally = await RepairReceptorGate.ApplyAsync(
+      children, work.Envelope.StateOnly, _integrityOptions.RepairReceptorLookback, _timeProvider.GetUtcNow(),
+      (ids, token) => _lookupHandledAsync(coordinator, ids, work.MessageId, token), ct).ConfigureAwait(false);
+    var metrics = scopeProvider.GetService<StreamIntegrityMetrics>();
+    foreach (var (reason, count) in tally) {
+      metrics?.RecordRepairedEvents(reason, count);
+    }
+  }
+
+  private async Task<HandledLedgerAnswer?> _lookupHandledAsync(
+      IWorkCoordinator? coordinator, IReadOnlyList<Guid> ids, Guid bundleId, CancellationToken ct) {
+    if (coordinator is null) {
+      return null;
+    }
+    try {
+      return await coordinator.LookupHandledEventsAsync(ids, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogHandledLedgerUnavailable(_logger, bundleId, ids.Count, ex);
       return null;
     }
   }
@@ -1083,6 +1119,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }
 
+      if (composite is RedeliveryComposite) {
+        await _gateRepairedChildrenAsync(result.Children, work, scopeProvider, ct).ConfigureAwait(false);
+      }
       await _commitExpansionAsync(work, composite, result.Children, preFanoutOutbox, scopeProvider, ct).ConfigureAwait(false);
       return;
     }
@@ -1329,7 +1368,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         StreamId = null,
         LastProcessedEventId = null,
         MessageSource = MessageSource.Inbox,
-        AttemptNumber = work.Attempts
+        AttemptNumber = work.Attempts,
+        // #2273: a repaired child the fan-out proved never handled runs only its [RunOnRepair] receptors.
+        IsRepair = work.Envelope.Repaired
       };
 
       // Slice 16: only spawn the detached fire-and-forget when a receptor is actually registered
@@ -1491,6 +1532,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "Redelivery bundle from origin {BundleOrigin}: the ownership map could not be read, so every child keeps the " +
               "bundle's origin; one stored under the wrong origin is corrected later by the misattributed-origin correction")]
   static partial void LogBundleOwnershipUnavailable(ILogger logger, Guid bundleOrigin, Exception exception);
+
+  [LoggerMessage(EventId = 88, Level = LogLevel.Warning,
+    Message = "Redelivery bundle {BundleId}: the handled ledger could not be read, so none of its {ChildCount} repaired " +
+              "events can be proven never handled; each is stored state only and runs no receptor")]
+  static partial void LogHandledLedgerUnavailable(ILogger logger, Guid bundleId, int childCount, Exception exception);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "InboxDispatchWorker started: maxInboxAttempts={MaxInboxAttempts}")]

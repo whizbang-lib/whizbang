@@ -26,3 +26,12 @@ public sealed record IntegrityKnownOrigin(
 /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
 public sealed record IntegrityGapTrackerState(
   IReadOnlyList<IntegrityKnownOrigin> Origins, IReadOnlyList<IntegrityGapTracker.PendingGap> Pending);
+
+/// <summary>
+/// #2261: the ledger buckets the service opened and closed over a window, summed from the shared per-minute tally every
+/// instance writes its own counts into.
+/// </summary>
+/// <param name="Opened">Buckets opened in the window.</param>
+/// <param name="Closed">Buckets closed in the window.</param>
+/// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+public readonly record struct IntegrityLedgerTally(long Opened, long Closed);

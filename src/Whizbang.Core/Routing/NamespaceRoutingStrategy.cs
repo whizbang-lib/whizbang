@@ -57,7 +57,7 @@ public sealed class NamespaceRoutingStrategy(Func<Type, string> typeToTopic) : I
   /// <returns>The full namespace in lowercase (e.g., "myapp.users.commands").</returns>
   /// <exception cref="InvalidOperationException">Thrown when the type has no namespace.</exception>
   public static string DefaultTypeToTopic(Type type) {
-    return type.Namespace?.ToLowerInvariant()
-           ?? throw new InvalidOperationException($"Type {type.Name} has no namespace");
+    return TypeNameFormatter.NamespaceOf(type)?.ToLowerInvariant()
+           ?? throw new InvalidOperationException($"Type {TypeNameFormatter.ForLog(type)} has no namespace");
   }
 }

@@ -304,8 +304,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return new PerspectiveOrWarning(
         Info: null,
         Warning: new PerspectiveMissingStreamIdWarning(
-            PerspectiveName: classSymbol.Name,
-            ModelName: modelType.Name,
+            PerspectiveName: TypeNameUtilities.SimpleName(classSymbol),
+            ModelName: TypeNameUtilities.SimpleName(modelType),
             Location: classDeclaration.Identifier.GetLocation()
         )
     );

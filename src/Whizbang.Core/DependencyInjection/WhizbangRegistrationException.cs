@@ -65,9 +65,9 @@ public sealed class WhizbangRegistrationException : Exception {
 
     for (var i = 0; i < missing.Count; i++) {
       sb.Append("  - ")
-        .Append(missing[i].MissingService.Name)
+        .Append(TypeNameFormatter.SimpleName(missing[i].MissingService))
         .Append(" (required by ")
-        .Append(missing[i].NeededBy.Name)
+        .Append(TypeNameFormatter.SimpleName(missing[i].NeededBy))
         .AppendLine(")");
     }
 

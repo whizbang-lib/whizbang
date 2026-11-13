@@ -340,7 +340,8 @@ public static class PostgresDriverExtensions {
           new PostgresStreamPurger(
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
-            logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+            logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+            integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
         // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
         // writes through it; a blob store package registers its own IArchiveStore first and wins.
         // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
@@ -553,7 +554,7 @@ public static class PostgresDriverExtensions {
         // An unnamed context still configured under the name earlier releases derived from its class
         // keeps working until its keys are renamed (see ResolveConnectionStringName).
         var legacyConnectionStringName = selector.ConnectionStringName is null
-          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(selector.DbContextType.Name)
+          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(TypeNameFormatter.SimpleName(selector.DbContextType))
           : null;
         // #1012: the same name keys this database's PostgresOptions section,
         // Whizbang:Postgres:<name>, which overrides the code values per key.

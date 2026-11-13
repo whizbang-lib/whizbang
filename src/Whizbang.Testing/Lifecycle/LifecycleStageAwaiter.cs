@@ -148,7 +148,7 @@ internal sealed class LifecycleCompletionReceptor<TMessage>(
 
     // Filter by perspective name if specified
     if (_perspectiveName is not null &&
-        LastLifecycleContext?.PerspectiveType?.Name != _perspectiveName) {
+        (LastLifecycleContext?.PerspectiveType is { } perspectiveType ? TypeNameFormatter.SimpleName(perspectiveType) : null) != _perspectiveName) {
       return ValueTask.CompletedTask;
     }
 

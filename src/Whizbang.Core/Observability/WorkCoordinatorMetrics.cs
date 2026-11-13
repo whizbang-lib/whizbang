@@ -180,9 +180,18 @@ public sealed class WorkCoordinatorMetrics {
       description: "Handler results dispatched but not yet committed: queued in the commit channel plus taken up by the flusher");
   }
 
+  /// <summary>
+  /// The stream-integrity metrics the work coordinator records the integrity ledger's opened and closed buckets on
+  /// (#2256); null when they are not registered, and then nothing is counted.
+  /// </summary>
+  /// <remarks>Carried here so the coordinator reaches every metric it records through one collaborator.</remarks>
+  public StreamIntegrityMetrics? Integrity { get; }
+
   /// <summary>Initializes a new instance of the <see cref="WorkCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
-  public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
+  /// <param name="integrity">The stream-integrity metrics, when registered; the container supplies them.</param>
+  public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics, StreamIntegrityMetrics? integrity = null) {
+    Integrity = integrity;
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     _meter = meter;
 

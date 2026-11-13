@@ -133,7 +133,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // Skip internal Whizbang library code - we control that and don't need interception
     var callingTypeSymbol = _getContainingTypeSymbol(context, invocation, ct);
     if (callingTypeSymbol is not null) {
-      var callingNamespace = TypeNameUtilities.DisplayOrEmpty(callingTypeSymbol.ContainingNamespace);
+      var callingNamespace = TypeNameUtilities.DisplayOrEmpty(TypeNameUtilities.NamespaceOf(callingTypeSymbol));
       if (callingNamespace.StartsWith("Whizbang", StringComparison.Ordinal)) {
         return (null, null);
       }
@@ -250,8 +250,8 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         if (attrSymbol is not null) {
           var attrName = TypeNameUtilities.Display(attrSymbol);
           if (attrName == SUPPRESS_ATTRIBUTE ||
-              attrSymbol.Name == SUPPRESS_ATTRIBUTE_NAME ||
-              attrSymbol.Name == SUPPRESS_SHORT_NAME) {
+              TypeNameUtilities.SimpleName(attrSymbol) == SUPPRESS_ATTRIBUTE_NAME ||
+              TypeNameUtilities.SimpleName(attrSymbol) == SUPPRESS_SHORT_NAME) {
             return true;
           }
         }

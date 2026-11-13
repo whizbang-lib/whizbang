@@ -32,6 +32,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Consolidated from multiple generators for consistency and testability.
 /// </summary>
 #pragma warning disable RS0030 // the one place the raw Roslyn display APIs (ToDisplayString, ToDisplayParts, MetadataName) are allowed (issue #698)
+[TypeNameAuthority]
 public static class TypeNameUtilities {
   /// <summary>
   /// Gets a simple name for a type, including containing type for nested classes.
@@ -254,6 +255,14 @@ public static class TypeNameUtilities {
     return symbol.ToDisplayString();
   }
 
+  /// <summary>The symbol rendered in a caller's display format (#2267).</summary>
+  public static string Display(ISymbol symbol, SymbolDisplayFormat format) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ToDisplayString(format);
+  }
+
   /// <summary>Whether the symbol's display form equals a known display name, ordinal.</summary>
   /// <remarks>
   /// This and the null-tolerant helpers below exist for <see cref="AttributeData.AttributeClass"/>, which
@@ -269,6 +278,82 @@ public static class TypeNameUtilities {
   /// </summary>
   public static bool IsFullyQualifiedNamed(ISymbol? symbol, string fullyQualifiedName) =>
     symbol != null && string.Equals(symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), fullyQualifiedName, StringComparison.Ordinal);
+
+  /// <summary>The symbol's simple name (<see cref="ISymbol.Name"/>): a type's, a namespace's or an assembly's (#2267).</summary>
+  public static string SimpleName(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.Name;
+  }
+
+  /// <summary>A runtime type's simple CLR name (<c>Type.Name</c>), for a generator inspecting its own types (#2267).</summary>
+  public static string SimpleName(Type type) {
+    if (type == null) {
+      throw new ArgumentNullException(nameof(type));
+    }
+    return type.Name;
+  }
+
+  /// <summary>The symbol's metadata name (<see cref="ISymbol.MetadataName"/>: <c>List`1</c>) (#2267).</summary>
+  public static string MetadataNameOf(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.MetadataName;
+  }
+
+  /// <summary>The symbol's containing namespace (<see cref="ISymbol.ContainingNamespace"/>) (#2267).</summary>
+  public static INamespaceSymbol NamespaceOf(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ContainingNamespace;
+  }
+
+  /// <summary>The symbol's containing assembly (<see cref="ISymbol.ContainingAssembly"/>) (#2267).</summary>
+  public static IAssemblySymbol AssemblyOf(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ContainingAssembly;
+  }
+
+  /// <summary>Whether the namespace is the root <c>System</c> namespace (#2267).</summary>
+  public static bool IsSystemNamespace(INamespaceSymbol? ns) =>
+    ns is { Name: "System", ContainingNamespace.IsGlobalNamespace: true };
+
+  /// <summary>An assembly symbol's version, from its identity (#2267).</summary>
+  public static Version AssemblyIdentityVersion(IAssemblySymbol assembly) {
+    if (assembly == null) {
+      throw new ArgumentNullException(nameof(assembly));
+    }
+    return assembly.Identity.Version;
+  }
+
+  /// <summary>An assembly symbol's simple name, from its identity (#2267).</summary>
+  public static string AssemblyIdentityName(IAssemblySymbol assembly) {
+    if (assembly == null) {
+      throw new ArgumentNullException(nameof(assembly));
+    }
+    return assembly.Identity.Name;
+  }
+
+  /// <summary>An assembly's simple name, the prefix of its embedded resource names (#2267).</summary>
+  public static string? AssemblySimpleName(System.Reflection.Assembly assembly) {
+    if (assembly == null) {
+      throw new ArgumentNullException(nameof(assembly));
+    }
+    return assembly.GetName().Name;
+  }
+
+  /// <summary>An assembly's version (#2267).</summary>
+  public static Version? AssemblyVersion(System.Reflection.Assembly assembly) {
+    if (assembly == null) {
+      throw new ArgumentNullException(nameof(assembly));
+    }
+    return assembly.GetName().Version;
+  }
 
   /// <summary>The symbol's simple name (<see cref="ISymbol.Name"/>), or null for no symbol.</summary>
   public static string? SimpleNameOrNull(ISymbol? symbol) => symbol?.Name;

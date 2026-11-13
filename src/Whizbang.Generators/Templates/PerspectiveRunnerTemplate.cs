@@ -703,6 +703,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public bool StartedPurged;
     public bool Rebuilding;
     public global::Whizbang.Core.Lenses.PerspectiveMetadata? ExistingMetadata;
+    // The row as stored, kept so a rebuild whose write is refused can tell an already-correct row from a stale one (#2252).
+    public __MODEL_TYPE_NAME__? StoredModel;
 
     // The fold.
     public int EventsProcessed;
@@ -729,13 +731,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public JsonDocument? SnapshotBeforeWrite;
     public long? CheckpointCommitSequence;
     public global::Whizbang.Core.Lenses.ScopeWrite ScopeWrite;
+    // #2252: a rebuild's fold, taken before the write strips a Split class model's promoted fields; null for any other
+    // apply. Taken for the per-pair write and a prepared one alike, since both strip the model the same way.
+    public JsonDocument? FoldBeforeWrite;
 
-    /// <summary>Releases the serialized models this apply took for a snapshot it will no longer write.</summary>
+    /// <summary>Releases the serialized models this apply took for a snapshot or a comparison it will no longer make.</summary>
     public void DisposeSnapshots() {
       SnapshotBeforeWrite?.Dispose();
       SnapshotBeforeWrite = null;
       ModelAtLastEvent?.Dispose();
       ModelAtLastEvent = null;
+      FoldBeforeWrite?.Dispose();
+      FoldBeforeWrite = null;
     }
   }
 
@@ -841,6 +848,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // unless Apply actually returns a model. Otherwise ApplyResult.None() on a new stream
     // would insert a phantom default row.
     var modelLoadedFromDb = currentModel != null;
+    // The row as stored, kept so a rebuild whose write is refused can tell an already-correct row from a stale one (#2252).
+    var storedModel = rebuilding && modelLoadedFromDb ? currentModel : null;
 
     // Purge stays purged (issue #1027): true when the row is missing BECAUSE it was purged.
     var startedPurged = false;
@@ -1058,6 +1067,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       ModelLoadedFromDb = modelLoadedFromDb,
       StartedPurged = startedPurged,
       Rebuilding = rebuilding,
+      StoredModel = storedModel,
       ExistingMetadata = existingMetadata,
       LastSuccessfulEventId = lastProcessedEventId,
       LastSuccessfulEventType = existingMetadata?.EventType,
@@ -1418,6 +1428,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             state.ModelAtLastEvent = null;  // handed to the snapshot write
           }
           state.SnapshotBeforeWrite = snapshotBeforeWrite;
+          // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
+          state.FoldBeforeWrite = state.StoredModel is null ? null : SnapshotBeforeWrite(updatedModel);
           // The model's [InheritScope] decides the scope: OnCreate and Always fields on a new row, the Always
           // fields merged into the row's stored scope on an existing one (#1425).
           state.ScopeWrite = _resolveScopeWrite(state.LastScope, state.ApplyRead, state.ModelLoadedFromDb, state.ScopeEventScope);
@@ -1519,6 +1531,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var modelAtLastEvent = state.ModelAtLastEvent;
     state.SnapshotBeforeWrite = null;  // owned here from now on
     state.ModelAtLastEvent = null;
+    using var foldBeforeWrite = state.FoldBeforeWrite;
+    state.FoldBeforeWrite = null;
+    // Why a rebuild that folded events left the row untouched (#2252)
+    var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
 
       // Unit of Work: Save model + checkpoint ONCE at end
       if (eventsProcessed > 0) {
@@ -1526,6 +1542,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Forget the purge only once the resurrected row is written.
           if (rowChanged && state.Resurrected && state.StartedPurged) {
             await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
+          }
+          // A rebuild's write the ordering guard refused, whether made per pair or by the batch write (#2252).
+          if (!rowChanged && state.Rebuilding) {
+            unchangedReason = _readRefusedRebuildWrite(foldBeforeWrite, updatedModel!, state.StoredModel);
           }
           // A live write the ordering guard refused folded this batch onto a row that is already past it: the row
           // holds a later event and lacks these (#1608). Reporting the batch applied would retire its work rows with
@@ -1547,6 +1567,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             return await _rewindAndRunCoreAsync(
                 streamId, perspectiveName, earliest.MessageId.Value, earliest.LocalCommitSequence, cancellationToken);
           }
+        } else if (!pendingPurge) {
+          // No event produced a model, so there was nothing to write (#2252).
+          unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.NoModel;
         }
         _reportPurgedEventsSkipped(perspectiveName, streamId, state.PurgedEventsSkipped);
 
@@ -1675,6 +1698,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         Status = resultStatus,
         EventsProcessed = eventsProcessed,
         RowChanged = rowChanged,
+        UnchangedReason = unchangedReason,
         ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray(),
         PurgedBy = pendingPurge && purgeEventId.HasValue ? purgeEventType : null
       };
@@ -1917,6 +1941,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     );
     _serviceProvider.GetService<PerspectiveMetrics>()?.PurgedEventsSkipped.Add(
         skipped, new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+  }
+
+  /// <summary>
+  /// Why a rebuild's write was refused (#2252): the fold compared with the row as it was stored, both serialized by the
+  /// snapshot serializer. Equal documents mean the read model was already right. A Split class model's fold is the
+  /// document taken before the write stripped its promoted fields.
+  /// </summary>
+  private static global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason _readRefusedRebuildWrite(
+      JsonDocument? foldBeforeWrite, __MODEL_TYPE_NAME__ folded, __MODEL_TYPE_NAME__? stored) {
+    if (stored is null) {
+      return global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.WriteRefused;
+    }
+    using var foldAfter = foldBeforeWrite is null ? ToSnapshotJson(folded) : null;
+    using var storedDocument = ToSnapshotJson(stored);
+    return global::Whizbang.Core.Perspectives.PerspectiveRowUnchanged.OfRefusedWrite(foldBeforeWrite ?? foldAfter, storedDocument);
   }
 
   /// <summary>
@@ -2786,6 +2825,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var frontierEventId = outcome.FrontierEventId;
     var frontierCommitSequence = outcome.FrontierCommitSequence;
     var rowChanged = false;  // True once this replay actually wrote or purged the row
+    // Why a rebuild that folded events left the row untouched (#2252)
+    var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
+    var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
+        is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
 
     // Single atomic write at the end — lenses see pre-replay data until this point.
     // Checkpoint at the replay FRONTIER (max id / max local sequence applied): the floor's
@@ -2811,6 +2854,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             && outcome.CollectivesSettled;
         // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
         snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? SnapshotBeforeWrite(updatedModel) : null;
+        // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
+        using var foldBeforeWrite = rebuilding ? SnapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
             streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow,
@@ -2829,6 +2874,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // The row did not move while the replay ran (a moved row is refused above, and replayed again), yet its
         // ordering guard refused the write: the row is stamped past everything this replay read. The replay's
         // correction is not in the row, and a rewind that wrote nothing is not one that applied (#1863).
+        if (!rowChanged && rebuilding) {
+          unchangedReason = _readRefusedRebuildWrite(
+              foldBeforeWrite, updatedModel, await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken));
+        }
         if (!rowChanged) {
           _logger.LogWarning(
               "[diag.rewind.write.refused] {PerspectiveName} stream {StreamId}: the row is stamped past the rewind's frontier at event {EventId}, so the replay was not written and the row keeps what it holds",
@@ -2836,6 +2885,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId,
               checkpointEventId);
         }
+      } else {
+        // No event produced a model, so there was nothing to write (#2252).
+        unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.NoModel;
       }
       _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);
 
@@ -2885,6 +2937,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       LastCommitSequence = frontierCommitSequence,
       Status = resultStatus,
       RowChanged = rowChanged,
+      UnchangedReason = unchangedReason,
       EventsProcessed = eventsProcessed
     };
   }

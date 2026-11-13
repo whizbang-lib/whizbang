@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>The <c>Assess</c> step compares this binary's library version against the migration
 /// ledger. The version used to be registered only inside the generated turnkey callback, which the
 /// driver skips when the consumer has already registered its own DbContext — a supported shape
-/// (the driver logs "already registered — skipping turnkey registration"). That consumer then had no
+/// (the driver logs "already registered; skipping turnkey registration"). That consumer then had no
 /// <see cref="ILibraryVersionProvider"/>, the assessor read "unreadable", stood down, and the host
 /// hung forever at <c>Host.StartAsync</c> (issue #619).</para>
 /// <para>The framework knows its own version without anybody injecting it: the driver registers it

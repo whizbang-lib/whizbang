@@ -36,7 +36,9 @@ public sealed class TagDeclaredPriorityProducerHook : IPriorityProducerHook {
     if (WorkPriority.IsDeclared(context.Declared)) {
       return context.Declared;
     }
-    return _byTypeName.Value.TryGetValue(context.MessageTypeName, out var declared) ? declared : context.Declared;
+    return _byTypeName.Value.TryGetValue(Messaging.EventTypeMatchingHelper.NormalizeTypeName(context.MessageTypeName), out var declared)
+      ? declared
+      : context.Declared;
   }
 
   private Dictionary<string, int> _buildIndex() {
@@ -48,7 +50,7 @@ public sealed class TagDeclaredPriorityProducerHook : IPriorityProducerHook {
       if (!_tagOptions.PriorityDeclarations.TryGetValue(registration.Tag, out var declared)) {
         continue;
       }
-      var typeName = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(registration.MessageType);
+      var typeName = TypeNameFormatter.FormatOrDisplay(registration.MessageType);   // the wire form; lookups normalize to it (#2267)
       // A type carrying two declared tags takes the more urgent declaration.
       index[typeName] = index.TryGetValue(typeName, out var existing) ? Math.Min(existing, declared) : declared;
     }
@@ -73,7 +75,8 @@ public sealed class PriorityClassificationReceiveHook(PriorityOptions options) :
   /// <inheritdoc />
   public int Classify(PriorityReceiveContext context) {
     ArgumentNullException.ThrowIfNull(context);
-    if (_options.TypeRules.TryGetValue(context.MessageTypeName, out var byType)) {
+    // #2267: the received name carries the publisher's build; the rules are keyed by the version-free wire form.
+    if (_options.TypeRules.TryGetValue(Messaging.EventTypeMatchingHelper.NormalizeTypeName(context.MessageTypeName), out var byType)) {
       return byType;
     }
     var typeFullName = TypeNameFormatter.GetFullName(context.MessageTypeName);

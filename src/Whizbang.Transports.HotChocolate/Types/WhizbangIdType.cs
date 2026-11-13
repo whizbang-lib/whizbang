@@ -26,10 +26,10 @@ internal sealed class WhizbangIdType : ScalarType {
   /// <param name="idType">The <c>[WhizbangId]</c> struct type; its name is the scalar's name.</param>
   /// <param name="fromGuid">The id's <c>From(Guid)</c>, from <see cref="WhizbangIdProviderRegistry.GetGuidConversions"/>.</param>
   public WhizbangIdType(Type idType, Func<Guid, object> fromGuid)
-      : base(idType.Name, BindingBehavior.Implicit) {
+      : base(TypeNameFormatter.SimpleName(idType), BindingBehavior.Implicit) {
     RuntimeType = idType;
     _fromGuid = fromGuid;
-    Description = $"A {idType.Name}, written as a UUID string.";
+    Description = $"A {TypeNameFormatter.SimpleName(idType)}, written as a UUID string.";
 #pragma warning disable S1075 // the URL of the UUID specification, published in the schema as @specifiedBy; not a host
     SpecifiedBy = new Uri("https://www.rfc-editor.org/rfc/rfc9562");
 #pragma warning restore S1075

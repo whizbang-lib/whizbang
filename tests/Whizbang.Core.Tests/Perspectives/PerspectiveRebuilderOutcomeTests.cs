@@ -215,6 +215,23 @@ public class PerspectiveRebuilderOutcomeTests {
     await Assert.That(dispatcher.Published).IsEmpty();
   }
 
+  /// <summary>
+  /// The completion line names how every stream ended (#2252): rewritten, already correct, write refused, without a
+  /// model and without events, each with its count, alongside the mode, the perspective, the streams and the time.
+  /// </summary>
+  [Test]
+  public async Task TheCompletionLine_NamesEveryOutcomeWithItsCountAsync() {
+    var (rebuilder, _, logger) = _build(new ScriptedRunner(rowChanged: true, events: 1));
+
+    await rebuilder.RebuildStreamsAsync(PERSPECTIVE, [Guid.NewGuid(), Guid.NewGuid()]);
+
+    var completed = logger.Collector.GetSnapshot()
+      .Single(r => r.Level == LogLevel.Information && r.Message.StartsWith("Completed ", StringComparison.Ordinal));
+    await Assert.That(completed.Message).Contains($"rebuild of perspective {PERSPECTIVE}: 2 streams in ");
+    await Assert.That(completed.Message).EndsWith(
+      "ms (2 rewritten, 0 already correct, 0 write refused, 0 without a model, 0 without events)");
+  }
+
   [Test]
   public async Task WithADigest_ThereIsNoReasonAsync() {
     var (rebuilder, dispatcher, _) = _build(new ScriptedRunner(rowChanged: true, events: 1), digest: new FixedDigest());

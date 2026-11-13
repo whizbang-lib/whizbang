@@ -87,7 +87,7 @@ public abstract class CompositeEventBase : ICompositeEvent {
     var count = Inner.Count;
     if (count > MaxInnerEventsAllowed) {
       throw new InvalidOperationException(
-        $"Composite '{GetType().Name}' carries {count} inner events, exceeding MaxInnerEventsAllowed ({MaxInnerEventsAllowed}).");
+        $"Composite '{TypeNameFormatter.ForLog(GetType())}' carries {count} inner events, exceeding MaxInnerEventsAllowed ({MaxInnerEventsAllowed}).");
     }
   }
 }

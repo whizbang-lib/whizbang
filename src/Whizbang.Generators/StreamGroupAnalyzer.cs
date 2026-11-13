@@ -124,11 +124,11 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
     // WHIZ142 is local: Bridge on the sole membership.
     if (memberships.Length == 1 && memberships[0].Bridge) {
       context.ReportDiagnostic(Diagnostic.Create(
-        MeaninglessBridge, symbol.Locations.FirstOrDefault(), symbol.Name));
+        MeaninglessBridge, symbol.Locations.FirstOrDefault(), TypeNameUtilities.SimpleName(symbol)));
     }
 
     collected.Add(new PerspectiveGroupInfo(
-      symbol.Name, LocationUtilities.FirstOrNone(symbol),
+      TypeNameUtilities.SimpleName(symbol), LocationUtilities.FirstOrNone(symbol),
       memberships, hasEvictor, isolated, eventTypes));
   }
 

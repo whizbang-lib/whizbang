@@ -54,7 +54,7 @@ public sealed class DapperCollectiveQuery : ICollectiveQuery, ICollectiveSibling
       ? table
       : throw new InvalidOperationException(
           $"No Dapper collective table registered for sibling model '{TypeNameFormatter.DisplayName(modelType)}'. A handler's Where " +
-          $"called q.Of<{modelType.Name}>(), but its table is unknown. Register it with " +
-          $"AddCollectiveTableDapper<{modelType.Name}>(\"wh_per_…\") (or AddCollectiveExecutorDapper).");
+          $"called q.Of<{TypeNameFormatter.ForLog(modelType)}>(), but its table is unknown. Register it with " +
+          $"AddCollectiveTableDapper<{TypeNameFormatter.ForLog(modelType)}>(\"wh_per_…\") (or AddCollectiveExecutorDapper).");
   }
 }

@@ -116,7 +116,7 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
     var diagnostic = Diagnostic.Create(
         InconsistentModelTypes,
         classDeclaration.Identifier.GetLocation(),
-        classSymbol.Name,
+        TypeNameUtilities.SimpleName(classSymbol),
         modelTypeNames
     );
     context.ReportDiagnostic(diagnostic);

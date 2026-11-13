@@ -865,4 +865,60 @@ public sealed class StreamIntegrityOptions {
   /// <docs>resilience/stream-integrity#re-attribution</docs>
   public int MaxReattributionBatchesPerPass { get; set; } = 20;
 
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.verified_percent</c> and <c>verified_percent_all_origins</c> (default true;
+  /// #2261): each origin's verified watermark as a percentage of the latest commit sequence its checkpoints announced, and
+  /// all origins weighted by what each committed. Derived from <c>sealed_through</c> and the checkpoints; a team that
+  /// computes it from those itself can switch it off.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public bool VerifiedPercentGaugeEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.repair_progress_percent</c> (default true; #2261): ledger buckets closed as a
+  /// percentage of buckets opened over <see cref="RepairProgressWindowMinutes"/>, per service. Derived from
+  /// <c>ledger_buckets_opened</c> and <c>ledger_buckets_closed</c>; a team that computes it from those itself can switch
+  /// it off.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public bool RepairProgressGaugeEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.backlog_eta_seconds</c> (default true; #2261): the repairable open buckets
+  /// divided by the net close rate over <see cref="RepairProgressWindowMinutes"/>, and no measurement while the backlog
+  /// is flat or growing. Derived from <c>ledger_open_buckets</c> and the opened and closed counters; a team that computes
+  /// it from those itself can switch it off.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public bool BacklogEtaGaugeEnabled { get; set; } = true;
+
+  /// <summary>
+  /// The rolling window <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> are computed over, in minutes
+  /// (default 60; #2261). At least 1.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  public int RepairProgressWindowMinutes { get; set; } = 60;
+
+  /// <summary>
+  /// How far back, from a repaired event's origin time, this service can prove whether it handled the event
+  /// (<c>Whizbang:StreamIntegrity:RepairReceptorLookback</c>, a duration; default seven days). It is also how long the
+  /// handled ledger keeps its records (#2273).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A repaired event runs a receptor only when the receptor is declared <see cref="RunOnRepairAttribute"/>, the event's
+  /// origin time is inside this lookback, and the handled ledger shows this service never handled it. Anything else is
+  /// stored and projected state only. The lookback in effect is clamped to the time the ledger starts covering, so a
+  /// lookback raised past what the ledger holds cannot make an incomplete window look complete: it grows into the new
+  /// value as the ledger fills.
+  /// </para>
+  /// <para>
+  /// Zero turns receptors on repair off: every repaired event is state only. Must not be negative; host start fails
+  /// otherwise.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_DefaultsToSevenDays_AndBindsFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_Negative_IsRejectedByNameAsync</tests>
+  public TimeSpan RepairReceptorLookback { get; set; } = TimeSpan.FromDays(7);
 }

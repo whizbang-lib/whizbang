@@ -182,7 +182,7 @@ public interface IPerspectiveRunner {
     ArgumentNullException.ThrowIfNull(prepared);
     if (!prepared.RunsPerPair) {
       throw new ArgumentException(
-        $"{GetType().Name} prepares no writes, so it completes only a pair it handed to the per-pair path.", nameof(prepared));
+        $"{TypeNameFormatter.ForLog(GetType())} prepares no writes, so it completes only a pair it handed to the per-pair path.", nameof(prepared));
     }
     return RunWithEventsAsync(
       prepared.StreamId, prepared.PerspectiveName, prepared.LastProcessedEventId, prepared.Events, cancellationToken);

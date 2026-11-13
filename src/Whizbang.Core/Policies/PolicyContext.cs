@@ -142,7 +142,7 @@ public class PolicyContext {
     }
 
     var service = Services.GetService(typeof(T)) as T ?? throw new InvalidOperationException(
-          $"Service of type {typeof(T).Name} is not registered in the ServiceProvider."
+          $"Service of type {TypeNameFormatter.ForLog(typeof(T))} is not registered in the ServiceProvider."
       );
     return service;
   }
@@ -214,8 +214,8 @@ public class PolicyContext {
   /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:MatchesAggregate_ReturnsTrue_WhenMessageIsForSpecifiedAggregateTypeAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:MatchesAggregate_ReturnsFalse_WhenMessageIsForDifferentAggregateTypeAsync</tests>
   public bool MatchesAggregate<TAggregate>() {
-    var aggregateName = typeof(TAggregate).Name;
-    var messageName = MessageType.Name;
+    var aggregateName = TypeNameFormatter.SimpleName(typeof(TAggregate));
+    var messageName = TypeNameFormatter.SimpleName(MessageType);
 
     // Check if message name contains aggregate name
     // Examples: CreateOrder contains "Order", OrderCreated contains "Order"
@@ -251,7 +251,7 @@ public class PolicyContext {
     }
 
     throw new InvalidOperationException(
-        $"Message type {MessageType.Name} does not have a property marked with [StreamId] attribute. " +
+        $"Message type {TypeNameFormatter.ForLog(MessageType)} does not have a property marked with [StreamId] attribute. " +
         "Add [StreamId] to a Guid property to enable stream ID extraction."
     );
   }

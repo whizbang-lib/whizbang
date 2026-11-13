@@ -285,6 +285,37 @@ public class DispatcherCompositePublishFanoutTests {
       .Because("a constituent carries one id from mint to every store: the producer's stored id is the id each receiver stores.");
   }
 
+  // #2266: a receiver that expands the bundle form of the composite reads each child's type off the wire. A publisher on
+  // another build of the contract assembly writes another version there; the stored ids must still agree.
+  [Test]
+  public async Task OwnedComposite_StoredConstituentIds_AreTheIdsARawExpansionFromAnotherBuildDerivesAsync() {
+    var strategy = new CapturingStrategy();
+    var dispatcher = _build(ownTestNamespace: true, strategy);
+    var composite = new OwnedComposite {
+      StreamId = (Guid)TrackedGuid.New(),
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
+    };
+
+    await dispatcher.PublishAsync(composite);
+
+    var wireRow = strategy.Rows.Single(r => r.MessageType.Contains(nameof(OwnedComposite), StringComparison.Ordinal));
+    var innerType = typeof(InnerEvt);
+    var otherBuild = $"{innerType.FullName}, {innerType.Assembly.GetName().Name}, Version=9.8.7.6, Culture=neutral, PublicKeyToken=null";
+    var bundle = new RawBundle((otherBuild, "{\"Id\":\"a\"}"), (otherBuild, "{\"Id\":\"b\"}"));
+    var received = CompositeInboxFanout.TryExpand(bundle, wireRow.Envelope, dispatcher.Services);
+    var producerIds = dispatcher.LocalEventStores.Where(c => c.Message is InnerEvt).Select(c => c.EventId).ToList();
+    var receiverIds = received.Children.Select(c => (Guid?)c.MessageId).ToList();
+    await Assert.That(received.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(producerIds).IsEquivalentTo(receiverIds, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the publisher's local fan-out and a raw expansion render the child's type the one canonical way");
+  }
+
+  private sealed class RawBundle(params (string Type, string Json)[] inner) : IRawInnerComposite {
+    public IEnumerable<IMessage> InnerEvents => [];
+    public IReadOnlyList<JsonElement> InnerPayloads { get; } = [.. inner.Select(i => JsonSerializer.Deserialize<JsonElement>(i.Json))];
+    public IReadOnlyList<string> InnerTypeNames { get; } = [.. inner.Select(i => i.Type)];
+  }
+
   [Test]
   public async Task OwnedComposite_NullInner_KeepsTheProducersOrdinalsAlignedWithTheReceiversAsync() {
     var strategy = new CapturingStrategy();

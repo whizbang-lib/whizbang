@@ -121,9 +121,9 @@ public static class WhizbangIdProviderRegistry {
     lock (_lock) {
       if (!_factories.TryGetValue(typeof(TId), out var factory)) {
         throw new InvalidOperationException(
-          $"No provider factory registered for {typeof(TId).Name}. " +
+          $"No provider factory registered for {TypeNameFormatter.ForLog(typeof(TId))}. " +
           "Ensure the WhizbangIdGenerator has processed this type. " +
-          $"Add the [WhizbangId] attribute to the {typeof(TId).Name} struct declaration.");
+          $"Add the [WhizbangId] attribute to the {TypeNameFormatter.ForLog(typeof(TId))} struct declaration.");
       }
 
       return (IWhizbangIdProvider<TId>)factory(baseProvider);
@@ -193,7 +193,7 @@ public static class WhizbangIdProviderRegistry {
     where TId : struct, IWhizbangId {
     ArgumentNullException.ThrowIfNull(value);
     if (value.Body is not MemberExpression read) {
-      throw new ArgumentException($"The read of {typeof(TId).Name}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
+      throw new ArgumentException($"The read of {TypeNameFormatter.SimpleName(typeof(TId))}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
     }
 
     lock (_lock) {

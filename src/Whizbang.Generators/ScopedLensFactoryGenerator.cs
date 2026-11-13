@@ -63,8 +63,8 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
     var lensInterface = typeSymbol.AllInterfaces
         .FirstOrDefault(i =>
             i.IsGenericType &&
-            i.OriginalDefinition.Name == LENS_QUERY_INTERFACE_NAME &&
-            TypeNameUtilities.IsNamed(i.OriginalDefinition.ContainingNamespace, LENS_QUERY_NAMESPACE));
+            TypeNameUtilities.SimpleName(i.OriginalDefinition) == LENS_QUERY_INTERFACE_NAME &&
+            TypeNameUtilities.IsNamed(TypeNameUtilities.NamespaceOf(i.OriginalDefinition), LENS_QUERY_NAMESPACE));
 
     if (lensInterface is null) {
       return null;
@@ -103,7 +103,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
   }
 
   private static bool _implementsInterface(ITypeSymbol type, string interfaceName) {
-    return type.AllInterfaces.Any(i => i.Name == interfaceName);
+    return type.AllInterfaces.Any(i => TypeNameUtilities.SimpleName(i) == interfaceName);
   }
 
   private static string[] _detectScopeProperties(ITypeSymbol modelType) {

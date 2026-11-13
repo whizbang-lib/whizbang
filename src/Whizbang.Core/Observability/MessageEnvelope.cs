@@ -185,6 +185,17 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public bool StateOnly { get; set; }
 
   /// <summary>
+  /// A repaired event this service can prove it never handled: only receptors declared
+  /// <see cref="Messaging.RunOnRepairAttribute"/> run for it (#2273). Set by the receive-side fan-out of a redelivery
+  /// bundle on the child rows it stores, so it rides the stored envelope, never a producer's wire. Omitted when false.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RepairedEnvelopeRoundTripTests.cs</tests>
+  [JsonPropertyName("rep")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool Repaired { get; set; }
+
+  /// <summary>
   /// The priority the producer declared (lower is more urgent; 0 = not declared). One small field on the
   /// wire, omitted when undeclared. The consumer decides the effective number at its receive boundary.
   /// </summary>
@@ -252,6 +263,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     Flags = source.Flags,
     Target = source.Target,
     StateOnly = source.StateOnly,
+    Repaired = source.Repaired,
     Priority = source.Priority,
     PayloadLimitOverride = source.PayloadLimitOverride,
   };

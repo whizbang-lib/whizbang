@@ -187,6 +187,23 @@ public partial class EnvelopeSerializerTests {
   }
 
   [Test]
+  public async Task SerializeEnvelope_PreservesRepairedAsync() {
+    // #2273: a repaired child that loses its marker at this seam would run every receptor, not only the opted-in ones.
+    var serializer = new EnvelopeSerializer(_createTestJsonOptions());
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Repaired = true
+    };
+
+    var result = serializer.SerializeEnvelope(envelope);
+
+    await Assert.That(result.JsonEnvelope.Repaired).IsTrue();
+  }
+
+  [Test]
   public async Task SerializeEnvelope_PreservesHopsAsync() {
     // Arrange
     var options = _createTestJsonOptions();

@@ -139,14 +139,14 @@ public sealed partial class QueryExposureAdvisory(
             _findingKey(model, table), _signature(exposure, unindexed), now, DEFAULT_REPORT_COOLDOWN,
             cancellationToken).ConfigureAwait(false)) {
         LogExposedPerspectiveIsLarge(
-          _logger, model.Name, table, bytes / (1024 * 1024), exposure.ToString(),
+          _logger, TypeNameFormatter.ForLog(model), table, bytes / (1024 * 1024), exposure.ToString(),
           unindexed.Count, string.Join(", ", unindexed));
 
         // The same finding as the log line, in a shape a host can route. A log line is the end of
         // the road: one deployment raises a work item from this, another only records it, and the
         // framework should not be deciding which.
         reported.Add(new SystemEvents.PerspectiveIndexAdvised {
-          ModelName = model.Name,
+          ModelName = TypeNameFormatter.SimpleName(model),
           TableName = table,
           TableSizeBytes = bytes,
           ThresholdBytes = thresholdBytes,

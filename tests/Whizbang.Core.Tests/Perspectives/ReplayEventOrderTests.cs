@@ -176,6 +176,69 @@ public class ReplayEventOrderTests {
     await _assertOrderAsync(ordered, 1, 2);
   }
 
+  // ===== #2257: a stream holding events of more than one origin, or origin events and local ones =====
+
+  [Test]
+  public async Task Order_WhenAnOriginsEventsArriveOutOfOrderAmongLocalEvents_PutsThemInOriginOrderInTheirSlotsAsync() {
+    // The update the origin committed before its delete arrived after it. Local events keep their places; the origin's
+    // two events swap into origin order within the places they hold.
+    var ordered = ReplayEventOrder.Order([
+      _event(1, local: 10),                                     // local
+      _event(2, local: 11, origin: _originA, source: 8),        // the delete, committed second at the origin
+      _event(3, local: 12),                                     // local
+      _event(4, local: 13, origin: _originA, source: 7)]);      // the update, committed first, arrived last
+
+    await _assertOrderAsync(ordered, 1, 4, 3, 2);
+  }
+
+  [Test]
+  public async Task Order_WhenTwoOriginsInterleave_EachFollowsItsOwnOriginOrder_AndTheInterleavingIsArrivalAsync() {
+    var ordered = ReplayEventOrder.Order([
+      _event(1, local: 20, origin: _originA, source: 6),
+      _event(2, local: 21, origin: _originB, source: 3),
+      _event(3, local: 22, origin: _originA, source: 5),
+      _event(4, local: 23, origin: _originB, source: 2),
+      _event(5, local: 24, origin: _originA, source: 4)]);
+
+    // A's slots (1st, 3rd, 5th) take A's events by origin sequence (5, 3, 1); B's slots (2nd, 4th) take 4 then 2.
+    await _assertOrderAsync(ordered, 5, 4, 3, 2, 1);
+  }
+
+  [Test]
+  public async Task Order_WhenStreamVersionsDecideTheLocalOrder_OriginEventsStillTakeOriginOrderInTheirSlotsAsync() {
+    var ordered = ReplayEventOrder.Order([
+      new(_id(1), new ProbeEvent(), []) { LocalStreamVersion = 1 },
+      new(_id(2), new ProbeEvent(), []) { LocalStreamVersion = 2, SourceServiceId = _originA, SourceCommitSequence = 9 },
+      new(_id(3), new ProbeEvent(), []) { LocalStreamVersion = 3, SourceServiceId = _originA, SourceCommitSequence = 4 }]);
+
+    await _assertOrderAsync(ordered, 1, 3, 2);
+  }
+
+  [Test]
+  public async Task Order_AMixedStream_GivesTheSameResultForEveryArrangementOfTheBatchAsync() {
+    MessageEnvelope<IEvent>[] batch = [
+      _event(1, local: 10),
+      _event(2, local: 11, origin: _originA, source: 8),
+      _event(3, local: 12, origin: _originB, source: 1),
+      _event(4, local: 13, origin: _originA, source: 7)];
+    int[][] arrangements = [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1], [1, 3, 0, 2]];
+
+    foreach (var arrangement in arrangements) {
+      var ordered = ReplayEventOrder.Order([.. arrangement.Select(i => batch[i])]);
+      await _assertOrderAsync(ordered, 1, 4, 3, 2);
+    }
+  }
+
+  [Test]
+  public async Task Order_WhenOneOriginsSequencesTieInAMixedStream_BreaksOnTheIdAsync() {
+    var ordered = ReplayEventOrder.Order([
+      _event(9, local: 1),
+      _event(2, local: 2, origin: _originA, source: 3),
+      _event(1, local: 3, origin: _originA, source: 3)]);
+
+    await _assertOrderAsync(ordered, 9, 1, 2);
+  }
+
   [Test]
   public async Task Order_WithOneEvent_ReturnsTheSameBatchAsync() {
     IReadOnlyList<MessageEnvelope<IEvent>> batch = [_event(1)];

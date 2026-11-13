@@ -203,7 +203,7 @@ public sealed class PinnedWorkerRegistry {
     ArgumentNullException.ThrowIfNull(workerType);
     ArgumentNullException.ThrowIfNull(options);
 
-    var simpleName = workerType.Name;
+    var simpleName = TypeNameFormatter.SimpleName(workerType);
     if (options.ExcludeWorkers.Contains(simpleName, StringComparer.Ordinal)) {
       return false;
     }

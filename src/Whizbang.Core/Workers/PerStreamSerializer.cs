@@ -276,7 +276,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
 #pragma warning disable CA1848
     _logger.LogError(ex,
       "PerStreamSerializer<{ItemType}>: processor threw for stream {StreamKey}; continuing",
-      typeof(T).Name, streamKey);
+      TypeNameFormatter.ForLog(typeof(T)), streamKey);
 #pragma warning restore CA1848
   }
 

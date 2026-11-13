@@ -165,7 +165,7 @@ public static class LifecycleInvocationHelper {
         deps.Metrics?.ReceptorErrors.Add(1,
           new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
           new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"),
-          new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+          new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
       } finally {
         stageSw.Stop();
         deps.Metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
@@ -227,7 +227,7 @@ public static class LifecycleInvocationHelper {
           metrics?.ReceptorErrors.Add(1,
             new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
             new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType),
-            new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+            new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
           throw;
         } finally {
           receptorSw.Stop();
@@ -278,7 +278,7 @@ public static class LifecycleInvocationHelper {
           metrics?.ReceptorErrors.Add(1,
             new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
             new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType),
-            new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+            new KeyValuePair<string, object?>("error_type", TypeNameFormatter.ForLog(ex.GetType())));
           throw;
         } finally {
           receptorSw.Stop();

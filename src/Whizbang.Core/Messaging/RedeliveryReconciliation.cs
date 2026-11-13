@@ -234,7 +234,7 @@ public static partial class RedeliveryReconciler {
     }
     var marked = answer.MarkedRefusedTruncated.Count + answer.MarkedUnchanged.Count;
     if (marked > 0) {
-      services.GetService<StreamIntegrityMetrics>()?.RepairsUnhealable.Add(marked);
+      services.GetService<StreamIntegrityMetrics>()?.RecordBucketsMarkedUnhealable(marked);
     }
     return answer;
   }
@@ -456,7 +456,7 @@ public static partial class RedeliveryReconciler {
         window is { } answered ? (answered, eventIds) : null, cancellationToken)
       .ConfigureAwait(false);
     if (marked > 0) {
-      metrics?.RepairsUnhealable.Add(marked);
+      metrics?.RecordBucketsMarkedUnhealable(marked);
     }
     return new RedeliveryReconciliation(childCount, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
   }

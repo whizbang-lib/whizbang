@@ -96,7 +96,9 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
       Target = target
     };
     var envelopeType =
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the harness hands a receiver to resolve, as a publisher writes it (#2267)
       $"Whizbang.Core.Messaging.MessageEnvelope`1[[{TypeNameFormatter.AssemblyQualifiedName(typeof(TMessage))}]], Whizbang.Core";
+#pragma warning restore RS0030
     await Wire.PublishAsync(envelope, new TransportDestination(topic), envelopeType);
   }
 

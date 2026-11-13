@@ -52,6 +52,17 @@ public class StreamIntegrityOptionsValidatorTests {
   [Test]
   [Arguments(0)]
   [Arguments(-1)]
+  public async Task Validate_ARepairProgressWindowBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { RepairProgressWindowMinutes = minutes });
+
+    await Assert.That(result.Failed).IsTrue()
+      .Because("progress and an ETA over an empty window divide by nothing (#2261)");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:RepairProgressWindowMinutes");
+  }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
   public async Task Validate_AnAnswerTimeoutBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
     var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { RepairAnswerTimeoutMinutes = minutes });
 
@@ -242,4 +253,32 @@ public class StreamIntegrityOptionsValidatorTests {
   public async Task UnownedTypeOriginSilence_DefaultsToSevenDaysAsync() =>
     await Assert.That(new StreamIntegrityOptions().UnownedTypeOriginSilenceDays).IsEqualTo(7)
       .Because("a week outlasts a weekend outage or a paused deployment, and no live origin is silent that long");
+
+  [Test]
+  public async Task RepairReceptorLookback_DefaultsToSevenDays_AndBindsFromConfigurationAsync() {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> { ["Whizbang:StreamIntegrity:RepairReceptorLookback"] = "2.00:00:00" })
+      .Build();
+    var bound = new StreamIntegrityOptions();
+    configuration.GetSection("Whizbang:StreamIntegrity").Bind(bound);
+
+    await Assert.That(new StreamIntegrityOptions().RepairReceptorLookback).IsEqualTo(TimeSpan.FromDays(7))
+      .Because("#2273: a week of handled records is what a repaired event can be proven against by default");
+    await Assert.That(bound.RepairReceptorLookback).IsEqualTo(TimeSpan.FromDays(2));
+  }
+
+  [Test]
+  public async Task RepairReceptorLookback_Negative_IsRejectedByNameAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { RepairReceptorLookback = TimeSpan.FromMinutes(-1) });
+
+    await Assert.That(result.Succeeded).IsFalse();
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:RepairReceptorLookback");
+  }
+
+  [Test]
+  public async Task RepairReceptorLookback_Zero_IsAcceptedAsync() {
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { RepairReceptorLookback = TimeSpan.Zero });
+
+    await Assert.That(result.Succeeded).IsTrue().Because("zero turns receptors on repair off, which is a valid choice");
+  }
 }

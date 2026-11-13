@@ -117,8 +117,8 @@ internal static class ContributionServiceCollectionExtensions {
       IServiceProvider services, string contributionKey, Func<TService, IEnumerable<string>> items) : IRegistrationCollisionSource
       where TService : class {
     public IReadOnlyList<RegistrationCollision> GetCollisions() =>
-      RegistrationCollisions.Find(typeof(TService).Name, services.GetKeyedServices<TService>(contributionKey)
+      RegistrationCollisions.Find(TypeNameFormatter.SimpleName(typeof(TService)), services.GetKeyedServices<TService>(contributionKey)
         .OfType<TService>()
-        .Select(contribution => (contribution.GetType().Assembly.GetName().Name!, items(contribution))));
+        .Select(contribution => (TypeNameFormatter.AssemblySimpleName(contribution.GetType().Assembly)!, items(contribution))));
   }
 }

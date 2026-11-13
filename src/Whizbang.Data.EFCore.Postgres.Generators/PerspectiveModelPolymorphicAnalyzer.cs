@@ -59,9 +59,9 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
-      if ((!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) &&
-           !iface.Name.StartsWith("IPerspectiveWithActionsFor", StringComparison.Ordinal) &&
-           !iface.Name.StartsWith("IPerspectiveBase", StringComparison.Ordinal)) || iface.TypeArguments.Length < 2) {
+      if ((!TypeNameUtilities.SimpleName(iface).StartsWith("IPerspectiveFor", StringComparison.Ordinal) &&
+           !TypeNameUtilities.SimpleName(iface).StartsWith("IPerspectiveWithActionsFor", StringComparison.Ordinal) &&
+           !TypeNameUtilities.SimpleName(iface).StartsWith("IPerspectiveBase", StringComparison.Ordinal)) || iface.TypeArguments.Length < 2) {
         continue;
       }
 
@@ -153,7 +153,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   /// Checks if a type is a System namespace type that is NOT a collections type.
   /// </summary>
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    return type.ContainingNamespace is { } ns &&
+    return TypeNameUtilities.NamespaceOf(type) is { } ns &&
            TypeNameUtilities.Display(ns).StartsWith("System", StringComparison.Ordinal) &&
            !TypeNameUtilities.Display(ns).StartsWith("System.Collections", StringComparison.Ordinal);
   }
@@ -189,8 +189,8 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
         DiagnosticDescriptors.PerspectiveModelPolymorphicProperty,
         LocationUtilities.FirstOrNone(member),
         member.Name,
-        containingType.Name,
-        polymorphicType.Name);
+        TypeNameUtilities.SimpleName(containingType),
+        TypeNameUtilities.SimpleName(polymorphicType));
     context.ReportDiagnostic(diagnostic);
   }
 

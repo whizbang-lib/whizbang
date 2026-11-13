@@ -70,16 +70,16 @@ public sealed class StreamIdInheritFromAnalyzer : DiagnosticAnalyzer {
     if (strongId is null) {
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.InheritFromOnAStreamIdThatIsNotAStrongId, location,
-        type.Name, choice.Property.Name, choice.Property.Type.Name));
+        TypeNameUtilities.SimpleName(type), choice.Property.Name, TypeNameUtilities.SimpleName(choice.Property.Type)));
       return;
     }
     foreach (var listedType in listed) {
       if (TypeNameUtilities.FullyQualified(listedType) == strongId.TypeName) {
         context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.InheritFromListsTheStreamIdsOwnType, location, type.Name, choice.Property.Name, listedType.Name));
+          DiagnosticDescriptors.InheritFromListsTheStreamIdsOwnType, location, TypeNameUtilities.SimpleName(type), choice.Property.Name, TypeNameUtilities.SimpleName(listedType)));
       } else if (!StrongIdStreamIds.IsStrongIdType(listedType)) {
         context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.InheritFromNotAStrongId, location, listedType.Name, type.Name, choice.Property.Name));
+          DiagnosticDescriptors.InheritFromNotAStrongId, location, TypeNameUtilities.SimpleName(listedType), TypeNameUtilities.SimpleName(type), choice.Property.Name));
       }
     }
   }
@@ -97,6 +97,6 @@ public sealed class StreamIdInheritFromAnalyzer : DiagnosticAnalyzer {
       ? LocationUtilities.ApplicationOrFallback(choice.Attribute, Location.None, context.CancellationToken)
       : LocationUtilities.FirstOrNone(type);
     context.ReportDiagnostic(Diagnostic.Create(
-      DiagnosticDescriptors.HasStreamIdOverStrongIdStreamId, location, type.Name, choice.Property.Name));
+      DiagnosticDescriptors.HasStreamIdOverStrongIdStreamId, location, TypeNameUtilities.SimpleName(type), choice.Property.Name));
   }
 }

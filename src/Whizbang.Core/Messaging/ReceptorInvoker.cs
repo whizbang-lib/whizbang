@@ -243,11 +243,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // the receptor body (exactly how ScopeContextAccessor.CurrentContext scope survives just below). Without
       // this, a worker-dispatched receptor's PublishAsync read a null InitiatingContext and its cascaded child
       // minted a fresh correlation while scope survived — the asymmetric boundary bug.
-      messageContextAccessor.Current = establishedContext;
-      var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
-      if (initiatingAccessor is not null) {
-        initiatingAccessor.InitiatingContext = establishedContext;
-      }
+      _publishEstablishedContext(messageContextAccessor, establishedContext);
     }
 
     // Extract both trace context and scope from envelope hops.
@@ -264,6 +260,15 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Registry already has categorized receptors at compile time
     var receptors = _registry.GetReceptorsFor(messageType, stage);
+
+    // #2273: a repaired event this service never handled runs only the receptors declared [RunOnRepair]; for every other
+    // receptor it is state only. Nothing else runs for it either, tag hooks included, since they react like receptors.
+    if (context?.IsRepair == true) {
+      receptors = _onlyRunOnRepair(receptors);
+      if (receptors.Count == 0) {
+        return;
+      }
+    }
 
     // Resolve scope for tag processing — use security context or extracted scope from hops
     var scopeForTags = securityContext ?? extracted.Scope;
@@ -310,6 +315,19 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   }
 
   /// <summary>
+  /// Sets the established message context on both accessors. Synchronous on purpose: called from
+  /// <see cref="InvokeAsync"/> after the awaited establish returns, so the AsyncLocal writes land on the flow that
+  /// reaches the receptor body rather than being lost across an await boundary.
+  /// </summary>
+  private void _publishEstablishedContext(IMessageContextAccessor messageContextAccessor, MessageContext establishedContext) {
+    messageContextAccessor.Current = establishedContext;
+    var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
+    if (initiatingAccessor is not null) {
+      initiatingAccessor.InitiatingContext = establishedContext;
+    }
+  }
+
+  /// <summary>
   /// Source-service filtering: PostInbox only fires for messages from OTHER services. Messages
   /// from THIS service already fired at LocalImmediate — returning true here skips PostInbox to
   /// prevent double-fire.
@@ -333,7 +351,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     _ensureLogger();
     if (_logger is not null) {
-      Log.SkippedSameServicePostInbox(_logger, stage, messageType.Name, envelope.MessageId.Value, _serviceName);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.SkippedSameServicePostInbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value, _serviceName);
+#pragma warning restore CA1873
     }
     return true;
   }
@@ -353,7 +373,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (_ownedDomains.Count == 0 || receptors.Count == 0 || !isPreOutbox) {
       return false;
     }
-    var isOwned = _isOwnedNamespace(messageType.Namespace);
+    var isOwned = _isOwnedNamespace(TypeNameFormatter.NamespaceOf(messageType));
     // A composite carries events, so it is filtered as one
     var isEvent = message is IEvent or Whizbang.Core.Minting.ICompositeEvent;
     if (isOwned ? isEvent : !isEvent) {
@@ -361,7 +381,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     _ensureLogger();
     if (_logger is not null) {
-      Log.SkippedOwnedDomainFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.SkippedOwnedDomainFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+#pragma warning restore CA1873
     }
     return true;
   }
@@ -415,7 +437,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (kept.Count == 0) {
       _ensureLogger();
       if (_logger is not null) {
-        Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+        Log.SkippedLocalDispatchPreOutbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+#pragma warning restore CA1873
       }
     }
     return kept;
@@ -443,7 +467,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       CancellationToken cancellationToken) {
     _ensureLogger();
     if (_logger is not null) {
-      Log.NoReceptorsRegistered(_logger, stage, messageType.Name, envelope.MessageId.Value);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.NoReceptorsRegistered(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+#pragma warning restore CA1873
     }
     await _processTagsAsync(message, messageType, stage, scopeForTags, changes, cancellationToken).ConfigureAwait(false);
   }
@@ -468,7 +494,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     _ensureLogger();
     if (_logger is not null) {
-      Log.SkippedStageTrackerDedup(_logger, stage, messageType.Name, envelope.MessageId.Value);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.SkippedStageTrackerDedup(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+#pragma warning restore CA1873
     }
     return false;
   }
@@ -477,7 +505,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private void _logSkippedReplayModeFilter(IMessageEnvelope envelope, Type messageType, LifecycleStage stage) {
     _ensureLogger();
     if (_logger is not null) {
-      Log.SkippedReplayModeFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.SkippedReplayModeFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+#pragma warning restore CA1873
     }
   }
 
@@ -514,7 +544,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // Refusing it here, after its handler ran, would protect nothing, so it runs without a context
       _ensureLogger();
       if (_logger is not null) {
-        Log.LocalStageRanWithoutContext(_logger, stage, messageType.Name, envelope.MessageId.Value);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+        Log.LocalStageRanWithoutContext(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+#pragma warning restore CA1873
       }
       return null;
     }
@@ -629,6 +661,16 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   ///   (<see cref="ReceptorInfo.FireDuringReplay"/>).</item>
   /// </list>
   /// </summary>
+  private static List<ReceptorInfo> _onlyRunOnRepair(IReadOnlyList<ReceptorInfo> receptors) {
+    var opted = new List<ReceptorInfo>(receptors.Count);
+    foreach (var receptor in receptors) {
+      if (receptor.RunOnRepair) {
+        opted.Add(receptor);
+      }
+    }
+    return opted;
+  }
+
   private static IReadOnlyList<ReceptorInfo> _filterForReplayMode(
       IReadOnlyList<ReceptorInfo> receptors,
       ILifecycleContext? context) {
@@ -945,7 +987,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
         throw new PerspectiveSyncTimeoutException(
             syncAttr.PerspectiveType,
             timeout,
-            $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
+            $"Perspective sync timed out waiting for {TypeNameFormatter.ForLog(syncAttr.PerspectiveType)} before invoking receptor {receptor.ReceptorId}");
       }
     }
 
@@ -1060,7 +1102,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     } catch (Exception ex) {
       _ensureLogger();
       if (_logger is not null) {
-        Log.TagProcessingError(_logger, ex, messageType.Name, stage);
+        Log.TagProcessingError(_logger, ex, TypeNameFormatter.ForLog(messageType), stage);
       }
     }
   }

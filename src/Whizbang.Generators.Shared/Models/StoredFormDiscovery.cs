@@ -233,7 +233,7 @@ public static class StoredFormDiscovery {
     }
     var from = _unwrap(previously);
     if (SymbolEqualityComparer.Default.Equals(from, current)) {
-      walk.Problem(CANNOT_GENERATE, path, $"Previously is the property's current type ({current.Name})");
+      walk.Problem(CANNOT_GENERATE, path, $"Previously is the property's current type ({TypeNameUtilities.SimpleName(current)})");
       return;
     }
 
@@ -263,16 +263,16 @@ public static class StoredFormDiscovery {
         }
         // The enum column rewrite already converts a text column of names to numbers.
         action = StoredFormColumnAction.None;
-        step = $"{STEP}ToEnumNumber({_literal(path)}, {_literal(current.Name)}, {NUMBER}{toNumber}, {_members(current)}, "
+        step = $"{STEP}ToEnumNumber({_literal(path)}, {_literal(TypeNameUtilities.SimpleName(current))}, {NUMBER}{toNumber}, {_members(current)}, "
           + (PhysicalFieldScalar.IsFlagsEnum(current) ? "true" : "false") + ")";
         break;
     }
 
     if (step is null) {
-      walk.Problem(CANNOT_GENERATE, path, $"no generated conversion from {from.Name} to {current.Name}");
+      walk.Problem(CANNOT_GENERATE, path, $"no generated conversion from {TypeNameUtilities.SimpleName(from)} to {TypeNameUtilities.SimpleName(current)}");
       return;
     }
-    walk.Migrations.Add(new StoredFormInfo(1, $"{path}:{from.Name}->{current.Name}", step,
+    walk.Migrations.Add(new StoredFormInfo(1, $"{path}:{TypeNameUtilities.SimpleName(from)}->{TypeNameUtilities.SimpleName(current)}", step,
       column, column is null ? StoredFormColumnAction.None : action, number, enumNames,
       Path: path, IsTypeChange: true, IndexStoreType: JsonIndexSql.StoreType(JsonIndexDiscovery.CastFor(current) ?? JsonIndexCast.None)));
   }
@@ -292,7 +292,7 @@ public static class StoredFormDiscovery {
       return;
     }
     if (_json(value, kind, number, current) is not { } json) {
-      walk.Problem(CANNOT_GENERATE, path, $"the default {value.ToCSharpString()} is not a value of the property's type ({current.Name})");
+      walk.Problem(CANNOT_GENERATE, path, $"the default {value.ToCSharpString()} is not a value of the property's type ({TypeNameUtilities.SimpleName(current)})");
       return;
     }
     walk.Migrations.Add(new StoredFormInfo(2, $"{path}:default", $"{STEP}DefaultWhenMissing({_literal(path)}, {_literal(json)})"));
@@ -389,7 +389,7 @@ public static class StoredFormDiscovery {
       return array.ElementType;
     }
     if (type is INamedTypeSymbol { IsGenericType: true } named && type.SpecialType != SpecialType.System_String
-        && TypeNameUtilities.Display(named.ContainingNamespace).StartsWith("System.Collections", StringComparison.Ordinal)) {
+        && TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(named)).StartsWith("System.Collections", StringComparison.Ordinal)) {
       return named.TypeArguments[^1];
     }
     return null;

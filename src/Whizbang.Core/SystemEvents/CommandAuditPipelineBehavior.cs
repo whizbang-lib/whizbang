@@ -91,7 +91,7 @@ public sealed class CommandAuditPipelineBehavior<TCommand, TResponse>(
 
     // Fallback: Generate receptor name from command type
     // CreateOrderCommand → CreateOrderReceptor
-    var commandTypeName = typeof(TCommand).Name;
+    var commandTypeName = TypeNameFormatter.SimpleName(typeof(TCommand));
     if (commandTypeName.EndsWith("Command", StringComparison.Ordinal)) {
       return commandTypeName[..^7] + "Receptor";
     }

@@ -57,7 +57,7 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
       var location = LocationUtilities.ApplicationOrFallback(declaration.Attribute, Location.None, context.CancellationToken);
       if (declaration.IsOverride && !anyInherited) {
         context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.StreamIdOverrideWithNothingToOverride, location, type.Name, declaration.Name));
+          DiagnosticDescriptors.StreamIdOverrideWithNothingToOverride, location, TypeNameUtilities.SimpleName(type), declaration.Name));
       }
 
       var isUsed = string.Equals(declaration.Name, used, System.StringComparison.OrdinalIgnoreCase);
@@ -66,7 +66,7 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
       if (isUsed && !hidesInherited) {
         continue;
       }
-      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.MultipleStreamIdAttributes, location, type.Name, used));
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.MultipleStreamIdAttributes, location, TypeNameUtilities.SimpleName(type), used));
     }
   }
 
@@ -87,12 +87,12 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
       return;
     }
     for (var baseType = type.BaseType; baseType is not null; baseType = baseType.BaseType) {
-      if (!SymbolEqualityComparer.Default.Equals(baseType.ContainingAssembly, type.ContainingAssembly)
+      if (!SymbolEqualityComparer.Default.Equals(TypeNameUtilities.AssemblyOf(baseType), TypeNameUtilities.AssemblyOf(type))
           && _declaresGenerateStreamId(baseType)) {
         var location = LocationUtilities.ApplicationOrFallback(ownStreamId.Attribute, Location.None, context.CancellationToken);
         context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.GenerationOptOutAcrossAssemblies, location,
-          type.Name, ownStreamId.Name, baseType.Name, baseType.ContainingAssembly.Name));
+          TypeNameUtilities.SimpleName(type), ownStreamId.Name, TypeNameUtilities.SimpleName(baseType), TypeNameUtilities.SimpleName(TypeNameUtilities.AssemblyOf(baseType))));
         return;
       }
     }

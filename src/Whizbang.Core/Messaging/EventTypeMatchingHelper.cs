@@ -13,6 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// Handles assembly-qualified names with and without version information.
 /// </summary>
 #pragma warning disable RS0030 // the one place the raw type-name sources (Type.FullName, AssemblyQualifiedName, Assembly.FullName) are allowed (issue #698)
+[TypeNameAuthority]
 public static class EventTypeMatchingHelper {
   /// <summary>
   /// Returns the INNERMOST payload type name of a wrapped message type, unwrapping

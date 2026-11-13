@@ -9,6 +9,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -282,7 +283,7 @@ public sealed class TypeNameHandlingAnalyzer : DiagnosticAnalyzer {
 
   private static bool _isSystemType(ExpressionSyntax receiver, SemanticModel model) {
     var type = model.GetTypeInfo(receiver).Type;
-    return type is { Name: "Type", ContainingNamespace.Name: "System" };
+    return type is not null && TypeNameUtilities.SimpleName(type) == "Type" && TypeNameUtilities.SimpleNameOrNull(TypeNameUtilities.NamespaceOf(type)) == "System";
   }
 
   private static bool _isStringType(ExpressionSyntax expression) =>

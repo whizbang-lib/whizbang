@@ -91,7 +91,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
     // Exemption 2 — the Whizbang.Core assembly: the framework's registered producers
     // (CoalesceShipWorker's default factory, RedeliveryPump's builder) ARE the factory path.
     // An object creation sits inside a member, and every member belongs to an assembly.
-    if (string.Equals(context.ContainingSymbol.ContainingAssembly!.Name, CORE_ASSEMBLY, System.StringComparison.Ordinal)) {
+    if (string.Equals(TypeNameUtilities.SimpleName(context.ContainingSymbol.ContainingAssembly!), CORE_ASSEMBLY, System.StringComparison.Ordinal)) {
       return;
     }
 
@@ -104,7 +104,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
     context.ReportDiagnostic(Diagnostic.Create(
       DirectMintedCompositeConstruction,
       creation.Syntax.GetLocation(),
-      constructedType.Name));
+      TypeNameUtilities.SimpleName(constructedType)));
   }
 
   /// <summary>True when the constructed type derives from <c>Whizbang.Core.Minting.CompositeEventBase</c>.</summary>
@@ -173,7 +173,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
       return false;
     }
     var containingType = parameter.ContainingSymbol.ContainingType.OriginalDefinition;
-    return $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}" == BATCH_EXTENSIONS_TYPE;
+    return $"{TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(containingType))}.{TypeNameUtilities.SimpleName(containingType)}" == BATCH_EXTENSIONS_TYPE;
   }
 
   /// <summary>True when <paramref name="property"/> is one of the sanctioned builder seams.</summary>
@@ -182,7 +182,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   /// </remarks>
   private static bool _isBuilderSeam(IPropertySymbol property) {
     var containingType = property.ContainingType!.OriginalDefinition;
-    var containingDisplay = $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}";
+    var containingDisplay = $"{TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(containingType))}.{TypeNameUtilities.SimpleName(containingType)}";
     return (property.Name == MINT_REQUEST_BUILDER && containingDisplay == MINT_REQUEST_TYPE)
         || (property.Name == COALESCE_POLICY_BUILDER && containingDisplay == COALESCE_POLICY_OPTIONS_TYPE);
   }

@@ -40,7 +40,7 @@ public sealed class TopicFilterTargetAnalyzer : DiagnosticAnalyzer {
     context.ReportDiagnostic(Diagnostic.Create(
       DiagnosticDescriptors.TopicFilterOnNonCommand,
       LocationUtilities.ApplicationOrFallback(filter, Location.None, context.CancellationToken),
-      type.Name));
+      TypeNameUtilities.SimpleName(type)));
   }
 
   /// <summary>The attribute or its generic <c>TopicFilterAttribute&lt;TEnum&gt;</c> form, which derives from it.</summary>

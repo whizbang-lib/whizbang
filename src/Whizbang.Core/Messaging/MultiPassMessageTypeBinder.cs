@@ -27,6 +27,8 @@ namespace Whizbang.Core.Messaging;
   Justification = "Type lookup over loaded assemblies is the binder's whole job; trimmer cannot statically prove which types are needed for runtime envelope type names.")]
 [SuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCode'",
   Justification = "Type lookup over loaded assemblies is the binder's whole job; assemblies are AOT-included.")]
+#pragma warning disable RS0030 // the shared resolver: resolving a type from a name is its whole job (#2267)
+[TypeNameAuthority]   // the shared resolver: a type from a name a publisher wrote (#2267)
 public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
   /// <summary>The most names a binder remembers unless constructed with another capacity.</summary>
   public const int DEFAULT_CAPACITY = 4096;
@@ -184,3 +186,4 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
     return assemblyQualifiedName.Trim();
   }
 }
+#pragma warning restore RS0030

@@ -106,7 +106,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
     context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.PerspectiveSyncInInlineReceptor,
         invocation.Syntax.GetLocation(),
-        containingClass.Name,
+        TypeNameUtilities.SimpleName(containingClass),
         methodName,
         firstInlineStage,
         suggestedDetachedStage));

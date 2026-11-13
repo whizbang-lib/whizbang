@@ -255,7 +255,7 @@ public sealed partial class IntegrityCheckpointWorker(
       HashSet<string> ownedDomains, CancellationToken cancellationToken) {
     var catalogEvents = catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type).ToList();
     if (ownedDomains.Count > 0) {
-      return [.. catalogEvents.Where(t => OwnedNamespaceMatcher.IsOwned(t.Namespace, ownedDomains))];
+      return [.. catalogEvents.Where(t => OwnedNamespaceMatcher.IsOwned(TypeNameFormatter.NamespaceOf(t), ownedDomains))];
     }
 
     var typeNames = new HashSet<string>(StringComparer.Ordinal);

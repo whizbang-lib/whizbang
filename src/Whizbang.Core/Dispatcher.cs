@@ -442,8 +442,8 @@ public abstract partial class Dispatcher(
     if (_lookupReceptorInvokerAny(message, messageType) is { } anyInvoker) {
       return async msg => await anyInvoker(msg) switch {
         null => throw new InvalidOperationException(
-          $"Could not extract {typeof(TResult).Name} from receptor result of type null. " +
-          $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}."),
+          $"Could not extract {TypeNameFormatter.ForLog(typeof(TResult))} from receptor result of type null. " +
+          $"The receptor for {TypeNameFormatter.ForLog(messageType)} does not return a value of type {TypeNameFormatter.ForLog(typeof(TResult))}."),
         TResult typed => typed,
         var other => throw new ReceptorResultMismatchException(other, typeof(TResult))
       };
@@ -463,12 +463,14 @@ public abstract partial class Dispatcher(
       result = await invoker(message);
     } catch (ReceptorResultMismatchException mismatch) {
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        Log.ExtractingResponse(CascadeLogger, messageType.Name, mismatch.Result.GetType().Name, typeof(TResult).Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+        Log.ExtractingResponse(CascadeLogger, TypeNameFormatter.ForLog(messageType), TypeNameFormatter.ForLog(mismatch.Result.GetType()), TypeNameFormatter.ForLog(typeof(TResult)));
+#pragma warning restore CA1873
       }
       if (!Internal.ResponseExtractor.TryExtractResponse<TResult>(mismatch.Result, out var response)) {
         throw new InvalidOperationException(
-          $"Could not extract {typeof(TResult).Name} from receptor result of type {mismatch.Result.GetType().Name}. " +
-          $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}.", mismatch);
+          $"Could not extract {TypeNameFormatter.ForLog(typeof(TResult))} from receptor result of type {TypeNameFormatter.ForLog(mismatch.Result.GetType())}. " +
+          $"The receptor for {TypeNameFormatter.ForLog(messageType)} does not return a value of type {TypeNameFormatter.ForLog(typeof(TResult))}.", mismatch);
       }
       await _cascadeEventsFromResultAsync(mismatch.Result, messageType, envelope, excludedResponse: response, cancellationToken);
       return response!;
@@ -479,7 +481,7 @@ public abstract partial class Dispatcher(
 
   /// <summary>Whether a message of this type is a composite this service owns, so it is expanded here.</summary>
   private bool _expandsHere(Type messageType) =>
-    typeof(ICompositeEvent).IsAssignableFrom(messageType) && _isOwnedNamespace(messageType.Namespace);
+    typeof(ICompositeEvent).IsAssignableFrom(messageType) && _isOwnedNamespace(TypeNameFormatter.NamespaceOf(messageType));
 
   /// <summary>Expands an owned composite here, as part of its local run; anything else is left alone.</summary>
   private Task _expandIfOwnedCompositeAsync(object message, Type messageType, MessageId? copyId) =>
@@ -601,7 +603,7 @@ public abstract partial class Dispatcher(
     if (MessageKindDetector.IsFrameworkSystemType(messageType)) {
       traits |= MessageTraits.SystemCommand;
     }
-    if (_isOwnedNamespace(messageType.Namespace)) {
+    if (_isOwnedNamespace(TypeNameFormatter.NamespaceOf(messageType))) {
       traits |= MessageTraits.Owned;
     }
     return traits;
@@ -662,19 +664,19 @@ public abstract partial class Dispatcher(
         throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.");
       case DispatchRejection.ConflictingBehaviors:
         throw new ArgumentException(
-          $"DispatchBehaviors.ThrowWhenNoHandler and DispatchBehaviors.ContinueWhenNoHandler cannot both be set (message type {messageType.Name}).");
+          $"DispatchBehaviors.ThrowWhenNoHandler and DispatchBehaviors.ContinueWhenNoHandler cannot both be set (message type {TypeNameFormatter.ForLog(messageType)}).");
       case DispatchRejection.CommandCannotBeStoreOnly:
         throw new DispatchRejectedException(decision.Reject, messageType,
-          $"{messageType.Name} is a command routed to the event store only; commands are not stored. Route it Local, Outbox or Both.");
+          $"{TypeNameFormatter.ForLog(messageType)} is a command routed to the event store only; commands are not stored. Route it Local, Outbox or Both.");
       case DispatchRejection.NotAnEventCannotBeStoreOnly:
         throw new DispatchRejectedException(decision.Reject, messageType,
-          $"{messageType.Name} is not an event and is routed to the event store only; only events are stored. Route it Local, Outbox or Both.");
+          $"{TypeNameFormatter.ForLog(messageType)} is not an event and is routed to the event store only; only events are stored. Route it Local, Outbox or Both.");
       case DispatchRejection.CannotScheduleInProcess:
         throw new DispatchRejectedException(decision.Reject, messageType,
-          $"{messageType.Name} is scheduled for later but never leaves this service, so nothing can deliver it later. Send it through the outbox or drop the schedule.");
+          $"{TypeNameFormatter.ForLog(messageType)} is scheduled for later but never leaves this service, so nothing can deliver it later. Send it through the outbox or drop the schedule.");
       default:
         throw new DispatchRejectedException(decision.Reject, messageType,
-          $"{messageType.Name} needs its handler's result, but the selected dispatch policy does not run the handler during the call.");
+          $"{TypeNameFormatter.ForLog(messageType)} needs its handler's result, but the selected dispatch policy does not run the handler during the call.");
     }
   }
 
@@ -687,7 +689,7 @@ public abstract partial class Dispatcher(
       "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
       "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
       "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
-      messageType.Name);
+      TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1848
   }
 
@@ -731,7 +733,7 @@ public abstract partial class Dispatcher(
 
   /// <summary>The receipt of a dispatch the policy let through without running or sending anything.</summary>
   private static DeliveryReceipt _nothingToDoReceipt(Type messageType, IMessageContext context) =>
-    DeliveryReceipt.Accepted(MessageId.New(), messageType.Name, context.CorrelationId, context.CausationId);
+    DeliveryReceipt.Accepted(MessageId.New(), TypeNameFormatter.SimpleName(messageType), context.CorrelationId, context.CausationId);
 
 
   /// <summary>
@@ -1332,7 +1334,7 @@ public abstract partial class Dispatcher(
         throw new PerspectiveSyncTimeoutException(
             syncAttr.PerspectiveType,
             timeout,
-            $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {syncReceptor.ReceptorId}");
+            $"Perspective sync timed out waiting for {TypeNameFormatter.ForLog(syncAttr.PerspectiveType)} before invoking receptor {syncReceptor.ReceptorId}");
       }
       // FireBehavior.FireAlways continues regardless of timeout
     }
@@ -1547,7 +1549,7 @@ public abstract partial class Dispatcher(
       var error = new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
       _dispatcherMetrics?.Errors.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "Unknown"),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, error.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(error.GetType())));
       throw error;
     }
     return (routed.Value, routed.Mode);
@@ -1578,7 +1580,7 @@ public abstract partial class Dispatcher(
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
     var parentActivity = Activity.Current;
-    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}", ActivityKind.Internal);
     if (dispatchActivity != null) {
       dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
@@ -1646,7 +1648,7 @@ public abstract partial class Dispatcher(
     MessageContextAccessor.CurrentContext = context;
 
     var sw = Stopwatch.StartNew();
-    var messageTypeName = messageType.Name;
+    var messageTypeName = TypeNameFormatter.SimpleName(messageType);
     try {
       var invoker = _lookupSendInvoker(message, messageType);
       var decision = _decide(policy, message, messageType, hasHandler: invoker != null, options, route);
@@ -1674,7 +1676,7 @@ public abstract partial class Dispatcher(
       }
       var delivered = DeliveryReceipt.Delivered(
         envelope.MessageId,
-        messageType.Name,
+        TypeNameFormatter.SimpleName(messageType),
         context.CorrelationId,
         context.CausationId,
         _streamIdExtractor?.ExtractStreamId(message, messageType));
@@ -1720,7 +1722,7 @@ public abstract partial class Dispatcher(
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -2092,14 +2094,14 @@ public abstract partial class Dispatcher(
       var result = await _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
         new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
 
       return result;
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -2132,19 +2134,19 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
+        var msgTypeName = TypeNameFormatter.SimpleName(messageType);
         CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Invoking receptor for {MessageType}", msgTypeName);
       }
       var result = await invoker(message);
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var resultTypeName = result?.GetType().Name ?? "null";
+        var resultTypeName = result is null ? "null" : TypeNameFormatter.SimpleName(result.GetType());
         var isNull = result == null;
         CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Receptor returned {ResultType}, IsNull={IsNull}", resultTypeName, isNull);
       }
@@ -2194,7 +2196,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2382,7 +2384,7 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         var parentActivity = Activity.Current;
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}", ActivityKind.Internal);
         if (dispatchActivity != null) {
           dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
           dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
@@ -2404,7 +2406,7 @@ public abstract partial class Dispatcher(
         await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
         _dispatcherMetrics?.MessagesDispatched.Add(1,
-          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
           new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
 
         // Unwrap Routed<T> from result if receptor returned a wrapped value
@@ -2421,8 +2423,8 @@ public abstract partial class Dispatcher(
       }
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -2459,7 +2461,7 @@ public abstract partial class Dispatcher(
 
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2479,12 +2481,12 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
         new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -2506,7 +2508,7 @@ public abstract partial class Dispatcher(
 
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
     dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
 
     // Invoke synchronously, with the message's envelope registered for a receptor that looks it up
@@ -2560,7 +2562,7 @@ public abstract partial class Dispatcher(
 
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2580,12 +2582,12 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
         new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, TypeNameFormatter.ForLog(messageType)),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -2715,7 +2717,7 @@ public abstract partial class Dispatcher(
       return;
     }
     var handledHere = decision.Local == LocalRun.Now
-      ? DeliveryReceipt.Delivered(MessageId.New(), messageType.Name, context.CorrelationId, context.CausationId,
+      ? DeliveryReceipt.Delivered(MessageId.New(), TypeNameFormatter.SimpleName(messageType), context.CorrelationId, context.CausationId,
           _streamIdExtractor?.ExtractStreamId(message, messageType))
       : null;
     await _sendToOutboxViaScopeAsync(message, messageType, context, caller.MemberName, caller.FilePath, caller.LineNumber, options,
@@ -2814,7 +2816,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2867,7 +2869,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -3035,7 +3037,7 @@ public abstract partial class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -3059,7 +3061,7 @@ public abstract partial class Dispatcher(
 
       // Build delivery receipt from envelope metadata
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-      var destination = messageType.Name;
+      var destination = TypeNameFormatter.SimpleName(messageType);
       var receipt = DeliveryReceipt.Delivered(
         envelope.MessageId,
         destination,
@@ -3094,7 +3096,7 @@ public abstract partial class Dispatcher(
         await _traceStore.StoreAsync(envelope, options.CancellationToken);
       }
 
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -3119,7 +3121,7 @@ public abstract partial class Dispatcher(
 
       // Build delivery receipt from envelope metadata
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-      var destination = messageType.Name;
+      var destination = TypeNameFormatter.SimpleName(messageType);
       var receipt = DeliveryReceipt.Delivered(
         envelope.MessageId,
         destination,
@@ -3308,8 +3310,8 @@ public abstract partial class Dispatcher(
 #pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var resultTypeName = result?.GetType().Name ?? "null";
-      var origMsgTypeName = originalMessageType.Name;
+      var resultTypeName = result is null ? "null" : TypeNameFormatter.SimpleName(result.GetType());
+      var origMsgTypeName = TypeNameFormatter.SimpleName(originalMessageType);
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ResultType={ResultType}, OriginalMessageType={OriginalMessageType}",
         resultTypeName, origMsgTypeName);
     }
@@ -3338,7 +3340,7 @@ public abstract partial class Dispatcher(
       extractedCount++;
       var messageType = msg.GetType();
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
+        var msgTypeName = TypeNameFormatter.SimpleName(messageType);
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted message {Count}: Type={MessageType}, Mode={Mode}",
           extractedCount, msgTypeName, mode);
       }
@@ -3356,7 +3358,7 @@ public abstract partial class Dispatcher(
     if (extractedCount == 0) {
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
         // Not null: a null (default) result returned at the fast path above.
-        var resultTypeName = result!.GetType().Name;
+        var resultTypeName = TypeNameFormatter.SimpleName(result!.GetType());
         CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: No messages extracted from result type {ResultType}. " +
           "This may indicate the result does not implement IMessage or is not wrapped in a supported collection/tuple.",
           resultTypeName);
@@ -3389,7 +3391,7 @@ public abstract partial class Dispatcher(
     }
 
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var eventTypeName = messageType.Name;
+      var eventTypeName = TypeNameFormatter.SimpleName(messageType);
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Tracked event for sync - StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
         streamId, eventTypeName, eventId);
     }
@@ -3456,7 +3458,7 @@ public abstract partial class Dispatcher(
         streamId = _streamIdExtractor.ExtractStreamId(msg, messageType) ?? minted;
         if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
           CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (OnlyIfEmpty={OnlyIfEmpty})",
-            streamId, messageType.Name, onlyIfEmpty);
+            streamId, TypeNameFormatter.ForLog(messageType), onlyIfEmpty);
         }
       }
     }
@@ -3491,7 +3493,9 @@ public abstract partial class Dispatcher(
         _streamIdExtractor.SetStreamId(message, newStreamId);
       }
 
-      Log.StreamIdAutoGenerated(CascadeLogger, newStreamId, messageType.Name, onlyIfEmpty);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.StreamIdAutoGenerated(CascadeLogger, newStreamId, TypeNameFormatter.ForLog(messageType), onlyIfEmpty);
+#pragma warning restore CA1873
     }
   }
 
@@ -3533,7 +3537,9 @@ public abstract partial class Dispatcher(
       _logRefusedInheritanceOnce(sourceType, messageType);
       return null;
     }
-    Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, sourceType.Name, messageType.Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, TypeNameFormatter.ForLog(sourceType), TypeNameFormatter.ForLog(messageType));
+#pragma warning restore CA1873
     return inherited;
   }
 
@@ -3551,7 +3557,9 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs:EachRefusedPairOfTypes_IsLoggedOnceAsync</tests>
   private void _logRefusedInheritanceOnce(Type sourceType, Type messageType) {
     if (_refusedStreamInheritances.TryAdd((sourceType, messageType), 0)) {
-      Log.StreamIdInheritanceRefused(CascadeLogger, sourceType.Name, messageType.Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      Log.StreamIdInheritanceRefused(CascadeLogger, TypeNameFormatter.ForLog(sourceType), TypeNameFormatter.ForLog(messageType));
+#pragma warning restore CA1873
     }
   }
 
@@ -3569,11 +3577,11 @@ public abstract partial class Dispatcher(
       scopedTracker.TrackEmittedEvent(streamId, messageType, eventId);
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[SYNC_DEBUG] Tracked in SCOPED tracker: StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
-          streamId, messageType.Name, eventId);
+          streamId, TypeNameFormatter.ForLog(messageType), eventId);
       }
     } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[SYNC_DEBUG] SCOPED tracker is NULL - event not tracked for same-scope sync: EventType={EventType}, EventId={EventId}",
-        messageType.Name, eventId);
+        TypeNameFormatter.ForLog(messageType), eventId);
     }
 #pragma warning restore CA1848
   }
@@ -3594,7 +3602,7 @@ public abstract partial class Dispatcher(
         _syncEventTracker.TrackEvent(messageType, eventId, streamId, perspectiveName);
         if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
           CascadeLogger.LogDebug("[SYNC_DEBUG] Tracked in SINGLETON tracker: StreamId={StreamId}, EventType={EventType}, EventId={EventId}, Perspective={Perspective}",
-            streamId, messageType.Name, eventId, perspectiveName);
+            streamId, TypeNameFormatter.ForLog(messageType), eventId, perspectiveName);
         }
       }
     } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -3699,7 +3707,7 @@ public abstract partial class Dispatcher(
       return false;
     }
     if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-      Log.UnhandledResultSkipped(CascadeLogger, messageType.Name);
+      Log.UnhandledResultSkipped(CascadeLogger, TypeNameFormatter.ForLog(messageType));
     }
     return true;
   }
@@ -3782,7 +3790,9 @@ public abstract partial class Dispatcher(
     // source-generated and check the level before building anything, and the step completes synchronously unless
     // the processor does not, so no async state machine is created on the common paths
     var logger = DispatcherLogger;
-    Log.TagProcessingEntered(logger, messageType.Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    Log.TagProcessingEntered(logger, TypeNameFormatter.ForLog(messageType));
+#pragma warning restore CA1873
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
@@ -4012,7 +4022,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     CascadeLogger.LogWarning("[CASCADE] CascadeToOutboxAsync: BASE IMPLEMENTATION CALLED for {MessageType}. " +
       "This means the generated dispatcher does NOT have an override for this message type. " +
-      "The message will NOT be written to the outbox!", messageType.Name);
+      "The message will NOT be written to the outbox!", TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1848
     return Task.CompletedTask;
   }
@@ -4041,7 +4051,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     CascadeLogger.LogWarning("[CASCADE] CascadeToEventStoreOnlyAsync: BASE IMPLEMENTATION CALLED for {MessageType}. " +
       "This means the generated dispatcher does NOT have an override for this message type. " +
-      "The event will NOT be written to the event store!", messageType.Name);
+      "The event will NOT be written to the event store!", TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1848
     return Task.CompletedTask;
   }
@@ -4075,7 +4085,7 @@ public abstract partial class Dispatcher(
     _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
-    var eventTypeName = eventType.Name;
+    var eventTypeName = TypeNameFormatter.SimpleName(eventType);
     // #587: the publish seam is where a re-emission cascade becomes visible — a service
     // publishing a type it also consumes. Resolved lazily and nullable: hosts without the
     // registry (or diagnostic) pay nothing.
@@ -4133,7 +4143,7 @@ public abstract partial class Dispatcher(
         new KeyValuePair<string, object?>(METRIC_PATTERN, "publish"));
 
       // Return delivery receipt with stream ID
-      var destination = eventType.Name;
+      var destination = TypeNameFormatter.SimpleName(eventType);
       return DeliveryReceipt.Delivered(
         messageId,
         destination,
@@ -4143,7 +4153,7 @@ public abstract partial class Dispatcher(
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -4195,7 +4205,7 @@ public abstract partial class Dispatcher(
     _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData!.GetType();
-    var eventTypeName = eventType.Name;
+    var eventTypeName = TypeNameFormatter.SimpleName(eventType);
     // #587: the publish seam is where a re-emission cascade becomes visible — a service
     // publishing a type it also consumes. Resolved lazily and nullable: hosts without the
     // registry (or diagnostic) pay nothing.
@@ -4246,7 +4256,7 @@ public abstract partial class Dispatcher(
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
 
       // Return delivery receipt with stream ID
-      var destination = eventType.Name;
+      var destination = TypeNameFormatter.SimpleName(eventType);
       return DeliveryReceipt.Delivered(
         messageId,
         destination,
@@ -4256,7 +4266,7 @@ public abstract partial class Dispatcher(
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, TypeNameFormatter.ForLog(ex.GetType())));
       throw;
     } finally {
       sw.Stop();
@@ -4297,7 +4307,7 @@ public abstract partial class Dispatcher(
       ?? throw new InvalidOperationException(
         "IClaimedEmissionStore is not registered. Call AddWhizbangClaimedEmissionStore() (Postgres driver) or register an implementation before using PublishOnceAsync.");
 
-    var eventTypeName = eventData.GetType().Name;
+    var eventTypeName = TypeNameFormatter.SimpleName(eventData.GetType());
 
     var claimed = await claimStore.TryClaimAsync(claimKey, TrackedGuid.New(), cancellationToken).ConfigureAwait(false);
     if (!claimed) {
@@ -4366,7 +4376,7 @@ public abstract partial class Dispatcher(
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var msgTypeName = messageType.Name;
+      var msgTypeName = TypeNameFormatter.SimpleName(messageType);
       CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Message={MessageType}, Mode={Mode}", msgTypeName, mode);
     }
 #pragma warning restore CA1848
@@ -4406,7 +4416,7 @@ public abstract partial class Dispatcher(
     sw.Stop();
     _dispatcherMetrics?.CascadeDuration.Record(sw.Elapsed.TotalMilliseconds);
     _dispatcherMetrics?.EventsCascaded.Add(1,
-      new KeyValuePair<string, object?>("event_type", messageType.Name),
+      new KeyValuePair<string, object?>("event_type", TypeNameFormatter.ForLog(messageType)),
       new KeyValuePair<string, object?>("destination", mode.ToString()));
   }
 
@@ -4479,7 +4489,7 @@ public abstract partial class Dispatcher(
     var priority = options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED;
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var eventTypeName = eventType.Name;
+      var eventTypeName = TypeNameFormatter.SimpleName(eventType);
       CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called for {EventType}, MessageId={MessageId}", eventTypeName, messageId);
     }
 #pragma warning restore CA1848
@@ -4491,28 +4501,14 @@ public abstract partial class Dispatcher(
     if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
 #pragma warning disable CA1848
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", eventType.Name);
+        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", TypeNameFormatter.ForLog(eventType));
       }
 #pragma warning restore CA1848
       return;
     }
 
-    // Create scope to resolve scoped IWorkCoordinatorStrategy
-    // Guard against ObjectDisposedException during application shutdown or hot reload
-    IServiceScope scope;
-    try {
-      scope = _scopeFactory.CreateScope();
-    } catch (ObjectDisposedException ex) {
-      // Service provider is disposed - application is shutting down
-      // Dropping events during shutdown is acceptable behavior
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-        var eventTypeName = eventType.Name;
-        CascadeLogger.LogWarning(ex,
-          "[CASCADE] PublishToOutboxAsync: Service provider disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
-          eventTypeName, messageId);
-      }
-#pragma warning restore CA1848
+    // Create scope to resolve scoped IWorkCoordinatorStrategy; none while the application shuts down
+    if (_tryCreateOutboxScope(eventType, messageId) is not { } scope) {
       return;
     }
 
@@ -4520,7 +4516,7 @@ public abstract partial class Dispatcher(
       var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var strategyTypeName = strategy?.GetType().Name ?? "null";
+        var strategyTypeName = strategy is null ? "null" : TypeNameFormatter.SimpleName(strategy.GetType());
         CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Strategy resolved: {StrategyType}", strategyTypeName);
       }
 #pragma warning restore CA1848
@@ -4554,12 +4550,40 @@ public abstract partial class Dispatcher(
       await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, strategy, scheduledFor,
         options?.CancellationToken ?? _ambientCopyWriteToken());
     } finally {
-      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
-      if (scope is IAsyncDisposable asyncDisposable) {
-        await asyncDisposable.DisposeAsync();
-      } else {
-        scope.Dispose();
+      await _disposeOutboxScopeAsync(scope);
+    }
+  }
+
+  /// <summary>
+  /// The scope an outbox publish resolves its scoped strategy from, or null when the service provider is
+  /// already disposed (application shutdown or hot reload), in which case the event is dropped with a warning.
+  /// </summary>
+  private IServiceScope? _tryCreateOutboxScope(Type eventType, MessageId messageId) {
+    // Guard against ObjectDisposedException during application shutdown or hot reload
+    try {
+      return _scopeFactory.CreateScope();
+    } catch (ObjectDisposedException ex) {
+      // Service provider is disposed - application is shutting down
+      // Dropping events during shutdown is acceptable behavior
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+        var eventTypeName = TypeNameFormatter.SimpleName(eventType);
+        CascadeLogger.LogWarning(ex,
+          "[CASCADE] PublishToOutboxAsync: Service provider disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
+          eventTypeName, messageId);
       }
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <summary>Disposes an outbox publish's scope, asynchronously when it supports it, so services that only
+  /// implement <see cref="IAsyncDisposable"/> are disposed properly.</summary>
+  private static async ValueTask _disposeOutboxScopeAsync(IServiceScope scope) {
+    if (scope is IAsyncDisposable asyncDisposable) {
+      await asyncDisposable.DisposeAsync();
+    } else {
+      scope.Dispose();
     }
   }
 
@@ -4619,7 +4643,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Event {EventType} queued to deferred channel (no active strategy)",
-          eventType.Name);
+          TypeNameFormatter.ForLog(eventType));
       }
 #pragma warning restore CA1848
       return;
@@ -4629,7 +4653,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
     var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
     if (logger?.IsEnabled(LogLevel.Warning) == true) {
-      var eventTypeName = eventType.Name;
+      var eventTypeName = TypeNameFormatter.SimpleName(eventType);
       logger.LogWarning(
         "IWorkCoordinatorStrategy not registered and IDeferredOutboxChannel not available - " +
         "event will not be published to outbox for cross-service delivery. " +
@@ -4682,7 +4706,7 @@ public abstract partial class Dispatcher(
     var innerCount = comp.InnerEvents.Count();
     if (innerCount > comp.MaxInnerEventsAllowed) {
       throw new InvalidOperationException(
-        $"Composite '{compositeType.Name}' carries {innerCount} inner events, exceeding MaxInnerEventsAllowed ({comp.MaxInnerEventsAllowed}).");
+        $"Composite '{TypeNameFormatter.ForLog(compositeType)}' carries {innerCount} inner events, exceeding MaxInnerEventsAllowed ({comp.MaxInnerEventsAllowed}).");
     }
 
     // Source envelope representing the composite, so each inner event inherits composite lineage
@@ -4696,7 +4720,7 @@ public abstract partial class Dispatcher(
     var carriedIds = (comp as IIdentityPreservingComposite)?.InnerEventIds;
     if (carriedIds is not null && carriedIds.Count != innerCount) {
       throw new InvalidOperationException(
-        $"Identity-preserving composite '{compositeType.Name}' carries {carriedIds.Count} InnerEventIds for {innerCount} inner events.");
+        $"Identity-preserving composite '{TypeNameFormatter.ForLog(compositeType)}' carries {carriedIds.Count} InnerEventIds for {innerCount} inner events.");
     }
 
     // Atomicity governs child failure: Atomic propagates (the whole publish fails); Independent logs + continues.
@@ -4710,14 +4734,14 @@ public abstract partial class Dispatcher(
       }
       var childId = carriedIds is not null
         ? carriedIds[ordinal]
-        : CompositeChildIdentity.Derive(messageId.Value, ordinal, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(inner.GetType()));
+        : CompositeChildIdentity.ForChild(messageId.Value, ordinal, inner.GetType());
       try {
         await _cascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local, childId, CancellationToken.None).ConfigureAwait(false);
       } catch (Exception ex) when (!atomic) {
 #pragma warning disable CA1848
         CascadeLogger.LogWarning(ex,
           "[CASCADE] Owned composite '{Composite}' inner event '{Inner}' failed under Independent atomicity — skipping.",
-          compositeType.Name, inner.GetType().Name);
+          TypeNameFormatter.ForLog(compositeType), TypeNameFormatter.ForLog(inner.GetType()));
 #pragma warning restore CA1848
       }
     }
@@ -4809,7 +4833,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Queueing event {EventType} with destination '{Destination}'",
-        eventType.Name, destination);
+        TypeNameFormatter.ForLog(eventType), destination);
       CascadeLogger.LogDebug("[TRACE] PublishToOutboxAsync: TraceParent={TraceParent}, HasActivity={HasActivity}",
         hop.TraceParent ?? "(null)", System.Diagnostics.Activity.Current is not null);
     }
@@ -4857,7 +4881,7 @@ public abstract partial class Dispatcher(
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
         CascadeLogger.LogWarning(ex,
           "[CASCADE] PublishToOutboxAsync: Strategy disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
-          eventType.Name, envelope.MessageId);
+          TypeNameFormatter.ForLog(eventType), envelope.MessageId);
       }
 #pragma warning restore CA1848
       return;
@@ -4875,7 +4899,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Successfully queued event {EventType} via work coordinator",
-        eventType.Name);
+        TypeNameFormatter.ForLog(eventType));
     }
 #pragma warning restore CA1848
   }
@@ -4899,7 +4923,7 @@ public abstract partial class Dispatcher(
     if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
 #pragma warning disable CA1848
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", eventType.Name);
+        CascadeLogger.LogDebug("[CASCADE] Suppressed re-broadcast of NoRebroadcast message {EventType}", TypeNameFormatter.ForLog(eventType));
       }
 #pragma warning restore CA1848
       return;
@@ -4927,7 +4951,9 @@ public abstract partial class Dispatcher(
       // Priority step 1: a cascade emission is declared like any other send; the ambient parent supplies inheritance,
       // and an explicit number on the options is kept.
       _stampExplicitPriority(jsonEnvelope, priority);
+#pragma warning disable RS0030 // versioned on purpose: the declaring hooks see the message type this envelope carries on the wire (#2267); their lookups normalize it
       jsonEnvelope.Priority = _declarePriority(jsonEnvelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(eventType), scheduledFor: null);
+#pragma warning restore RS0030
 
       // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
@@ -4976,7 +5002,7 @@ public abstract partial class Dispatcher(
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
   private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext) {
-    var typeNameForLookup = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(eventType);
+    var typeNameForLookup = TypeNameFormatter.Format(eventType);   // the registry looks names up in the wire form (#2267)
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
       ?? throw new InvalidOperationException(
@@ -5068,12 +5094,16 @@ public abstract partial class Dispatcher(
         SupersedingKey = Whizbang.Core.Lifecycle.SupersedingEvents.KeyOf(eventData),
         SupersedingGroup = Whizbang.Core.Lifecycle.SupersedingEvents.GroupOf(eventData)
       },
+#pragma warning disable RS0030 // versioned on purpose: an envelope type a receiver resolves the envelope from (#2267)
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
+#pragma warning restore RS0030
       StreamId = streamId,
       IsEvent = eventData is IEvent,
       Flags = Whizbang.Core.Messaging.EventFlagsDeriver.FromPayload(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
+#pragma warning disable RS0030 // versioned on purpose: the message type a receiver resolves the payload from (#2267)
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType),
+#pragma warning restore RS0030
       Priority = jsonEnvelope.Priority,
       CollectiveLinkType = CollectivePredecessorLink.TypeFor(eventData)
     };
@@ -5162,7 +5192,7 @@ public abstract partial class Dispatcher(
 
     // 2. Fallback to convention if not found in registry
     if (baseTopic == null) {
-      var typeName = eventType.Name;
+      var typeName = TypeNameFormatter.SimpleName(eventType);
 
       // Convention-based routing: ProductXxxEvent → "products", InventoryXxxEvent → "inventory"
       if (typeName.StartsWith("Product", StringComparison.Ordinal)) {
@@ -5207,7 +5237,7 @@ public abstract partial class Dispatcher(
 
     // 2. Fallback to convention if not found in registry
     if (baseTopic == null) {
-      var typeName = commandType.Name;
+      var typeName = TypeNameFormatter.SimpleName(commandType);
 
       // Convention-based routing: ProductXxxCommand → "products", InventoryXxxCommand → "inventory"
       if (typeName.StartsWith("Product", StringComparison.Ordinal) || typeName.StartsWith("CreateProduct", StringComparison.Ordinal)) {
@@ -5269,7 +5299,7 @@ public abstract partial class Dispatcher(
           "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
           "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
           "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
-          messageType.Name);
+          TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1848
         throw new ReceptorNotFoundException(messageType);
       }
@@ -5287,7 +5317,7 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
       var parentActivity = Activity.Current;
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {TypeNameFormatter.ForLog(messageType)} (Outbox)", ActivityKind.Internal);
       if (dispatchActivity != null) {
         dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
@@ -5320,7 +5350,7 @@ public abstract partial class Dispatcher(
       // Handled here as well: the local run is the delivery the caller sees. Otherwise the message is queued.
       return handledLocallyReceipt ?? DeliveryReceipt.Accepted(
         envelope.MessageId,
-        destination ?? messageType.Name,
+        destination ?? TypeNameFormatter.SimpleName(messageType),
         context.CorrelationId,
         context.CausationId,
         streamId
@@ -5403,7 +5433,7 @@ public abstract partial class Dispatcher(
       var messageId = envelope.MessageId;
       await _handleNoStrategyFallbackAsync(eventData, eventType, messageId, sourceEnvelope: null, eventStoreOnly: !copyDecisions[i].WriteOutbox, scope,
         stampedBy: envelope.Hops[^1]).ConfigureAwait(false);
-      receipts.Add(DeliveryReceipt.Accepted(messageId, eventType.Name, eventContext.CorrelationId, eventContext.CausationId,
+      receipts.Add(DeliveryReceipt.Accepted(messageId, TypeNameFormatter.SimpleName(eventType), eventContext.CorrelationId, eventContext.CausationId,
         _streamIdExtractor?.ExtractStreamId(eventData, eventType)));
     }
     return receipts;
@@ -5420,7 +5450,7 @@ public abstract partial class Dispatcher(
     _stampExplicitPriority(envelope, options.Priority);
     envelope.PayloadLimitOverride = options.MaxPayloadBytes;
     var copy = _serializeToNewOutboxMessage(envelope, message, messageType, destination, decision.DeferUntil);
-    var receipt = DeliveryReceipt.Accepted(envelope.MessageId, destination ?? messageType.Name, context.CorrelationId, context.CausationId,
+    var receipt = DeliveryReceipt.Accepted(envelope.MessageId, destination ?? TypeNameFormatter.SimpleName(messageType), context.CorrelationId, context.CausationId,
       _streamIdExtractor?.ExtractStreamId(message, messageType));
     return (copy, receipt);
   }
@@ -5666,7 +5696,7 @@ public abstract partial class Dispatcher(
     await ProcessTagsIfEnabledAsync(eventData, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(eventData, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
     await _startLocalRunDetachedHooksAsync(eventData, eventType, registered, sourceEnvelope: null, copyId);
-    return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
+    return DeliveryReceipt.Delivered(MessageId.New(), TypeNameFormatter.SimpleName(eventType), correlationId: null, causationId: null,
       streamId: _streamIdExtractor?.ExtractStreamId(eventData, eventType));
   }
 
@@ -5793,7 +5823,7 @@ public abstract partial class Dispatcher(
 
       if (syncResult.Outcome == SyncOutcome.TimedOut) {
         throw new TimeoutException(
-            $"Perspective {typeof(TPerspective).Name} did not complete processing within {_syncTimeout(timeout)}. " +
+            $"Perspective {TypeNameFormatter.ForLog(typeof(TPerspective))} did not complete processing within {_syncTimeout(timeout)}. " +
             $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
       }
 
@@ -6337,7 +6367,9 @@ public abstract partial class Dispatcher(
 
     // Priority step 1: declared before the row is built so the number travels inside the stored envelope
     // and sits on the row for the store. The message type is rendered by the shared helper.
+#pragma warning disable RS0030 // versioned on purpose: the declaring hooks see the message type this envelope carries on the wire (#2267); their lookups normalize it
     var declaredPriority = _declarePriority(envelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(payloadType), scheduledFor);
+#pragma warning restore RS0030
     envelope.Priority = declaredPriority;
 
     // Use centralized envelope serializer (REQUIRED)

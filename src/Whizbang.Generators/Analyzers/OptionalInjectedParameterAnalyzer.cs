@@ -4,6 +4,7 @@
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -47,8 +48,8 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
 
   private static bool _isBclDataInterface(ITypeSymbol type) {
     // System.Collections and everything beneath it (Generic, Immutable, ...).
-    for (var ns = type.ContainingNamespace; ns is { IsGlobalNamespace: false }; ns = ns.ContainingNamespace) {
-      if (ns.Name == "Collections" && ns.ContainingNamespace is { Name: "System", ContainingNamespace.IsGlobalNamespace: true }) {
+    for (var ns = TypeNameUtilities.NamespaceOf(type); ns is { IsGlobalNamespace: false }; ns = TypeNameUtilities.NamespaceOf(ns)) {
+      if (TypeNameUtilities.SimpleName(ns) == "Collections" && TypeNameUtilities.IsSystemNamespace(TypeNameUtilities.NamespaceOf(ns))) {
         return true;
       }
     }
@@ -91,7 +92,7 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
         DiagnosticDescriptors.OptionalInjectedParameter,
         p.Locations[0],
         p.Name,
-        method.ContainingType.Name));
+        TypeNameUtilities.SimpleName(method.ContainingType)));
     }
   }
 }

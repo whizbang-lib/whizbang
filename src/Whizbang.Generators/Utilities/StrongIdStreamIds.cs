@@ -47,7 +47,7 @@ internal static class StrongIdStreamIds {
     var declared = _whizbangId(property) ?? (parameter is null ? null : _whizbangId(parameter));
     if (declared is not null) {
       var name = type.TypeKind == TypeKind.Error
-        ? _discoveredName(type.Name, property, declared)
+        ? _discoveredName(TypeNameUtilities.SimpleName(type), property, declared)
         : TypeNameUtilities.FullyQualified(type);
       return new StrongId(name, HasGuidFactory: true);
     }
@@ -112,7 +112,7 @@ internal static class StrongIdStreamIds {
     foreach (var listed in attribute.DescendantNodes().OfType<TypeOfExpressionSyntax>()) {
       if (model.GetTypeInfo(listed.Type).Type is IErrorTypeSymbol error) {
         unresolved.Add(listed.Type);
-        names.Add(error.Name);
+        names.Add(TypeNameUtilities.SimpleName(error));
       }
     }
     var declarations = new List<SyntaxTree>();
@@ -142,8 +142,8 @@ internal static class StrongIdStreamIds {
       var parameters = nodes.OfType<ParameterSyntax>().Where(p => p.AttributeLists.Any())
         .Select(p => model.GetDeclaredSymbol(p)).OfType<IParameterSymbol>().Select(p => ((ISymbol)p, p.Type));
       foreach (var (symbol, type) in properties.Concat(parameters)) {
-        if (type.TypeKind == TypeKind.Error && names.Contains(type.Name) && _whizbangId(symbol) is { } attribute) {
-          yield return (_discoveredNamespace(symbol, attribute), type.Name);
+        if (type.TypeKind == TypeKind.Error && names.Contains(TypeNameUtilities.SimpleName(type)) && _whizbangId(symbol) is { } attribute) {
+          yield return (_discoveredNamespace(symbol, attribute), TypeNameUtilities.SimpleName(type));
         }
       }
     }
