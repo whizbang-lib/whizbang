@@ -44,14 +44,21 @@ internal static class SplitDocumentProjectionRewriter {
     return _projection(call) is { } projection ? call.Update(null, [call.Arguments[0], Expression.Quote(projection)]) : call;
   }
 
-  // Paging and the element operators without a predicate: EF Core applies them in the database, before the copy.
-  private static bool _passesThrough(MethodCallExpression call) => call.Method.Name switch {
-    nameof(Queryable.Skip) or nameof(Queryable.Take) => true,
-    nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
-      or nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
-      or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault) => call.Arguments.Count == 1,
-    _ => false,
+  // Paging, which EF Core applies in the database before the copy runs.
+  private static readonly HashSet<string> _paging = new(StringComparer.Ordinal) { nameof(Queryable.Skip), nameof(Queryable.Take) };
+
+  // The element operators, applied in the database too when they take no predicate.
+  private static readonly HashSet<string> _elementOperators = new(StringComparer.Ordinal) {
+    nameof(Queryable.First), nameof(Queryable.FirstOrDefault),
+    nameof(Queryable.Single), nameof(Queryable.SingleOrDefault),
+    nameof(Queryable.Last), nameof(Queryable.LastOrDefault),
   };
+
+  // Paging and the element operators without a predicate pass through to the projection beneath them. Sets rather than
+  // a switch on the name: a string switch compiles to a hash table whose "hash matched, name differs" outcomes no
+  // method name can take, which left decisions the tests could never reach.
+  private static bool _passesThrough(MethodCallExpression call) =>
+    _paging.Contains(call.Method.Name) || (_elementOperators.Contains(call.Method.Name) && call.Arguments.Count == 1);
 
   // The registered projection of a Select that reads a row's document, r => r.Data, or null for any other call.
   private static LambdaExpression? _projection(MethodCallExpression call) =>
