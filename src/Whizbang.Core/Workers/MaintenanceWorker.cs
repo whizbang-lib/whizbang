@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Workers;
 
@@ -1011,8 +1012,20 @@ public sealed partial class MaintenanceWorker(
         continue;
       }
       try {
-        await runner.BootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
-        LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);
+        // #2294: success is reported only for a snapshot that was written. A bootstrap that found no row used to be
+        // logged as one, and the bodies it was meant to cover were held for good.
+        var outcome = await runner.TryBootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
+        switch (outcome) {
+          case SnapshotBootstrapOutcome.Written:
+            LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);
+            break;
+          case SnapshotBootstrapOutcome.RowMissing:
+            LogReapDrivenSnapshotRowMissing(_logger, target.PerspectiveName, target.StreamId);
+            break;
+          default:
+            LogReapDrivenSnapshotNotWritten(_logger, target.PerspectiveName, target.StreamId, outcome);
+            break;
+        }
       } catch (Exception ex) {
         LogReapDrivenSnapshotFailed(_logger, ex, target.PerspectiveName, target.StreamId);
       }
@@ -1418,8 +1431,16 @@ public sealed partial class MaintenanceWorker(
   static partial void LogError(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 20, Level = LogLevel.Debug,
-    Message = "Reap-driven ephemeral snapshot for perspective {Perspective} on stream {StreamId}")]
+    Message = "Reap-driven ephemeral snapshot written for perspective {Perspective} on stream {StreamId}")]
   static partial void LogReapDrivenSnapshot(ILogger logger, string perspective, Guid streamId);
+
+  [LoggerMessage(EventId = 71, Level = LogLevel.Information,
+    Message = "Reap-driven ephemeral snapshot not taken for perspective {Perspective} on stream {StreamId}: the stream has no row to snapshot")]
+  static partial void LogReapDrivenSnapshotRowMissing(ILogger logger, string perspective, Guid streamId);
+
+  [LoggerMessage(EventId = 72, Level = LogLevel.Debug,
+    Message = "Reap-driven ephemeral snapshot not written for perspective {Perspective} on stream {StreamId} ({Outcome})")]
+  static partial void LogReapDrivenSnapshotNotWritten(ILogger logger, string perspective, Guid streamId, SnapshotBootstrapOutcome outcome);
 
   [LoggerMessage(EventId = 21, Level = LogLevel.Warning,
     Message = "Reap-driven ephemeral snapshot failed for perspective {Perspective} on stream {StreamId} (non-fatal — body held for a later cycle)")]

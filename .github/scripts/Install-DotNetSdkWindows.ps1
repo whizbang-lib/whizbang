@@ -43,7 +43,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:InstallScriptUri = 'https://dot.net/v1/dotnet-install.ps1'
+# Tried in order: Microsoft's CDN, then the dot.net redirect, so an outage of either host alone does not stop the
+# job (#2298).
+$script:InstallScriptUris = @(
+  'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.ps1',
+  'https://dot.net/v1/dotnet-install.ps1')
 
 # The channel to install, and where it came from.
 function Get-DotNetChannel {
@@ -100,7 +104,21 @@ function Install-DotNetSdk {
   $choice = Get-DotNetChannel -GlobalJsonPath $GlobalJsonPath -FallbackVersion $FallbackVersion
   "Installing .NET SDK $($choice.Source) into $InstallDir"
   $installer = Join-Path $TempDir 'dotnet-install.ps1'
-  & $Download $script:InstallScriptUri $installer
+  $failures = [System.Collections.Generic.List[string]]::new()
+  $downloaded = $false
+  foreach ($uri in $script:InstallScriptUris) {
+    try {
+      & $Download $uri $installer
+      $downloaded = $true
+      break
+    }
+    catch {
+      $failures.Add("${uri}: $($_.Exception.Message)")
+    }
+  }
+  if (-not $downloaded) {
+    throw "Could not download dotnet-install.ps1 from any address: $($failures -join '; ')"
+  }
   & $Install $installer $choice.Channel $InstallDir
   $dotnet = Join-Path $InstallDir ($IsWindows ? 'dotnet.exe' : 'dotnet')
   $version = & $GetVersion $dotnet

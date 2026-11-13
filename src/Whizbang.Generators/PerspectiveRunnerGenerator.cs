@@ -148,6 +148,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // window before consumed bodies are reaped. Resolved at compile time — zero reflection.
     var isEphemeral = eventTypeSymbols.Any(static s => EphemeralResolver.IsEphemeral(s));
 
+    // #2295: whether it keeps a rewind floor is decided by what it consumes. Applying only ephemeral events (and not
+    // opting in with [KeepEphemeralRewindFloor]), it takes no snapshots; the EF Core association generator reads the same
+    // classification to register the marker the reaper reads.
+    var keepsRewindFloor = !EphemeralConsumption.KeepsNoRewindFloor(classSymbol, eventTypeSymbols);
+
     // TtlRow perspective-row expiry (E2-4d): resolved virally like isEphemeral. If ANY applied [Ephemeral]
     // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
     // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
@@ -269,6 +274,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             InheritScopeAlways: inheritScopeAlways,
             IsEphemeral: isEphemeral,
+            KeepsRewindFloor: keepsRewindFloor,
             TtlRowSeconds: ttlRowSeconds,
             IsFullHistory: isFullHistory,
             ArchivedStreamRowPolicy: archivedStreamRowPolicy,
@@ -583,7 +589,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ? $"@event is {string.Join(" or ", decisive)};"
           : "false;"));
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
-        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
+        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};\n"
+        + $"  private const bool _keepsRewindFloor = {_csharpBool(perspective.KeepsRewindFloor)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0

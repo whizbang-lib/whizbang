@@ -54,3 +54,9 @@ __DIGEST_EXEMPT_TYPES__ = ARRAY['Whizbang.Core.SystemEvents.EventAudited','Whizb
 # earlier history was truncated here (252, #1843). store_inbox_messages writes it to wh_inbox_state.error and
 # wh_reconcile_redelivered_bundle reads it back.
 __REPAIR_REFUSED_TRUNCATED__ = 'repair refused: stream prefix truncated'
+
+# The association type of the marker the startup associations step registers for a perspective that keeps no rewind
+# floor (it applies only ephemeral events and is not marked [KeepEphemeralRewindFloor]); the ephemeral body reaper reaps
+# that perspective's bodies without waiting for a snapshot (403, #2295). Core spells it
+# EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE, and MigrationConstantsTests holds the two equal.
+__ASSOCIATION_NO_REWIND_FLOOR__ = 'no_rewind_floor'

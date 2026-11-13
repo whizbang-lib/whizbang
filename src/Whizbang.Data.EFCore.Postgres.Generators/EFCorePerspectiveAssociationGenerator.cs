@@ -27,6 +27,10 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 [Generator]
 #pragma warning disable S1144 // Initialize is a public method implementing IIncrementalGenerator interface
 public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
+  // The marker's association type, as Whizbang.Core.Perspectives.EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE spells it
+  // (a generator cannot reference Core); it enters only the associations hash.
+  private const string NO_REWIND_FLOOR_ASSOCIATION_TYPE = "no_rewind_floor";
+
   /// <summary>
   /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
@@ -94,6 +98,19 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     // This is consistent with PerspectiveDiscoveryGenerator and PerspectiveRunnerRegistryGenerator
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
+    // #2295: the perspective keeps no rewind floor when every event it applies is ephemeral and it does not opt in. The
+    // same classification as the runner generator, over every event it applies (a global perspective's too), so the
+    // marker the reaper reads and the runner that takes no snapshots always agree.
+    var appliedEvents = perspectiveInterfaces.SelectMany(static i => i.TypeArguments.Skip(1))
+        .Concat(classSymbol.AllInterfaces
+            .Where(static i => TypeNameUtilities.Display(i.OriginalDefinition)
+                .StartsWith("Whizbang.Core.Perspectives.IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent", StringComparison.Ordinal))
+            .SelectMany(static i => i.TypeArguments.Skip(2)))
+        .Distinct(SymbolEqualityComparer.Default)
+        .Cast<ITypeSymbol>()
+        .ToList();
+    var keepsNoRewindFloor = EphemeralConsumption.KeepsNoRewindFloor(classSymbol, appliedEvents);
+
     // Generate one PerspectiveAssociationInfo per event type
     var results = perspectiveInterfaces.SelectMany(perspectiveInterface => {
       // Extract event types (all except TModel at index 0)
@@ -104,7 +121,8 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
 
         return new PerspectiveAssociationInfo(
             PerspectiveClrTypeName: clrTypeName,
-            MessageTypeName: messageTypeName
+            MessageTypeName: messageTypeName,
+            KeepsNoRewindFloor: keepsNoRewindFloor
         );
       });
     }).ToArray();
@@ -150,6 +168,19 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       canonical.Append(p.MessageTypeName).Append('|')
                .Append("perspective").Append('|')
                .Append(p.PerspectiveClrTypeName).Append('|')
+               .Append(assemblyName).Append('\n');
+    }
+    // #2295: the no-rewind-floor markers, one per perspective, are part of the registered set, so a build that adds or
+    // drops one re-registers even when no perspective association changed.
+    var noFloorPerspectives = uniquePerspectives
+        .Where(static p => p.KeepsNoRewindFloor)
+        .Select(static p => p.PerspectiveClrTypeName)
+        .Distinct(StringComparer.Ordinal)
+        .ToImmutableArray();
+    foreach (var name in noFloorPerspectives) {
+      canonical.Append(name).Append('|')
+               .Append(NO_REWIND_FLOOR_ASSOCIATION_TYPE).Append('|')
+               .Append(name).Append('|')
                .Append(assemblyName).Append('\n');
     }
     byte[] hashBytes;
@@ -203,6 +234,11 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       associationCount++;
     }
 
+    foreach (var name in noFloorPerspectives) {
+      associations.AppendLine(
+          $"    json.Append(global::Whizbang.Core.Perspectives.EphemeralRewindFloor.NoFloorAssociationEntryJson(\"{name}\", serviceName));");
+    }
+
     // Replace placeholders
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
     template = template.Replace("__ASSOCIATION_COUNT__", associationCount.ToString(CultureInfo.InvariantCulture));
@@ -227,7 +263,10 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
 /// </summary>
 /// <param name="PerspectiveClrTypeName">CLR format type name (e.g., "Namespace.Parent+Child" for nested types)</param>
 /// <param name="MessageTypeName">Database format message type name (TypeName, AssemblyName)</param>
+/// <param name="KeepsNoRewindFloor">True when the perspective applies only ephemeral events and does not opt in with
+/// <c>[KeepEphemeralRewindFloor]</c>, so a <c>no_rewind_floor</c> marker is registered for it (#2295).</param>
 internal sealed record PerspectiveAssociationInfo(
     string PerspectiveClrTypeName,
-    string MessageTypeName
+    string MessageTypeName,
+    bool KeepsNoRewindFloor = false
 );
