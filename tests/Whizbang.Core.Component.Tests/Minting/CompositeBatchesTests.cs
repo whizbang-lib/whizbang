@@ -259,7 +259,7 @@ public class CompositeBatchesTests {
   public async Task AConsumerThatStopsWhileAReadIsPending_EndsTheRead_ThenDisposesTheSourceAsync(CancellationToken cancellationToken) {
     var clock = new TimerAdvancingClock(_ignoredDue);
     var readEnded = false;
-    var disposed = false;
+    var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     async IAsyncEnumerable<RowImported> oneRowThenNothing([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token = default) {
       try {
         yield return _row(1);
@@ -271,7 +271,7 @@ public class CompositeBatchesTests {
           throw;
         }
       } finally {
-        disposed = true;
+        disposed.SetResult();
       }
     }
     var batches = oneRowThenNothing(CancellationToken.None).ToCompositeBatches(_factory(), _options(), clock).GetAsyncEnumerator(cancellationToken);
@@ -282,7 +282,7 @@ public class CompositeBatchesTests {
     await batches.DisposeAsync();
 
     await Assert.That(readEnded).IsTrue().Because("the outstanding read was ended by the stop");
-    await Assert.That(disposed).IsTrue().Because("the source was disposed once its read had ended");
+    await Assert.That(disposed.Task.IsCompleted).IsTrue().Because("the source was disposed once its read had ended");
   }
 
   [Test]
