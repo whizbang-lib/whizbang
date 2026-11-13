@@ -198,11 +198,11 @@ public static partial class PerspectiveStorageParameters {
       var applied = new List<TableStorageChange>();
       var failed = new List<string>();
       foreach (var declaration in declarations.Where(d => !manual.Contains(d.Table) && held.ContainsKey(d.Table))) {
-        var (options, hasPages) = held[declaration.Table];
-        if (Plan(declaration, options) is not { } change) {
+        var current = held[declaration.Table];
+        if (Plan(declaration, current.Item1) is not { } change) {
           continue;
         }
-        if (await _applyAsync(connection, schema, change, options, hasPages, lockTimeout ?? DefaultLockTimeout, logger, cancellationToken)
+        if (await _applyAsync(connection, schema, change, current, lockTimeout ?? DefaultLockTimeout, logger, cancellationToken)
             .ConfigureAwait(false)) {
           applied.Add(change);
         } else {
@@ -260,9 +260,11 @@ public static partial class PerspectiveStorageParameters {
   }
 
   // One table's change, in a transaction of its own under the lock timeout; false when the database refused it.
+  // current is what the table holds now: its storage options and whether it has any pages.
   private static async Task<bool> _applyAsync(
-      NpgsqlConnection connection, string schema, TableStorageChange change, IReadOnlyCollection<string> held, bool hasPages,
+      NpgsqlConnection connection, string schema, TableStorageChange change, (List<string> Options, bool HasPages) current,
       TimeSpan lockTimeout, ILogger logger, CancellationToken cancellationToken) {
+    var (held, hasPages) = current;
     var quotedSchema = PgIdentifier.Quote(schema);
     var statements = new List<string> {
       $"SET LOCAL lock_timeout = '{((long)lockTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture)}ms'",

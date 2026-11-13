@@ -147,25 +147,10 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     var leftQueued = 0;
     foreach (var candidate in candidates) {
       cancellationToken.ThrowIfCancellationRequested();
-      var ratio = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
-      var after = await ApproxBloatMeasurement.AfterRewriteAsync(
-        coordinator, candidate.TableName, ratio, approxReady, _logger, cancellationToken).ConfigureAwait(false);
-      var before = candidate.Method.ToValue();
-      var afterMethod = after?.Method.ToValue() ?? "none";
-      if (after is not { } measured || measured.Ratio >= candidate.BloatRatio) {
-        // No improvement: leave the request in place so the next boot retries, and say so,
-        // rather than clearing it and reporting success we did not achieve.
+      if (await _rewriteOneAsync(rewriter, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false)) {
+        rewritten++;
+      } else {
         leftQueued++;
-        LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, before,
-          after?.Ratio ?? -1, afterMethod);
-        continue;
-      }
-      rewritten++;
-      LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
-      if (candidate.Requested) {
-        await coordinator.CompleteTableRewriteAsync(
-          new TableRewriteOutcome(candidate.TableName, rewriter.Strategy, candidate.Reason, candidate.BloatRatio, measured.Ratio),
-          cancellationToken).ConfigureAwait(false);
       }
     }
 
@@ -173,6 +158,29 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
       leftQueued == 0
         ? $"rewrote {rewritten} table(s)"
         : $"rewrote {rewritten} table(s); {leftQueued} ineffective, left queued for the next boot");
+  }
+
+  // Rewrites one table and measures it again; true when it shrank. One that did not shrink keeps its request, so the
+  // next boot retries it, and says so rather than clearing it and reporting a success that was not achieved.
+  private async Task<bool> _rewriteOneAsync(
+      ITableRewriter rewriter, IWorkCoordinator coordinator, TableRewriteCandidate candidate, bool approxReady,
+      CancellationToken cancellationToken) {
+    var ratio = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
+    var after = await ApproxBloatMeasurement.AfterRewriteAsync(
+      coordinator, candidate.TableName, ratio, approxReady, _logger, cancellationToken).ConfigureAwait(false);
+    var before = candidate.Method.ToValue();
+    var afterMethod = after?.Method.ToValue() ?? "none";
+    if (after is not { } measured || measured.Ratio >= candidate.BloatRatio) {
+      LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, before, after?.Ratio ?? -1, afterMethod);
+      return false;
+    }
+    LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
+    if (candidate.Requested) {
+      await coordinator.CompleteTableRewriteAsync(
+        new TableRewriteOutcome(candidate.TableName, rewriter.Strategy, candidate.Reason, candidate.BloatRatio, measured.Ratio),
+        cancellationToken).ConfigureAwait(false);
+    }
+    return true;
   }
 
   /// <summary>Logs once, naming them, the tables that wait for an online strategy to apply a lowered fillfactor.</summary>

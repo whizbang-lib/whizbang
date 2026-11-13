@@ -956,12 +956,7 @@ public sealed partial class MaintenanceWorker(
         continue;
       }
       if (c.Requested) {
-        // Already on the books. Reported either way: an operator who never looks at this still gets the bloat gauge,
-        // and a row queued with a measurement keeps reporting it while it waits.
-        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
-        if (c.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
-          measured[c.TableName] = new(c.BloatRatio, c.Method);
-        }
+        _reportQueuedRewrite(c, measured);
         continue;
       }
       try {
@@ -973,6 +968,19 @@ public sealed partial class MaintenanceWorker(
       }
     }
     sp.GetService<Whizbang.Core.Observability.TableStatisticsMetrics>()?.UpdateMeasuredTableBloat(measured);
+  }
+
+  /// <summary>
+  /// Reports a table already on the books. Reported either way: an operator who never looks at this still gets the bloat
+  /// gauge, and a row queued with a measurement keeps reporting it while it waits.
+  /// </summary>
+  private void _reportQueuedRewrite(
+      Whizbang.Core.Messaging.TableRewriteCandidate candidate,
+      Dictionary<string, Whizbang.Core.Observability.BloatMeasurement> measured) {
+    LogRewriteNeeded(_logger, candidate.TableName, candidate.BloatRatio);
+    if (candidate.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
+      measured[candidate.TableName] = new(candidate.BloatRatio, candidate.Method);
+    }
   }
 
   /// <summary>
