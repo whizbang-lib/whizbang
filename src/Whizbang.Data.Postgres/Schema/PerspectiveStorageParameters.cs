@@ -58,13 +58,16 @@ public sealed record PerspectiveStorageReport(
 /// <para>
 /// Each table is altered in one statement, in a transaction of its own under a lock timeout, so a table busy with a
 /// long-running lock is skipped with a warning and tried again at the next start rather than holding the start. A
-/// changed or reset fillfactor on a table that has pages queues a rewrite request. The reconcile never fails a start.
+/// changed or reset fillfactor on a table that has pages queues a rewrite request, recording what the fillfactor was and
+/// is (<c>wh_request_fillfactor_rewrite</c>), so a lowered one is rewritten once online whatever the table's bloat
+/// (#2300). The reconcile never fails a start.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#removed-storage-settings</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveStorageParametersTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperTableStorageResetTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public static partial class PerspectiveStorageParameters {
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>Starts a table's storage marker line; the bare table name and each <c>name=value</c> follow, space-separated.</summary>
@@ -199,7 +202,7 @@ public static partial class PerspectiveStorageParameters {
         if (Plan(declaration, options) is not { } change) {
           continue;
         }
-        if (await _applyAsync(connection, schema, change, hasPages, lockTimeout ?? DefaultLockTimeout, logger, cancellationToken)
+        if (await _applyAsync(connection, schema, change, options, hasPages, lockTimeout ?? DefaultLockTimeout, logger, cancellationToken)
             .ConfigureAwait(false)) {
           applied.Add(change);
         } else {
@@ -258,25 +261,30 @@ public static partial class PerspectiveStorageParameters {
 
   // One table's change, in a transaction of its own under the lock timeout; false when the database refused it.
   private static async Task<bool> _applyAsync(
-      NpgsqlConnection connection, string schema, TableStorageChange change, bool hasPages, TimeSpan lockTimeout,
-      ILogger logger, CancellationToken cancellationToken) {
+      NpgsqlConnection connection, string schema, TableStorageChange change, IReadOnlyCollection<string> held, bool hasPages,
+      TimeSpan lockTimeout, ILogger logger, CancellationToken cancellationToken) {
     var quotedSchema = PgIdentifier.Quote(schema);
     var statements = new List<string> {
       $"SET LOCAL lock_timeout = '{((long)lockTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture)}ms'",
       AlterStatement($"{quotedSchema}.{PgIdentifier.Quote(change.Table)}", change),
     };
-    // The rewrite request names the bare table, as the rewriter lists the tables it measures. The name matched
-    // _identifier when the marker was read, so it holds no quote.
     var queuesRewrite = change.TouchesFillFactor && hasPages;
-    if (queuesRewrite) {
-      statements.Add($"SELECT {quotedSchema}.wh_request_table_rewrite('{change.Table}')");
-    }
 
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
     try {
       foreach (var sql in statements) {
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
+      if (queuesRewrite) {
+        // The request names the bare table, as the rewriter lists the tables it measures, and says what the fillfactor
+        // was and is, so a decrease is honored with one rewrite whatever the table's bloat (#2300).
+        await using var request = new NpgsqlCommand(
+          $"SELECT {quotedSchema}.wh_request_fillfactor_rewrite(@table, @from::integer, @to::integer)", connection, transaction);
+        request.Parameters.AddWithValue("table", change.Table);
+        request.Parameters.AddWithValue("from", _fillFactor(held.FirstOrDefault(h => h.StartsWith(FILLFACTOR + "=", StringComparison.Ordinal))));
+        request.Parameters.AddWithValue("to", change.Set.GetValueOrDefault(FILLFACTOR, DEFAULT_FILLFACTOR));
+        await request.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       }
       await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     } catch (PostgresException ex) {
@@ -290,6 +298,12 @@ public static partial class PerspectiveStorageParameters {
     LogTableApplied(logger, schema, change.Table, set, reset, queuesRewrite);
     return true;
   }
+
+  // A heap's fillfactor when none is set.
+  private const string DEFAULT_FILLFACTOR = "100";
+
+  // The value of a held "fillfactor=NN" option, or the default when the table holds none.
+  private static string _fillFactor(string? held) => held is null ? DEFAULT_FILLFACTOR : held[(FILLFACTOR.Length + 1)..];
 
   [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)]
   private static partial Regex _identifier();

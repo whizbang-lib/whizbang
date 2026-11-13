@@ -950,6 +950,11 @@ public sealed partial class MaintenanceWorker(
       if (ct.IsCancellationRequested) {
         return;
       }
+      if (c.Reason == Whizbang.Core.Messaging.TableRewriteReason.FillFactorDecrease) {
+        // Queued and compact: it waits for one online rewrite at its lowered fillfactor (#2300), so it is not
+        // reported as holding space it cannot use.
+        continue;
+      }
       if (c.Requested) {
         // Already on the books. Reported either way: an operator who never looks at this still gets the bloat gauge,
         // and a row queued with a measurement keeps reporting it while it waits.

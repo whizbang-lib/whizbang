@@ -41,10 +41,15 @@ namespace Whizbang.Core.Startup;
 /// large a consumer's table is, and taking that lock unattended must be opted into.
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
 /// ineffective rewrite stays queued for the next boot instead of being silently forgotten.
+/// A table offered only because its fillfactor was lowered (<see cref="TableRewriteReason.FillFactorDecrease"/>) is never
+/// taken by <c>VACUUM FULL</c>, whatever <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/> says: when no online
+/// strategy is chosen, the step logs once which tables wait and what would rewrite them (#2300).
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
+/// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepCoverageTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed partial class TableRewriteStartupStep : IStartupStep {
@@ -97,6 +102,10 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     var options = _options.Value;
     var plan = TableRewriteStrategyResolver.Resolve(options.TableRewriteStrategy, options.AllowTableRewrite, _pgSqueezeUsable());
     if (plan.Strategy is null) {
+      using var waitScope = _scopeFactory.CreateScope();
+      if (waitScope.ServiceProvider.GetService<IWorkCoordinator>() is { } waitCoordinator) {
+        _reportWaiting(await waitCoordinator.GetTablesNeedingRewriteAsync(cancellationToken).ConfigureAwait(false));
+      }
       return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
     }
     if (string.Equals(plan.Strategy, TableRewriteStrategies.PG_SQUEEZE, StringComparison.Ordinal) || PgRepackClient.RunsInProcess(options)) {
@@ -122,7 +131,11 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
 
     // Candidates are re-measured at call time, so a request recorded for an already-rewritten
     // table yields nothing rather than an expensive no-op.
-    var candidates = await coordinator.GetTablesNeedingRewriteAsync(cancellationToken).ConfigureAwait(false);
+    // A table offered only for a lowered fillfactor is for an online strategy alone: it is compact, and a blocking
+    // VACUUM FULL is never taken for it (#2300). It waits, and the start says so.
+    var offered = await coordinator.GetTablesNeedingRewriteAsync(cancellationToken).ConfigureAwait(false);
+    _reportWaiting(offered);
+    var candidates = offered.Where(c => c.Reason != TableRewriteReason.FillFactorDecrease).ToList();
     if (candidates.Count == 0) {
       return new StartupStepReport(StartupStepOutcome.Skipped, "no rewrites owed");
     }
@@ -160,6 +173,14 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
         : $"rewrote {rewritten} table(s); {leftQueued} ineffective, left queued for the next boot");
   }
 
+  /// <summary>Logs once, naming them, the tables that wait for an online strategy to apply a lowered fillfactor.</summary>
+  private void _reportWaiting(IReadOnlyList<TableRewriteCandidate> offered) {
+    var waiting = offered.Where(c => c.Reason == TableRewriteReason.FillFactorDecrease).Select(c => c.TableName).ToList();
+    if (waiting.Count > 0) {
+      LogFillFactorWaiting(_logger, string.Join(", ", waiting), STRATEGY_KEY);
+    }
+  }
+
   /// <summary>Whether pg_squeeze is usable (Ready or Provisionable) on every database the registry probes it on.</summary>
   private bool _pgSqueezeUsable() {
     if (_capabilities is null) {
@@ -172,6 +193,11 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
 
   private const string PG_SQUEEZE_EXTENSION = "pg_squeeze";
   private const string ONLINE_BUDGET_KEY = "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle";
+  private const string STRATEGY_KEY = "Whizbang:Workers:Maintenance:TableRewriteStrategy";
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
+    Message = "Rewrite step: {Tables} wait for one rewrite to apply their lowered fillfactor to the rows already stored. Only an online rewrite performs it: set {Key} to PgSqueeze, or to PgRepack with its client, and the maintenance cycle rewrites them within its budget. VACUUM FULL is never used for it; the requests stay queued")]
+  static partial void LogFillFactorWaiting(ILogger logger, string tables, string key);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Rewrite step: {Table} rewritten, bloat {Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})")]

@@ -36,7 +36,10 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// <para>
 /// Only tables in the <c>pending_table_rewrites</c> queue are rewritten; the cycle's bloat detection puts a table there
-/// before this step runs. They are taken largest bloat ratio first, ties by name. A table whose heap does not fit what is
+/// before this step runs, and the schema pass puts one there when it lowers the table's fillfactor. A table offered only
+/// for that (<see cref="TableRewriteReason.FillFactorDecrease"/>) is rewritten once, whatever its bloat, and its request
+/// is cleared once the rewrite ran, since a compact table rewritten at a lower fillfactor measures larger, not smaller
+/// (#2300). They are taken largest bloat ratio first, ties by name. A table whose heap does not fit what is
 /// left of the budget is deferred to a later cycle and the next smaller one that fits is taken, so one large table does
 /// not hold the rest back; a table larger than the whole budget is never rewritten, and the log names the setting to
 /// raise.
@@ -47,7 +50,9 @@ namespace Whizbang.Core.Workers;
 /// <param name="capabilities">The capability registry, which says whether the strategy's capabilities are Ready; null when the host registers none.</param>
 /// <param name="logger">The step's logger.</param>
 /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+/// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public sealed partial class OnlineTableRewriteStep(
     IEnumerable<ITableRewriter> rewriters,
     IOptions<MaintenanceWorkerOptions> options,
@@ -154,6 +159,13 @@ public sealed partial class OnlineTableRewriteStep(
       LogNotRewritten(_logger, candidate.TableName);
       return false;
     }
+    if (candidate.Reason == TableRewriteReason.FillFactorDecrease) {
+      // A compact table rewritten at a lower fillfactor grows: the request asked for the free page space, and the
+      // rewrite gave it, so it is honored and cleared whatever the re-measure says, and not rewritten again (#2300).
+      await coordinator.ClearTableRewriteRequestAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
+      LogFillFactorApplied(_logger, candidate.TableName, tool, measured.Ratio);
+      return true;
+    }
     var before = candidate.Method.ToValue();
     var afterMethod = measured.Method.ToValue();
     if (measured.Ratio >= candidate.BloatRatio) {
@@ -214,6 +226,10 @@ public sealed partial class OnlineTableRewriteStep(
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Online rewrite of {Table} through {Tool} failed; the request stays queued")]
   static partial void LogFailed(ILogger logger, string table, string tool, Exception ex);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Information,
+    Message = "Online rewrite: {Table} rewritten through {Tool} to apply its lowered fillfactor to the rows already stored (bloat now {After}x); the request is cleared")]
+  static partial void LogFillFactorApplied(ILogger logger, string table, string tool, double after);
 
   [LoggerMessage(EventId = 8, Level = LogLevel.Information,
     Message = "Online rewrite: {Rewritten} of {Queued} queued table(s) rewritten this cycle; {Left} left queued")]

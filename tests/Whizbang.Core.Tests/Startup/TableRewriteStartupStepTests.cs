@@ -528,4 +528,13 @@ public class TableRewriteStartupStepTests {
 
     await Assert.That(_waiting(logger)).IsEmpty();
   }
+
+  /// <summary>#2300: a start that rewrites nothing and has no coordinator registered skips with the plan's reason.</summary>
+  [Test]
+  public async Task NoRewritePermitted_WithNoCoordinator_SkipsWithThePlansReasonAsync() {
+    var report = await _stepWith(coordinator: null, TableRewriteStrategy.None).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).StartsWith("None: no table is rewritten");
+  }
 }
