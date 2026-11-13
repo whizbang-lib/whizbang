@@ -1477,18 +1477,18 @@ public sealed partial class MaintenanceWorker(
         Whizbang.Core.Observability.StreamIntegrityMetrics.HOW_TAG, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_FORGOTTEN));
   }
 
-  [LoggerMessage(EventId = 72, Level = LogLevel.Debug,
+  [LoggerMessage(EventId = 75, Level = LogLevel.Debug,
     Message = "Stream-integrity ledger tally write failed; this instance's opened and closed buckets are written on the next cycle")]
   static partial void LogLedgerTallyWriteFailed(ILogger logger, Exception ex);
 
-  [LoggerMessage(EventId = 71, Level = LogLevel.Debug,
+  [LoggerMessage(EventId = 76, Level = LogLevel.Debug,
     Message = "Stream-integrity repair backlog read failed; the backlog gauges report nothing until the next cycle")]
   static partial void LogLedgerBacklogRefreshFailed(ILogger logger, Exception ex);
-  [LoggerMessage(EventId = 73, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 77, Level = LogLevel.Information,
     Message = "Removed {Removed} handled ledger records older than the {Lookback} repair receptor lookback")]
   static partial void LogHandledLedgerSwept(ILogger logger, long removed, TimeSpan lookback);
 
-  [LoggerMessage(EventId = 74, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 78, Level = LogLevel.Warning,
     Message = "The handled ledger sweep failed at the {Lookback} repair receptor lookback; the ledger keeps its records until a later cycle succeeds")]
   static partial void LogHandledLedgerSweepFailed(ILogger logger, TimeSpan lookback, Exception ex);
 

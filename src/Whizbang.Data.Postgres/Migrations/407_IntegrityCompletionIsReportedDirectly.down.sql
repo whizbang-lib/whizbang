@@ -1,9 +1,9 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 405_IntegrityCompletionIsReportedDirectly.sql (#2261): the tally, its two functions and the kept
+-- The reverse of 407_IntegrityCompletionIsReportedDirectly.sql (#2261): the tally, its two functions and the kept
 -- watermark column are dropped. Lossy: the tally's minutes and the watermarks are lost, and the next maintenance ticks
--- and checkpoints rebuild them once 405 is applied again. Nothing before 405 reads any of them.
+-- and checkpoints rebuild them once 407 is applied again. Nothing before 407 reads any of them.
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_ledger_tally_since');
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_ledger_tally_add');

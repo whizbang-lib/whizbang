@@ -1,10 +1,10 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 403_TheLedgerCountsWhatItOpensAndCloses.sql (#2256): the nine ledger functions 403 turned into wrappers
--- are restored to their last words before 403 (090, 094, 320, 331, 370 and 384), and the counting forms and the backlog
--- read 403 added are dropped. An older release calls only the restored names, which answer exactly as they did before
--- 403. 403 stored no data, so the reverse loses none.
+-- The reverse of 405_TheLedgerCountsWhatItOpensAndCloses.sql (#2256): the nine ledger functions 405 turned into wrappers
+-- are restored to their last words before 405 (090, 094, 320, 331, 370 and 384), and the counting forms and the backlog
+-- read 405 added are dropped. An older release calls only the restored names, which answer exactly as they did before
+-- 405. 405 stored no data, so the reverse loses none.
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_integrity_try_begin_report: 320's definition, whole.
@@ -470,7 +470,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_integrity_forget_origin_types(UUID[], TEXT[]) 
 '370: deletes every integrity ledger row of the given (origin, event type) pairs, which the integrity audit judged to be recorded under an origin that does not own the type: such a row is never compared again, so it can neither heal nor clear. A null or empty list forgets nothing. Returns the rows deleted.';
 
 -- ---------------------------------------------------------------------------------------------
--- The counting forms and the backlog read 403 added.
+-- The counting forms and the backlog read 405 added.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_report_divergences_counted');
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_report_outcome');

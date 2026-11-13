@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// bump (one per maintenance batch, on any lane) reset every consumer's seal to 0.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/406_ASealFallsOnlyAsFarAsARewriteReached.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/408_ASealFallsOnlyAsFarAsARewriteReached.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
 public class OriginRewriteFloorSqlTests : EFCoreTestBase {
@@ -493,7 +493,7 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
   // ── the reverse ───────────────────────────────────────────────────────────────────────────────
 
   /// <summary>
-  /// 406's reverse restores what an older release runs: 093's bump, which moves the generation on every call, and 093's
+  /// 408's reverse restores what an older release runs: 093's bump, which moves the generation on every call, and 093's
   /// guard, which resets a consumer's seal on any generation change; 093's refold and 092's fold no longer note a
   /// rewrite; and the rewrite log is gone.
   /// </summary>
@@ -506,8 +506,8 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
     await coordinator.EnsureIntegritySealGenerationAsync(origin, 5);
     await coordinator.AdvanceIntegritySealAsync(origin, 400);
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
-      "Whizbang.Data.Postgres.MigrationReversals.406_ASealFallsOnlyAsFarAsARewriteReached.down.sql")
-      ?? throw new InvalidOperationException("406 ships its reverse");
+      "Whizbang.Data.Postgres.MigrationReversals.408_ASealFallsOnlyAsFarAsARewriteReached.down.sql")
+      ?? throw new InvalidOperationException("408 ships its reverse");
     using var reader = new StreamReader(down);
     await _executeAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
       (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));

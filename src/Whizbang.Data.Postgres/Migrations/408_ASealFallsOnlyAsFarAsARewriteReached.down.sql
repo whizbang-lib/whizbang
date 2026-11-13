@@ -1,10 +1,10 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 406_ASealFallsOnlyAsFarAsARewriteReached.sql (#2262): the generation guard, the bump and the refold
+-- The reverse of 408_ASealFallsOnlyAsFarAsARewriteReached.sql (#2262): the generation guard, the bump and the refold
 -- helper as 093 defined them, the epoch fold as 092 defined it, and the rewrite log, its settings, the note and the
 -- answer dropped. The log is lost: an older release never reads it, and resets a consumer's seal on every generation
--- change, as it did before 406. Seals and the generation itself are kept.
+-- change, as it did before 408. Seals and the generation itself are kept.
 
 -- ---------------------------------------------------------------------------------------------
 -- integrity_seal_generation_guard: 093's definition, whole.
@@ -117,7 +117,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_fold_digest_epoch IS
 'Internal: (re)writes one epoch''s bucket rows from the canonical fold (_wh_epoch_buckets).';
 
 -- ---------------------------------------------------------------------------------------------
--- What 406 added.
+-- What 408 added.
 -- ---------------------------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_integrity_seal_guard(UUID, BIGINT, BIGINT, BIGINT);
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_integrity_history_rewrite(BIGINT);
