@@ -146,4 +146,38 @@ public class SplitDocumentRegistryTests {
 
     await Assert.That(document.Data).IsSameReferenceAs(replacement);
   }
+  private static readonly string[] _elementOperators =
+    ["First", "FirstOrDefault", "Single", "SingleOrDefault", "Last", "LastOrDefault"];
+
+  [Test]
+  public async Task Rewrite_PagingAndEveryElementOperatorWithoutAPredicate_PassThroughToTheProjectionAsync() {
+    var projection = _rows().Select(r => r.Data).Expression;
+    Expression[] passing = [
+      Expression.Call(typeof(Queryable), nameof(Queryable.Skip), [typeof(ProjectionProbeModel)], projection, Expression.Constant(1)),
+      Expression.Call(typeof(Queryable), nameof(Queryable.Take), [typeof(ProjectionProbeModel)], projection, Expression.Constant(2)),
+      .. _elementOperators.Select(name => _element(name, projection)),
+    ];
+
+    foreach (var query in passing) {
+      await Assert.That(_selectorOf(SplitDocumentProjectionRewriter.Rewrite(query))).IsSameReferenceAs(_projection)
+        .Because($"{((MethodCallExpression)query).Method.Name} is applied in the database, before the copy runs");
+    }
+  }
+
+  [Test]
+  public async Task Rewrite_EveryElementOperatorWithAPredicate_OrAnyOtherOperator_IsLeftAsItWasAsync() {
+    var projection = _rows().Select(r => r.Data).Expression;
+    var predicate = Expression.Quote((Expression<Func<ProjectionProbeModel, bool>>)(m => m.Note == "x"));
+    Expression[] stopping = [
+      .. _elementOperators.Select(name =>
+        Expression.Call(typeof(Queryable), name, [typeof(ProjectionProbeModel)], projection, predicate)),
+      Expression.Call(typeof(Queryable), nameof(Queryable.Distinct), [typeof(ProjectionProbeModel)], projection),
+      Expression.Call(typeof(Queryable), nameof(Queryable.Count), [typeof(ProjectionProbeModel)], projection),
+    ];
+
+    foreach (var query in stopping) {
+      await Assert.That(SplitDocumentProjectionRewriter.Rewrite(query)).IsSameReferenceAs(query)
+        .Because($"{((MethodCallExpression)query).Method.Name} here runs over the copied model, so the query keeps its shape");
+    }
+  }
 }
