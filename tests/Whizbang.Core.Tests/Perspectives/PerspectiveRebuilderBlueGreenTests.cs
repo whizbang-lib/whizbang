@@ -349,14 +349,60 @@ public class PerspectiveRebuilderBlueGreenTests {
     await Assert.That(verifiedWhileRunning).IsTrue().Because("the keepalive renewed the duty while the rebuild held it");
   }
 
+  /// <summary>
+  /// #2301: an elector that throws fails the rebuild with its error and leaves the table free on this instance, so the
+  /// next rebuild of it is voted for rather than refused as already in flight.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_WhenTheElectorThrows_FailsAndLeavesTheTableFreeHereAsync() {
+    var swapper = new FakeSwapper();
+    var elector = new FakeElector(swapper.Calls) { Failure = new InvalidOperationException("the vote failed") };
+    var fixture = new Fixture(swapper, elector: elector);
+    fixture.Add(_a, 1);
+
+    var failed = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+    elector.Failure = null;
+    var rebuilt = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(failed.Error).IsEqualTo("the vote failed");
+    await Assert.That(rebuilt.Success).IsTrue().Because(rebuilt.Error ?? "");
+  }
+
+  /// <summary>#2301: the duty's name is the prefix and the bare table, and a table must be named.</summary>
+  [Test]
+  public async Task TheDutyName_IsThePrefixAndTheTableAsync() {
+    await Assert.That(PerspectiveRebuildDuty.For(TABLE)).IsEqualTo("perspective-rebuild:" + TABLE);
+    await Assert.That(() => PerspectiveRebuildDuty.For(" ")).ThrowsExactly<ArgumentException>();
+  }
+
+  /// <summary>#2301: a driver that cannot say which perspective writes a table says none, so no rebuild rewrites it.</summary>
+  [Test]
+  public async Task TheDefaultLookup_FindsNoPerspectiveAsync() {
+    IPerspectiveTableSwapper plain = new PlainSwapper();
+
+    await Assert.That(await plain.FindPerspectiveAsync(TABLE, CancellationToken.None)).IsNull();
+  }
+
+  private sealed class PlainSwapper : IPerspectiveTableSwapper {
+    public Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string> CreateShadowAsync(string liveTable, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DeleteRowsAsync(string table, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string?> SwapAsync(PerspectiveTableSwap swap, Func<CancellationToken, Task> underWriteLock, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DropAsync(string table, CancellationToken cancellationToken) => throw new NotSupportedException();
+  }
+
   /// <summary>Records each vote and release in the swapper's call list; refuses as told, or grants.</summary>
   private sealed class FakeElector(List<string> calls) : IDutyElector {
     public DutyRefusal? Refuse { get; init; }
     public TimeSpan? RenewInterval { get; init; }
     public TaskCompletionSource Verified { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Exception? Failure { get; set; }
 
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
       calls.Add("acquire " + duty);
+      if (Failure is not null) {
+        return Task.FromException<DutyAttempt>(Failure);
+      }
       return Task.FromResult(Refuse is { } refusal
         ? DutyAttempt.Lost(refusal, "detail of " + refusal)
         : DutyAttempt.Granted(new Grant(calls, duty, this)));

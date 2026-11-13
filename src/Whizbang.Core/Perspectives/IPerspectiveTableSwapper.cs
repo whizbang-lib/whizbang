@@ -60,22 +60,6 @@ public interface IPerspectiveTableSwapper {
   Task DropAsync(string table, CancellationToken cancellationToken);
 
   /// <summary>
-  /// Takes the fleet-wide guard that only one blue-green rebuild of <paramref name="liveTable"/> runs at a time, or
-  /// returns null when another rebuild holds it. Two rebuilds of one table share one shadow table, and creating it
-  /// drops a shadow left behind, so a second rebuild would destroy the first one's replay (#2301). The guard is
-  /// released when the returned handle is disposed.
-  /// </summary>
-  /// <remarks>Default: a guard that excludes nothing, for a driver whose rebuilds cannot run on two instances.</remarks>
-  /// <param name="liveTable">The live table the rebuild replaces.</param>
-  /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>The held guard, or null when another rebuild of the table holds it.</returns>
-  /// <docs>fundamentals/perspectives/rebuild#one-blue-green-rebuild-per-table</docs>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/PostgresPerspectiveTableSwapperTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
-  Task<IAsyncDisposable?> TryLockRebuildAsync(string liveTable, CancellationToken cancellationToken) =>
-    Task.FromResult<IAsyncDisposable?>(NoRebuildGuard.Instance);
-
-  /// <summary>
   /// The one perspective that writes <paramref name="table"/>, as the perspective registry records it, or null when the
   /// table is not a perspective table, or more than one perspective writes it, so no single rebuild can rebuild it.
   /// </summary>
@@ -86,20 +70,6 @@ public interface IPerspectiveTableSwapper {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/PostgresPerspectiveTableSwapperTests.cs</tests>
   Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) =>
     Task.FromResult<string?>(null);
-}
-
-/// <summary>The guard <see cref="IPerspectiveTableSwapper.TryLockRebuildAsync"/> returns by default: it excludes nothing.</summary>
-/// <docs>fundamentals/perspectives/rebuild#one-blue-green-rebuild-per-table</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
-public sealed class NoRebuildGuard : IAsyncDisposable {
-  /// <summary>The one instance.</summary>
-  public static NoRebuildGuard Instance { get; } = new();
-
-  private NoRebuildGuard() {
-  }
-
-  /// <inheritdoc />
-  public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
 /// <summary>One blue-green swap: which table becomes live, and what happens to the one it replaces.</summary>

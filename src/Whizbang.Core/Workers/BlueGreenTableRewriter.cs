@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
@@ -65,8 +66,8 @@ public sealed partial class BlueGreenTableRewriter(IServiceScopeFactory scopeFac
   }
 
   /// <summary>
-  /// Why the table cannot be rebuilt now because a rebuild of it is already running (another instance holds its guard, or
-  /// this instance is rebuilding the perspective), or null when it can. A rebuild in flight satisfies the request for now:
+  /// Why the table cannot be rebuilt now because a rebuild of it is already running (another instance holds the table's
+  /// duty, <see cref="PerspectiveRebuildDuty"/>, or this instance is rebuilding the perspective), or null when it can. A rebuild in flight satisfies the request for now:
   /// it stays queued, and a later cycle sees whether it is still owed.
   /// </summary>
   /// <param name="table">The bare table name.</param>
@@ -78,13 +79,17 @@ public sealed partial class BlueGreenTableRewriter(IServiceScopeFactory scopeFac
     if (await rebuilder.GetRebuildStatusAsync(perspective, cancellationToken).ConfigureAwait(false) is not null) {
       return $"a rebuild of {perspective} is in flight on this instance";
     }
-    var swapper = scope.ServiceProvider.GetRequiredService<IPerspectiveTableSwapper>();
-    var guard = await swapper.TryLockRebuildAsync(table, cancellationToken).ConfigureAwait(false);
-    if (guard is null) {
-      return $"another blue-green rebuild of {table} is in flight";
+    // Read, never voted for: taking the duty to probe it would hold it, and on this instance a duty already held is
+    // granted again, so a vote could not tell a rebuild in flight here from none. A host without an assignment reader
+    // has no fleet to read, and the rebuild's own guard still refuses a second rebuild.
+    if (scope.ServiceProvider.GetService<IRoleAssignmentReader>() is not { } roles) {
+      return null;
     }
-    await guard.DisposeAsync().ConfigureAwait(false);
-    return null;
+    var duty = PerspectiveRebuildDuty.For(table);
+    var assignments = await roles.ReadAssignmentsAsync(cancellationToken).ConfigureAwait(false);
+    return assignments.Any(a => string.Equals(a.Role, duty, StringComparison.Ordinal) && a.State == RoleAssignmentState.Held)
+      ? $"another blue-green rebuild of {table} is in flight"
+      : null;
   }
 
   /// <inheritdoc />

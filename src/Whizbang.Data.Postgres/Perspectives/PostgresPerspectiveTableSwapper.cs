@@ -30,11 +30,6 @@ namespace Whizbang.Data.Postgres.Perspectives;
 /// Every lock wait in the swap is bounded by the swap's lock timeout; a swap that times out rolls back and the
 /// live table is left as it was. The installed table is then analyzed, outside the swap's transaction.
 /// </para>
-/// <para>
-/// Only one blue-green rebuild of a table runs at a time, fleet-wide: <see cref="TryLockRebuildAsync"/> takes a session
-/// advisory lock keyed on the schema and the table, which the rebuilder holds from before the shadow is created until
-/// the swap is done (#2301).
-/// </para>
 /// </remarks>
 /// <param name="openConnection">Opens a connection of the swapper's own; the swapper disposes it.</param>
 /// <param name="schema">The schema the perspective tables are in, or null for the connection's search path.</param>
@@ -54,8 +49,6 @@ public sealed class PostgresPerspectiveTableSwapper(
   private const string SHADOW_SUFFIX = "_bg";
   private const string PREVIOUS_SUFFIX = "_bg_old";
   private const int MAX_IDENTIFIER_LENGTH = 63;
-  // The rebuild guard's key family (#2301): never change it, since instances of different versions must agree on it.
-  private const string REBUILD_GUARD_PREFIX = "whizbang:blue-green-rebuild:";
 
   private readonly Func<CancellationToken, Task<NpgsqlConnection>> _openConnection =
     openConnection ?? throw new ArgumentNullException(nameof(openConnection));
@@ -199,36 +192,6 @@ public sealed class PostgresPerspectiveTableSwapper(
   }
 
   /// <inheritdoc />
-  /// <remarks>
-  /// A session advisory lock, taken with a try on a connection of the guard's own and held until the guard is disposed,
-  /// which unlocks it before the connection goes back to the pool. Its key is the process-stable hash of the schema (the
-  /// connection's current one when none is configured) and the table, so every instance of every version computes the
-  /// same key for the same table.
-  /// </remarks>
-  public async Task<IAsyncDisposable?> TryLockRebuildAsync(string liveTable, CancellationToken cancellationToken) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(liveTable);
-    NpgsqlConnection? owned = await _openConnection(cancellationToken).ConfigureAwait(false);
-    try {
-      await using var resolve = new NpgsqlCommand("SELECT COALESCE(@schema, current_schema())", owned);
-      resolve.Parameters.AddWithValue(nameof(schema), (object?)schema ?? DBNull.Value).NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text;
-      var key = FnvHash64.Compute(REBUILD_GUARD_PREFIX + (string)(await resolve.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!
-        + "." + liveTable);
-      await using var take = new NpgsqlCommand("SELECT pg_try_advisory_lock(@key)", owned);
-      take.Parameters.AddWithValue(nameof(key), key);
-      if (!(bool)(await take.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!) {
-        return null;
-      }
-      var guard = new RebuildGuard(owned, key);
-      owned = null;
-      return guard;
-    } finally {
-      if (owned is not null) {
-        await owned.DisposeAsync().ConfigureAwait(false);
-      }
-    }
-  }
-
-  /// <inheritdoc />
   /// <remarks>Every perspective the registry records as writing the table; one is the answer, none or several is null.</remarks>
   public async Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrWhiteSpace(table);
@@ -239,23 +202,6 @@ public sealed class PostgresPerspectiveTableSwapper(
       "WHERE r.table_name = @table", conn);
     cmd.Parameters.AddWithValue(nameof(table), table);
     return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
-  }
-
-  /// <summary>Holds a table's rebuild guard: the advisory lock and the session it was taken on.</summary>
-  private sealed class RebuildGuard(NpgsqlConnection connection, long key) : IAsyncDisposable {
-    private bool _released;
-
-    public async ValueTask DisposeAsync() {
-      if (_released) {
-        return;
-      }
-      _released = true;
-      await using (var release = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", connection)) {
-        release.Parameters.AddWithValue(nameof(key), key);
-        await release.ExecuteNonQueryAsync().ConfigureAwait(false);
-      }
-      await connection.DisposeAsync().ConfigureAwait(false);
-    }
   }
 
   /// <summary>

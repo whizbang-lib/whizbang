@@ -11,6 +11,7 @@ using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 using static Whizbang.Core.Messaging.ProcessingModeAccessor;
 
@@ -28,6 +29,9 @@ public sealed partial class PerspectiveRebuilder(
     ILogger<PerspectiveRebuilder> logger) : IPerspectiveRebuilder {
 
   private readonly ConcurrentDictionary<string, RebuildStatus> _activeRebuilds = new();
+
+  // One blue-green rebuild of a table at a time, on this instance and through the table's duty across the fleet (#2301).
+  private readonly PerspectiveRebuildGuard _guard = new(logger);
 
   // Batch size for flushing pending cursor completions to IPerspectiveCheckpointCompleter.
   // Matches PerspectiveWorker's intent of amortizing round-trips while still persisting
@@ -499,12 +503,14 @@ public sealed partial class PerspectiveRebuilder(
     var options = sp.GetOptionsValue<BlueGreenRebuildOptions>() ?? new BlueGreenRebuildOptions();
 
     // Two rebuilds of one table share its shadow, and creating the shadow drops one left behind, so a second rebuild
-    // would destroy the first one's replay. The guard is fleet-wide and held until the swap is done (#2301); a rebuild
-    // that cannot take it fails before it touches anything, as any rebuild that cannot start fails: with the reason.
-    await using var guard = await swapper.TryLockRebuildAsync(table, ct).ConfigureAwait(false)
-      ?? throw new InvalidOperationException(
-        $"Perspective '{run.PerspectiveName}' was not rebuilt: another blue-green rebuild of {table} is in flight, on this " +
-        "instance or another. Run it again once that rebuild has finished.");
+    // would destroy the first one's replay. The table's duty is held until the swap is done (#2301); a rebuild that
+    // cannot take it fails before it touches anything, as any rebuild that cannot start fails: with the reason.
+    var entry = await _guard.TryEnterAsync(
+      table, sp.GetService<IDutyElector>(), sp.GetService<TimeProvider>() ?? TimeProvider.System, ct).ConfigureAwait(false);
+    await using var guard = entry.Held ?? throw new InvalidOperationException(entry.IsInFlight
+      ? $"Perspective '{run.PerspectiveName}' was not rebuilt: another blue-green rebuild of {table} is in flight, on this " +
+        "instance or another. Run it again once that rebuild has finished."
+      : $"Perspective '{run.PerspectiveName}' was not rebuilt: it {entry.Refusal}.");
 
     var mark = await changes.WatermarkAsync(ct).ConfigureAwait(false);
     var shadow = await swapper.CreateShadowAsync(table, ct).ConfigureAwait(false);
