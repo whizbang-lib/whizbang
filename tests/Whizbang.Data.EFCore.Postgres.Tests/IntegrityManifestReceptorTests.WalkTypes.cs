@@ -28,7 +28,7 @@ public partial class IntegrityManifestReceptorTests {
 
     var manifest = _deserializeManifest(transport.Published.Single().Envelope);
     await Assert.That(manifest.RequestedEventTypes).IsNotNull();
-    await Assert.That(manifest.RequestedEventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX", "Contracts.TypeY" })
+    await Assert.That(manifest.RequestedEventTypes).IsEquivalentTo(["Contracts.TypeX", "Contracts.TypeY"])
       .Because("the asker's next page must ask for every type of the walk, and only the answer can carry them to it");
   }
 
@@ -48,11 +48,10 @@ public partial class IntegrityManifestReceptorTests {
     coordinator.ReceivedDigests = [_digest(stream, 41, 42, 5)];
 
     // A page of a walk over TypeX and TypeY that happens to hold only TypeX streams.
-    await receptor.HandleAsync(_streamPage(coordinator, stream, cursor)
-      with { RequestedEventTypes = ["Contracts.TypeX", "Contracts.TypeY"] });
+    await receptor.HandleAsync(_streamPage(coordinator, stream, cursor) with { RequestedEventTypes = ["Contracts.TypeX", "Contracts.TypeY"] });
 
     var follow = _streamAsks(transport).Single();
-    await Assert.That(follow.EventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX", "Contracts.TypeY" })
+    await Assert.That(follow.EventTypes).IsEquivalentTo(["Contracts.TypeX", "Contracts.TypeY"])
       .Because("TypeY's streams may sit on a later page; asking only for the types this page held drops it from the walk");
     await Assert.That(follow.ResumeAfterStreamId).IsEqualTo(cursor);
   }
@@ -65,7 +64,7 @@ public partial class IntegrityManifestReceptorTests {
 
     await receptor.HandleAsync(_streamPage(coordinator, stream, TrackedGuid.New().Value));
 
-    await Assert.That(_streamAsks(transport).Single().EventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX" })
+    await Assert.That(_streamAsks(transport).Single().EventTypes).IsEquivalentTo(["Contracts.TypeX"])
       .Because("an origin that predates the echo says nothing about the walk, so the page's own types are all there is");
   }
 
@@ -75,14 +74,16 @@ public partial class IntegrityManifestReceptorTests {
     var cursor = TrackedGuid.New().Value;
 
     // A page whose every stream belonged to types the origin does not own: it arrives with no digests and a cursor.
-    await receptor.HandleAsync(_manifest(coordinator, [])
-      with {
-        SinceSequence = CURSOR_SINCE, ComputedThrough = CURSOR_THROUGH, ChunkCount = 1, ResumeAfterStreamId = cursor,
-        RequestedEventTypes = ["Contracts.TypeX"],
-      });
+    await receptor.HandleAsync(_manifest(coordinator, []) with {
+      SinceSequence = CURSOR_SINCE,
+      ComputedThrough = CURSOR_THROUGH,
+      ChunkCount = 1,
+      ResumeAfterStreamId = cursor,
+      RequestedEventTypes = ["Contracts.TypeX"],
+    });
 
     var follow = _streamAsks(transport).Single();
-    await Assert.That(follow.EventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX" })
+    await Assert.That(follow.EventTypes).IsEquivalentTo(["Contracts.TypeX"])
       .Because("an empty page names no type; asking for none would end the walk or ask for nothing");
   }
   [Test]
@@ -96,16 +97,45 @@ public partial class IntegrityManifestReceptorTests {
     var cursor = TrackedGuid.New().Value;
     var billing = _digest(TrackedGuid.New().Value, 4, 5, 6) with { EventType = "App.Contracts.Billing.Raised, App.Contracts" };
 
-    await receptor.HandleAsync(_manifest(coordinator, [billing])
-      with {
-        SinceSequence = CURSOR_SINCE, ComputedThrough = CURSOR_THROUGH, ChunkCount = 1, ResumeAfterStreamId = cursor,
-        RequestedEventTypes = ["Contracts.TypeX"],
-      });
+    await receptor.HandleAsync(_manifest(coordinator, [billing]) with {
+      SinceSequence = CURSOR_SINCE,
+      ComputedThrough = CURSOR_THROUGH,
+      ChunkCount = 1,
+      ResumeAfterStreamId = cursor,
+      RequestedEventTypes = ["Contracts.TypeX"],
+    });
 
     var follow = _streamAsks(transport).SingleOrDefault();
     await Assert.That(follow).IsNotNull()
       .Because("a page whose every digest is left out of the compare still says there is more; dropping it ends the walk");
-    await Assert.That(follow!.EventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX" });
+    await Assert.That(follow!.EventTypes).IsEquivalentTo(["Contracts.TypeX"]);
     await Assert.That(follow.ResumeAfterStreamId).IsEqualTo(cursor);
+  }
+  [Test]
+  public async Task ManifestReceptor_AnEmptyPage_FromAnOriginThatEchoesNoTypes_EndsTheWalkAsync() {
+    var (coordinator, transport, receptor) = _cursorFixture(maxPages: 5);
+
+    await receptor.HandleAsync(_manifest(coordinator, []) with {
+      SinceSequence = CURSOR_SINCE,
+      ComputedThrough = CURSOR_THROUGH,
+      ChunkCount = 1,
+      ResumeAfterStreamId = TrackedGuid.New().Value,
+    });
+
+    await Assert.That(_streamAsks(transport)).IsEmpty()
+      .Because("the page names no type and the origin echoed none, so a follow-up would ask for nothing");
+  }
+  [Test]
+  public async Task ManifestReceptor_AnEmptyLastPage_EndsTheWalkAsync() {
+    var (coordinator, transport, receptor) = _cursorFixture(maxPages: 5);
+
+    await receptor.HandleAsync(_manifest(coordinator, []) with {
+      SinceSequence = CURSOR_SINCE,
+      ComputedThrough = CURSOR_THROUGH,
+      ChunkCount = 1,
+      RequestedEventTypes = ["Contracts.TypeX"],
+    });
+
+    await Assert.That(_streamAsks(transport)).IsEmpty().Because("a page with no cursor is the walk's last");
   }
 }
