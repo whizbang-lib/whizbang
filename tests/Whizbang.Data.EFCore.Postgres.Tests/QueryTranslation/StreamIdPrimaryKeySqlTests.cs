@@ -174,6 +174,40 @@ public class StreamIdPrimaryKeySqlTests {
     await Assert.That(sql).DoesNotContain("'Price'");
   }
 
+  /// <summary>A projected sort on a promoted field orders by its column, so an index can supply the order.</summary>
+  [Test]
+  public async Task ProjectedOrderBy_PhysicalField_OrdersByTheColumnAsync() {
+    var sql = _projectedSql(models => models.OrderBy(x => x.Price));
+
+    await Assert.That(sql).Contains("ORDER BY w.price");
+  }
+
+  /// <summary>A secondary sort follows its primary sort beneath the projection.</summary>
+  [Test]
+  public async Task ProjectedThenBy_PhysicalField_OrdersByTheColumnAsync() {
+    var sql = _projectedSql(models => models.OrderBy(x => x.Title).ThenByDescending(x => x.Price));
+
+    await Assert.That(sql).Contains("w.price DESC");
+  }
+
+  /// <summary>Paging after a projected sort keeps the sort on the column.</summary>
+  [Test]
+  public async Task ProjectedOrderByThenSkip_OrdersByTheColumnAsync() {
+    var sql = _projectedSql(models => models.OrderBy(x => x.Price).Skip(5).Take(10));
+
+    await Assert.That(sql).Contains("ORDER BY w.price");
+  }
+
+  /// <summary>A projection over the model reads a promoted field from its column.</summary>
+  [Test]
+  public async Task ProjectedSelect_PhysicalField_ReadsTheColumnAsync() {
+    await using var db = _newContext();
+    var sql = db.Set<PerspectiveRow<OrderModel>>().Select(r => r.Data).Select(x => new { x.OrderId, x.Price }).ToQueryString();
+
+    await Assert.That(sql).Contains("w.price");
+    await Assert.That(sql).DoesNotContain("'Price'");
+  }
+
   // ========================================
   // Left alone
   // ========================================
