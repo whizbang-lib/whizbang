@@ -339,7 +339,7 @@ public class PerspectiveRebuilderBlueGreenTests {
     // grant has been verified by the time Advance returns: nothing is waited on.
     swapper.BeforeSwapAsync = () => {
       time.Advance(TimeSpan.FromSeconds(2));
-      verifiedWhileRunning = elector.Verified.Task.IsCompleted;
+      verifiedWhileRunning = elector.Verifications > 0;
       return Task.CompletedTask;
     };
 
@@ -395,7 +395,10 @@ public class PerspectiveRebuilderBlueGreenTests {
   private sealed class FakeElector(List<string> calls) : IDutyElector {
     public DutyRefusal? Refuse { get; init; }
     public TimeSpan? RenewInterval { get; init; }
-    public TaskCompletionSource Verified { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _verifications;
+
+    /// <summary>How many times a grant was verified, which is how the keepalive renews it.</summary>
+    public int Verifications => Volatile.Read(ref _verifications);
     public Exception? Failure { get; set; }
 
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
@@ -414,7 +417,7 @@ public class PerspectiveRebuilderBlueGreenTests {
       public TimeSpan? RenewInterval => elector.RenewInterval;
 
       public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) {
-        elector.Verified.TrySetResult();
+        Interlocked.Increment(ref elector._verifications);
         return Task.FromResult(true);
       }
 
