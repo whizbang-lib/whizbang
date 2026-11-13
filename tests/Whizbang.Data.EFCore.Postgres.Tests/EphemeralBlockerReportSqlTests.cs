@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/392_WhatHoldsEphemeralHistoryBackIsNamed.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
-public class EphemeralBlockerReportSqlTests : EFCoreTestBase {
+public partial class EphemeralBlockerReportSqlTests : EFCoreTestBase {
   private const int EPHEMERAL = 8;
   // Real types, named the way the append path stores them (#2254): the walk names each catalog entry by its Type.
   private static readonly string TYPE = TypeNameFormatter.Format(typeof(SessionPinged));
