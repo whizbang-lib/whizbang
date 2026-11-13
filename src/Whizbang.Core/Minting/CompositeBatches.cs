@@ -335,7 +335,7 @@ internal static class CompositeBatchSize {
   /// <exception cref="InvalidOperationException">The event's type has no registered JSON type info.</exception>
   public static long Of(object evt, JsonSerializerOptions options) {
     var type = evt.GetType();
-    var typeInfo = JsonContextRegistry.GetTypeInfoByName(TypeNameFormatter.AssemblyQualifiedNameOrDisplay(type), options)
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(TypeNameFormatter.Format(type), options)
       ?? throw new InvalidOperationException(
         $"No JSON type info found for {TypeNameFormatter.DisplayName(type)}, so its size cannot be measured. Ensure the type is registered in a JsonSerializerContext.");
     return JsonSerializer.SerializeToUtf8Bytes(evt, typeInfo).Length;

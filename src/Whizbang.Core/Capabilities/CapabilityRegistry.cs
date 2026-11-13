@@ -146,7 +146,7 @@ public sealed partial class CapabilityRegistry : ICapabilityRegistry {
     try {
       return await provider.ProbeAsync(scope, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
-      var reason = $"{ex.GetType().Name}: {ex.Message}";
+      var reason = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}";
       LogProbeFailed(_logger, provider.Name, scope, reason);
       return CapabilityStatus.Unknown(provider.Descriptors, scope, reason);
     }

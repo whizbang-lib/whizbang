@@ -162,7 +162,7 @@ public sealed class AuditingEventStoreDecorator(
       // Derived from the event it audits, so a record derived again is the same record (#1724).
       Id = AuditLedger.RecordIdFor(envelope.MessageId.Value),
       OriginalEventId = envelope.MessageId.Value,
-      OriginalEventType = typeof(TMessage).Name,
+      OriginalEventType = TypeNameFormatter.SimpleName(typeof(TMessage)),
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,
@@ -228,13 +228,17 @@ public sealed class AuditingEventStoreDecorator(
         MessageId = envelope.MessageId,
         Hops = envelope.CopyHops()
       },
+#pragma warning disable RS0030 // versioned on purpose: an envelope type a receiver resolves the envelope from (#2267)
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
+#pragma warning restore RS0030
       // The tenant's audit ledger, as on the outbox path. Transport-only, as on the outbox path: an audit
       // record is never event-stored at its origin, so it neither takes the ledger's per-stream store lock
       // nor lands in the origin's digest lane (#1485).
       StreamId = AuditLedger.StreamFor(auditEvent.TenantId),
       IsEvent = false,
+#pragma warning disable RS0030 // versioned on purpose: the message type a receiver resolves the payload from (#2267)
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
+#pragma warning restore RS0030
     };
   }
 

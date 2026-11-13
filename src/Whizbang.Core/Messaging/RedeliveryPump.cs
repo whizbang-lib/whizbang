@@ -68,7 +68,8 @@ public sealed class RedeliveryPumpOptions {
 /// <summary>
 /// Stream-integrity R1a2: bundles selected re-delivery events (<see cref="RedeliveryEvent"/>, as
 /// produced by <see cref="IWorkCoordinator.SelectRedeliveryEventsAsync"/> — ordered (stream,
-/// version)) into per-stream <see cref="RedeliveryComposite"/>s and publishes them <b>wire-only</b>
+/// version)) into <see cref="RedeliveryComposite"/>s, one stream per bundle or, for a backfill or an answer to a
+/// requester that accepts it, across streams by scope (#2092, #2268), and publishes them <b>wire-only</b>
 /// directly through <see cref="ITransport"/>: no outbox row, no local dispatch — the origin
 /// already holds these events, so its own pipeline has nothing to do with them.
 /// </summary>
@@ -130,6 +131,47 @@ public sealed class RedeliveryPump(
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
   public Guid? BundleStreamId { get; init; }
+
+  /// <summary>
+  /// When set, an answer bundles across streams (#2268): events group by scope only, as a windowed backfill's do
+  /// (<see cref="BundleStreamId"/>), so a request naming many streams a few events short ships in as few bundles as
+  /// <see cref="RedeliveryPumpOptions.MaxInnerEventsPerComposite"/> and <see cref="RedeliveryPumpOptions.MaxBytesPerComposite"/>
+  /// allow instead of one per stream. Each child names the stream it is stored on, and every bundle's own stream, its
+  /// broker session, is <see cref="AnswerSessionFor"/> of the origin, topic, requester and scope, so one stream's events
+  /// that span bundles, or pages of one selection, arrive in order. False (the default) keeps one stream per bundle for
+  /// a requester that predates the shape (<see cref="RequestRedeliveryCommand.AcceptsStreamSpanningBundles"/>).
+  /// <see cref="BundleStreamId"/>, when also set, names the session instead.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-answers-bundle-across-streams</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpAnswerBundlingTests.cs</tests>
+  public bool BundleAcrossStreams { get; init; }
+
+  /// <summary>Namespace of <see cref="AnswerSessionFor"/>'s name-based ids.</summary>
+  private static readonly Guid _answerSessionNamespace = NameBasedGuid.V5(Guid.Empty, "whizbang.redelivery-answer-session.v1");
+
+  /// <summary>
+  /// The broker session (and bundle stream) of a stream-spanning answer (#2268): a name-based id of the origin, the reply
+  /// topic, the requester and the scope. Derived rather than minted, so every page of one selection and every instance
+  /// of the origin agree, and one stream's bundles share it and keep their order on the receiver. One key per scope
+  /// keeps tenants apart; one per origin and requester keeps unrelated answers apart. Answers to one requester for one
+  /// tenant are serialized behind each other, which costs little: one bundle now carries what was up to hundreds of
+  /// messages.
+  /// </summary>
+  /// <param name="originServiceId">The answering origin's service id.</param>
+  /// <param name="topic">The reply topic.</param>
+  /// <param name="target">The requester the answer is directed at, or null for a broadcast.</param>
+  /// <param name="scope">The events' stored scope JSON, or null when unscoped.</param>
+  /// <returns>The session key.</returns>
+  /// <docs>resilience/stream-integrity#repair-answers-bundle-across-streams</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpAnswerBundlingTests.cs:AnswerSessionFor_IsDerived_AndSeparatesOrigins_Requesters_Topics_AndScopesAsync</tests>
+  public static Guid AnswerSessionFor(Guid originServiceId, string topic, string? target, string? scope) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+    // Target and scope are each prefixed by whether they are present, so "no requester" never collides with an empty one.
+    return NameBasedGuid.V5(_answerSessionNamespace, string.Concat(
+      originServiceId.ToString("N"), "\n", topic, "\n",
+      target is null ? "-" : "+" + target, "\n",
+      scope is null ? "-" : "+" + scope));
+  }
 
   /// <summary>
   /// Publishes a backfill window's answer to <paramref name="target"/> on <paramref name="topic"/>, on the backfill's
@@ -237,13 +279,15 @@ public sealed class RedeliveryPump(
       // tenant's authority. A stream is single-tenant in practice, which makes this a no-op split
       // that costs nothing and forecloses the mis-attribution when it is not.
       // #2092: a windowed backfill bundles across streams (scope only); each child still names its stored stream.
-      GroupKey = BundleStreamId is null
+      // #2268: an answer to a requester that files each child under its own stream bundles across streams too.
+      GroupKey = BundleStreamId is null && !BundleAcrossStreams
         ? CompositeGroupKey.FromKey<RedeliveryEvent>(e => $"{e.StreamId}|{e.Scope}")
         : CompositeGroupKey.FromKey<RedeliveryEvent>(e => e.Scope ?? string.Empty),
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
-      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested, BundleStreamId,
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested,
+        _bundleStreamFor(batch.Constituents[0].Scope, originServiceId, topic, target),
         answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds)),
     });
 
@@ -275,6 +319,13 @@ public sealed class RedeliveryPump(
       .Select(g => g.Key)];
     return partial.Count == 0 ? null : partial;
   }
+
+  /// <summary>
+  /// The stream (and broker session) a bundle of <paramref name="scope"/> rides: the backfill's, the answer's shared key
+  /// when bundles span streams, or null for the one stream every child of a per-stream bundle shares.
+  /// </summary>
+  private Guid? _bundleStreamFor(string? scope, Guid originServiceId, string topic, string? target) =>
+    BundleStreamId ?? (BundleAcrossStreams ? AnswerSessionFor(originServiceId, topic, target, scope) : null);
 
   /// <summary>
   /// One chunk's repair bundle: the stored payloads and type names raw, the original ids, origin and commit sequences,
@@ -348,8 +399,9 @@ public sealed class RedeliveryPump(
     };
 
     // The outbox's composite seam: typed → MessageEnvelope<JsonElement> + payload-derived wire type.
-    // Session-enabled subscriptions dead-letter sessionless deliveries; per-stream chunking makes
-    // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
+    // Session-enabled subscriptions dead-letter sessionless deliveries. The bundle's own stream is the session key: the
+    // one stream of a per-stream bundle, or the key every bundle of a stream-spanning answer or backfill shares, so a
+    // stream's bundles keep FIFO either way (#2268).
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
     await _sendWithRetryAsync(serialized, _destination(topic, composite.StreamId, typeof(RedeliveryComposite)), cancellationToken)
       .ConfigureAwait(false);

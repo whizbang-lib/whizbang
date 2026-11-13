@@ -30,6 +30,7 @@ namespace Whizbang.Generators;
 /// <param name="IsOnceAcrossServices">True if receptor class has [ReceptorOnceAcrossServices]. The receptor runs once for a message across every service that registers it, so the ReceptorInvoker guardrail skips it on a prior invocation recorded by any service rather than only by its own.</param>
 /// <param name="Priority">The receptor's [ReceptorPriority], or the middle default (500) when it declares none. Orders the receptors that run for one message (#1412); lower runs first.</param>
 /// <param name="NotInjectableLocation">Where the parameter <paramref name="LikelyNotInjectableParameter"/> names is declared, set only when that parameter is set, so WHIZ014 is reported at it (#1429). Only the rare receptor that reports carries a location, so it costs incremental caching nothing on every other receptor.</param>
+/// <param name="RunsOnRepair">True if receptor class has [RunOnRepair]: it runs for a repaired event this service can prove it never handled (#2273). Without it a repaired event is state only for the receptor.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -48,7 +49,8 @@ public sealed record ReceptorInfo(
     string? LikelyNotInjectableParameter = null,
     bool IsOnceAcrossServices = false,
     int Priority = ReceptorInfo.DEFAULT_PRIORITY,
-    Microsoft.CodeAnalysis.Location? NotInjectableLocation = null
+    Microsoft.CodeAnalysis.Location? NotInjectableLocation = null,
+    bool RunsOnRepair = false
 ) {
   /// <summary>The priority of a receptor that declares none: the middle of the range (ReceptorPriority.DEFAULT).</summary>
   public const int DEFAULT_PRIORITY = 500;

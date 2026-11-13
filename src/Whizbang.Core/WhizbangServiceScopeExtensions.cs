@@ -28,7 +28,7 @@ public static class WhizbangServiceScopeExtensions {
   /// <typeparam name="TMarker">Any type in one of the service's assemblies.</typeparam>
   /// <param name="services">The host's service collection.</param>
   public static IServiceCollection AddWhizbangServiceAnchor<TMarker>(this IServiceCollection services) =>
-    services.AddWhizbangServiceAnchor(typeof(TMarker).Assembly.GetName().Name!);
+    services.AddWhizbangServiceAnchor(TypeNameFormatter.AssemblySimpleName(typeof(TMarker).Assembly)!);
 
   /// <summary>Anchors the host on the assembly named <paramref name="assembly"/>.</summary>
   /// <param name="services">The host's service collection.</param>

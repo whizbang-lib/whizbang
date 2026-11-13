@@ -271,7 +271,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       return;
     }
     _lastPeekFailureLogged[entity] = now;
-    LogBacklogHeadPeekFailed(_logger, exception, entity, exception.GetType().Name, exception.Message, depth);
+    LogBacklogHeadPeekFailed(_logger, exception, entity, TypeNameFormatter.ForLog(exception.GetType()), exception.Message, depth);
   }
 
   [LoggerMessage(Level = LogLevel.Warning, Message = "Backlog head peek failed for {Entity} ({ExceptionType}: {ExceptionMessage}); reporting depth {Depth} with no age")]
@@ -616,7 +616,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
       //            But for METADATA, we use the provided envelopeType string which preserves the original payload type information
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
       var envelopeTypeName = envelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
 
       // For serialization, always use the actual runtime type of the envelope object (AOT-safe)
       var envelopeRuntimeType = envelope.GetType();
@@ -849,7 +851,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
             localResults.Add(new BulkPublishItemResult {
               MessageId = item.MessageId,
               Success = false,
-              Error = $"{ex.GetType().Name}: {ex.Message}",
+              Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
               Reason = TransportFailureClassifier.Classify(ex),
             });
           }
@@ -891,7 +893,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         results.Add(new BulkPublishItemResult {
           MessageId = id,
           Success = false,
-          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
           Reason = reason,
         });
       }
@@ -900,7 +902,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
   private ServiceBusMessage _createServiceBusMessage(BulkPublishItem item, TransportDestination destination) {
     var envelope = item.Envelope;
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
     var envelopeTypeName = item.EnvelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
 
     var envelopeRuntimeType = envelope.GetType();
 
@@ -1972,7 +1976,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         args.Message.MessageId,
         destination.Address,
         _subscriptionOf(destination),
-        ex.GetType().Name,
+        TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
       await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
@@ -1984,7 +1988,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         args.Message.MessageId,
         destination.Address,
         _subscriptionOf(destination),
-        ex.GetType().Name,
+        TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
       await _safeAbandonAsync(args);

@@ -139,8 +139,8 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
 
       // An event in the global namespace has none to register, as on the receptor path (#1177): displayed, the
       // global namespace reads "<global namespace>", which is not a namespace.
-      if (!eventType.ContainingNamespace.IsGlobalNamespace) {
-        eventNamespaces.Add(TypeNameUtilities.Display(eventType.ContainingNamespace).ToLowerInvariant());
+      if (!TypeNameUtilities.NamespaceOf(eventType).IsGlobalNamespace) {
+        eventNamespaces.Add(TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(eventType)).ToLowerInvariant());
       }
     }
 
@@ -193,7 +193,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
 
     // Get the namespace
     // A type that implements IEvent is a named type or a type parameter, and both sit in a namespace.
-    var containingNamespace = messageType.ContainingNamespace!;
+    var containingNamespace = TypeNameUtilities.NamespaceOf(messageType);
     if (containingNamespace.IsGlobalNamespace) {
       return null;
     }
@@ -210,7 +210,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context, bool collective, System.Threading.CancellationToken cancellationToken) {
     if (context.SemanticModel.GetDeclaredSymbol(context.Node, cancellationToken) is not INamedTypeSymbol symbol
         || symbol.IsAbstract
-        || symbol.ContainingNamespace.IsGlobalNamespace
+        || TypeNameUtilities.NamespaceOf(symbol).IsGlobalNamespace
         || !symbol.AllInterfaces.Any(i => TypeNameUtilities.FullyQualified(i) == IEVENT_INTERFACE)) {
       return null;
     }
@@ -219,7 +219,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
       : symbol.GetAttributes().Any(a =>
           TypeNameUtilities.IsNamed(a.AttributeClass, NOTIFICATION_TAG_ATTRIBUTE)
           || TypeNameUtilities.IsNamed(a.AttributeClass, NOTIFICATION_ID_TAG_ATTRIBUTE));
-    return consumed ? TypeNameUtilities.Display(symbol.ContainingNamespace).ToLowerInvariant() : null;
+    return consumed ? TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(symbol)).ToLowerInvariant() : null;
   }
 
   /// <summary>

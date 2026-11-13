@@ -60,7 +60,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
     var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
 
     // Check properties recursively
-    _checkPropertiesRecursively(context, typeSymbol, null, typeSymbol.Name, visited);
+    _checkPropertiesRecursively(context, typeSymbol, null, TypeNameUtilities.SimpleName(typeSymbol), visited);
   }
 
   private static void _checkPropertiesRecursively(
@@ -117,7 +117,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
       var diagnostic = Diagnostic.Create(
           DiagnosticDescriptors.NonSerializableNestedProperty,
           location,
-          currentType.Name,           // Nested type name
+          TypeNameUtilities.SimpleName(currentType),           // Nested type name
           path,                       // Path from the root type to the nested type (Root.Prop.Prop)
           property.Name,              // Property on nested type with issue
           typeName                    // The problematic type
@@ -133,7 +133,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
             descriptor,
             location,
             property.Name,
-            currentType.Name,
+            TypeNameUtilities.SimpleName(currentType),
             typeName
         );
         context.ReportDiagnostic(diagnostic);
@@ -143,7 +143,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
             descriptor,
             location,
             property.Name,
-            currentType.Name
+            TypeNameUtilities.SimpleName(currentType)
         );
         context.ReportDiagnostic(diagnostic);
       }
@@ -246,7 +246,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check if it's a System.* or Microsoft.* type
-    var containingNamespace = TypeNameUtilities.DisplayOrEmpty(typeSymbol.ContainingNamespace);
+    var containingNamespace = TypeNameUtilities.DisplayOrEmpty(TypeNameUtilities.NamespaceOf(typeSymbol));
     return containingNamespace.StartsWith("System", StringComparison.Ordinal) ||
         containingNamespace.StartsWith("Microsoft", StringComparison.Ordinal);
   }

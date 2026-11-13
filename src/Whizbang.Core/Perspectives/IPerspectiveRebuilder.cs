@@ -146,6 +146,37 @@ public record RebuildResult(
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:Rebuild_ByDefault_SkipsAStreamArchivedWhole_AndReportsItSkippedNotFailedAsync</tests>
   public int StreamsSkipped { get; init; }
 
+  /// <summary>
+  /// How many streams folded to exactly the row already stored (#2252): the store wrote nothing because the read model
+  /// was already right. Each is counted in <see cref="StreamsProcessed"/> as rebuilt and verified, so the rows the
+  /// rebuild actually rewrote are <see cref="StreamsProcessed"/> minus this.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AFoldThatEqualsTheStoredRow_IsRebuiltAndVerified_NotFailedAsync</tests>
+  public int StreamsAlreadyCorrect { get; init; }
+
+  /// <summary>
+  /// How many streams folded to a row that differs from the stored one, whose write the row's ordering guard refused
+  /// (#2252). Their rows are left as they are and they are not rebuilt.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AWriteTheOrderingGuardRefused_FailsAndSaysSoAsync</tests>
+  public int StreamsWriteRefused { get; init; }
+
+  /// <summary>
+  /// How many streams folded without any event producing a model, so there was nothing to write (#2252).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AFoldThatProducedNoModel_FailsAndIsToldApartFromARefusalAsync</tests>
+  public int StreamsWithoutModel { get; init; }
+
+  /// <summary>
+  /// How many streams had no events for this perspective (#2252).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AMixedRun_SeparatesRewrittenAlreadyCorrectRefusedNoModelAndNoEventsAsync</tests>
+  public int StreamsWithoutEvents { get; init; }
+
 }
 
 /// <summary>

@@ -186,6 +186,7 @@ public sealed partial class RepairDrainWorker(
         Topic = replyTopic,
         FromCommitSequence = fromSeq,
         ToCommitSequence = toSeq,
+        AcceptsStreamSpanningBundles = true,
       };
       // #2029, #2223: recorded as awaiting its answer before it is sent. An answer clears the wait, and the origin can
       // answer before the publish call returns (a fast origin, or this host's continuation delayed under load); recorded

@@ -3,6 +3,7 @@
 
 using Microsoft.EntityFrameworkCore.Query;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Query;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Functions;
 
@@ -16,7 +17,7 @@ public class WhizbangMethodCallTranslatorPlugin : IMethodCallTranslatorPlugin {
     var npgsqlFactory = sqlExpressionFactory as NpgsqlSqlExpressionFactory
       ?? throw new InvalidOperationException(
           "WhizbangMethodCallTranslatorPlugin requires Npgsql provider. " +
-          $"Expected NpgsqlSqlExpressionFactory but got {sqlExpressionFactory.GetType().Name}");
+          $"Expected NpgsqlSqlExpressionFactory but got {TypeNameFormatter.ForLog(sqlExpressionFactory.GetType())}");
     Translators = [
       new JsonArrayContainsAnyTranslator(npgsqlFactory),
       new FoldedContainsTranslator(npgsqlFactory),

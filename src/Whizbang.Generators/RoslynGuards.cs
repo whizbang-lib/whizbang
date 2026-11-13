@@ -153,7 +153,7 @@ public static class RoslynGuards {
       RecordDeclarationSyntax record => GetRecordSymbolOrThrow(record, semanticModel, cancellationToken),
       ClassDeclarationSyntax @class => GetClassSymbolOrThrow(@class, semanticModel, cancellationToken),
       _ => throw new InvalidOperationException(
-          $"Unexpected node type: {node.GetType().Name}. " +
+          $"Unexpected node type: {TypeNameUtilities.SimpleName(node.GetType())}. " +
           "Expected RecordDeclarationSyntax or ClassDeclarationSyntax.")
     };
   }

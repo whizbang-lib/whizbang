@@ -140,7 +140,7 @@ internal static partial class CapabilityProvisioningRunner {
       return await provisioner.ProvisionAsync(status, action, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
       LogProvisioningFailed(logger, id, status.Scope, action, ex);
-      return _heldBack(status, action, $"provisioning failed ({ex.GetType().Name}: {ex.Message})");
+      return _heldBack(status, action, $"provisioning failed ({TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message})");
     }
   }
 

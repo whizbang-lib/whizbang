@@ -271,7 +271,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
       // Get envelope type name - prefer provided envelopeType to preserve correct generic type
       // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
       var envelopeTypeName = envelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
 
       var envelopeRuntimeType = envelope.GetType();
 
@@ -428,7 +430,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           results.Add(new BulkPublishItemResult {
             MessageId = item.MessageId,
             Success = false,
-            Error = $"{ex.GetType().Name}: {ex.Message}",
+            Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
             Reason = TransportFailureClassifier.Classify(ex),
           });
         }
@@ -436,7 +438,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (AlreadyClosedException ex) {
       _failRemainingItems(items, results, $"AlreadyClosedException: {ex.Message}", TransportFailureClassifier.Classify(ex));
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _failRemainingItems(items, results, $"{ex.GetType().Name}: {ex.Message}", TransportFailureClassifier.Classify(ex));
+      _failRemainingItems(items, results, $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}", TransportFailureClassifier.Classify(ex));
     }
 
     return results;
@@ -454,7 +456,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   ) {
     var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
     var envelope = item.Envelope;
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
     var envelopeTypeName = item.EnvelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
     var envelopeRuntimeType = envelope.GetType();
 
     // Honor per-item pre-serialized hint when present (avoids double-serialize

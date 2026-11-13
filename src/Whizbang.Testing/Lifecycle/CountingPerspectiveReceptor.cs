@@ -57,10 +57,10 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
     // Get perspective name and stream ID from lifecycle context
     var context = _context.Value;
-    var perspectiveName = context?.PerspectiveType?.Name ?? "Unknown";
+    var perspectiveName = context?.PerspectiveType is { } perspectiveType ? TypeNameFormatter.SimpleName(perspectiveType) : "Unknown";
     var streamId = context?.StreamId?.ToString() ?? "Unknown";
 
-    Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {typeof(TEvent).Name} on stream {streamId}");
+    Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {TypeNameFormatter.ForLog(typeof(TEvent))} on stream {streamId}");
 
     // Track (perspectiveName, streamId) pairs to count per-stream invocations
     // This allows counting multiple events for the same perspective (e.g., 2 ProductCreatedEvents -> 2 InventoryLevelsPerspective invocations)

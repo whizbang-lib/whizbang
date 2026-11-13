@@ -103,6 +103,15 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// </summary>
   /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
   public bool Recheck { get; init; }
+
+  /// <summary>
+  /// #2262: the origin generation the asker last recorded beside its seal for this origin. The origin answers how far
+  /// its history was rewritten since (<see cref="IntegrityManifest.RewrittenSinceGeneration"/>,
+  /// <see cref="IntegrityManifest.RewrittenFrom"/>), so a new generation lowers the asker's seal only that far. Null on
+  /// first contact and from a sender that predates the field; the origin then vouches for nothing.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public long? KnownOriginGeneration { get; init; }
 }
 
 /// <summary>
@@ -171,6 +180,22 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   public long? OriginGeneration { get; init; }
 
   /// <summary>
+  /// #2262: the generation <see cref="RewrittenFrom"/> counts from, echoing the ask's
+  /// <see cref="RequestIntegrityManifest.KnownOriginGeneration"/>. Null when the ask named none, or when the origin's
+  /// rewrite log no longer reaches back to it; a consumer then resets its seal on a new generation, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public long? RewrittenSinceGeneration { get; init; }
+
+  /// <summary>
+  /// #2262: the lowest position of the origin's own lane that any rewrite after
+  /// <see cref="RewrittenSinceGeneration"/> touched. Null with a since-generation set means nothing was rewritten
+  /// since. A consumer keeps a seal at or below it and lowers a seal above it to it, never to 0.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public long? RewrittenFrom { get; init; }
+
+  /// <summary>
   /// #2107: true when the origin shortened the window at its <see cref="StreamIntegrityOptions.MaxAuditWindowSequences"/>:
   /// <see cref="ComputedThrough"/> is the end of the slice it answered, not its settled head, and more settled history
   /// follows. A consumer that seals a clean capped window asks for the next one from <see cref="ComputedThrough"/>.
@@ -215,6 +240,18 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>
 [PinnedId("a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85")]
 public sealed record ScheduledIntegritySweep : ICommand;
+
+/// <summary>
+/// #2262: what an origin vouches about its history since a generation: every rewrite of its own lane after
+/// <paramref name="SinceGeneration"/> touched nothing below <paramref name="RewrittenFrom"/> (null: nothing was rewritten
+/// since). A consumer's generation guard lowers its seal to <paramref name="RewrittenFrom"/> when the seal is above it,
+/// and keeps it otherwise.
+/// </summary>
+/// <param name="SinceGeneration">The generation the floor counts from.</param>
+/// <param name="RewrittenFrom">The lowest rewritten position after it; null when nothing was rewritten.</param>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs</tests>
+public sealed record IntegrityHistoryRewrite(long SinceGeneration, long? RewrittenFrom);
 
 /// <summary>
 /// Stream-integrity #80-B: the result of a NEGOTIATED-SCOPE digest read — digests for a sequence

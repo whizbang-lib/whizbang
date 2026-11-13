@@ -132,7 +132,7 @@ public class IntegrityLedgerForgetUnconsumedSqlTests : EFCoreTestBase {
   public async Task Forget_WithTheFunctionUnavailable_ForgetsNothing_AndDoesNotThrowAsync() {
     await _trackAsync(TrackedGuid.New().Value, UNCONSUMED);
     await using (var ctx = CreateDbContext()) {
-      await ctx.Database.ExecuteSqlRawAsync("DROP FUNCTION IF EXISTS wh_integrity_forget_unconsumed(TEXT[], TEXT[])");
+      await ctx.Database.ExecuteSqlRawAsync("DROP FUNCTION IF EXISTS wh_integrity_forget_unconsumed_counted(TEXT[], TEXT[])");
     }
 
     var forgotten = await _coordinator().IntegrityForgetUnconsumedEventTypesAsync([CONSUMED], []);

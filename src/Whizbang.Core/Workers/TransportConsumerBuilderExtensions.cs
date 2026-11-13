@@ -457,7 +457,7 @@ public static class TransportConsumerBuilderExtensions {
   /// Gets the service name from <see cref="IServiceInstanceProvider"/> or falls back to assembly name.
   /// </summary>
   private static string _getServiceName(IServiceProvider sp)
-    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name);
+    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly() is { } entry ? TypeNameFormatter.AssemblySimpleName(entry) : null);
 
   /// <summary>
   /// The service-name fallback chain, with the entry-assembly lookup supplied by the caller.

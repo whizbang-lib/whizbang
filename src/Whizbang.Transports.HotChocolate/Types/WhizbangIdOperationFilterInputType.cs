@@ -5,6 +5,7 @@ using System.Linq.Expressions;
 using HotChocolate.Data.Filters;
 using HotChocolate.Language;
 using HotChocolate.Types;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.HotChocolate.Types;
 
@@ -24,10 +25,10 @@ namespace Whizbang.Transports.HotChocolate.Types;
 internal sealed class WhizbangIdOperationFilterInputType(Type idType, InputParser inputParser) : FilterInputType {
   /// <inheritdoc />
   protected override void Configure(IFilterInputTypeDescriptor descriptor) {
-    descriptor.Name($"{idType.Name}OperationFilterInput");
+    descriptor.Name($"{TypeNameFormatter.SimpleName(idType)}OperationFilterInput");
 
     // The list operands name the id's scalar, which the eq operand's runtime type has already added to the schema.
-    var ids = new ListTypeNode(new NonNullTypeNode(new NamedTypeNode(idType.Name)));
+    var ids = new ListTypeNode(new NonNullTypeNode(new NamedTypeNode(TypeNameFormatter.SimpleName(idType))));
 
     _handle(descriptor.Operation(DefaultFilterOperations.Equals).Type(idType),
       canBeNull: true, WhizbangIdFilterHandler.IdEquals);

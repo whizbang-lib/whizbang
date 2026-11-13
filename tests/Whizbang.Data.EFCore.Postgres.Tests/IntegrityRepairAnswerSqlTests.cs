@@ -88,6 +88,57 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
       .Because("the next comparison still found it divergent, which re-arms it");
   }
 
+  // ===== #2268: an answer bundled across streams =====
+
+  [Test]
+  public async Task RecordBundleAnswer_ABundleSpanningStreams_AnswersEveryStreamsBucketAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var first = TrackedGuid.New().Value;
+    var second = TrackedGuid.New().Value;
+    await using var conn = await _openAsync();
+    var type = await _normalizedTypeAsync(conn);
+    IntegrityRepairLedger.DivergenceKey[] keys = [_key(origin, first, type), _key(origin, second, type)];
+    foreach (var key in keys) {
+      await _reportAsync(coordinator, key, deficit: 1, at: _t0);
+    }
+    _ = await coordinator.IntegrityMarkAnswerPendingAsync(origin, keys, null, null, _t0.AddSeconds(1), _answerTimeout);
+    var missingFirst = TrackedGuid.New().Value;
+    var missingSecond = TrackedGuid.New().Value;
+    await _storeAsync(_message(missingFirst, first, origin, 7), _message(missingSecond, second, origin, 8));
+
+    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(origin, [missingFirst, missingSecond], [7, 8], _t0.AddMinutes(5));
+
+    await Assert.That(answer!.Absent).IsEqualTo(2);
+    await Assert.That(await _scalarAsync<long>(conn,
+      "SELECT COUNT(*) FROM wh_integrity_ledger WHERE stream_id = ANY($1) AND answer_pending_until IS NULL AND answered_at IS NOT NULL",
+      new[] { first, second })).IsEqualTo(2L)
+      .Because("one bundle carrying two streams' events answers each stream's bucket, as two one-stream bundles did");
+  }
+
+  [Test]
+  public async Task RecordBundleAnswer_ABundleSpanningStreams_MarksUnchangedOnlyWhenTheWholeBundleChangedNothingAsync() {
+    // The commit-time "changed nothing" judgment is per bundle. A stream whose events were all stored already, bundled
+    // with a stream the bundle repaired, is answered but not marked; the next answer that changes nothing marks it.
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var stuck = TrackedGuid.New().Value;
+    var healing = TrackedGuid.New().Value;
+    await using var conn = await _openAsync();
+    var type = await _normalizedTypeAsync(conn);
+    var stored = await _storeEventAsync(conn, stuck, version: 1, origin, originSequence: 4);
+    await _reportAsync(coordinator, _key(origin, stuck, type), deficit: 1, at: _t0);
+    await _reportAsync(coordinator, _key(origin, healing, type), deficit: 1, at: _t0);
+    var missing = TrackedGuid.New().Value;
+    await _storeAsync(_message(missing, healing, origin, 5));
+
+    var mixed = await coordinator.IntegrityRecordBundleAnswerAsync(origin, [stored, missing], [4, 5], _t0.AddMinutes(5));
+    var alone = await coordinator.IntegrityRecordBundleAnswerAsync(origin, [stored], [4], _t0.AddMinutes(6));
+
+    await Assert.That(mixed!.MarkedUnchanged).IsEmpty();
+    await Assert.That(alone!.MarkedUnchanged).IsEquivalentTo([_key(origin, stuck, type)]);
+  }
+
   // ===== #2033: the unhealable mark at commit =====
 
   [Test]

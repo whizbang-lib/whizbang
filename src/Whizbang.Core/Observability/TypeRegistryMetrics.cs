@@ -84,7 +84,7 @@ public sealed class TypeRegistryMetrics {
   /// asserted: under a managed host the entry assembly is never null.
   /// </summary>
   internal static KeyValuePair<string, object?> ServiceTag(string? service, System.Reflection.Assembly? entryAssembly) {
-    service ??= entryAssembly?.GetName().Name;
+    service ??= entryAssembly is null ? null : TypeNameFormatter.AssemblySimpleName(entryAssembly);
     return new KeyValuePair<string, object?>("service", string.IsNullOrEmpty(service) ? "<unknown>" : service);
   }
 }

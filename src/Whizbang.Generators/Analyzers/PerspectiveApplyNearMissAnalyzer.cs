@@ -91,7 +91,7 @@ public class PerspectiveApplyNearMissAnalyzer : DiagnosticAnalyzer {
             MisspelledApply,
             candidate.Locations[0],
             candidate.Name,
-            perspective.Name,
+            TypeNameUtilities.SimpleName(perspective),
             TypeNameUtilities.MinimallyQualified(candidate.Parameters[1].Type)));
       }
     });

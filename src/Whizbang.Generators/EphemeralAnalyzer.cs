@@ -231,21 +231,21 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     }
     var pairs = MixedStreamOptIn.Pairs(events);
     if (pairs.Count > 0) {
-      mixed.Add(new MixedReadModel(symbol.Name, LocationUtilities.FirstOrNone(symbol), MixedStreamOptIn.AllowsStreams(symbol),
+      mixed.Add(new MixedReadModel(TypeNameUtilities.SimpleName(symbol), LocationUtilities.FirstOrNone(symbol), MixedStreamOptIn.AllowsStreams(symbol),
         [.. pairs.Select(p => (TypeNameUtilities.Display(p.Ephemeral), TypeNameUtilities.Display(p.Durable)))]));
     }
 
     var ephemeral = new List<string>();
     var sourced = new List<string>();
     foreach (var evt in events) {
-      (EphemeralResolver.IsEphemeral(evt) ? ephemeral : sourced).Add(evt.Name);
+      (EphemeralResolver.IsEphemeral(evt) ? ephemeral : sourced).Add(TypeNameUtilities.SimpleName(evt));
     }
 
     if (pairs.Count > 0 && !MixedStreamOptIn.HasOptIn(symbol)) {
       context.ReportDiagnostic(Diagnostic.Create(
         MixedModePerspective,
         LocationUtilities.FirstOrNone(symbol),
-        symbol.Name,
+        TypeNameUtilities.SimpleName(symbol),
         string.Join(", ", ephemeral),
         string.Join(", ", sourced)));
     }
@@ -256,7 +256,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(Diagnostic.Create(
         AmbiguousComposition,
         LocationUtilities.FirstOrNone(symbol),
-        symbol.Name));
+        TypeNameUtilities.SimpleName(symbol)));
     }
   }
 
@@ -275,8 +275,8 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
         context.ReportDiagnostic(Diagnostic.Create(
           EphemeralToSourcedLaundering,
           LocationUtilities.FirstOrNone(symbol),
-          symbol.Name,
-          receptor.TypeArguments[0].Name,
+          TypeNameUtilities.SimpleName(symbol),
+          TypeNameUtilities.SimpleName(receptor.TypeArguments[0]),
           string.Join(", ", sourced.Distinct(System.StringComparer.Ordinal))));
       }
     }
@@ -303,7 +303,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
         break;
       case INamedTypeSymbol named when _isEvent(named):
         if (!named.IsAbstract && !EphemeralResolver.IsEphemeral(named)) {
-          sourced.Add(named.Name);
+          sourced.Add(TypeNameUtilities.SimpleName(named));
         }
         break;
       case INamedTypeSymbol wrapper:
@@ -431,7 +431,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
         name.Syntax.GetLocation(),
         action,
         TypeNameUtilities.BuildClrTypeName(perspective),
-        string.Join(", ", events.Select(e => e.Name))));
+        string.Join(", ", events.Select(e => TypeNameUtilities.SimpleName(e)))));
     }
   }
 

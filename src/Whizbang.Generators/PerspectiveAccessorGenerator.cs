@@ -77,7 +77,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
       (ClassDeclarationSyntax)context.Node, cancellationToken)!;
 
     var perspective = declared.AllInterfaces.FirstOrDefault(
-      i => i.Name == "IPerspectiveFor" && i.TypeArguments.Length > 0);
+      i => TypeNameUtilities.SimpleName(i) == "IPerspectiveFor" && i.TypeArguments.Length > 0);
 
     if (perspective?.TypeArguments[0] is not INamedTypeSymbol model) {
       return null;
@@ -90,17 +90,17 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var containing = TypeNameUtilities.NamespaceName(model.ContainingNamespace);
+    var containing = TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(model));
 
     // A model nested in another type shares its namespace with every other model nested in a
     // sibling, and they may share a simple name. The declaring types are part of the name here for
     // the same reason they are part of the model's own.
     var declaring = new List<string>();
     for (var outer = model.ContainingType; outer is not null; outer = outer.ContainingType) {
-      declaring.Insert(0, outer.Name);
+      declaring.Insert(0, TypeNameUtilities.SimpleName(outer));
     }
 
-    declaring.Add(model.Name);
+    declaring.Add(TypeNameUtilities.SimpleName(model));
     var name = string.Join("_", declaring);
 
     // A model no more visible than its assembly cannot be handed out by a public property. The
@@ -180,7 +180,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
   private static bool _hasPathsBeneath(INamedTypeSymbol type) =>
     type.TypeKind == TypeKind.Class
     && type.SpecialType == SpecialType.None
-    && !type.AllInterfaces.Any(i => i.Name == "IEnumerable");
+    && !type.AllInterfaces.Any(i => TypeNameUtilities.SimpleName(i) == "IEnumerable");
 
 
   /// <summary>Writes one accessor class per model.</summary>

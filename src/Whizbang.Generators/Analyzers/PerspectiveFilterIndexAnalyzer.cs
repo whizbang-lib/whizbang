@@ -858,7 +858,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
     // Every caller found the field on the model, so the model is a real type with members, and a real
     // type belongs to an assembly.
-    var owning = model.ContainingAssembly!;
+    var owning = TypeNameUtilities.AssemblyOf(model);
     return !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
            HasReasonedSuppression(owning.GetAttributes());
   }

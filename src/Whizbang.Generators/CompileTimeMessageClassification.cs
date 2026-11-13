@@ -36,7 +36,7 @@ public static class CompileTimeMessageClassification {
   /// conventions (OwnDomains patterns, broker routing keys). Empty for global-namespace types.
   /// </summary>
   internal static string ContractNamespaceOf(ITypeSymbol messageType) {
-    return TypeNameUtilities.NamespaceName(messageType.ContainingNamespace).ToLowerInvariant();
+    return TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(messageType)).ToLowerInvariant();
   }
 
 #pragma warning disable S3776 // the classification is one decision table over the type's markers and base types; a split would hide the table
@@ -64,7 +64,7 @@ public static class CompileTimeMessageClassification {
 
     // Priority 2: framework system namespace subtree (outranks interfaces — framework
     // system commands implement ICommand yet are broadcast/run-control traffic)
-    var ns = TypeNameUtilities.NamespaceName(messageType.ContainingNamespace);
+    var ns = TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(messageType));
     if (ns == FRAMEWORK_SYSTEM_NAMESPACE
         || ns.StartsWith(FRAMEWORK_SYSTEM_NAMESPACE + ".", System.StringComparison.Ordinal)) {
       return "System";
@@ -98,7 +98,7 @@ public static class CompileTimeMessageClassification {
     }
 
     // Priority 5: type-name suffix
-    var name = messageType.Name;
+    var name = TypeNameUtilities.SimpleName(messageType);
     if (name.EndsWith(COMMAND_KIND, System.StringComparison.Ordinal)) {
       return COMMAND_KIND;
     }
@@ -131,7 +131,7 @@ public static class CompileTimeMessageClassification {
       }
       var arg = attr.ConstructorArguments[0];
       if (arg.Type is INamedTypeSymbol enumType
-          && enumType.Name == "LifecycleStage"
+          && TypeNameUtilities.SimpleName(enumType) == "LifecycleStage"
           && arg.Value is int v) {
         var member = enumType.GetMembers().OfType<IFieldSymbol>()
           .FirstOrDefault(f => Equals(f.ConstantValue, v));

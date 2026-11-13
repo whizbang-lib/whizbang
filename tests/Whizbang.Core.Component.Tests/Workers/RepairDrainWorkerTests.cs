@@ -85,6 +85,8 @@ public class RepairDrainWorkerTests {
     var own = typeA.Single(r => r.StreamIds!.Count == 1);
     await Assert.That(own.FromCommitSequence).IsEqualTo(199L);
     await Assert.That(own.ToCommitSequence).IsEqualTo(599L);
+    await Assert.That(typeA.All(r => r.AcceptsStreamSpanningBundles)).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
   }
 
   [Test]

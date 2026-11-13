@@ -41,18 +41,19 @@ public class ReceptorNotFoundException(Type messageType) : Exception(_formatMess
   public Type MessageType => messageType;
 
   private static string _formatMessage(Type messageType) {
+    var name = TypeNameFormatter.ForLog(messageType);
     return $@"No receptor found for message type '{TypeNameFormatter.DisplayName(messageType)}'.
 
 To fix this:
-1. Create a receptor that implements IReceptor<{messageType.Name}, TResponse>
+1. Create a receptor that implements IReceptor<{name}, TResponse>
 2. Ensure the receptor is in a project that references Whizbang.Generators
 3. The receptor will be auto-discovered at compile time (no attribute needed)
 
 Example:
-public class {messageType.Name}Receptor : IReceptor<{messageType.Name}, {messageType.Name}Result> {{
-    public async Task<{messageType.Name}Result> HandleAsync({messageType.Name} message) {{
+public class {name}Receptor : IReceptor<{name}, {name}Result> {{
+    public async Task<{name}Result> HandleAsync({name} message) {{
         // Handle message
-        return new {messageType.Name}Result();
+        return new {name}Result();
     }}
 }}";
   }

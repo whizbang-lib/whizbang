@@ -126,7 +126,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
             ApplyForUnlistedEvent,
             _location(apply, perspective, inherited),
             _inheritedFrom(apply, inherited),
-            perspective.Name,
+            TypeNameUtilities.SimpleName(perspective),
             TypeNameUtilities.MinimallyQualified(eventType),
             TypeNameUtilities.MinimallyQualified(model)));
       } else if (_undeclaredReturn(contract, apply) is { } declared) {
@@ -135,7 +135,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
             _location(apply, perspective, inherited),
             _inheritedFrom(apply, inherited),
             TypeNameUtilities.MinimallyQualified(eventType),
-            perspective.Name,
+            TypeNameUtilities.SimpleName(perspective),
             TypeNameUtilities.MinimallyQualified(apply.ReturnType),
             declared,
             TypeNameUtilities.MinimallyQualified(model)));
@@ -154,7 +154,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(Diagnostic.Create(
           EventWithNoDeclaredApply,
           perspective.Locations[0],
-          perspective.Name,
+          TypeNameUtilities.SimpleName(perspective),
           TypeNameUtilities.MinimallyQualified(eventType),
           TypeNameUtilities.MinimallyQualified(model)));
     }
@@ -188,7 +188,7 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
         context.ReportDiagnostic(Diagnostic.Create(
             DuplicateApplyForEvent,
             _location(other, perspective, inherited),
-            perspective.Name,
+            TypeNameUtilities.SimpleName(perspective),
             TypeNameUtilities.MinimallyQualified(explicitApply.Parameters[1].Type),
             $"{TypeNameUtilities.MinimallyQualified(explicitApply.ExplicitInterfaceImplementations[0].ContainingType)}.Apply",
             _signature(other, inherited)));
@@ -212,5 +212,5 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
     inherited ? perspective.Locations[0] : apply.Locations[0];
 
   private static string _inheritedFrom(IMethodSymbol apply, bool inherited) =>
-    inherited ? $" (inherited from '{apply.ContainingType.Name}')" : "";
+    inherited ? $" (inherited from '{TypeNameUtilities.SimpleName(apply.ContainingType)}')" : "";
 }

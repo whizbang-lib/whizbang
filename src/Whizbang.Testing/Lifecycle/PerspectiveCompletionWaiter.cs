@@ -63,7 +63,7 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     _bffPerspectives = bffPerspectives;
 
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
-    Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");
+    Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {TypeNameFormatter.ForLog(typeof(TEvent))} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");
 
     // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
     _inventoryCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -97,7 +97,7 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     }
 
     // CRITICAL: Register receptors NOW (before command is sent)
-    Console.WriteLine($"[PerspectiveWaiter] Registering receptors for {typeof(TEvent).Name}");
+    Console.WriteLine($"[PerspectiveWaiter] Registering receptors for {TypeNameFormatter.ForLog(typeof(TEvent))}");
     _inventoryRegistry.Register<TEvent>(_inventoryReceptor, LifecycleStage.PostPerspectiveInline);
     _bffRegistry.Register<TEvent>(_bffReceptor, LifecycleStage.PostPerspectiveInline);
     Console.WriteLine("[PerspectiveWaiter] Receptors registered! Ready to send command.");
@@ -111,7 +111,7 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   public async Task WaitAsync(int timeoutMilliseconds = 45000) {
     var effectiveTimeout = TestTimeouts.Scale(timeoutMilliseconds);
     var totalPerspectives = _inventoryPerspectives + _bffPerspectives;
-    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={effectiveTimeout}ms{(TestTimeouts.Multiplier > 1 ? $" [x{TestTimeouts.Multiplier}]" : "")})");
+    Console.WriteLine($"[PerspectiveWaiter] Waiting for {TypeNameFormatter.ForLog(typeof(TEvent))} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={effectiveTimeout}ms{(TestTimeouts.Multiplier > 1 ? $" [x{TestTimeouts.Multiplier}]" : "")})");
 
     try {
       // Wait for BOTH hosts to complete their perspectives
@@ -119,9 +119,9 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
         _inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout)),
         _bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout))
       );
-      Console.WriteLine($"[PerspectiveWaiter] All {totalPerspectives} perspectives completed for {typeof(TEvent).Name}!");
+      Console.WriteLine($"[PerspectiveWaiter] All {totalPerspectives} perspectives completed for {TypeNameFormatter.ForLog(typeof(TEvent))}!");
     } catch (TimeoutException) {
-      Console.WriteLine($"[PerspectiveWaiter] TIMEOUT waiting for {typeof(TEvent).Name} after {timeoutMilliseconds}ms");
+      Console.WriteLine($"[PerspectiveWaiter] TIMEOUT waiting for {TypeNameFormatter.ForLog(typeof(TEvent))} after {timeoutMilliseconds}ms");
       Console.WriteLine($"[PerspectiveWaiter] Inventory completed: {_inventoryCompletionSource.Task.IsCompleted}");
       Console.WriteLine($"[PerspectiveWaiter] BFF completed: {_bffCompletionSource.Task.IsCompleted}");
       throw;
@@ -132,7 +132,7 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// Unregister receptors from both hosts.
   /// </summary>
   public void Dispose() {
-    Console.WriteLine($"[PerspectiveWaiter] Disposing waiter for {typeof(TEvent).Name}");
+    Console.WriteLine($"[PerspectiveWaiter] Disposing waiter for {TypeNameFormatter.ForLog(typeof(TEvent))}");
     _inventoryRegistry.Unregister<TEvent>(_inventoryReceptor, LifecycleStage.PostPerspectiveInline);
     _bffRegistry.Unregister<TEvent>(_bffReceptor, LifecycleStage.PostPerspectiveInline);
   }

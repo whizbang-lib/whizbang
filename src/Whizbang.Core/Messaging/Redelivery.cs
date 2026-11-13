@@ -193,6 +193,16 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
   public bool OperatorRequested { get; init; }
 
   /// <summary>
+  /// True when the requester files each child of a redelivery bundle under the stream the child names, so the origin
+  /// may answer with bundles that span streams (#2268). Every request this release sends sets it. A requester on a
+  /// release that predates the field leaves it false, which a JSON payload without it also reads as, and is answered
+  /// one stream per bundle, because it would file every child of a bundle under the bundle's own stream.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-answers-bundle-across-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryWindowAnswerTests.cs</tests>
+  public bool AcceptsStreamSpanningBundles { get; init; }
+
+  /// <summary>
   /// Set by a paced backfill (#2092): the request is one WINDOW of that backfill. The origin selects in commit-sequence
   /// order from <see cref="FromCommitSequence"/>, up to <see cref="MaxEvents"/> (clamped by its own cap), ships the
   /// events in as few bundles as its size bounds allow, all on this id's session, and then sends a

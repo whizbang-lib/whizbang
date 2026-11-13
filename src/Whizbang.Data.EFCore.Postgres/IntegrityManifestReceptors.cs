@@ -229,6 +229,11 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // #80-F: every answer carries the history generation — how a consumer distinguishes a
     // deliberate mutation of folded history (reset + re-verify) from damage (alarm).
     var originGeneration = await coordinator.GetIntegrityOriginGenerationAsync(cancellationToken).ConfigureAwait(false);
+    // #2262: how far history was rewritten since the generation the asker recorded. Read AFTER the generation, so a rewrite
+    // committed between the two reads is counted in the floor: the floor may then be lower than needed, never higher.
+    var rewrite = message.KnownOriginGeneration is long knownGeneration
+      ? await coordinator.GetIntegrityHistoryRewriteAsync(knownGeneration, cancellationToken).ConfigureAwait(false)
+      : null;
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -259,6 +264,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
           ResumeAfterStreamId = resumeAfter,
           ChunkCount = totalChunks,
           OriginGeneration = originGeneration,
+          RewrittenSinceGeneration = rewrite?.SinceGeneration,
+          RewrittenFrom = rewrite?.RewrittenFrom,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
@@ -444,8 +451,12 @@ public sealed partial class IntegrityManifestReceptor(
     // and folds were aligned to the OLD world, and comparing them would alarm on deliberate
     // change. The guard resets the seal once; the next audit re-verifies from the beginning.
     if (message.OriginGeneration is long carriedGeneration) {
+      // #2262: with the origin's rewrite floor, the guard lowers the seal only as far as the rewrite reached.
+      var rewrite = message.RewrittenSinceGeneration is long rewrittenSince
+        ? new IntegrityHistoryRewrite(rewrittenSince, message.RewrittenFrom)
+        : null;
       var coherent = await coordinator.EnsureIntegritySealGenerationAsync(
-        message.OriginServiceId, carriedGeneration, cancellationToken).ConfigureAwait(false);
+        message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
         return;
@@ -596,6 +607,14 @@ public sealed partial class IntegrityManifestReceptor(
         _ => "local_extra",
       };
       divergent.Add((origin, mine, isDeficit, reason));
+    }
+
+    // #2259: a re-check also heals a divergent bucket whose fold matches once the events stored inside the settle window
+    // are counted. A repair answer stores the missing events now, so the settled fold leaves out exactly what the answer
+    // brought, and the healed bucket read as short until the window passed.
+    if (message.Recheck && divergent.Count > 0) {
+      divergent = await _healWhatTheAnswerStoredAsync(coordinator, message, divergent, healedKeys, cancellationToken)
+        .ConfigureAwait(false);
     }
 
     // #2115: the rows this comparison removed, which a re-check's answer counts (a ledger that cannot say what it removed
@@ -793,6 +812,47 @@ public sealed partial class IntegrityManifestReceptor(
     message.RequestedEventTypes is { Count: > 0 } walk ? [.. walk] : pageTypes;
 
   /// <summary>
+  /// #2259: folds a re-check's divergent buckets again counting the events stored inside the settle window, and moves
+  /// each one that now matches its origin's digest to <paramref name="healedKeys"/>. The settle window exists for events
+  /// still in flight from the origin; it judges by the local arrival time, so it also leaves out the events a repair
+  /// answer just stored, which is exactly what a re-check of an answered bucket has to see. Only a fold EQUAL to the
+  /// origin's closes a row: an event in flight the origin has not yet settled makes the fold differ and the bucket stays
+  /// as the settled fold read it. An engine that cannot fold the chunk leaves every bucket as it was.
+  /// </summary>
+  /// <returns>The divergences still to record, in manifest order.</returns>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_HealsABucketWhoseAnsweredEventIsInsideTheSettleWindowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenEvenWhatTheAnswerStoredDoesNotMatchAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenTheUnsettledFoldHasNoRowForTheBucketAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_OnAnEngineThatCannotFoldTheChunk_KeepsTheRowAsync</tests>
+  private static async Task<List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>> _healWhatTheAnswerStoredAsync(
+      IWorkCoordinator coordinator, IntegrityManifest message,
+      List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)> divergent,
+      List<IntegrityRepairLedger.DivergenceKey> healedKeys, CancellationToken cancellationToken) {
+    var streams = divergent.Select(d => d.Origin.StreamId).Distinct().ToList();
+    // The same range the settled fold covered: the manifest's window, or the whole history.
+    var windowed = message.ComputedThrough is not null;
+    var unsettled = await coordinator.ComputeStreamDigestsForChunkAsync(
+      message.OriginServiceId, streams, windowed ? message.SinceSequence ?? 0 : null, message.ComputedThrough, TimeSpan.Zero,
+      cancellationToken).ConfigureAwait(false);
+    if (unsettled is null) {
+      return divergent;
+    }
+    var byBucket = unsettled.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
+    var still = new List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>(divergent.Count);
+    foreach (var entry in divergent) {
+      var origin = entry.Origin;
+      byBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var held);
+      if (IntegrityDigestMath.PlaceHeld(origin, held, null).Verdict == HeldWindowVerdict.Matches) {
+        healedKeys.Add(new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId));
+      } else {
+        still.Add(entry);
+      }
+    }
+    return still;
+  }
+
+  /// <summary>
   /// #1792: decides which deficit buckets this comparison may add to the paced repair drain's ledger.
   /// A bucket the ledger already tracks is always admitted (its row is refreshed, the backlog does not
   /// grow). A NEW bucket is admitted while this comparison has added fewer than
@@ -972,6 +1032,8 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = cursor,
         // #2115: the rest of a re-check's window is a re-check too.
         Recheck = message.Recheck,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)
@@ -1209,6 +1271,8 @@ public sealed partial class IntegrityManifestReceptor(
         UntilSequence = message.ComputedThrough,
         MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
         ResumeAfterStreamId = resumeAfter,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1301,6 +1365,8 @@ public sealed partial class IntegrityManifestReceptor(
         Windowed = true,
         SinceSequence = through,
         WindowNumber = window,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1377,6 +1443,7 @@ public sealed partial class IntegrityManifestReceptor(
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
         StateOnly = true,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1432,6 +1499,7 @@ public sealed partial class IntegrityManifestReceptor(
         // manifests leave both null, the pre-existing whole-history semantics.
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1514,7 +1582,8 @@ public sealed partial class IntegrityManifestReceptor(
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Information,
     Message = "Origin '{OriginServiceName}' history generation changed to {Generation} — a legitimate " +
-              "mutation (close/reclassify); seal reset, this comparison round skipped, re-verifying from the beginning next audit")]
+              "rewrite of its history below the seal; the seal fell to the rewrite point (or to the start when the origin " +
+              "could not say how far the rewrite reached), this comparison round skipped, re-verifying from there next audit")]
   static partial void LogGenerationChanged(ILogger logger, string originServiceName, long generation);
 
   [LoggerMessage(EventId = 62, Level = LogLevel.Debug,

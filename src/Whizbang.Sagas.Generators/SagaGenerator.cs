@@ -118,8 +118,8 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     }
 
     return new SagaInfo(
-      @namespace: typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : TypeNameUtilities.Display(typeSymbol.ContainingNamespace),
-      className: typeSymbol.Name,
+      @namespace: TypeNameUtilities.NamespaceOf(typeSymbol).IsGlobalNamespace ? null : TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(typeSymbol)),
+      className: TypeNameUtilities.SimpleName(typeSymbol),
       sagaName: sagaName!,
       eventBaseFullName: eventBaseFullName,
       options: new SagaEmitOptions(includeHooks, generateService, isPartial, _readOutcomeDeclaration(typeSymbol)),
