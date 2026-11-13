@@ -99,7 +99,7 @@ public class LateLoadedServiceAssemblyTests {
     using var _ = WhizbangServiceAssemblies.ReplaceForTesting(new ServiceAssemblyFacts("Orders", true, []));
     var services = _anchoredOn("Orders");
     services.AddServiceAssemblyScope();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var query = new WhizbangReceptorRegistryQueryAdapter(
       NullReceptorRegistry.Instance, provider.GetRequiredService<ServiceAssemblyScope>());
     _contribute("Orders", ORDERS_EVENT);

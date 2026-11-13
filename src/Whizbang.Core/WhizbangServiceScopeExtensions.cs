@@ -57,8 +57,8 @@ public static class WhizbangServiceScopeExtensions {
   /// container holds, and the startup report that names what it included and excluded.
   /// </summary>
   internal static IServiceCollection AddServiceAssemblyScope(this IServiceCollection services) {
-    services.TryAddSingleton(sp => ServiceAssemblyScope.Compute(
-      sp.GetServices<WhizbangServiceAnchor>().Select(anchor => anchor.Assembly), WhizbangServiceAssemblies.Snapshot()));
+    services.TryAddSingleton(sp => ServiceAssemblyScope.ComputeForProcess(
+      sp.GetServices<WhizbangServiceAnchor>().Select(anchor => anchor.Assembly)));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Hosting.IHostedService, ServiceAssemblyScopeStartupReporter>(
       sp => new ServiceAssemblyScopeStartupReporter(
         sp.GetRequiredService<ServiceAssemblyScope>(),

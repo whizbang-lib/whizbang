@@ -54,14 +54,23 @@ public sealed record ServiceAssemblyFacts(string Assembly, bool IsServiceRoot, I
 public sealed class ServiceAssemblyScope {
   private readonly HashSet<string> _foreign;
 
+  // #2283: a scope computed from the process's recorded facts classifies an assembly whose facts arrive later by the
+  // same rule; _known holds the assemblies classified when the scope was computed, whose classification never changes.
+  private readonly bool _followsLateAssemblies;
+  private readonly HashSet<string> _known;
+  private LateAssemblies? _late;
+
   private ServiceAssemblyScope(
       IReadOnlyList<string> anchors, HashSet<string> foreign,
-      IReadOnlyList<string> included, IReadOnlyList<string> excluded, string? unscopedReason) {
+      IReadOnlyList<string> included, IReadOnlyList<string> excluded, string? unscopedReason,
+      bool followsLateAssemblies = false) {
     Anchors = anchors;
     _foreign = foreign;
     Included = included;
     Excluded = excluded;
     UnscopedReason = unscopedReason;
+    _followsLateAssemblies = followsLateAssemblies && unscopedReason is null;
+    _known = new HashSet<string>(included.Concat(excluded), StringComparer.Ordinal);
   }
 
   /// <summary>The scope of a host that names no service: every assembly is included.</summary>
@@ -86,7 +95,21 @@ public sealed class ServiceAssemblyScope {
   /// <param name="anchors">The assemblies the host anchors on.</param>
   /// <param name="facts">Every generated assembly's facts, by name.</param>
   public static ServiceAssemblyScope Compute(
-      IEnumerable<string> anchors, IReadOnlyDictionary<string, ServiceAssemblyFacts> facts) {
+      IEnumerable<string> anchors, IReadOnlyDictionary<string, ServiceAssemblyFacts> facts) =>
+    _compute(anchors, facts, followsLateAssemblies: false);
+
+  /// <summary>
+  /// The scope of a host anchored on <paramref name="anchors"/>, from the facts recorded in the process so far; an
+  /// assembly that records its facts later is classified by the same rule when it does (#2283), so a service whose code
+  /// loads after the host was anchored is never counted as the host's own.
+  /// </summary>
+  /// <param name="anchors">The assemblies the host anchors on.</param>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/LateLoadedServiceAssemblyTests.cs</tests>
+  internal static ServiceAssemblyScope ComputeForProcess(IEnumerable<string> anchors) =>
+    _compute(anchors, WhizbangServiceAssemblies.Snapshot(), followsLateAssemblies: true);
+
+  private static ServiceAssemblyScope _compute(
+      IEnumerable<string> anchors, IReadOnlyDictionary<string, ServiceAssemblyFacts> facts, bool followsLateAssemblies) {
     ArgumentNullException.ThrowIfNull(anchors);
     ArgumentNullException.ThrowIfNull(facts);
     var anchorList = anchors.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -118,7 +141,8 @@ public sealed class ServiceAssemblyScope {
       anchorList, foreign,
       [.. known.Where(name => !foreign.Contains(name))],
       [.. known.Where(foreign.Contains)],
-      unscopedReason: null);
+      unscopedReason: null,
+      followsLateAssemblies);
   }
 
   /// <summary>
@@ -128,7 +152,7 @@ public sealed class ServiceAssemblyScope {
   /// <param name="services">The host's service collection.</param>
   public static ServiceAssemblyScope For(IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
-    return Compute(WhizbangServiceScopeExtensions.AnchorsIn(services), WhizbangServiceAssemblies.Snapshot());
+    return ComputeForProcess(WhizbangServiceScopeExtensions.AnchorsIn(services));
   }
 
   /// <summary>
@@ -136,12 +160,36 @@ public sealed class ServiceAssemblyScope {
   /// recorded no facts, is always included: it is not known to be another service's.
   /// </summary>
   /// <param name="assembly">The registering assembly's name.</param>
-  public bool Includes(string? assembly) => assembly is null || !_foreign.Contains(assembly);
+  /// <remarks>
+  /// A host's scope classifies an assembly that recorded its facts after the scope was computed when it is first asked
+  /// about (#2283), by the rule above: it is excluded when it is another service's root or only another service is built
+  /// on it, and included when the host is built on it or nothing says it is another's. An assembly classified when the
+  /// scope was computed keeps its classification, so registrations already made under it stay consistent.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/LateLoadedServiceAssemblyTests.cs</tests>
+  public bool Includes(string? assembly) => assembly is null || !(_foreign.Contains(assembly) || _isLateForeign(assembly));
 
   /// <inheritdoc/>
   public override string ToString() => IsScoped
     ? $"anchored on [{string.Join(", ", Anchors)}]; included [{string.Join(", ", Included)}]; excluded [{string.Join(", ", Excluded)}]"
     : $"unscoped ({UnscopedReason}); included [{string.Join(", ", Included)}]";
+
+  private bool _isLateForeign(string assembly) {
+    if (!_followsLateAssemblies || _known.Contains(assembly)) {
+      return false;
+    }
+    // Recomputed once per change to the recorded facts, never per lookup.
+    var version = WhizbangServiceAssemblies.Version;
+    var late = Volatile.Read(ref _late);
+    if (late is null || late.Version != version) {
+      late = new LateAssemblies(version, _compute(Anchors, WhizbangServiceAssemblies.Snapshot(), followsLateAssemblies: false)._foreign);
+      Volatile.Write(ref _late, late);
+    }
+    return late.Foreign.Contains(assembly);
+  }
+
+  // Which assemblies the rule excludes over the facts recorded at one version of the process's record.
+  private sealed record LateAssemblies(int Version, HashSet<string> Foreign);
 
   private static ServiceAssemblyScope _unscoped(string[] anchors, string[] known, string reason) =>
     new(anchors, [], known, [], reason);

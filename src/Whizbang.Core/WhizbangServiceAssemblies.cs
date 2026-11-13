@@ -24,6 +24,13 @@ public sealed class WhizbangServiceAssemblyAttribute : Attribute;
 public static class WhizbangServiceAssemblies {
   private static readonly Lock _lock = new();
   private static readonly Dictionary<string, ServiceAssemblyFacts> _facts = new(StringComparer.Ordinal);
+  private static int _version;
+
+  /// <summary>
+  /// Changes whenever a fact is recorded, so a host's scope classifies an assembly that loaded after the host was
+  /// anchored once, when its facts arrive (#2283), instead of on every lookup.
+  /// </summary>
+  internal static int Version => Volatile.Read(ref _version);
 
   /// <summary>Records one generated assembly's facts. Called from generated code.</summary>
   /// <param name="assembly">The assembly's name.</param>
@@ -34,6 +41,7 @@ public static class WhizbangServiceAssemblies {
     ArgumentNullException.ThrowIfNull(references);
     lock (_lock) {
       _facts[assembly] = new ServiceAssemblyFacts(assembly, isServiceRoot, [.. references]);
+      Interlocked.Increment(ref _version);
     }
   }
 
@@ -52,6 +60,7 @@ public static class WhizbangServiceAssemblies {
       foreach (var fact in facts) {
         _facts[fact.Assembly] = fact;
       }
+      Interlocked.Increment(ref _version);
       return new Restore(saved);
     }
   }
@@ -63,6 +72,7 @@ public static class WhizbangServiceAssemblies {
         foreach (var fact in saved) {
           _facts[fact.Assembly] = fact;
         }
+        Interlocked.Increment(ref _version);
       }
     }
   }
