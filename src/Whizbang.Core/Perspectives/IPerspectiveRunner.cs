@@ -174,4 +174,32 @@ public interface IPerspectiveRunner {
     Guid lastProcessedEventId,
     CancellationToken cancellationToken = default
   );
+
+  /// <summary>
+  /// Takes the same bootstrap snapshot as <see cref="BootstrapSnapshotAsync"/> and says what happened: whether a
+  /// snapshot was written, and when none was, why (#2294).
+  /// </summary>
+  /// <remarks>
+  /// A caller that acts on the snapshot, such as the reap-driven pass that takes it so the ephemeral bodies it covers
+  /// can be reclaimed, needs to know it exists: a bootstrap that found no row returned the same as one that wrote a
+  /// snapshot, so the pass reported success for a snapshot that was never taken and selected the same stream again on
+  /// every cycle. Generated runners implement this member and route <see cref="BootstrapSnapshotAsync"/> through it.
+  /// The default, for a runner that implements only <see cref="BootstrapSnapshotAsync"/>, runs it and reports
+  /// <see cref="SnapshotBootstrapOutcome.NotReported"/>, because it cannot know.
+  /// </remarks>
+  /// <param name="streamId">Stream to bootstrap</param>
+  /// <param name="perspectiveName">Perspective to bootstrap</param>
+  /// <param name="lastProcessedEventId">The cursor's last processed event ID to snapshot at</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>What the bootstrap did.</returns>
+  /// <docs>fundamentals/perspectives/snapshots#bootstrap</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/SnapshotBootstrapOutcomeTests.cs</tests>
+  async Task<SnapshotBootstrapOutcome> TryBootstrapSnapshotAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid lastProcessedEventId,
+    CancellationToken cancellationToken = default) {
+    await BootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken).ConfigureAwait(false);
+    return SnapshotBootstrapOutcome.NotReported;
+  }
 }

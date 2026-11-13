@@ -98,6 +98,28 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync() {
+    // #2294: a purged row has nothing to snapshot; the pair was selected again on every cycle. Same SQL as the EF Core
+    // driver (CoordinatorCatalogSql), proved here on this driver's connection.
+    var coordinator = _coordinator();
+    var stream = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    await _commitAsync(eventId, stream, EVENT_TYPE, flags: 8);
+    await _executeAsync("DELETE FROM wh_perspective_events WHERE stream_id = @stream", new { stream });
+    await _executeAsync("UPDATE wh_event_store SET created_at = NOW() - INTERVAL '1 hour' WHERE event_id = @eventId", new { eventId });
+    await _associateAsync();
+    await _cursorAsync(stream, eventId, status: 0);
+    await _executeAsync(
+      "INSERT INTO wh_stream_purge_markers (stream_id, perspective_name, purge_event_id) VALUES (@stream, @perspective, @eventId)",
+      new { stream, perspective = PERSPECTIVE, eventId });
+
+    var targets = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
+
+    await Assert.That(targets).IsEmpty()
+      .Because("the perspective purged the row, which covers the stream's bodies without a snapshot");
+  }
+
+  [Test]
   public async Task Cursors_AreReadInABatch_AndThoseFlaggedForARewindAreListedAsync() {
     var coordinator = _coordinator();
     var stream = Guid.NewGuid();
