@@ -109,7 +109,7 @@ public sealed partial class IntegrityLedgerRecheckWorker(
     if (origins.Count == 0) {
       return;
     }
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(IntegrityLedgerRecheckWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
       return;

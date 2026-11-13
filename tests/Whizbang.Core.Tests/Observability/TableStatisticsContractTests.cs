@@ -49,6 +49,15 @@ public class TableStatisticsContractTests {
   }
 
   [Test]
+  public async Task AProviderThatDoesNotCountPendingReclamation_AnswersNullAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.SamplePendingReclamationAsync(new PendingReclamationRequest("whizbang:pending-reclamation:0", 10)))
+      .IsNull()
+      .Because("null reads as 'not measured', which the sampler reports as nothing; zero would claim nothing is left to clean");
+  }
+
+  [Test]
   public async Task AProviderWithoutIndexStatistics_ReportsNoUnusedIndexesAsync() {
     ITableStatisticsProvider provider = new SizesOnlyProvider();
 

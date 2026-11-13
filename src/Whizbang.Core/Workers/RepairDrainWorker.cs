@@ -122,7 +122,7 @@ public sealed partial class RepairDrainWorker(
       return;
     }
     // #2001: asked only once there is something to send, so an idle drain does not measure the backlog every second.
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(RepairDrainWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
       return;

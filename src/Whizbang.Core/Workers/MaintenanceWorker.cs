@@ -277,6 +277,8 @@ public sealed partial class MaintenanceWorker(
     }
 
     var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog);
+    // #2288: the first deferral of a run goes to the store, so the forced-pass ceiling survives a restart.
+    await HousekeepingDeferralStore.RecordAsync(coordinator, decision, _logger, ct).ConfigureAwait(false);
     if (!decision.Granted) {
       var logged = _orUnmeasured(backlog);
       LogMaintenanceDeferred(
@@ -301,6 +303,8 @@ public sealed partial class MaintenanceWorker(
       // In a finally: a sweep that throws and never releases its slot would disable maintenance
       // for the lifetime of the process.
       _housekeeping.End(HousekeepingCoordinator.Activity.Maintenance);
+      // A pass that ended re-arms the stored ceiling for every instance (#2288), as End re-arms the in-memory one.
+      await HousekeepingDeferralStore.ClearAsync(coordinator, decision, _logger).ConfigureAwait(false);
     }
   }
 

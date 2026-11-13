@@ -31,6 +31,22 @@ internal sealed class InMemoryIntegrityDeliveryCoordinator : IWorkCoordinator {
 
   public Exception? BacklogFailure { get; set; }
 
+  /// <summary>The housekeeping first deferrals recorded through this coordinator (#2288).</summary>
+  public List<(string Key, DateTimeOffset At)> DeferralsRecorded { get; } = [];
+
+  /// <summary>The housekeeping deferral budgets cleared through this coordinator (#2288).</summary>
+  public List<string> DeferralsCleared { get; } = [];
+
+  public ValueTask RecordHousekeepingDeferralAsync(string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default) {
+    DeferralsRecorded.Add((budgetKey, firstDeferredAt));
+    return ValueTask.CompletedTask;
+  }
+
+  public ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default) {
+    DeferralsCleared.Add(budgetKey);
+    return ValueTask.CompletedTask;
+  }
+
   public Task<IntegrityDeliveryEnqueueResult> EnqueueIntegrityDeliveryAsync(
       Guid deliveryId, string deliveryType, string payload, CancellationToken cancellationToken = default) {
     if (EnqueueFailure is { } failure) {

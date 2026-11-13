@@ -117,6 +117,28 @@ public interface ITableStatisticsProvider {
     Task.FromResult<IReadOnlyDictionary<string, EventTypeBytes>?>(null);
 
   /// <summary>
+  /// Reads how much storage cleanup has left to do (#2289): per maintenance task whose predicate an index serves, the
+  /// rows it would remove now, counted up to <see cref="PendingReclamationRequest.CountCap"/>; and per incomplete
+  /// ephemeral history walk, the events it has yet to visit.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One instance of the fleet reads per window: the claim is <see cref="PendingReclamationRequest.ClaimKey"/>, and an
+  /// instance that does not get it answers null without reading anything. A task whose count no index serves is left
+  /// out of the reading rather than guessed.
+  /// </para>
+  /// <para>Defaults to null, so a provider that does not count reports nothing.</para>
+  /// </remarks>
+  /// <param name="request">The window's claim and the cap on each count.</param>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The reading, or null where another instance holds the window or the provider does not count.</returns>
+  /// <docs>operations/observability/metrics#pending-reclamation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderThatDoesNotCountPendingReclamation_AnswersNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PendingReclamationSqlTests.cs:EachTask_CountsWhatItWouldRemove_AndNothingElseAsync</tests>
+  Task<PendingReclamation?> SamplePendingReclamationAsync(PendingReclamationRequest request, CancellationToken ct = default) =>
+    Task.FromResult<PendingReclamation?>(null);
+
+  /// <summary>
   /// Returns the indexes on the framework's tables that nothing has scanned since the statistics were last reset, by
   /// index name, with their table and size.
   /// </summary>

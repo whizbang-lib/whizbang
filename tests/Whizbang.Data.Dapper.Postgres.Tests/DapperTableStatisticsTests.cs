@@ -84,12 +84,50 @@ public class DapperTableStatisticsTests {
       .Because("the queue depths are read through the connection's search path, where the Dapper tables are");
   }
 
-  private static MeterListener _listen(IMeterFactory factory, out List<(string Name, double Value, string? Tag)> readings) {
+  [Test]
+  [Timeout(120_000)]
+  public async Task ADapperHost_ReportsWhatCleanupHasLeftAsync(CancellationToken cancellationToken) {
+    // #2289: the pending-reclamation sampler reaches the maintenance meter on a Dapper host as on an EF Core one.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
+    services.AddWhizbangPostgres(
+      _database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true, _entries,
+      managedObjects: null);
+    await using var provider = services.BuildServiceProvider();
+    await provider.GetServices<IHostedService>().OfType<WhizbangDatabaseInitializerService>().Single().StartAsync(cancellationToken);
+    await using (var connection = new Npgsql.NpgsqlConnection(_database.ConnectionString)) {
+      await connection.OpenAsync(cancellationToken);
+      await using var seed = new Npgsql.NpgsqlCommand(
+        "INSERT INTO wh_instance_evictions (instance_id, evicted_at) VALUES (gen_random_uuid(), NOW() - INTERVAL '3 days')",
+        connection);
+      await seed.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var sampler = provider.GetHostedWorkers().OfType<PendingReclamationSampler>().Single();
+    var sampled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    sampler.SampleCompleted += took => sampled.TrySetResult(took);
+    using var stop = new CancellationTokenSource();
+    await sampler.StartAsync(stop.Token);
+    var took = await sampled.Task.WaitAsync(cancellationToken);
+    await stop.CancelAsync();
+    await sampler.ExecuteTask!.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    using var listener = _listen(provider.GetRequiredService<IMeterFactory>(), out var readings, MaintenanceMetrics.METER_NAME);
+    listener.RecordObservableInstruments();
+
+    await Assert.That(took).IsTrue().Because("the only instance takes its window");
+    await Assert.That(readings.Any(r => r.Name == "whizbang.maintenance.pending_rows" && r.Tag == "purge_instance_evictions" && r.Value == 1)).IsTrue()
+      .Because("the eviction tombstone past its retention is what the next cycle would remove");
+  }
+
+  private static MeterListener _listen(
+      IMeterFactory factory, out List<(string Name, double Value, string? Tag)> readings,
+      string meterName = TableStatisticsMetrics.METER_NAME) {
     var collected = new List<(string Name, double Value, string? Tag)>();
     readings = collected;
     var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument.Meter.Scope, factory) && instrument.Meter.Name == TableStatisticsMetrics.METER_NAME) {
+        if (ReferenceEquals(instrument.Meter.Scope, factory) && instrument.Meter.Name == meterName) {
           l.EnableMeasurementEvents(instrument);
         }
       },
@@ -97,7 +135,7 @@ public class DapperTableStatisticsTests {
     void Record(Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags) {
       string? tag = null;
       foreach (var t in tags) {
-        if (t.Key is "table_name" or "queue_name") {
+        if (t.Key is "table_name" or "queue_name" or "task") {
           tag = t.Value?.ToString();
         }
       }

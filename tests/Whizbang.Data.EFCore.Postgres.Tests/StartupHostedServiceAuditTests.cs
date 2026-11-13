@@ -65,6 +65,7 @@ public sealed class StartupHostedServiceAuditTests {
     ["TypeDefinitionReconcilerHostedService"] = SCHEMA_READY,
     ["TableStatisticsCollector"] = SCHEMA_READY,
     ["EventTypeBytesSampler"] = SCHEMA_READY,
+    ["PendingReclamationSampler"] = SCHEMA_READY,
     ["NotifyDebounceStatsCollector"] = SCHEMA_READY,
     // Deregistration is the stop of a service that started when the schema was ready (#1991): an instance stopped
     // before then has nothing to deregister, against tables that may not exist yet.
