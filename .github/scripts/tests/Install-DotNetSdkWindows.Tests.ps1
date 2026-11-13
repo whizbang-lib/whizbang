@@ -70,7 +70,7 @@ Describe 'Install-DotNetSdk' {
     $dir = Join-Path $TestDrive 'dotnet'
     $out = @(Install-DotNetSdk -GlobalJsonPath $json -FallbackVersion '10.0.x' -InstallDir $dir -TempDir $TestDrive `
         -PathFile $PathFile -EnvFile $EnvFile -Download $Download -Install $Install -GetVersion $Version)
-    $Calls[0] | Should -BeLike 'download https://dot.net/v1/dotnet-install.ps1 -> *dotnet-install.ps1'
+    $Calls[0] | Should -BeLike "download $($script:InstallScriptUris[0]) -> *dotnet-install.ps1"
     $Calls[1] | Should -BeLike "install 10.0.1xx into $dir with *dotnet-install.ps1"
     $Calls[2] | Should -BeLike "version $dir*dotnet*"
     Get-Content -LiteralPath $PathFile | Should -Be @($dir, (Join-Path $dir 'tools'))
@@ -144,5 +144,34 @@ Describe 'The default download, install and version commands' {
     $bad = Join-Path $dir 'bad.ps1'
     Set-Content -LiteralPath $bad -Value 'exit 3'
     { & (Get-DefaultGetVersion) $bad } | Should -Throw '*exited 3*'
+  }
+}
+
+# #2298: the installer is fetched from Microsoft's CDN first and the dot.net redirect second, so an outage of either
+# host alone does not stop a job before it builds anything.
+Describe 'Install-DotNetSdk installer addresses' {
+  BeforeEach {
+    $script:Install = { param($Installer, $Channel, $Dir) }
+    $script:Version = { param($Dotnet) '10.0.999' }
+  }
+
+  It 'tries the CDN before the dot.net redirect by default' {
+    $script:InstallScriptUris[0] | Should -Be 'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.ps1'
+    $script:InstallScriptUris[1] | Should -Be 'https://dot.net/v1/dotnet-install.ps1'
+  }
+
+  It 'falls back to the next address when one fails' {
+    $calls = [System.Collections.Generic.List[string]]::new()
+    $download = { param($Uri, $OutFile) $calls.Add($Uri); if ($Uri -like '*builds.dotnet*') { throw 'An error occurred while sending the request' } }.GetNewClosure()
+    { Install-DotNetSdk -GlobalJsonPath (Join-Path $TestDrive 'none.json') -FallbackVersion '10.0.x' -InstallDir (Join-Path $TestDrive 'sdk') `
+        -TempDir $TestDrive -PathFile '' -EnvFile '' -Download $download -Install $Install -GetVersion $Version } | Should -Not -Throw
+    $calls | Should -Be @($script:InstallScriptUris[0], $script:InstallScriptUris[1])
+  }
+
+  It 'throws naming every address and its error when none downloads, so the retry tries again' {
+    $download = { param($Uri, $OutFile) throw "down: $Uri" }
+    { Install-DotNetSdk -GlobalJsonPath (Join-Path $TestDrive 'none.json') -FallbackVersion '10.0.x' -InstallDir (Join-Path $TestDrive 'sdk') `
+        -TempDir $TestDrive -PathFile '' -EnvFile '' -Download $download -Install $Install -GetVersion $Version } |
+      Should -Throw -ExpectedMessage '*builds.dotnet.microsoft.com*down:*dot.net/v1/dotnet-install.ps1: down:*'
   }
 }

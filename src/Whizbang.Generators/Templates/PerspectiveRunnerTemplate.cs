@@ -59,6 +59,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // are ephemeral). Gates the rewind fallback — an ephemeral stream's consumed bodies are reaped,
   // so a full replay-from-zero would read reaped/absent bodies and silently corrupt the model.
   private const bool _isEphemeralPerspective = false;
+  // Generated (#2295): false for a perspective that applies only ephemeral events and does not opt in with
+  // [KeepEphemeralRewindFloor]. It keeps no rewind floor: the runner is given no snapshot store, so it writes no
+  // snapshot, live or bootstrapped, and a late event that would need a floor is dropped as an ephemeral one is.
+  private const bool _keepsRewindFloor = true;
   #endregion
 
   #region UNCONDITIONAL_PURGE
@@ -174,7 +178,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     _tracingOptions = tracingOptions;
-    _snapshotStore = snapshotStore;
+    // #2295: a perspective that keeps no rewind floor takes no snapshots and restores from none.
+    _snapshotStore = _keepsRewindFloor ? snapshotStore : null;
     _snapshotOptions = snapshotOptions;
     _applyCoordinator = applyCoordinator;
     _collectiveReplayApplier = collectiveReplayApplier;
@@ -2520,10 +2525,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid streamId,
       string perspectiveName,
       Guid lastProcessedEventId,
+      CancellationToken cancellationToken = default) =>
+    _ = await TryBootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
+
+  // #2294: the bootstrap says what it did, so a caller that relies on the snapshot (the reap-driven pass) never counts a
+  // snapshot that was not written.
+  public async Task<global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome> TryBootstrapSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid lastProcessedEventId,
       CancellationToken cancellationToken = default) {
 
     if (_snapshotStore is null || _snapshotOptions?.Value.Enabled != true) {
-      return;
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.SnapshotsOff;
     }
 
     // #1963: a bootstrap snapshot is a live row too, so a row with collectives reads the fence before the model and again
@@ -2534,21 +2548,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
       if (applyRead.Version.State != global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present) {
         _deferSnapshot(perspectiveName, streamId);
-        return;
+        return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Deferred;
       }
       collectiveFence = await _readCollectiveFenceAsync(applyRead.Scope?.TenantId, cancellationToken);
     }
 
     var model = await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken);
     if (model is null) {
-      return;
+      // The perspective purged the row, an eviction removed it, or no event ever produced one: nothing to snapshot.
+      _logger.LogInformation(
+          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} at event {EventId} not taken: the stream has no row to snapshot",
+          perspectiveName, streamId, lastProcessedEventId);
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.RowMissing;
     }
 
     var collectiveMark = collectiveFence is { } fenceBefore
         ? await _collectiveMarkAfterWriteAsync(fenceBefore, perspectiveName, streamId, cancellationToken)
         : new CollectiveMark(Deferred: false, ThroughSequence: null);
     if (collectiveMark.Deferred) {
-      return;
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Deferred;
     }
 
     var snapshotData = ToSnapshotJson(model);
@@ -2565,6 +2583,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",
         perspectiveName, streamId, lastProcessedEventId);
+    return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written;
   }
 
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
