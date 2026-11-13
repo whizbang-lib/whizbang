@@ -18,12 +18,14 @@ namespace Whizbang.Data.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Release_NamesWithOrWithoutTheAssembly_MatchTheConfiguredTypesAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Release_ForAnotherType_OrOfTheTypeItself_ReleasesNothingAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.cs:Report_TheReleaseLine_TakesTheNextFreeIndex_OfAnExistingListAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralBlockerReportSqlTests.FormerNames.cs:Release_AReleasedTypesBareFormerName_ReachesTheEventsStoredUnderItAsync</tests>
 internal sealed record EphemeralReleaseList(string[] Names, int ConfiguredCount) {
   /// <summary>Resolves the configured release list of an ephemeral type.</summary>
   /// <param name="releaseBlockers">The configured lists, keyed by ephemeral type name with or without its assembly.</param>
   /// <param name="ephemeral">The ephemeral type's catalog entry.</param>
   /// <param name="catalog">Every message type the application declares: a value without its assembly is resolved
-  /// through it to the type's stored name (<see cref="TypeNameFormatter.Format(Type)"/>), with the type's former names.</param>
+  /// through it to the type's stored name (<see cref="TypeNameFormatter.Format(Type)"/>), with the type's former names in
+  /// their stored form (<see cref="TypeNameFormatter.FormatFormerName"/>, #2269).</param>
   /// <returns>The release list; empty when none is configured.</returns>
   public static EphemeralReleaseList Resolve(
       IReadOnlyDictionary<string, List<string>> releaseBlockers, MessageTypeCatalogEntry ephemeral,
@@ -41,8 +43,12 @@ internal sealed record EphemeralReleaseList(string[] Names, int ConfiguredCount)
         _ = names.Add(EventTypeMatchingHelper.NormalizeTypeName(value));
         var fullName = TypeNameFormatter.GetFullName(value);
         // A catalog name may lack the assembly; the store's name is the type's formatted name, so a match is resolved to that.
+        // #2269: a former name is resolved to its stored form too: a bare one takes the type's own assembly.
         foreach (var entry in catalog.Where(e => string.Equals(TypeNameFormatter.GetFullName(e.ClrTypeName), fullName, StringComparison.Ordinal))) {
-          names.UnionWith([TypeNameFormatter.Format(entry.Type), .. entry.FormerNames]);
+          names.UnionWith([
+            TypeNameFormatter.Format(entry.Type),
+            .. entry.FormerNames.Select(n => TypeNameFormatter.FormatFormerName(entry.Type, n)),
+          ]);
         }
       }
     }

@@ -171,7 +171,7 @@ public class SupersedingFormerNameReconcileSqlTests : EFCoreTestBase {
   private static async Task<string?> _textAsync(NpgsqlConnection conn, string sql, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return await cmd.ExecuteScalarAsync() as string;
   }
 
