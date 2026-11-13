@@ -412,6 +412,7 @@ Whizbang:Workers:LeaseRenewal:Flusher:MaxBatchSize=200
 Whizbang:Workers:LeaseRenewal:Flusher:MaxFlushAttempts=5
 Whizbang:Workers:LeaseRenewal:LeaseSeconds=300
 Whizbang:Workers:Maintenance:AllowTableRewrite=false
+Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle=1
 Whizbang:Workers:Maintenance:ConcludeExhaustedInboxRows=true
 Whizbang:Workers:Maintenance:DestructionRetryBackoffSeconds=300
 Whizbang:Workers:Maintenance:Enabled=true
