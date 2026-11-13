@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 403_RepairedEventsRunOnlyReceptorsThatNeverRan.sql
+-- Migration: 407_RepairedEventsRunOnlyReceptorsThatNeverRan.sql
 -- Date: 2026-11-11
 -- Description: A repaired event runs a receptor only when this service can prove it never handled the event (#2273).
 --

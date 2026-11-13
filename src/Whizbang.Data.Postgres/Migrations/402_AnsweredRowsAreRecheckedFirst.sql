@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 398_AnsweredRowsAreRecheckedFirst.sql
+-- Migration: 402_AnsweredRowsAreRecheckedFirst.sql
 -- Date: 2026-11-11
 -- Description: The idle ledger re-check claims rows whose repair was answered, and not re-checked since, before any
 --              other row (#2259).

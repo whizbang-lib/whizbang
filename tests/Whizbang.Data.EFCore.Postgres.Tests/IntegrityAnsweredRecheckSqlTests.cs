@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// report's age and however recently it was last re-checked before the answer. Once re-checked after the answer it waits
 /// like any other row.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/398_AnsweredRowsAreRecheckedFirst.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/402_AnsweredRowsAreRecheckedFirst.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
 [Category("Integration")]

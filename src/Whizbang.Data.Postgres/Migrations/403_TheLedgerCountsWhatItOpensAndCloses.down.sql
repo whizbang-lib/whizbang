@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 399_TheLedgerCountsWhatItOpensAndCloses.sql (#2256): the nine ledger functions 399 turned into wrappers
+-- The reverse of 403_TheLedgerCountsWhatItOpensAndCloses.sql (#2256): the nine ledger functions 399 turned into wrappers
 -- are restored to their last words before 399 (090, 094, 320, 331, 370 and 384), and the counting forms and the backlog
 -- read 399 added are dropped. An older release calls only the restored names, which answer exactly as they did before
 -- 399. 399 stored no data, so the reverse loses none.

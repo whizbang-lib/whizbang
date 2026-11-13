@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 402_ASealFallsOnlyAsFarAsARewriteReached.sql
+-- Migration: 406_ASealFallsOnlyAsFarAsARewriteReached.sql
 -- Date: 2026-11-11
 -- Description: An origin generation bump invalidates only what it changed (#2262).
 --

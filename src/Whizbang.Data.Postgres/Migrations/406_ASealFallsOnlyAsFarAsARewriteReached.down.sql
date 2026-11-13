@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 402_ASealFallsOnlyAsFarAsARewriteReached.sql (#2262): the generation guard, the bump and the refold
+-- The reverse of 406_ASealFallsOnlyAsFarAsARewriteReached.sql (#2262): the generation guard, the bump and the refold
 -- helper as 093 defined them, the epoch fold as 092 defined it, and the rewrite log, its settings, the note and the
 -- answer dropped. The log is lost: an older release never reads it, and resets a consumer's seal on every generation
 -- change, as it did before 402. Seals and the generation itself are kept.

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 400_LedgerGaugesSplitBucketsByKind.sql
+-- Migration: 404_LedgerGaugesSplitBucketsByKind.sql
 -- Date: 2026-11-11
 -- Description: The stream-integrity ledger gauges split the unhealed buckets by kind (#2260).
 --

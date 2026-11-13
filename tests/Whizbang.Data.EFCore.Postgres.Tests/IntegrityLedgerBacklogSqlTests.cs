@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// removing a row already marked unhealable does not close it a second time. So the repairable rows change by exactly
 /// <c>opened - closed</c>.
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/399_TheLedgerCountsWhatItOpensAndCloses.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/403_TheLedgerCountsWhatItOpensAndCloses.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
 [Category("Integration")]
@@ -363,7 +363,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
     var stream = TrackedGuid.New().Value;
     await using var conn = await _openAsync();
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
-      "Whizbang.Data.Postgres.MigrationReversals.399_TheLedgerCountsWhatItOpensAndCloses.down.sql")
+      "Whizbang.Data.Postgres.MigrationReversals.403_TheLedgerCountsWhatItOpensAndCloses.down.sql")
       ?? throw new InvalidOperationException("399 ships its reverse");
     using var reader = new StreamReader(down);
     await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(

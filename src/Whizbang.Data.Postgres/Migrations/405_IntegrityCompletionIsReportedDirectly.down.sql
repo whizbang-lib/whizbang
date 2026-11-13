@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 401_IntegrityCompletionIsReportedDirectly.sql (#2261): the tally, its two functions and the kept
+-- The reverse of 405_IntegrityCompletionIsReportedDirectly.sql (#2261): the tally, its two functions and the kept
 -- watermark column are dropped. Lossy: the tally's minutes and the watermarks are lost, and the next maintenance ticks
 -- and checkpoints rebuild them once 401 is applied again. Nothing before 401 reads any of them.
 

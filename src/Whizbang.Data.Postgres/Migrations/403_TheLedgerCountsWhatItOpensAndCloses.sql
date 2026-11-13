@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 399_TheLedgerCountsWhatItOpensAndCloses.sql
+-- Migration: 403_TheLedgerCountsWhatItOpensAndCloses.sql
 -- Date: 2026-11-11
 -- Description: The stream-integrity ledger reports how many buckets each call opened and closed, and the open repair
 --              backlog is read as one grouped count (#2256).

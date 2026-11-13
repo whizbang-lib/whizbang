@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 400_LedgerGaugesSplitBucketsByKind.sql (#2260): wh_integrity_ledger_gauges as its last words before 400
+-- The reverse of 404_LedgerGaugesSplitBucketsByKind.sql (#2260): wh_integrity_ledger_gauges as its last words before 400
 -- defined it (373), without the four kind columns. 400 stored no data, so the reverse loses none.
 
 -- ---------------------------------------------------------------------------------------------

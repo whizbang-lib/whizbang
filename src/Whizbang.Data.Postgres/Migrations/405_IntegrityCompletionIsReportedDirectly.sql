@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 401_IntegrityCompletionIsReportedDirectly.sql
+-- Migration: 405_IntegrityCompletionIsReportedDirectly.sql
 -- Date: 2026-11-11
 -- Description: What the derived integrity completion gauges read (#2261): each origin's latest announced commit
 --              sequence, and a per-minute tally of the ledger buckets the service opened and closed.

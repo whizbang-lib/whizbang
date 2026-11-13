@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// from its checkpoints beside its name, and read with its seal; the buckets each instance opened and closed are added to
 /// a per-minute tally the service shares, pruned in the same call, and summed over a window.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/401_IntegrityCompletionIsReportedDirectly.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/405_IntegrityCompletionIsReportedDirectly.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
 [Category("Integration")]
@@ -129,7 +129,7 @@ public class IntegrityCompletionSqlTests : EFCoreTestBase {
   public async Task TheReverse_DropsTheTallyAndTheWatermarkAsync() {
     await using var conn = await _openAsync();
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
-      "Whizbang.Data.Postgres.MigrationReversals.401_IntegrityCompletionIsReportedDirectly.down.sql")
+      "Whizbang.Data.Postgres.MigrationReversals.405_IntegrityCompletionIsReportedDirectly.down.sql")
       ?? throw new InvalidOperationException("401 ships its reverse");
     using var reader = new StreamReader(down);
     await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
