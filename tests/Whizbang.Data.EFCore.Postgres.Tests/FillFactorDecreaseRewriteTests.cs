@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/TableMaintenanceSql.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/OnlineTableRewriteStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/TableRewriteStartupStep.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/405_AFillFactorDecreaseIsRewrittenOnce.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/410_AFillFactorDecreaseIsRewrittenOnce.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
 public class FillFactorDecreaseRewriteTests : EFCoreTestBase {
