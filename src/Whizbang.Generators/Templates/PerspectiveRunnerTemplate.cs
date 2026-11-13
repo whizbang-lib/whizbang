@@ -1944,9 +1944,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
-  /// Moves the replay frontier (max event id, max local commit sequence) past an envelope.
-  /// </summary>
-  /// <summary>
   /// Why a rebuild's write was refused (#2252): the fold compared with the row as it was stored, both serialized by the
   /// snapshot serializer. Equal documents mean the read model was already right. A Split class model's fold is the
   /// document taken before the write stripped its promoted fields.
@@ -1961,6 +1958,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return global::Whizbang.Core.Perspectives.PerspectiveRowUnchanged.OfRefusedWrite(foldBeforeWrite ?? foldAfter, storedDocument);
   }
 
+  /// <summary>
+  /// Moves the replay frontier (max event id, max local commit sequence) past an envelope.
+  /// </summary>
   /// <summary>
   /// The commit sequence a fold records as its position. A live apply records its last event's; a rebuild records
   /// the highest among the events it folded (#1352), as the rewind's frontier does. A rebuild folds a stream in

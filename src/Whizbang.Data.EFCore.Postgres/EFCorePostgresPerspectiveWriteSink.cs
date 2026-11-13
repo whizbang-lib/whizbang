@@ -38,7 +38,7 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
     }
     if (!PerspectiveRowVersionSql.Supports(Context)) {
       throw new InvalidOperationException(
-        $"{nameof(EFCorePostgresPerspectiveWriteSink)} writes through Npgsql, and {Context.GetType().Name} is configured with another provider.");
+        $"{nameof(EFCorePostgresPerspectiveWriteSink)} writes through Npgsql, and {Whizbang.Core.TypeNameFormatter.ForLog(Context.GetType())} is configured with another provider.");
     }
     var connection = (NpgsqlConnection)Context.Database.GetDbConnection();
 

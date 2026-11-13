@@ -173,7 +173,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
       return false;
     }
     var containingType = parameter.ContainingSymbol.ContainingType.OriginalDefinition;
-    return $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}" == BATCH_EXTENSIONS_TYPE;
+    return $"{TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(containingType))}.{TypeNameUtilities.SimpleName(containingType)}" == BATCH_EXTENSIONS_TYPE;
   }
 
   /// <summary>True when <paramref name="property"/> is one of the sanctioned builder seams.</summary>
