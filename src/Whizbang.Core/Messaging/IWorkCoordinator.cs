@@ -1990,7 +1990,7 @@ public interface IWorkCoordinator {
   /// <returns>A task that completes when the request is cleared and the rewrite recorded.</returns>
   /// <remarks>Default: the request is cleared and nothing is recorded.</remarks>
   /// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BlueGreenTableRewriteTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs</tests>
   Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(outcome);
@@ -5371,7 +5371,7 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <param name="BloatBefore">The ratio it was offered with.</param>
 /// <param name="BloatAfter">The ratio measured after the rewrite.</param>
 /// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BlueGreenTableRewriteTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public sealed record TableRewriteOutcome(
   string TableName, string Strategy, TableRewriteReason Reason, double BloatBefore, double BloatAfter);
 
