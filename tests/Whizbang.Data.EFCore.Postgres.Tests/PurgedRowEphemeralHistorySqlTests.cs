@@ -27,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/CoordinatorCatalogSql.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/EphemeralDestructionSql.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("PurgedRowEphemeralHistory")]
 [Category("Shard3")]
 public class PurgedRowEphemeralHistorySqlTests : EFCoreTestBase {
   private const string EVENT_TYPE = "Whizbang.Tests.PurgedRowSessionPinged";
