@@ -124,10 +124,12 @@ internal static class CoordinatorCatalogSql {
       // 209: coverage is read by version, the stream's own counter, never by commit sequence.
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
       "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version) " +
-      // 403 (#2294): a row the perspective purged has nothing to snapshot, and its marker covers the stream's bodies, so
-      // the pair is no target. Selecting it again every cycle only repeated a bootstrap that found no row.
-      $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm WHERE pm.stream_id = es.stream_id " +
-      "  AND pm.perspective_name = ma.target_name)";
+      // 403 (#2294): a body at or before the perspective's purge event is covered by the purge (a purged row has nothing
+      // to snapshot, and selecting it again every cycle only repeated a bootstrap that found no row). A body after it
+      // stays a target: a stale marker can stand on a resurrected, live row. As in the reap.
+      $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm JOIN {prefix}wh_event_store pv " +
+      "  ON pv.event_id = pm.purge_event_id AND pv.stream_id = pm.stream_id " +
+      "  WHERE pm.stream_id = es.stream_id AND pm.perspective_name = ma.target_name AND es.version <= pv.version)";
     var list = new List<EphemeralSnapshotTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {

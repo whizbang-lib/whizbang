@@ -23,13 +23,17 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// The runner writes the marker <em>before</em> it removes the row and clears it only <em>after</em> it writes
-/// the resurrected row, so a crash between the two leaves a marker on a live row (harmless: a live row never
-/// consults it) rather than a missing row without a marker.
+/// the resurrected row, so a crash between the two leaves a marker on a live row rather than a missing row without a
+/// marker. The runner never consults a live row's marker. The maintenance cycle does (#2294), and a stale marker is
+/// why it reads one narrowly: a marker covers only the ephemeral bodies at or before its purge event (the row's
+/// previous life), never the later bodies a resurrected row is built from, and the cursor and snapshots of a purged
+/// row are removed only when its table holds no row for the stream.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AStaleMarkerOnAResurrectedRow_CoversOnlyTheBodiesAtOrBeforeThePurgeAsync</tests>
 public interface IPerspectivePurgeMarkerStore {
   /// <summary>
   /// Whether the stream is purged for the perspective: a marker for that perspective, or one for every

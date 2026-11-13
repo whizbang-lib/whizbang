@@ -10,9 +10,13 @@
 --              finds no row. Every body of the stream was then held for good, with the row's cursor and snapshots, and
 --              the reap-driven pass selected the same pairs on every cycle.
 --
---                1. A perspective's purge marker (wh_stream_purge_markers, 180) covers every body of its stream, in
---                   the reap and in the two statements that mirror it (the reap-driven pass's targets and the batch the
---                   destruction hook is offered, CoordinatorCatalogSql and EphemeralDestructionSql).
+--                1. A perspective's purge marker (wh_stream_purge_markers, 180) covers the bodies of its stream at or
+--                   before the marker's purge event (by stream version), in the reap and in the two statements that
+--                   mirror it (the reap-driven pass's targets and the batch the destruction hook is offered,
+--                   CoordinatorCatalogSql and EphemeralDestructionSql). Bodies after the purge stay gated: the runner
+--                   clears a marker only after it writes a resurrected row, so a crash can leave one on a live row
+--                   whose later bodies a replay needs. A marker with no purge event, or one the stream does not hold,
+--                   covers nothing.
 --                2. Task 8b removes a purged row's cursor and every snapshot (_wh_remove_purged_row_companions), once
 --                   the stream has no work pending for the perspective and its table holds no row for the stream.
 --
@@ -157,6 +161,8 @@ COMMENT ON FUNCTION __SCHEMA__._wh_remove_purged_row_companions(INTEGER) IS
 -- <docs>fundamentals/events/ephemeral-events#a-purged-row-covers-its-history</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_TheBodiesOfAPurgedRow_AreReapedWithoutASnapshotAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AnOperatorPurgeOfEveryPerspective_DoesNotCoverTheBodyAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AStaleMarkerOnAResurrectedRow_CoversOnlyTheBodiesAtOrBeforeThePurgeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AMarkerThatNamesNoPurgeEvent_CoversNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Maintenance_ReportsHowManyCompanionsItRemovedAsync</tests>
 -- <docs>fundamentals/events/ephemeral-events#snapshots-follow-what-a-read-model-consumes</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:Reap_TheBodyOfAReadModelThatKeepsNoFloor_IsReapedWithoutASnapshotAsync</tests>
@@ -541,14 +547,20 @@ BEGIN
               AND s.perspective_name = ma.target_name
               AND s.snapshot_version >= es.version
           )
-          -- 403 (#2294): a row the perspective purged covers every body of its stream. While its marker stands the row
-          -- is gone: the events before the purge built state the purge removed, and the events after it were skipped,
-          -- so no snapshot can be taken and none is needed. Only the perspective's own marker counts: an operator purge
-          -- ('*') can stand beside a row a later Apply resurrected, because a resurrect clears only its own marker.
+          -- 403 (#2294): a row the perspective purged covers the bodies of its stream AT OR BEFORE the purge event: they
+          -- built state the purge removed, which no rewind of a later, resurrected row can need. Bodies after the purge
+          -- stay gated, because the marker can outlive the purge: the runner clears it only after it writes a resurrected
+          -- row, so a crash leaves it on a live row, and those bodies feed that row (a mixed read model replays them from
+          -- the start). A marker that names no purge event, or one the stream does not hold, has no position to compare,
+          -- so it covers nothing. Only the perspective's own marker counts: an operator purge ('*') can stand beside a
+          -- row a later Apply resurrected, because a resurrect clears only its own marker.
           AND NOT EXISTS (
             SELECT 1 FROM __SCHEMA__.wh_stream_purge_markers pm
+            JOIN __SCHEMA__.wh_event_store pv
+              ON pv.event_id = pm.purge_event_id AND pv.stream_id = pm.stream_id
             WHERE pm.stream_id = es.stream_id
               AND pm.perspective_name = ma.target_name
+              AND es.version <= pv.version
           )
       );
     GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -767,5 +779,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_perform_maintenance(UUID[]) IS
   'ephemeral body reap to the bodies the destruction hook and the compaction handler were given; every other gate still '
   'applies to them. NULL reaps every eligible body, for a cycle that ran no hook or handler. 366: the completed-inbox '
   'purge deletes at most wh_settings.completed_inbox_purge_batch_size rows per call (default 50000, never below 1). 403: '
-  'a perspective''s purge marker covers its stream''s bodies, Task 8b removes a purged row''s cursor and snapshots, and a '
+  'a perspective''s purge marker covers its stream''s bodies at or before its purge event, Task 8b removes a purged row''s cursor and snapshots, and a '
   'perspective with a no_rewind_floor marker association holds no body back.';
