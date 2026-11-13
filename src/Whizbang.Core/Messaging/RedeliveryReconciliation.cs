@@ -295,7 +295,7 @@ public static partial class RedeliveryReconciler {
         _writeBound(writer, "from", answered.FromCommitSequence);
         _writeBound(writer, "to", answered.ToCommitSequence);
         // #2149: the streams the bundle carried only in part; absent when it carried every stream whole.
-        if (answered.PartialStreamIds is { Count: > 0 } partial) {
+        if (answered.PartialStreamIds is { } partial) {
           writer.WriteStartArray("partialStreams");
           foreach (var stream in partial) {
             writer.WriteStringValue(stream);

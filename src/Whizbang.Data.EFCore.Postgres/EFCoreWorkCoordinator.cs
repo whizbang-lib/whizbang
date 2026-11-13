@@ -1547,7 +1547,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _bindAnsweredWindow(cmd, answeredWindow);
       // #2149 (410): the streams the bundle carried only in part are answered but never marked.
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_partial_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-        Value = answeredWindow?.PartialStreamIds is { Count: > 0 } partial ? partial.ToArray() : DBNull.Value
+        Value = answeredWindow?.PartialStreamIds is { } partial ? partial.ToArray() : DBNull.Value
       });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_partial_streams)";
