@@ -107,7 +107,7 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
   }
 
   private async Task _seedAsync(Guid rowId, OrderModel model) {
-    var metadata = new PerspectiveMetadata { EventType = "OrderCreated", EventId = rowId.ToString(), Timestamp = DateTime.UtcNow };
+    var metadata = new PerspectiveMetadata { EventType = "OrderCreated", EventId = rowId.ToString(), Timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc) };
     await new PostgresUpsertStrategy().UpsertPerspectiveRowWithPhysicalFieldsAsync(
       _context!, TABLE, rowId, model, metadata, new PerspectiveScope(), new Dictionary<string, object?>());
   }
