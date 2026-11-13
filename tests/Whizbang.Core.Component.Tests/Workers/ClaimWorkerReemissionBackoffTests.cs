@@ -77,12 +77,17 @@ public class ClaimWorkerReemissionBackoffTests {
     /// </summary>
     public Action? AfterClaim { get; set; }
 
+    /// <summary>Runs inside a claim, with the claim's number, before it returns: something that happens mid-claim.</summary>
+    public Action<int>? DuringClaim { get; set; }
+
     /// <summary>When true, every claim returns an EMPTY batch — the true-idle shape.</summary>
     public bool ReturnEmpty { get; set; }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
+      int call;
       lock (_lock) {
         ClaimCallTimes.Add(DateTimeOffset.UtcNow);
+        call = ClaimCallTimes.Count;
         if (ClaimCallTimes.Count == 1) {
           FirstCallSignal.TrySetResult();
         } else if (ClaimCallTimes.Count == 2) {
@@ -91,6 +96,7 @@ public class ClaimWorkerReemissionBackoffTests {
           ThirdCallSignal.TrySetResult();
         }
       }
+      DuringClaim?.Invoke(call);
       AfterClaim?.Invoke();
       // Same stream, every time. Nothing new ever appears.
       return Task.FromResult(ReturnEmpty
@@ -474,4 +480,96 @@ public class ClaimWorkerReemissionBackoffTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// A new-work doorbell that rings while a repeat claim is running is not spent on it. The claim was already in flight,
+  /// and a repeat claim re-offers only what this instance holds, so it cannot have served the new work any more than an
+  /// empty claim can. The doorbell is kept for the next claim, which therefore skips the spacing nap and follows at
+  /// once. Before, the claim consumed the doorbell and the loop napped for the whole spacing (up to
+  /// PollingMaxIntervalMilliseconds in production, here ten minutes), so the new work waited it out.
+  /// </summary>
+  /// <remarks>
+  /// Deterministic: the doorbell rings from inside the second claim, both poll intervals are ten minutes, and the test
+  /// waits for exactly the third claim. Without the fix that claim does not come until the nap ends.
+  /// </remarks>
+  [Test]
+  public async Task RepeatedWorkSet_DoorbellDuringTheRepeatClaim_IsKeptForTheNextClaim_WhichSkipsTheNapAsync() {
+    var coord = new ReemittingCoordinator();
+    var napsStarted = 0;
+    var (worker, cts) = await _startTenMinuteLoopAsync(coord, w => {
+      w.SpacingNapStarted += _ => Interlocked.Increment(ref napsStarted);
+      // Mid-claim, deterministically: the ring lands while the second claim, a repeat, is still running.
+      coord.DuringClaim = call => {
+        if (call == 2) {
+          w.SignalNewWork();
+        }
+      };
+    });
+    using (cts) {
+      await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+      await Assert.That(Volatile.Read(ref napsStarted)).IsEqualTo(0)
+        .Because("the doorbell that rang during the repeat claim was kept, so no spacing nap held the next claim back");
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
+  /// The control: the same repeat claim with no doorbell ringing still spaces the next claim out. The loop starts its
+  /// spacing nap (the signal is the nap itself, not a sleep), and the third claim has not happened.
+  /// </summary>
+  [Test]
+  public async Task RepeatedWorkSet_WithNoDoorbell_StillSpacesTheNextClaimOutAsync() {
+    var coord = new ReemittingCoordinator();
+    var napStarted = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (worker, cts) = await _startTenMinuteLoopAsync(coord, w => w.SpacingNapStarted += ms => napStarted.TrySetResult(ms));
+    using (cts) {
+      var nap = await napStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+      await Assert.That(nap).IsEqualTo(600_000).Because("a repeat claim with nothing new spaces the next claim out");
+      await Assert.That(coord.ClaimCallTimes).Count().IsEqualTo(2);
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
+  /// A loop whose poll intervals are both ten minutes, so it claims only when woken: the first claim runs at start, and
+  /// one completion-feedback wake after it brings the second claim, which re-offers the first claim's work.
+  /// </summary>
+  private static async Task<(ClaimWorker Worker, CancellationTokenSource Cts)> _startTenMinuteLoopAsync(
+      ReemittingCoordinator coord, Action<ClaimWorker>? beforeStart = null) {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var worker = new ClaimWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      options: Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 600_000,
+        PollingMaxIntervalMilliseconds = 600_000,
+      }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
+    beforeStart?.Invoke(worker);
+    var woke = 0;
+    coord.AfterClaim = () => {
+      if (Interlocked.Increment(ref woke) == 1) {
+        worker.RequestImmediatePoll();
+      }
+    };
+    var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    return (worker, cts);
+  }
 }

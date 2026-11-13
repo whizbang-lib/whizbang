@@ -333,6 +333,12 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   public event Action<WorkBatch>? OnBatchClaimed;
 
   /// <summary>
+  /// Raised as the loop starts a spacing nap, with its length in milliseconds, once the nap can be cut short by
+  /// <see cref="SignalNewWork"/>. The signal a test waits on to know the next claim is being spaced out.
+  /// </summary>
+  internal event Action<int>? SpacingNapStarted;
+
+  /// <summary>
   /// Wake for NEW work (a store-level doorbell or a strategy persisting fresh rows) — as opposed
   /// to <see cref="RequestImmediatePoll"/>, which the system's own completion-feedback traffic
   /// also pulls. The distinction matters to the repeat-claim spacing: completion feedback must
@@ -623,6 +629,7 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
             // them would reintroduce the re-offer spin loop this spacing exists to damp.
             using var napCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             Volatile.Write(ref _napCts, napCts);
+            SpacingNapStarted?.Invoke(floorMs);
             try {
               await Task.Delay(floorMs, napCts.Token);
             } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
