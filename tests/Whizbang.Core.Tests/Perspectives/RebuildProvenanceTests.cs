@@ -44,7 +44,8 @@ public class RebuildProvenanceTests {
     var values = Enum.GetValues<RebuildTrigger>();
     var distinct = values.Select(v => (int)v).Distinct().Count();
 
-    await Assert.That(values.Length).IsEqualTo(4);
+    await Assert.That(values.Length).IsEqualTo(5)
+      .Because("Unknown, the three original triggers, and TableRewrite (#2301)");
     await Assert.That(distinct).IsEqualTo(values.Length);
   }
 

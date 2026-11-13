@@ -114,8 +114,8 @@ public sealed class VacuumFullTableRewriterTests {
 
     await Assert.That(strategies.Count(s => s == TableRewriteStrategies.VACUUM_FULL)).IsEqualTo(1)
       .Because("AddWhizbangWorkers is idempotent; a second call must not register a second rewriter");
-    await Assert.That(strategies).IsEquivalentTo([TableRewriteStrategies.VACUUM_FULL, TableRewriteStrategies.PG_REPACK, TableRewriteStrategies.PG_SQUEEZE])
-      .Because("one rewriter per strategy: the blocking one, pg_repack (#1753) and pg_squeeze (#1743)");
+    await Assert.That(strategies).IsEquivalentTo([TableRewriteStrategies.VACUUM_FULL, TableRewriteStrategies.PG_REPACK, TableRewriteStrategies.PG_SQUEEZE, TableRewriteStrategies.BLUE_GREEN])
+      .Because("one rewriter per strategy: the blocking one, pg_repack (#1753), pg_squeeze (#1743) and the blue-green rebuild (#2301)");
     await Assert.That(rewriters[0]).IsTypeOf<VacuumFullTableRewriter>();
   }
 
