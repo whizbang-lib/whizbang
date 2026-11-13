@@ -13,8 +13,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// #2294: the ephemeral history of a row its perspective purged (<c>ApplyResult.Purge()</c>) is reclaimed. A purged
 /// row has nothing to snapshot, so the coverage gate, which waits for a snapshot at or past each body, held every
 /// body of the stream for good, and the reap-driven pass picked the same pairs again on every cycle. A purge marker
-/// for the perspective now covers the stream's bodies, the pass no longer selects it, and the maintenance cycle removes
-/// the purged row's cursor and snapshots, which describe a row that no longer exists.
+/// for the perspective now covers the stream's bodies at or before its purge event, the pass no longer selects a pair
+/// it covers, and the maintenance cycle removes the purged row's cursor and snapshots, which describe a row that no
+/// longer exists. Bodies after the purge stay gated: a crash can leave a marker on a resurrected, live row.
 /// </summary>
 /// <remarks>
 /// An operator purge marks a stream for every perspective (<c>'*'</c>), and an Apply that resurrects a perspective's
@@ -84,6 +85,66 @@ public class PurgedRowEphemeralHistorySqlTests : EFCoreTestBase {
 
     await Assert.That(await _bodyCountAsync(conn, eventId)).IsEqualTo(1L)
       .Because("a '*' marker can stand beside a row a later Apply resurrected, so it says nothing about this row");
+  }
+
+  [Test]
+  public async Task Reap_AStaleMarkerOnAResurrectedRow_CoversOnlyTheBodiesAtOrBeforeThePurgeAsync() {
+    // The runner clears a marker only after it writes the resurrected row, so a crash leaves the marker on a live row.
+    // The bodies after the purge feed that live row (a mixed read model replays them from the start), so they stay gated.
+    await using var conn = await _openAsync();
+    var (stream, before, purge, after) = await _resurrectedStreamWithAStaleMarkerAsync(conn);
+
+    await _maintainAsync(conn);
+
+    await Assert.That(await _bodyCountAsync(conn, before)).IsEqualTo(0L)
+      .Because("a body before the purge belongs to the row's previous life, which no rewind of the resurrected row needs");
+    await Assert.That(await _bodyCountAsync(conn, purge)).IsEqualTo(0L).Because("the purge event itself is at the purge");
+    await Assert.That(await _bodyCountAsync(conn, after)).IsEqualTo(1L)
+      .Because("a body after the purge may feed a resurrected row, so it waits for a snapshot as any other");
+    await Assert.That(stream).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task Reap_AMarkerThatNamesNoPurgeEvent_CoversNothingAsync() {
+    await using var conn = await _openAsync();
+    var (stream, eventId) = await _consumedEphemeralEventAsync(conn);
+    await _markPurgedAsync(conn, stream, PERSPECTIVE, purgeEventId: null);
+
+    await _maintainAsync(conn);
+
+    await Assert.That(await _bodyCountAsync(conn, eventId)).IsEqualTo(1L)
+      .Because("without a purge event there is no position the purge is known to have reached, so the gate stays");
+  }
+
+  [Test]
+  public async Task Reap_AMarkerWhosePurgeEventIsNotInTheStream_CoversNothingAsync() {
+    await using var conn = await _openAsync();
+    var (stream, eventId) = await _consumedEphemeralEventAsync(conn);
+    await _markPurgedAsync(conn, stream, PERSPECTIVE, Guid.CreateVersion7());
+
+    await _maintainAsync(conn);
+
+    await Assert.That(await _bodyCountAsync(conn, eventId)).IsEqualTo(1L)
+      .Because("a purge event the store cannot place has no version to compare, so it covers nothing");
+  }
+
+  [Test]
+  public async Task Mirrors_AStaleMarker_LeaveThePostPurgePairATarget_AndOfferOnlyThePrePurgeBodiesAsync() {
+    await using var conn = await _openAsync();
+    await using var dbContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      dbContext, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var (stream, before, purge, after) = await _resurrectedStreamWithAStaleMarkerAsync(conn);
+
+    var targets = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
+    var offered = (await coordinator.GetEphemeralBodiesAboutToReapAsync()).Select(t => t.EventId).ToList();
+
+    await Assert.That(targets.Any(t => t.StreamId == stream && t.PerspectiveName == PERSPECTIVE)).IsTrue()
+      .Because("the post-purge body is uncovered, so the live row is snapshotted before it can go");
+    await Assert.That(offered).Contains(before);
+    await Assert.That(offered).Contains(purge);
+    await Assert.That(offered).DoesNotContain(after)
+      .Because("the destruction hook is offered exactly what the reap deletes");
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -296,6 +357,33 @@ public class PurgedRowEphemeralHistorySqlTests : EFCoreTestBase {
       ("s", stream), ("p", PERSPECTIVE), ("e", eventId));
     await Assert.That(await _bodyCountAsync(conn, eventId)).IsEqualTo(1L).Because("the body is offloaded at commit");
     return (stream, eventId);
+  }
+
+  /// <summary>
+  /// A stream the perspective purged at its second event and then resurrected, with the marker left behind: three
+  /// consumed ephemeral events past their grace at versions 5, 6 (the purge) and 7, the perspective's cursor on the
+  /// last, no snapshot, and a marker naming the purge event.
+  /// </summary>
+  private static async Task<(Guid Stream, Guid Before, Guid Purge, Guid After)> _resurrectedStreamWithAStaleMarkerAsync(
+      NpgsqlConnection conn) {
+    await _associateAsync(conn);
+    var stream = Guid.CreateVersion7();
+    var ids = new[] { Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7() };
+    for (var i = 0; i < ids.Length; i++) {
+      await _commitAsync(conn, ids[i], stream);
+    }
+    // Versions 5 to 7 sit above the 1 to 3 the commits gave, so the reassignment never collides.
+    for (var i = 0; i < ids.Length; i++) {
+      await _executeAsync(conn,
+        "UPDATE wh_event_store SET version = @v, commit_sequence = @v, created_at = NOW() - INTERVAL '10 minutes' WHERE event_id = @id",
+        ("v", 5 + i), ("id", ids[i]));
+      await _executeAsync(conn, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id", ("id", ids[i]));
+    }
+    await _executeAsync(conn,
+      "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) VALUES (@s, @p, @e, 1)",
+      ("s", stream), ("p", PERSPECTIVE), ("e", ids[2]));
+    await _markPurgedAsync(conn, stream, PERSPECTIVE, ids[1]);
+    return (stream, ids[0], ids[1], ids[2]);
   }
 
   private static async Task _markPurgedAsync(NpgsqlConnection conn, Guid stream, string perspective, Guid? purgeEventId) {
