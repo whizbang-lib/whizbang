@@ -116,6 +116,37 @@ namespace TestNamespace {
 }
 """;
 
+  // The only durable event is applied through the global interface: it still counts, so the perspective keeps its
+  // floor. Reading only the single-stream interfaces would class it as ephemeral-only and reap its bodies unprotected.
+  private const string DURABLE_THROUGH_GLOBAL = """
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  [Ephemeral]
+  public record UserIsTyping : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record ConversationOpened : IEvent {
+    public string ConversationId { get; init; } = "";
+  }
+
+  public record PresenceModel {
+    [StreamId]
+    public string ConversationId { get; init; } = "";
+  }
+
+  public class PresencePerspective
+      : IPerspectiveFor<PresenceModel, UserIsTyping>, IGlobalPerspectiveFor<PresenceModel, string, ConversationOpened> {
+    public PresenceModel Apply(PresenceModel currentData, UserIsTyping @event) => currentData;
+    public string GetPartitionKey(ConversationOpened @event) => @event.ConversationId;
+    public PresenceModel Apply(PresenceModel currentData, ConversationOpened @event) => currentData;
+  }
+}
+""";
+
   private const string KEEPS_NO_FLOOR = "private const bool _keepsRewindFloor = false;";
   private const string KEEPS_A_FLOOR = "private const bool _keepsRewindFloor = true;";
   private const string MARKER_CALL = "EphemeralRewindFloor.NoFloorAssociationEntryJson(\"TestNamespace.PresencePerspective\", serviceName)";
@@ -165,6 +196,7 @@ namespace TestNamespace {
   [Arguments(OPTED_IN)]
   [Arguments(MIXED)]
   [Arguments(DURABLE)]
+  [Arguments(DURABLE_THROUGH_GLOBAL)]
   public async Task Associations_OfAPerspectiveThatKeepsAFloor_RegisterNoMarkerAsync(string source) {
     var associations = _associations(source);
 
