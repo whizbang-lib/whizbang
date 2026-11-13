@@ -102,7 +102,8 @@ public class SetBasedJsonbColumnParityTests {
       ["stamp"] = model.Stamp,
     };
     if (useSink) {
-      var write = strategy.PreparePendingWrite(context, TABLE, model.Id, model, metadata, new PerspectiveScope(), physical, false, expected)!;
+      var write = strategy.PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<JsonbExtractedItem.Model>(
+        TABLE, model.Id, model, metadata, new PerspectiveScope(), physical, false, expected))!;
       var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([write]);
       await Assert.That(outcomes[0].Status).IsEqualTo(PerspectiveWriteStatus.Written);
     } else {

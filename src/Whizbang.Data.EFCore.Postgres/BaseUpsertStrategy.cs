@@ -35,7 +35,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// atomic-UPSERT path (Path 1) can issue a raw <c>INSERT … ON CONFLICT DO UPDATE</c>
   /// against the right table without re-querying EF's model metadata.
   /// </summary>
-  private readonly record struct UpsertRowArgs<TModel>(
+  internal readonly record struct UpsertRowArgs<TModel>(
     string TableName,
     Guid Id,
     TModel Model,
@@ -457,22 +457,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </summary>
   /// <returns>The pending write, or null when the row must take the per-stream write (see <see cref="UsesAtomicUpsert"/>).</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SetBasedPerspectiveWriteSinkTests.cs</tests>
-  internal PendingPerspectiveWrite? PreparePendingWrite<TModel>(
-      DbContext context,
-      string tableName,
-      Guid id,
-      TModel model,
-      PerspectiveMetadata metadata,
-      PerspectiveScope scope,
-      IDictionary<string, object?>? physicalFieldValues,
-      bool forceUpdateScope,
-      PerspectiveRowVersion expectedVersion)
+  internal PendingPerspectiveWrite? PreparePendingWrite<TModel>(DbContext context, UpsertRowArgs<TModel> row)
       where TModel : class {
     if (!UsesAtomicUpsert) {
       return null;
     }
-    var (args, hookPlan, expiresAt, businessTime, _) = _planRowWrite(context, new UpsertRowArgs<TModel>(
-      tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion));
+    var (args, hookPlan, expiresAt, businessTime, _) = _planRowWrite(context, row);
     return _tryPrepareAtomicWrite(context, args, hookPlan, expiresAt, businessTime);
   }
 

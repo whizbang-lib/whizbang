@@ -255,10 +255,10 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
     var strategy = new PostgresUpsertStrategy();
 
     var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([
-      strategy.PreparePendingWrite(context, VERSIONED_TABLE, upserted, new VersionedItem { Id = upserted, State = "Running", Value = 1 },
-        _meta(null, _olderEventId), new PerspectiveScope(), null, false, PerspectiveRowVersion.Unchecked)!,
-      strategy.PreparePendingWrite(context, VERSIONED_TABLE, updated, new VersionedItem { Id = updated, State = "Running", Value = 1 },
-        _meta(null, _olderEventId), new PerspectiveScope(), null, false, PerspectiveRowVersion.Of(readVersion))!,
+      strategy.PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<VersionedItem>(VERSIONED_TABLE, upserted, new VersionedItem { Id = upserted, State = "Running", Value = 1 },
+        _meta(null, _olderEventId), new PerspectiveScope(), null, false, PerspectiveRowVersion.Unchecked))!,
+      strategy.PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<VersionedItem>(VERSIONED_TABLE, updated, new VersionedItem { Id = updated, State = "Running", Value = 1 },
+        _meta(null, _olderEventId), new PerspectiveScope(), null, false, PerspectiveRowVersion.Of(readVersion)))!,
     ]);
 
     await Assert.That(outcomes[0].Status).IsEqualTo(PerspectiveWriteStatus.Refused);
@@ -464,8 +464,8 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
       var actionId = Guid.CreateVersion7();
       var itemId = Guid.CreateVersion7();
       writes.Add(_action(context, actionId, $"a{i}", i, PerspectiveRowVersion.Absent, commitSequence: 1));
-      writes.Add(strategy.PreparePendingWrite(context, VERSIONED_TABLE, itemId, new VersionedItem { Id = itemId, State = $"s{i}", Value = i },
-        _meta(1, Guid.CreateVersion7()), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent)!);
+      writes.Add(strategy.PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<VersionedItem>(VERSIONED_TABLE, itemId, new VersionedItem { Id = itemId, State = $"s{i}", Value = i },
+        _meta(1, Guid.CreateVersion7()), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent))!);
     }
 
     var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync(writes);
@@ -557,7 +557,7 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
       await using var context = CreateDbContext();
       var physical = new Dictionary<string, object?> { ["status"] = model.Status, ["priority"] = model.Priority };
       if (useSink) {
-        var write = strategy.PreparePendingWrite(context, SPLIT_TABLE, id, model, _meta(sequence, null), _scope, physical, false, expected)!;
+        var write = strategy.PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<InitOnlySplitModel>(SPLIT_TABLE, id, model, _meta(sequence, null), _scope, physical, false, expected))!;
         var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([write]);
         await Assert.That(outcomes[0].Status).IsEqualTo(PerspectiveWriteStatus.Written);
       } else {
@@ -610,10 +610,10 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
     var id = Guid.CreateVersion7();
     var model = new ActionTestModel { Id = id, Name = "x", Value = 1 };
 
-    await Assert.That(UpsertWritePath.Strategy(atomic: false).PreparePendingWrite(context, ACTION_TABLE, id, model,
-      _meta(1, null), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent)).IsNull();
-    await Assert.That(new PostgresUpsertStrategy().PreparePendingWrite(inMemory, ACTION_TABLE, id, model,
-      _meta(1, null), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent)).IsNull();
+    await Assert.That(UpsertWritePath.Strategy(atomic: false).PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<ActionTestModel>(ACTION_TABLE, id, model,
+      _meta(1, null), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent))).IsNull();
+    await Assert.That(new PostgresUpsertStrategy().PreparePendingWrite(inMemory, new BaseUpsertStrategy.UpsertRowArgs<ActionTestModel>(ACTION_TABLE, id, model,
+      _meta(1, null), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent))).IsNull();
   }
 
   [Test]
@@ -678,20 +678,20 @@ public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
   private static PendingPerspectiveWrite _action(
       DbContext context, Guid id, string name, int value, PerspectiveRowVersion expected, long? commitSequence = null,
       PerspectiveScope? scope = null, bool forceUpdateScope = false) =>
-    new PostgresUpsertStrategy().PreparePendingWrite(context, ACTION_TABLE, id, new ActionTestModel { Id = id, Name = name, Value = value },
-      _meta(commitSequence, null), scope ?? new PerspectiveScope(), null, forceUpdateScope, expected)!;
+    new PostgresUpsertStrategy().PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<ActionTestModel>(ACTION_TABLE, id, new ActionTestModel { Id = id, Name = name, Value = value },
+      _meta(commitSequence, null), scope ?? new PerspectiveScope(), null, forceUpdateScope, expected))!;
 
   private static PendingPerspectiveWrite _extracted(
       DbContext context, Guid id, string? status, int priority, PerspectiveRowVersion expected, long commitSequence) =>
-    new PostgresUpsertStrategy().PreparePendingWrite(context, EXTRACTED_TABLE, id,
+    new PostgresUpsertStrategy().PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<InitOnlyExtractedModel>(EXTRACTED_TABLE, id,
       new InitOnlyExtractedModel { Id = id, Status = status, Priority = priority }, _meta(commitSequence, null), new PerspectiveScope(),
-      new Dictionary<string, object?> { ["status"] = status, ["priority"] = priority }, false, expected)!;
+      new Dictionary<string, object?> { ["status"] = status, ["priority"] = priority }, false, expected))!;
 
   private static PendingPerspectiveWrite _split(
       DbContext context, Guid id, string? status, int priority, string note, PerspectiveRowVersion expected, long commitSequence) =>
-    new PostgresUpsertStrategy().PreparePendingWrite(context, SPLIT_TABLE, id,
+    new PostgresUpsertStrategy().PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<InitOnlySplitModel>(SPLIT_TABLE, id,
       new InitOnlySplitModel { Id = id, Status = status, Priority = priority, Note = note }, _meta(commitSequence, null), new PerspectiveScope(),
-      new Dictionary<string, object?> { ["status"] = status, ["priority"] = priority }, false, expected)!;
+      new Dictionary<string, object?> { ["status"] = status, ["priority"] = priority }, false, expected))!;
 
   private static PendingPerspectiveWrite _withRow(PendingPerspectiveWrite write, PerspectiveRowValues row) =>
     PendingPerspectiveWrite.Write(write.Table, write.StreamId, write.ExpectedVersion, row);

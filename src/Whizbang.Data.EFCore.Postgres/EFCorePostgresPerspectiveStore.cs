@@ -535,8 +535,8 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       PerspectiveRowVersion expectedVersion,
       IDictionary<string, object?>? physicalFieldValues) =>
     _upsertStrategy is BaseUpsertStrategy strategy
-      ? strategy.PreparePendingWrite(
-          _context, _tableName, streamId, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion)
+      ? strategy.PreparePendingWrite(_context, new BaseUpsertStrategy.UpsertRowArgs<TModel>(
+          _tableName, streamId, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion))
         ?.ForSink(_context.GetType())
       : null;
 
