@@ -39,10 +39,10 @@ public partial class RedeliveryRequestReceptorTests {
       _evt(_first, TrackedGuid.New().Value, 1), _evt(_first, TrackedGuid.New().Value, 2), _evt(_first, TrackedGuid.New().Value, 3),
       _evt(_second, TrackedGuid.New().Value, 1), _evt(_second, TrackedGuid.New().Value, 2));
 
-    var bundles = serializer.Captured.Select(c => c.Payload).ToList();
+    var bundles = serializer.Captured.ConvertAll(c => c.Payload);
     await Assert.That(bundles.Count).IsEqualTo(4).Because("precondition: pages [1a 1b] [1c 2a] [2b], one bundle per stream per page");
     foreach (var bundle in bundles) {
-      await Assert.That(bundle.AnsweredPartialStreamIds!).IsEquivalentTo([bundle.InnerStreamIds![0]])
+      await Assert.That(bundle.AnsweredPartialStreamIds).IsEquivalentTo([bundle.InnerStreamIds![0]])
         .Because("every bundle here holds a stream whose other events are on the page before or after it");
     }
   }
@@ -62,7 +62,7 @@ public partial class RedeliveryRequestReceptorTests {
       _evt(_first, TrackedGuid.New().Value, 1), _evt(_first, TrackedGuid.New().Value, 2), _evt(_first, TrackedGuid.New().Value, 3));
 
     var bundle = serializer.Captured.Single().Payload;
-    await Assert.That(bundle.AnsweredPartialStreamIds!).IsEquivalentTo([_first])
+    await Assert.That(bundle.AnsweredPartialStreamIds).IsEquivalentTo([_first])
       .Because("the stream's third event lies beyond the cap, so a bundle that changed nothing has not shown it is unhealable");
   }
 }

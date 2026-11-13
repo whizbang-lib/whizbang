@@ -32,7 +32,7 @@ public partial class RedeliveryPumpWindowTests {
     var splitBundles = serializer.Composites.Where(c => c.InnerStreamIds!.Contains(split)).ToList();
     await Assert.That(splitBundles.Count).IsEqualTo(2);
     foreach (var bundle in splitBundles) {
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value.PartialStreamIds!).Contains(split)
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value.PartialStreamIds).Contains(split)
         .Because("a bundle holding part of a stream's answer cannot say the stream had nothing missing");
     }
     var wholeBundle = serializer.Composites.Single(c => c.InnerStreamIds!.Contains(whole));
@@ -54,7 +54,7 @@ public partial class RedeliveryPumpWindowTests {
       topic: "inbox.whizbang.service.billing", target: "billing");
 
     var openBundle = serializer.Composites.Single(c => c.InnerStreamIds!.Contains(open));
-    await Assert.That(openBundle.AnsweredPartialStreamIds!).IsEquivalentTo([open])
+    await Assert.That(openBundle.AnsweredPartialStreamIds).IsEquivalentTo([open])
       .Because("the stream's answer continues on the next page or stopped at the cap; a stream this bundle does not carry is not named");
     var closedBundle = serializer.Composites.Single(c => c.InnerStreamIds!.Contains(closed));
     await Assert.That(closedBundle.AnsweredPartialStreamIds).IsNull();

@@ -40,7 +40,7 @@ public partial class RedeliveryAnswerCoverageTests {
     IIdentityPreservingComposite partial = new RedeliveryComposite { AnswersWindow = true, AnsweredPartialStreamIds = [stream] };
     IIdentityPreservingComposite whole = new RedeliveryComposite { AnswersWindow = true };
 
-    await Assert.That(partial.AnsweredWindow!.Value.PartialStreamIds!).IsEquivalentTo([stream]);
+    await Assert.That(partial.AnsweredWindow!.Value.PartialStreamIds).IsEquivalentTo([stream]);
     await Assert.That(whole.AnsweredWindow!.Value.PartialStreamIds).IsNull();
   }
 
@@ -98,7 +98,7 @@ public partial class RedeliveryAnswerCoverageTests {
 
     _ = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle), services, NullLogger.Instance, _now);
 
-    await Assert.That(coordinator.BundleAnswerWindows.Single()!.Value.PartialStreamIds!).IsEquivalentTo([stream])
+    await Assert.That(coordinator.BundleAnswerWindows.Single()!.Value.PartialStreamIds).IsEquivalentTo([stream])
       .Because("the durable store marks at commit, so it needs to know which streams the bundle carried only in part");
   }
 }

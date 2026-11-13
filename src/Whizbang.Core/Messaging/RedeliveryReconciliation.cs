@@ -294,6 +294,14 @@ public static partial class RedeliveryReconciler {
         writer.WriteStartObject("answeredWindow");
         _writeBound(writer, "from", answered.FromCommitSequence);
         _writeBound(writer, "to", answered.ToCommitSequence);
+        // #2149: the streams the bundle carried only in part; absent when it carried every stream whole.
+        if (answered.PartialStreamIds is { Count: > 0 } partial) {
+          writer.WriteStartArray("partialStreams");
+          foreach (var stream in partial) {
+            writer.WriteStringValue(stream);
+          }
+          writer.WriteEndArray();
+        }
         writer.WriteEndObject();
       }
       writer.WriteEndObject();
@@ -308,6 +316,10 @@ public static partial class RedeliveryReconciler {
       writer.WriteNull(name);
     }
   }
+
+  // #2149: the streams the bundle carried only in part; null when the record names none (and on one recorded before).
+  private static List<Guid>? _readPartial(JsonElement window) =>
+    window.TryGetProperty("partialStreams", out var partial) ? [.. partial.EnumerateArray().Select(e => e.GetGuid())] : null;
 
   private static long? _readBound(JsonElement window, string name) {
     var bound = window.GetProperty(name);
@@ -333,7 +345,7 @@ public static partial class RedeliveryReconciler {
       ? flag.GetBoolean()
       : null;
     RedeliveryAnswerWindow? window = root.TryGetProperty("answeredWindow", out var answered)
-      ? new RedeliveryAnswerWindow(_readBound(answered, "from"), _readBound(answered, "to"))
+      ? new RedeliveryAnswerWindow(_readBound(answered, "from"), _readBound(answered, "to")) { PartialStreamIds = _readPartial(answered) }
       : null;
     return new BundleAdoption(
       root.GetProperty("originServiceId").GetGuid(),
@@ -432,8 +444,10 @@ public static partial class RedeliveryReconciler {
     // and read as present.
     List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
     var storedNothing = allPresentAtCommit ?? present + refusedTruncated >= childCount;
+    // #2149: a stream the bundle carried only in part may have its missing events in the part it did not carry.
+    var partial = window?.PartialStreamIds ?? [];
     List<RedeliveredBucketPresence> unchanged = adopted == 0 && storedNothing
-      ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
+      ? [.. buckets.Where(b => b.RefusedTruncated == 0 && !partial.Contains(b.StreamId))]
       : [];
     var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
     if (ledger is null) {

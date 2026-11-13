@@ -228,6 +228,8 @@ public sealed class RedeliveryPump(
     // serialization or exceed the broker message-size limit and never deliver. The per-stream
     // split is an ordering concern layered on routing (all chunks share the topic): the stream id
     // rides as the broker session key, so redelivered bundles keep stream FIFO.
+    // #2149: how many of each stream's events this publish carries, so a bundle holding fewer names the stream partial.
+    var perStream = answeredWindow is null ? null : _countPerStream(events);
     var plans = _compositeFactory.Create(new CompositeMintRequest<RedeliveryEvent> {
       Constituents = events,
       // Grouped by stream AND scope. A composite carries ONE hop scope, so a bundle spanning two
@@ -241,7 +243,8 @@ public sealed class RedeliveryPump(
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
-      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested, BundleStreamId, answeredWindow),
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested, BundleStreamId,
+        answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds)),
     });
 
     var published = 0;
@@ -254,6 +257,25 @@ public sealed class RedeliveryPump(
     return published;
   }
 
+  private static Dictionary<Guid, int> _countPerStream(IReadOnlyList<RedeliveryEvent> events) =>
+    events.GroupBy(e => e.StreamId).ToDictionary(g => g.Key, g => g.Count());
+
+  /// <summary>
+  /// #2149: the streams one bundle of an answer carries only in part: those the caller says continue past this publish
+  /// (<see cref="RedeliveryAnswerWindow.PartialStreamIds"/>), and those whose other events this publish put in another
+  /// bundle. Null when the bundle answers no window, or carries every stream whole.
+  /// </summary>
+  private static List<Guid>? _partialStreams(
+      IReadOnlyList<RedeliveryEvent> chunk, Dictionary<Guid, int>? perStream, IReadOnlyList<Guid>? continuing) {
+    if (perStream is null) {
+      return null;
+    }
+    List<Guid> partial = [.. chunk.GroupBy(e => e.StreamId)
+      .Where(g => g.Count() < perStream[g.Key] || continuing?.Contains(g.Key) == true)
+      .Select(g => g.Key)];
+    return partial.Count == 0 ? null : partial;
+  }
+
   /// <summary>
   /// One chunk's repair bundle: the stored payloads and type names raw, the original ids, origin and commit sequences,
   /// and the stream each event is stored on, which the receiver files it under (#1798).
@@ -261,7 +283,7 @@ public sealed class RedeliveryPump(
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private static RedeliveryComposite _buildComposite(
       IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested, Guid? bundleStreamId,
-      RedeliveryAnswerWindow? answeredWindow) {
+      RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
     // payload bytes that were emitted are the payload bytes that repair.
@@ -287,6 +309,8 @@ public sealed class RedeliveryPump(
       AnswersWindow = answeredWindow is not null,
       AnsweredFromCommitSequence = answeredWindow?.FromCommitSequence,
       AnsweredToCommitSequence = answeredWindow?.ToCommitSequence,
+      // #2149: the streams this bundle carries only in part, whose buckets it must not mark.
+      AnsweredPartialStreamIds = partialStreams,
     };
   }
 

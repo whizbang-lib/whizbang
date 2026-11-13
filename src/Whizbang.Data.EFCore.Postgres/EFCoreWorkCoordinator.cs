@@ -1517,7 +1517,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     IntegrityRecordBundleAnswerAsync(originServiceId, eventIds, commitSequences, null, now, cancellationToken);
 
   /// <inheritdoc />
-  /// <remarks>An unchanged bucket the answered window did not cover is answered and not marked (357, #2143).</remarks>
+  /// <remarks>An unchanged bucket the answered window did not cover is answered and not marked (357, #2143), and so is one
+  /// of a stream the bundle carried only in part (410, #2149).</remarks>
   public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
       Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
       RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
@@ -1544,8 +1545,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // An unknown window marks as before 357.
       cmd.Parameters.AddWithValue("p_answer_window_known", answeredWindow is not null);
       _bindAnsweredWindow(cmd, answeredWindow);
+      // #2149 (410): the streams the bundle carried only in part are answered but never marked.
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_partial_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = answeredWindow?.PartialStreamIds is { Count: > 0 } partial ? partial.ToArray() : DBNull.Value
+      });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to)";
+      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_partial_streams)";
 #pragma warning restore S2077
       int present = 0, absent = 0, refused = 0, adoptable = 0;
       var markedRefused = new List<IntegrityRepairLedger.DivergenceKey>();
