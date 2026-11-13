@@ -85,4 +85,27 @@ public partial class IntegrityManifestReceptorTests {
     await Assert.That(follow.EventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX" })
       .Because("an empty page names no type; asking for none would end the walk or ask for nothing");
   }
+  [Test]
+  public async Task ManifestReceptor_APageOfOnlyTypesTheOriginIsNotAuthoritativeFor_StillFollowsTheWalkAsync() {
+    var (coordinator, transport, receptor) = _cursorFixture(maxPages: 5);
+    coordinator.Claims = [new IntegrityDomainClaim {
+      Domain = "app.contracts.billing",
+      OwnerServiceId = TrackedGuid.New().Value,
+      OwnerServiceName = "billing-svc",
+    }];
+    var cursor = TrackedGuid.New().Value;
+    var billing = _digest(TrackedGuid.New().Value, 4, 5, 6) with { EventType = "App.Contracts.Billing.Raised, App.Contracts" };
+
+    await receptor.HandleAsync(_manifest(coordinator, [billing])
+      with {
+        SinceSequence = CURSOR_SINCE, ComputedThrough = CURSOR_THROUGH, ChunkCount = 1, ResumeAfterStreamId = cursor,
+        RequestedEventTypes = ["Contracts.TypeX"],
+      });
+
+    var follow = _streamAsks(transport).SingleOrDefault();
+    await Assert.That(follow).IsNotNull()
+      .Because("a page whose every digest is left out of the compare still says there is more; dropping it ends the walk");
+    await Assert.That(follow!.EventTypes!).IsEquivalentTo(new[] { "Contracts.TypeX" });
+    await Assert.That(follow.ResumeAfterStreamId).IsEqualTo(cursor);
+  }
 }
