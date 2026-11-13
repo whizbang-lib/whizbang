@@ -518,7 +518,7 @@ jobs:
       # Create release as DRAFT so upload-release-assets can add assets before publishing
       - name: Create GitHub Release (stable only)
         if: ${{ !contains(needs.check-release.outputs.version, '-') }}
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
           name: Release v${{ needs.check-release.outputs.version }}
@@ -528,7 +528,7 @@ jobs:
 
       - name: Create GitHub Pre-Release
         if: ${{ contains(needs.check-release.outputs.version, '-') }}
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
           name: Pre-release v${{ needs.check-release.outputs.version }}
@@ -687,7 +687,7 @@ jobs:
           jq -c '.dsseEnvelope' "$BUNDLE" > "./packages/whizbang-$RELEASE_VERSION.intoto.jsonl"
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
           files: |
