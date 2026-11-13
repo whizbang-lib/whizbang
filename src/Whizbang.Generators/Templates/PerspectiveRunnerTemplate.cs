@@ -2520,10 +2520,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid streamId,
       string perspectiveName,
       Guid lastProcessedEventId,
+      CancellationToken cancellationToken = default) =>
+    _ = await TryBootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
+
+  // #2294: the bootstrap says what it did, so a caller that relies on the snapshot (the reap-driven pass) never counts a
+  // snapshot that was not written.
+  public async Task<global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome> TryBootstrapSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid lastProcessedEventId,
       CancellationToken cancellationToken = default) {
 
     if (_snapshotStore is null || _snapshotOptions?.Value.Enabled != true) {
-      return;
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.SnapshotsOff;
     }
 
     // #1963: a bootstrap snapshot is a live row too, so a row with collectives reads the fence before the model and again
@@ -2534,21 +2543,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
       if (applyRead.Version.State != global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present) {
         _deferSnapshot(perspectiveName, streamId);
-        return;
+        return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Deferred;
       }
       collectiveFence = await _readCollectiveFenceAsync(applyRead.Scope?.TenantId, cancellationToken);
     }
 
     var model = await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken);
     if (model is null) {
-      return;
+      // The perspective purged the row, an eviction removed it, or no event ever produced one: nothing to snapshot.
+      _logger.LogInformation(
+          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} at event {EventId} not taken: the stream has no row to snapshot",
+          perspectiveName, streamId, lastProcessedEventId);
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.RowMissing;
     }
 
     var collectiveMark = collectiveFence is { } fenceBefore
         ? await _collectiveMarkAfterWriteAsync(fenceBefore, perspectiveName, streamId, cancellationToken)
         : new CollectiveMark(Deferred: false, ThroughSequence: null);
     if (collectiveMark.Deferred) {
-      return;
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Deferred;
     }
 
     var snapshotData = ToSnapshotJson(model);
@@ -2565,6 +2578,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",
         perspectiveName, streamId, lastProcessedEventId);
+    return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written;
   }
 
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.

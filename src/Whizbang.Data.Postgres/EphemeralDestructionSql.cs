@@ -66,7 +66,10 @@ internal static class EphemeralDestructionSql {
       $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
       // 209: by version, matching the migration. Any drift from the DELETE this mirrors reports bodies that survive or
       // hides bodies that go.
-      "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version))";
+      "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version) " +
+      // 403 (#2294): the perspective's purge marker covers the stream's bodies, as in the reap.
+      $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm WHERE pm.stream_id = es.stream_id " +
+      "    AND pm.perspective_name = ma.target_name))";
     var targets = new List<EphemeralDestructionTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {

@@ -94,8 +94,10 @@ internal static class CoordinatorCatalogSql {
 
   /// <summary>
   /// The (stream, perspective) pairs with an ephemeral body past its rewind grace, consumed, that no snapshot covers by
-  /// version: the snapshots to take before the body is reaped.
+  /// version and whose row the perspective has not purged (#2294): the snapshots to take before the body is reaped.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_APurgedPair_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
   internal static async Task<IReadOnlyList<EphemeralSnapshotTarget>> EphemeralPairsNeedingSnapshotAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     cmd.CommandText =
@@ -114,7 +116,11 @@ internal static class CoordinatorCatalogSql {
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_events pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       // 209: coverage is read by version, the stream's own counter, never by commit sequence.
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
-      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version)";
+      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version) " +
+      // 403 (#2294): a row the perspective purged has nothing to snapshot, and its marker covers the stream's bodies, so
+      // the pair is no target. Selecting it again every cycle only repeated a bootstrap that found no row.
+      $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm WHERE pm.stream_id = es.stream_id " +
+      "  AND pm.perspective_name = ma.target_name)";
     var list = new List<EphemeralSnapshotTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
