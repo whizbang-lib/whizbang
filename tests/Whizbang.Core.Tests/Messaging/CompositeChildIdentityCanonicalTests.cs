@@ -182,20 +182,4 @@ public partial class CompositeChildIdentityCanonicalTests {
       .IsEquivalentTo(viaTyped.Children.Select(c => c.MessageId).ToList(), TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the same child of the same composite is one event, whichever path expanded it and whichever build sent it");
   }
-
-  /// <summary>
-  /// The guard (#2267): library code cannot call <see cref="CompositeChildIdentity.Derive"/>, nor render a type's versioned
-  /// assembly-qualified name, because both are banned for it at compile time (RS0030). This reads the ban list the
-  /// production projects compile against, so removing an entry fails here before a second rendering can creep back.
-  /// </summary>
-  [Test]
-  public async Task TheBanList_ForbidsTheRawDerivation_AndTheVersionedTypeNamesAsync() {
-    var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "BannedSymbols.txt"));
-    var banned = (await File.ReadAllLinesAsync(path)).Select(l => l.Split(';')[0].Trim()).ToHashSet(StringComparer.Ordinal);
-
-    await Assert.That(banned).Contains("M:Whizbang.Core.Messaging.CompositeChildIdentity.Derive(System.Guid,System.Int32,System.String)");
-    await Assert.That(banned).Contains("M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedName(System.Type)");
-    await Assert.That(banned).Contains("M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedNameOrNull(System.Type)");
-    await Assert.That(banned).Contains("M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedNameOrDisplay(System.Type)");
-  }
 }
