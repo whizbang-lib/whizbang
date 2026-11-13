@@ -167,9 +167,9 @@ public class WorkerPipelineExtensionsCoverageTests {
 
     await Assert.That(coordinator.StoredOutboxMessages.Count).IsEqualTo(2)
       .Because("the store still happens for the whole batch");
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo(new[] { failing.MessageId, healthy.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo([failing.MessageId, healthy.MessageId])
       .Because("the healthy message's pre-store receptors run although the failing message's threw");
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { failing.MessageId, healthy.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([failing.MessageId, healthy.MessageId])
       .Because("the healthy message's post-store receptors run although the failing message's threw");
 
     var failures = loggerProvider.Snapshot()

@@ -40,7 +40,7 @@ public class LifecycleStageFailureIsolationTests {
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { first.MessageId, second.MessageId, third.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId, third.MessageId])
       .Because("the first message's failure must not skip the inline stage for the messages after it in the flush");
     var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Error);
     await Assert.That(failure.Message).Contains(first.MessageId.ToString())
@@ -66,7 +66,7 @@ public class LifecycleStageFailureIsolationTests {
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { first.MessageId, second.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId])
       .Because("inbox messages in the same flush are isolated the same way");
     await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(1);
   }
@@ -90,7 +90,7 @@ public class LifecycleStageFailureIsolationTests {
 
     await Assert.That(thrown!.Message).Contains(first.MessageId.ToString())
       .Because("the exception thrown is the first failure's own, so a caller sees what it always saw");
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { first.MessageId, second.MessageId, third.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId, third.MessageId])
       .Because("every message's receptors run before the first failure is thrown");
     await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(2)
       .Because("each failure is logged, including the ones that are not thrown");
@@ -110,7 +110,7 @@ public class LifecycleStageFailureIsolationTests {
         LifecycleStage.PreDistributeDetached, LifecycleStage.PreDistributeInline, context))
       .ThrowsExactly<InvalidOperationException>();
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo(new[] { first.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo([first.MessageId])
       .Because("a stage that refuses the write stops at the failure; running the rest would act on messages that are not stored");
   }
 
@@ -128,7 +128,7 @@ public class LifecycleStageFailureIsolationTests {
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { readable.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([readable.MessageId])
       .Because("a payload that cannot be read costs only its own message");
     var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Error);
     await Assert.That(failure.Message).Contains(unreadable.MessageId.ToString());
@@ -171,7 +171,7 @@ public class LifecycleStageFailureIsolationTests {
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { first.MessageId, second.MessageId });
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId]);
     await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(1);
   }
 
@@ -189,7 +189,7 @@ public class LifecycleStageFailureIsolationTests {
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(LifecycleStage.DistributeDetached, context);
     await detachedWork.DrainAsync(CancellationToken.None);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.DistributeDetached)).IsEquivalentTo(new[] { first.MessageId, second.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.DistributeDetached)).IsEquivalentTo([first.MessageId, second.MessageId])
       .Because("one message's detached receptor failure must not skip the stage for the rest of the batch");
     var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Error);
     await Assert.That(failure.Message).Contains(first.MessageId.ToString());
@@ -207,7 +207,7 @@ public class LifecycleStageFailureIsolationTests {
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(LifecycleStage.DistributeDetached, context);
     await detachedWork.DrainAsync(CancellationToken.None);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.DistributeDetached)).IsEquivalentTo(new[] { first.MessageId, second.MessageId });
+    await Assert.That(invoker.InvokedAt(LifecycleStage.DistributeDetached)).IsEquivalentTo([first.MessageId, second.MessageId]);
   }
 
   [Test]
@@ -226,7 +226,7 @@ public class LifecycleStageFailureIsolationTests {
 
     await Assert.That(coordinator.StoredOutboxMessages.Count).IsEqualTo(2)
       .Because("the post-store stage runs after both messages are stored");
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { first.MessageId, second.MessageId })
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId])
       .Because("the second message's post-store receptors still run when the first message's fail");
   }
 
@@ -244,7 +244,7 @@ public class LifecycleStageFailureIsolationTests {
       .ThrowsExactly<InvalidOperationException>();
 
     await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(0);
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo(new[] { first.MessageId });
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo([first.MessageId]);
   }
 
   [Test]
@@ -327,7 +327,7 @@ public class LifecycleStageFailureIsolationTests {
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
 
-    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo(new[] { only.MessageId });
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([only.MessageId]);
   }
 
   private static ServiceProvider _flushProvider(IReceptorInvoker invoker, IWorkCoordinator coordinator) {
@@ -411,14 +411,11 @@ public class LifecycleStageFailureIsolationTests {
   private sealed record IsolationProbe : IMessage;
 
   /// <summary>Records each (stage, message) it is asked to run and throws for the messages it was told to fail.</summary>
-  private sealed class FailingForInvoker : IReceptorInvoker {
-    private readonly HashSet<Guid> _failFor;
-    private readonly Exception? _toThrow;
+  private sealed class FailingForInvoker(Exception? toThrow, params Guid[] failFor) : IReceptorInvoker {
+    private readonly HashSet<Guid> _failFor = [.. failFor];
     private readonly ConcurrentQueue<(LifecycleStage Stage, Guid MessageId)> _invoked = new();
 
-    public FailingForInvoker(params Guid[] failFor) => _failFor = [.. failFor];
-
-    public FailingForInvoker(Exception toThrow, params Guid[] failFor) : this(failFor) => _toThrow = toThrow;
+    public FailingForInvoker(params Guid[] failFor) : this(null, failFor) { }
 
     public Exception? Thrown { get; private set; }
 
@@ -431,7 +428,7 @@ public class LifecycleStageFailureIsolationTests {
       var messageId = envelope.MessageId.Value;
       _invoked.Enqueue((stage, messageId));
       if (_failFor.Contains(messageId) && (FailOnlyAt is null || FailOnlyAt == stage)) {
-        var thrown = _toThrow ?? new InvalidOperationException($"receptor failed for {messageId}");
+        var thrown = toThrow ?? new InvalidOperationException($"receptor failed for {messageId}");
         Thrown ??= thrown;
         throw thrown;
       }
