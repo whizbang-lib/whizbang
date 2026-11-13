@@ -200,7 +200,7 @@ public static class CompositeBatchExtensions {
         }
         var evt = enumerator.Current;
         var size = _sizeOf(evt, maxBytes, measure);
-        if (_wouldOverflow(batch.Count, bytes, size, maxMessages, maxBytes)) {
+        if (_wouldOverflow(batch.Count, bytes, size, maxBytes)) {
           var full = _cut(factory, batch);
           bytes = 0;
           yield return full;
@@ -257,13 +257,14 @@ public static class CompositeBatchExtensions {
   /// <summary>An event's size, measured only when a byte limit applies.</summary>
   private static long _sizeOf<TEvent>(TEvent evt, long maxBytes, Func<TEvent, long> measure) => maxBytes > 0 ? measure(evt) : 0;
 
-  /// <summary>Whether adding an event of <paramref name="size"/> would take a batch that holds events past a limit.</summary>
-  private static bool _wouldOverflow(int batched, long bytes, long size, int maxMessages, long maxBytes) {
+  /// <summary>Whether adding an event of <paramref name="size"/> would take a batch that holds events past its byte limit.</summary>
+  /// <remarks>
+  /// Only the bytes can overflow on an add: a batch is cut as soon as it reaches the message count (<see cref="_isFull"/>),
+  /// so one that is still open always has room for one more message.
+  /// </remarks>
+  private static bool _wouldOverflow(int batched, long bytes, long size, long maxBytes) {
     if (batched == 0) {
       return false;
-    }
-    if (batched + 1 > maxMessages) {
-      return true;
     }
     // 0 or less is no byte limit.
     if (maxBytes <= 0) {
