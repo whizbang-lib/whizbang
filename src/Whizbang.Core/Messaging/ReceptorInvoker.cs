@@ -336,7 +336,27 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
 
     var invocationCtx = new ReceptorInvocationContext(message, messageType, envelope, stage, context, callerInfo, extractedStreamId, parentContext);
-    var anyFailed = false;
+
+    // As when a receptor's exception is thrown: tags are processed only once every receptor succeeded.
+    if (!await _invokeEachReceptorAsync(receptors, invocationCtx, failures, cancellationToken).ConfigureAwait(false)) {
+      return;
+    }
+
+    // Process message tags after all receptors complete at the current lifecycle stage
+    await _processTagsAsync(message, messageType, stage, scopeForTags, (context as LifecycleExecutionContext)?.Changes, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Runs each receptor in turn. With no <paramref name="failures"/> the first receptor that throws stops the stage and
+  /// its exception propagates; with one, each failure is reported there and the next receptor still runs (#2310).
+  /// </summary>
+  /// <returns><see langword="true"/> when every receptor succeeded.</returns>
+  private async ValueTask<bool> _invokeEachReceptorAsync(
+      IReadOnlyList<ReceptorInfo> receptors,
+      ReceptorInvocationContext invocationCtx,
+      IReceptorFailureSink? failures,
+      CancellationToken cancellationToken) {
+    var allSucceeded = true;
     foreach (var receptor in receptors) {
       if (failures is null) {
         await _invokeReceptorAsync(receptor, invocationCtx, cancellationToken).ConfigureAwait(false);
@@ -346,18 +366,11 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
         await _invokeReceptorAsync(receptor, invocationCtx, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
         // #2310: this receptor's failure is its own; the message's other receptors still run.
-        anyFailed = true;
-        failures.OnReceptorFailed(envelope, stage, receptor.ReceptorId, ex);
+        allSucceeded = false;
+        failures.OnReceptorFailed(invocationCtx.Envelope, invocationCtx.Stage, receptor.ReceptorId, ex);
       }
     }
-
-    // As when a receptor's exception is thrown: tags are processed only once every receptor succeeded.
-    if (anyFailed) {
-      return;
-    }
-
-    // Process message tags after all receptors complete at the current lifecycle stage
-    await _processTagsAsync(message, messageType, stage, scopeForTags, (context as LifecycleExecutionContext)?.Changes, cancellationToken).ConfigureAwait(false);
+    return allSucceeded;
   }
 
   /// <summary>
