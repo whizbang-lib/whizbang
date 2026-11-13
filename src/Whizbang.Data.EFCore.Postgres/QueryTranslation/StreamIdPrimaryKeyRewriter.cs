@@ -8,20 +8,23 @@ using System.Reflection;
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 
 /// <summary>
-/// Lets a filter on a perspective model reach the row: it moves a filter written after
-/// <c>Select(r =&gt; r.Data)</c> beneath the projection, and adds the row's primary key beside an
-/// equality on the model's registered stream id.
+/// Lets a query written over a perspective model reach the row: it moves the filters, sorts and
+/// projections written after <c>Select(r =&gt; r.Data)</c> beneath it, and adds the row's primary key
+/// beside an equality on the model's registered stream id.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Hoisting.</b> An <c>IQueryable</c> composer such as a GraphQL filtering layer applies its filter to
-/// the projected model: <c>rows.Select(r =&gt; r.Data).OrderBy(x =&gt; x.Name).Where(x =&gt; x.Id == id)</c>.
-/// The rest of the pipeline only recognizes the row form, <c>r.Data.Id</c>, so such a filter never
-/// reaches a promoted column or the primary key. A filter commutes with ordering and with an identity
-/// projection, so the <c>Where</c> is moved beneath the <c>Select</c> (and any <c>OrderBy</c>/<c>ThenBy</c>
-/// between them) as <c>rows.Where(r =&gt; P(r.Data))</c>, which returns exactly the same rows. Anything
-/// that does not commute with a filter (<c>Skip</c>, <c>Take</c>, <c>Distinct</c>, another projection)
-/// stops the move, and the filter stays where it was.
+/// <b>Hoisting.</b> An <c>IQueryable</c> composer such as a GraphQL filtering and sorting layer works on the
+/// projected model: <c>rows.Select(r =&gt; r.Data).OrderBy(x =&gt; x.Name).Where(x =&gt; x.Id == id)</c>.
+/// The rest of the pipeline only recognizes the row form, <c>r.Data.Name</c>, so such a query never
+/// reaches a promoted column or the primary key. An identity projection commutes with a filter and with
+/// ordering, so a <c>Where</c>, <c>OrderBy</c>, <c>OrderByDescending</c>, <c>ThenBy</c> or
+/// <c>ThenByDescending</c> applied directly to it is moved beneath it, as
+/// <c>rows.Where(r =&gt; P(r.Data)).Select(r =&gt; r.Data)</c>, and a <c>Select(x =&gt; f(x))</c> applied to it
+/// is folded into one projection, <c>rows.Select(r =&gt; f(r.Data))</c>. The rows, their order and their
+/// shape are unchanged. The tree is rewritten from the inside out, so a chain of such operators moves one
+/// at a time. Anything else (<c>Skip</c>, <c>Take</c>, <c>Distinct</c>, a grouping) stops the move, and
+/// whatever is above it stays where it was.
 /// </para>
 /// <para>
 /// <b>The primary key.</b> A row's <c>id</c> is its stream id, and the model's <c>[StreamId]</c> property
@@ -47,14 +50,30 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
     .Single(m => m.Name == nameof(Queryable.Where)
       && m.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2);
 
-  /// <summary>Hoists a model filter beneath an identity projection, then adds the primary key where it can.</summary>
+  /// <summary>Moves an operator beneath an identity projection, then adds the primary key to a row filter where it can.</summary>
   protected override Expression VisitMethodCall(MethodCallExpression node) {
-    var visited = base.VisitMethodCall(node);
-    if (visited is not MethodCallExpression call || _filterOf(call) is not { } predicate) {
-      return visited;
+    if (node.Method.DeclaringType != typeof(Queryable) || node.Object is not null) {
+      return base.VisitMethodCall(node);
     }
 
-    return _hoisted(call, predicate) ?? _withPrimaryKey(call, predicate);
+    var arguments = node.Arguments.Select(a => Visit(a) ?? a).ToArray();
+
+    // Decided from the rewritten arguments before the call is rebuilt: a ThenBy whose primary sort has just
+    // moved beneath the projection now sits on an IQueryable, not an IOrderedQueryable, and could not be
+    // rebuilt where it stands, only moved beneath the projection with it.
+    if (arguments.Length == 2 && _hoisted(node.Method, arguments[0], arguments[1]) is { } hoisted) {
+      return hoisted;
+    }
+
+    // A rewrite beneath that changed a type this operator depends on (an ordered source under a ThenBy that
+    // could not move with it) is undone by keeping the original subtree, which translates as it always did.
+    var parameters = node.Method.GetParameters();
+    if (arguments.Where((a, i) => !parameters[i].ParameterType.IsAssignableFrom(a.Type)).Any()) {
+      return node;
+    }
+
+    var call = arguments.SequenceEqual(node.Arguments) ? node : node.Update(null, arguments);
+    return _filterOf(call) is { } predicate ? _withPrimaryKey(call, predicate) : call;
   }
 
   /// <summary>The predicate of a <c>Queryable.Where</c> with a one-parameter lambda; null for anything else.</summary>
@@ -67,40 +86,47 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
         : null;
 
   /// <summary>
-  /// Rebuilds <c>Select(rows, r =&gt; r.Data).Ordering*.Where(x =&gt; P(x))</c> as
-  /// <c>Select(rows.Where(r =&gt; P(r.Data)), r =&gt; r.Data).Ordering*</c>; null when the chain has another shape.
+  /// The operator moved beneath the identity projection it is applied to: <c>Where</c> and the orderings as
+  /// <c>rows.Op(r =&gt; L(r.Data)).Select(r =&gt; r.Data)</c>, and <c>Select</c> folded into
+  /// <c>rows.Select(r =&gt; f(r.Data))</c>. Null when the call is not one of those over an identity projection.
   /// </summary>
-  private static Expression? _hoisted(MethodCallExpression where, LambdaExpression predicate) {
-    var orderings = new List<MethodCallExpression>();
-    var source = where.Arguments[0];
-    while (source is MethodCallExpression ordering && _isOrdering(ordering)) {
-      orderings.Add(ordering);
-      source = ordering.Arguments[0];
-    }
-
-    if (source is not MethodCallExpression select || _identityDataSelector(select) is not { } selector
-        || predicate.Parameters[0].Type != selector.Body.Type) {
+  private static MethodCallExpression? _hoisted(MethodInfo method, Expression source, Expression argument) {
+    if (source is not MethodCallExpression select
+        || _identityDataSelector(select) is not { } selector
+        || _unquote(argument) is not LambdaExpression { Parameters.Count: 1 } lambda
+        || lambda.Parameters[0].Type != selector.Body.Type) {
       return null;
     }
 
     var row = selector.Parameters[0];
-    var rowPredicate = Expression.Lambda(new ParameterReplacer(predicate.Parameters[0], selector.Body).Visit(predicate.Body), row);
-    var rowWhere = Expression.Call(null, _where.MakeGenericMethod(row.Type), select.Arguments[0], Expression.Quote(rowPredicate));
+    var rows = select.Arguments[0];
+    var rowLambda = Expression.Lambda(new ParameterReplacer(lambda.Parameters[0], selector.Body).Visit(lambda.Body), row);
 
-    Expression result = Expression.Call(null, select.Method, _withPrimaryKey(rowWhere, rowPredicate), select.Arguments[1]);
-    for (var i = orderings.Count - 1; i >= 0; i--) {
-      result = Expression.Call(null, orderings[i].Method, result, orderings[i].Arguments[1]);
+    switch (method.Name) {
+      case nameof(Queryable.Where):
+        var rowWhere = Expression.Call(null, _where.MakeGenericMethod(row.Type), rows, Expression.Quote(rowLambda));
+        return Expression.Call(null, select.Method, _withPrimaryKey(rowWhere, rowLambda), select.Arguments[1]);
+
+      case nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending):
+        return Expression.Call(null, select.Method, _onRows(method, rows, row, rowLambda), select.Arguments[1]);
+
+      // A secondary sort needs its primary beneath the projection too, which the inside-out rewrite has
+      // already done whenever the primary sort was applied to the same projection.
+      case nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending)
+          when typeof(IOrderedQueryable<>).MakeGenericType(row.Type).IsAssignableFrom(rows.Type):
+        return Expression.Call(null, select.Method, _onRows(method, rows, row, rowLambda), select.Arguments[1]);
+
+      case nameof(Queryable.Select):
+        return _onRows(method, rows, row, rowLambda);
+
+      default:
+        return null;
     }
-
-    return result;
   }
 
-  /// <summary>An <c>OrderBy</c>, <c>OrderByDescending</c>, <c>ThenBy</c> or <c>ThenByDescending</c> with a key selector.</summary>
-  private static bool _isOrdering(MethodCallExpression call) =>
-    call.Method.DeclaringType == typeof(Queryable)
-      && call.Arguments.Count == 2
-      && call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending)
-        or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending);
+  /// <summary>The same <c>Queryable</c> operator applied to the rows, with its lambda rewritten over <c>r.Data</c>.</summary>
+  private static MethodCallExpression _onRows(MethodInfo method, Expression rows, ParameterExpression row, LambdaExpression rowLambda) =>
+    Expression.Call(null, method.GetGenericMethodDefinition().MakeGenericMethod(row.Type, rowLambda.ReturnType), rows, Expression.Quote(rowLambda));
 
   /// <summary>The selector of <c>Queryable.Select(rows, r =&gt; r.Data)</c> over perspective rows; null for any other projection.</summary>
   private static LambdaExpression? _identityDataSelector(MethodCallExpression select) =>
