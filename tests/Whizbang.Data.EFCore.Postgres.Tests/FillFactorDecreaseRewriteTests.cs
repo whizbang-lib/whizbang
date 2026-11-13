@@ -210,6 +210,37 @@ public class FillFactorDecreaseRewriteTests : EFCoreTestBase {
     await Assert.That(pending).Contains("wh_per_b").And.DoesNotContain("wh_per_c");
   }
 
+  /// <summary>
+  /// #2301: each completed rewrite is a history row naming its strategy and reason with the ratios before and after,
+  /// written as the request is cleared. The history stays bounded: rows older than 90 days, and all but the newest
+  /// 1,000, are trimmed by the write that adds one, so no separate sweep is needed and it never grows unbounded.
+  /// </summary>
+  [Test]
+  public async Task TheRewriteHistory_RecordsEachRewrite_AndStaysBoundedAsync() {
+    await _execAsync($"""
+      SELECT wh_request_fillfactor_rewrite('{TABLE}', 100, 90);
+      INSERT INTO wh_table_rewrite_history (table_name, strategy, reason, bloat_before, bloat_after, completed_at)
+      SELECT 'wh_per_aged', 'PgSqueeze', 'Bloat', 4, 1, now() - interval '91 days'
+      UNION ALL
+      SELECT 'wh_per_' || g, 'PgSqueeze', 'Bloat', 4, 1, now() - interval '1 day' FROM generate_series(1, 1005) g;
+      """);
+
+    await using (var provider = new ServiceCollection().BuildServiceProvider()) {
+      IWorkCoordinator coordinator = _coordinator(provider);
+      await coordinator.CompleteTableRewriteAsync(
+        new TableRewriteOutcome(TABLE, TableRewriteStrategies.BLUE_GREEN, TableRewriteReason.FillFactorDecrease, 1.1, 1.3));
+    }
+
+    await Assert.That(await _scalarAsync<string>(
+        $"SELECT strategy || '/' || reason || '/' || bloat_before || '/' || bloat_after FROM wh_table_rewrite_history WHERE table_name = '{TABLE}'"))
+      .IsEqualTo("BlueGreenRebuild/FillFactorDecrease/1.10/1.30");
+    await Assert.That(await _decreaseAsync(TABLE)).IsNull().Because("completing the rewrite clears the request and its reason");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_table_rewrite_history WHERE table_name = 'wh_per_aged'")).IsEqualTo(0L)
+      .Because("a row older than 90 days is trimmed");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_table_rewrite_history")).IsEqualTo(1000L)
+      .Because("the newest 1,000 rows are kept, the one just written among them");
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
   /// <summary>

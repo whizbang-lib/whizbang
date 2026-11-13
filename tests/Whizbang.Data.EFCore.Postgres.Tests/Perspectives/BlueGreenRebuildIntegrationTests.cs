@@ -4,6 +4,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -14,7 +16,11 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Capabilities;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -173,6 +179,180 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
       .Because("With no connection of its own to open, there is no swapper, and a blue-green rebuild replays in place.");
   }
 
+  // ── #2301: a perspective table rewritten by a blue-green rebuild ───────────────────────────────
+
+  /// <summary>
+  /// #2301: on a server where neither pg_squeeze nor pg_repack is usable, a perspective table whose fillfactor was
+  /// lowered is rewritten under <c>Online</c> by a blue-green rebuild of its perspective: the rebuilt table holds the
+  /// declared fillfactor (the shadow took the live table's settings, #2299), its rows are the replayed ones, an update
+  /// of one of them is HOT, the request is cleared and the history says the rebuild carried it out. <c>Auto</c> first
+  /// rewrites nothing: the rebuild is opted into.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task Online_WithNoExtension_RebuildsALoweredFillFactorTable_AtTheNewFillFactorAsync(CancellationToken cancellationToken) {
+    var streams = Enumerable.Range(0, 120).Select(_ => Guid.NewGuid()).ToArray();
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask);
+    foreach (var stream in streams) {
+      await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 10m });
+    }
+    await _seedStaleLiveRowsAsync(streams);
+    await _registerTableAsync();
+    await _execAsync($"ANALYZE {TABLE}");
+    await _lowerFillFactorAsync();
+    var before = await _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass");
+    await Assert.That(await _isHotUpdateAsync(streams[0])).IsFalse().Because("the control: the stale rows sit on full pages");
+
+    await _maintenanceCycleAsync(sp, TableRewriteStrategy.Auto);
+    await Assert.That(await _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass")).IsEqualTo(before)
+      .Because("Auto never starts an online rewrite, a rebuild included");
+
+    await _maintenanceCycleAsync(sp, TableRewriteStrategy.Online);
+
+    await Assert.That(await _scalarAsync<string>($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
+      .Contains("fillfactor=90");
+    await Assert.That((await _liveBalancesAsync()).Values.Distinct()).IsEquivalentTo([10m]).Because("the rows are the replayed ones");
+    await Assert.That(await _isHotUpdateAsync(streams[0])).IsTrue()
+      .Because("the rebuild filled every page to fillfactor 90, so an update stays on its page");
+    await Assert.That(await _scalarAsync<string>("SELECT setting_value FROM wh_settings WHERE setting_key = 'pending_table_rewrites'"))
+      .DoesNotContain(TABLE);
+    await Assert.That(await _scalarAsync<string>($"SELECT strategy || '/' || reason FROM wh_table_rewrite_history WHERE table_name = '{TABLE}'"))
+      .IsEqualTo("BlueGreenRebuild/FillFactorDecrease");
+  }
+
+  /// <summary>
+  /// #2301: two blue-green rebuilds of one table at once: the second, started while the first is replaying, fails and
+  /// says why without touching the shadow, and the first completes. Without the guard the second would drop the first
+  /// one's shadow mid-replay.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task TwoRebuildsOfOneTable_TheSecondFails_AndTheFirstCompletesAsync(CancellationToken cancellationToken) {
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    RebuildResult? second = null;
+    var started = false;
+    // Once: the second rebuild's own runner would otherwise start a third from the same hook.
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: async root => {
+      if (!started) {
+        started = true;
+        second = await root.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE, CancellationToken.None);
+      }
+    });
+    foreach (var stream in streams) {
+      await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 5m });
+    }
+    await _registerTableAsync();
+
+    var first = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE, cancellationToken);
+
+    await Assert.That(second).IsNotNull();
+    await Assert.That(second!.Success).IsFalse();
+    await Assert.That(second.Error).Contains("another blue-green rebuild of " + TABLE + " is in flight");
+    await Assert.That(first.Success).IsTrue().Because(first.Error ?? "");
+    await Assert.That(await _liveBalancesAsync()).IsEquivalentTo(new Dictionary<Guid, decimal> { [streams[0]] = 5m, [streams[1]] = 5m });
+  }
+
+  /// <summary>
+  /// #2301: a table another blue-green rebuild holds, on any instance, is not rebuilt by the maintenance cycle; its
+  /// request stays queued for a later cycle.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task Online_SkipsATableAnotherRebuildHolds_AndLeavesItQueuedAsync(CancellationToken cancellationToken) {
+    var stream = Guid.NewGuid();
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask);
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 5m });
+    await _seedStaleLiveRowsAsync([stream]);
+    await _registerTableAsync();
+    await _lowerFillFactorAsync();
+    var before = await _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass");
+    await using var held = await sp.GetRequiredService<IPerspectiveTableSwapper>().TryLockRebuildAsync(TABLE, cancellationToken);
+    await Assert.That(held).IsNotNull();
+
+    await _maintenanceCycleAsync(sp, TableRewriteStrategy.Online);
+
+    await Assert.That(await _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass")).IsEqualTo(before);
+    await Assert.That(await _scalarAsync<string>("SELECT setting_value FROM wh_settings WHERE setting_key = 'pending_table_rewrites'"))
+      .Contains(TABLE);
+  }
+
+  /// <summary>#2301: a framework table cannot be rebuilt from events, so with no extension it waits; nothing rewrites it.</summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task Online_WithNoExtension_AFrameworkTableWaitsAsync(CancellationToken cancellationToken) {
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask);
+    await TableBloat.ManufactureAsync(ConnectionString, cancellationToken);
+    await _execAsync("SELECT wh_request_table_rewrite('wh_settings')");
+    var before = await _scalarAsync<long>("SELECT relfilenode::bigint FROM pg_class WHERE oid = 'wh_settings'::regclass");
+
+    await _maintenanceCycleAsync(sp, TableRewriteStrategy.Online);
+
+    await Assert.That(await _scalarAsync<long>("SELECT relfilenode::bigint FROM pg_class WHERE oid = 'wh_settings'::regclass")).IsEqualTo(before);
+    await Assert.That(await _scalarAsync<string>("SELECT setting_value FROM wh_settings WHERE setting_key = 'pending_table_rewrites'"))
+      .Contains("wh_settings");
+  }
+
+  /// <summary>One maintenance cycle's online rewrite, under <paramref name="strategy"/>, on a server with neither extension usable.</summary>
+  private static async Task _maintenanceCycleAsync(ServiceProvider sp, TableRewriteStrategy strategy) {
+    var options = Options.Create(new MaintenanceWorkerOptions { TableRewriteStrategy = strategy });
+    var registry = new CapabilityRegistry([new NotPermittedExtensions()], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    var step = new OnlineTableRewriteStep(
+      [new PgSqueezeTableRewriter(), new BlueGreenTableRewriter(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<BlueGreenTableRewriter>.Instance)],
+      options, registry, NullLogger<OnlineTableRewriteStep>.Instance);
+    await using var scope = sp.CreateAsyncScope();
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>(), JsonContextRegistry.CreateCombinedOptions())).BuildServiceProvider();
+    await step.RunAsync(services, CancellationToken.None);
+  }
+
+  /// <summary>pg_squeeze and pg_repack, each probed NotPermitted, as on a server that does not allowlist them.</summary>
+  private sealed class NotPermittedExtensions : ICapabilityProvider {
+    public string Name => RequiresPostgresExtensionAttribute.PROVIDER;
+    public IReadOnlyList<CapabilityDescriptor> Descriptors { get; } = [_describe("pg_squeeze"), _describe("pg_repack")];
+    public IReadOnlyList<string> Scopes { get; } = ["db"];
+
+    public Task<IReadOnlyList<CapabilityStatus>> ProbeAsync(string scope, CancellationToken cancellationToken) =>
+      Task.FromResult<IReadOnlyList<CapabilityStatus>>([.. Descriptors.Select(d => new CapabilityStatus(d, scope, CapabilityState.NotPermitted, null, null, null))]);
+
+    private static CapabilityDescriptor _describe(string name) =>
+      new(new CapabilityId(RequiresPostgresExtensionAttribute.PROVIDER, name), "online rewrite", ["Online table rewrite"], true, [],
+        new Dictionary<CapabilityState, string>());
+  }
+
+  /// <summary>Lowers the table's fillfactor through the schema pass's reconcile, as a start that finds 90 declared does.</summary>
+  private async Task _lowerFillFactorAsync() {
+    await using var db = await _openAsync();
+    await PerspectiveStorageParameters.ReconcileAsync(
+      db, "public", [PerspectiveStorageParameters.MARKER + TABLE + " fillfactor=90"], null, CancellationToken.None);
+  }
+
+  /// <summary>Whether an update of the row (to its version, which no index covers) is HOT; read in its own transaction, rolled back.</summary>
+  private async Task<bool> _isHotUpdateAsync(Guid id) {
+    await using var db = await _openAsync();
+    await using var tx = await db.BeginTransactionAsync();
+    await using (var update = new NpgsqlCommand($"UPDATE {TABLE} SET version = version + 1 WHERE id = @id", db, tx)) {
+      update.Parameters.AddWithValue(nameof(id), id);
+      await update.ExecuteNonQueryAsync();
+    }
+    await using var hot = new NpgsqlCommand($"SELECT pg_stat_get_xact_tuples_hot_updated('{TABLE}'::regclass)", db, tx);
+    var count = (long)(await hot.ExecuteScalarAsync())!;
+    await tx.RollbackAsync();
+    return count == 1;
+  }
+
+  private async Task _execAsync(string sql) {
+    await using var db = await _openAsync();
+    await using var command = new NpgsqlCommand(sql, db);
+    await command.ExecuteNonQueryAsync();
+  }
+
+  private async Task<T> _scalarAsync<T>(string sql) {
+    await using var db = await _openAsync();
+    await using var command = new NpgsqlCommand(sql, db);
+    return (T)(await command.ExecuteScalarAsync())!;
+  }
+
   private sealed class InMemoryContext(DbContextOptions<InMemoryContext> options) : DbContext(options);
 
   private sealed class EntityFrameworkOnlyUpsertStrategy : BaseUpsertStrategy {
@@ -268,9 +448,9 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
   private async Task _registerTableAsync() {
     await using var conn = await _openAsync();
     await conn.ExecuteAsync("""
-      INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name)
-      VALUES (@name, @table, '{}'::jsonb, 'h', 'svc') ON CONFLICT DO NOTHING
-      """, new { name = MODEL, table = TABLE });
+      INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name, perspective_names)
+      VALUES (@name, @table, '{}'::jsonb, 'h', 'svc', ARRAY[@perspective]) ON CONFLICT DO NOTHING
+      """, new { name = MODEL, table = TABLE, perspective = PERSPECTIVE });
   }
 
   private Task<Dictionary<Guid, decimal>> _liveBalancesAsync() => _balancesAsync(TABLE);

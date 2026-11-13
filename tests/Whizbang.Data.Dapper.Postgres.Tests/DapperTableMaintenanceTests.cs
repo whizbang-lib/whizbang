@@ -86,6 +86,21 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
       .Because("a cleared request takes its measurement with it");
   }
 
+  /// <summary>#2301: completing a rewrite clears its request and records which strategy carried it out, as on EF Core.</summary>
+  [Test]
+  public async Task CompleteTableRewrite_ClearsTheRequest_AndRecordsTheStrategyAsync() {
+    var coordinator = _coordinator();
+    await coordinator.RequestTableRewriteAsync("wh_outbox");
+
+    await coordinator.CompleteTableRewriteAsync(
+      new TableRewriteOutcome("wh_outbox", "PgRepack", TableRewriteReason.Bloat, 4.5, 1.25));
+
+    await Assert.That((await _pendingAsync()).Split(',').Contains("wh_outbox")).IsFalse();
+    await Assert.That(await _scalarAsync<string>(
+        "SELECT strategy || '/' || reason || '/' || bloat_before || '/' || bloat_after FROM wh_table_rewrite_history WHERE table_name = 'wh_outbox'"))
+      .IsEqualTo("PgRepack/Bloat/4.50/1.25");
+  }
+
   [Test]
   public async Task MeasureTableBloat_EstimateMatchesTheScan_ApproxReadsTheTable_AndExactIsRefusedAsync() {
     var coordinator = _coordinator();

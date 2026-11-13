@@ -82,7 +82,9 @@ public class PerspectiveRebuilderBlueGreenTests {
     await Assert.That(result.StreamsProcessed).IsEqualTo(3);
     await Assert.That(fixture.Runner.Runs.Select(r => r.Table).Distinct()).IsEquivalentTo([SHADOW])
       .Because("Every stream is replayed into the shadow table; the live table is never written by the rebuild.");
-    await Assert.That(swapper.Calls).IsEquivalentTo(["find", "create " + TABLE, "swap " + TABLE + "->" + SHADOW + " keep 00:00:10"]);
+    await Assert.That(swapper.Calls).IsEquivalentTo(
+      ["find", "guard " + TABLE, "create " + TABLE, "swap " + TABLE + "->" + SHADOW + " keep 00:00:10", "release " + TABLE],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(fixture.Runner.Runs.Select(r => r.Phase).Distinct()).IsEquivalentTo([RebuildPhase.Replaying]);
     await Assert.That(fixture.Runner.Runs[^1].Status!.TotalStreams).IsEqualTo(3)
       .Because("Progress is reported while the rebuild runs.");
@@ -130,7 +132,7 @@ public class PerspectiveRebuilderBlueGreenTests {
     await Assert.That(result.Success).IsTrue();
     await Assert.That(fixture.Runner.Runs.Select(r => (r.StreamId, r.Phase)))
       .IsEquivalentTo([(_a, RebuildPhase.Replaying), (_a, RebuildPhase.Swapping)]);
-    await Assert.That(swapper.Calls[^1]).IsEqualTo("swap " + TABLE + "->" + SHADOW + " drop 00:00:02");
+    await Assert.That(swapper.Calls[^2]).IsEqualTo("swap " + TABLE + "->" + SHADOW + " drop 00:00:02");
   }
 
   [Test]
@@ -199,7 +201,7 @@ public class PerspectiveRebuilderBlueGreenTests {
 
     await Assert.That(result.Success).IsFalse();
     await Assert.That(result.Error).IsEqualTo("lock timeout");
-    await Assert.That(swapper.Calls[^1]).IsEqualTo("drop " + SHADOW)
+    await Assert.That(swapper.Calls[^2]).IsEqualTo("drop " + SHADOW)
       .Because("A failed rebuild leaves the live table as it was and no shadow behind.");
   }
 
@@ -212,6 +214,60 @@ public class PerspectiveRebuilderBlueGreenTests {
     var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
 
     await Assert.That(result.Error).IsEqualTo("lock timeout");
+  }
+
+  /// <summary>
+  /// #2301: two blue-green rebuilds of one table share its shadow, and creating the shadow drops one left behind, so a
+  /// second rebuild would destroy the first one's replay. A rebuild whose table another rebuild holds fails, says why,
+  /// and never touches the shadow.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_WhileAnotherRebuildOfTheTableRuns_FailsWithoutTouchingTheShadowAsync() {
+    var swapper = new FakeSwapper { GuardHeld = true };
+    var fixture = new Fixture(swapper);
+    fixture.Add(_a, 1);
+
+    var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).Contains("another blue-green rebuild of " + TABLE + " is in flight");
+    await Assert.That(swapper.Calls).IsEquivalentTo(["find", "guard refused " + TABLE]);
+  }
+
+  /// <summary>#2301: the guard is taken before the shadow is created and released after the swap, success or failure.</summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task BlueGreen_HoldsTheTablesGuard_FromBeforeTheShadowUntilAfterTheSwapAsync(bool swapFails) {
+    var swapper = new FakeSwapper { SwapFailure = swapFails ? new InvalidOperationException("lock timeout") : null };
+    var fixture = new Fixture(swapper);
+    fixture.Add(_a, 1);
+
+    await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(swapper.Calls[1]).IsEqualTo("guard " + TABLE);
+    await Assert.That(swapper.Calls[2]).IsEqualTo("create " + TABLE);
+    await Assert.That(swapper.Calls[^1]).IsEqualTo("release " + TABLE);
+  }
+
+  /// <summary>#2301: a driver that keeps no guard gets the default, which excludes nothing and releases nothing.</summary>
+  [Test]
+  public async Task TheDefaultGuard_ExcludesNothing_AndTheDefaultLookupFindsNoPerspectiveAsync() {
+    IPerspectiveTableSwapper plain = new PlainSwapper();
+
+    var guard = await plain.TryLockRebuildAsync(TABLE, CancellationToken.None);
+    await guard!.DisposeAsync();
+
+    await Assert.That(guard).IsSameReferenceAs(NoRebuildGuard.Instance);
+    await Assert.That(await plain.FindPerspectiveAsync(TABLE, CancellationToken.None)).IsNull();
+  }
+
+  private sealed class PlainSwapper : IPerspectiveTableSwapper {
+    public Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string> CreateShadowAsync(string liveTable, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DeleteRowsAsync(string table, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string?> SwapAsync(PerspectiveTableSwap swap, Func<CancellationToken, Task> underWriteLock, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DropAsync(string table, CancellationToken cancellationToken) => throw new NotSupportedException();
   }
 
   [Test]
@@ -320,6 +376,25 @@ public class PerspectiveRebuilderBlueGreenTests {
     public Action? BeforeLock { get; set; }
     public Exception? SwapFailure { get; init; }
     public Exception? DropFailure { get; init; }
+
+    /// <summary>When true, another rebuild of the table holds the guard (#2301).</summary>
+    public bool GuardHeld { get; init; }
+
+    public Task<IAsyncDisposable?> TryLockRebuildAsync(string liveTable, CancellationToken cancellationToken) {
+      if (GuardHeld) {
+        Calls.Add("guard refused " + liveTable);
+        return Task.FromResult<IAsyncDisposable?>(null);
+      }
+      Calls.Add("guard " + liveTable);
+      return Task.FromResult<IAsyncDisposable?>(new Guard(Calls, liveTable));
+    }
+
+    private sealed class Guard(List<string> calls, string table) : IAsyncDisposable {
+      public ValueTask DisposeAsync() {
+        calls.Add("release " + table);
+        return ValueTask.CompletedTask;
+      }
+    }
 
     /// <summary>The name the rebuilder asked for. Recorded because asking for the wrong one is #1308.</summary>
     public string? FoundFor { get; private set; }

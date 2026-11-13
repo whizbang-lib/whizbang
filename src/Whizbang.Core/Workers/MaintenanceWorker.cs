@@ -1687,6 +1687,16 @@ public sealed class MaintenanceWorkerOptions {
   public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
 
   /// <summary>
+  /// The most perspective tables one maintenance cycle rewrites by a blue-green rebuild when
+  /// <see cref="TableRewriteStrategy"/> is <see cref="Workers.TableRewriteStrategy.Online"/> and no online extension is
+  /// usable (<c>Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle</c>). Default 1: a rebuild replays every
+  /// stream of its perspective, so several large perspectives are not rebuilt at once. The heap bytes still count
+  /// against <see cref="OnlineRewriteMaxBytesPerCycle"/>. <c>0</c> rebuilds nothing.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#blue-green-rewrite</docs>
+  public int BlueGreenRewriteMaxPerCycle { get; set; } = 1;
+
+  /// <summary>
   /// How many times its expected size an index on a queue table that churns to empty may grow before the maintenance
   /// cycle rebuilds it with <c>REINDEX INDEX CONCURRENTLY</c> (<c>Whizbang:Workers:Maintenance:ReindexBloatThreshold</c>).
   /// Default <c>3.0</c>, the same line a table is queued for rewrite at; <c>0</c> turns the rebuild off. Any other value

@@ -12,6 +12,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Processes;
 using Whizbang.Core.Tests.Capabilities;
 using Whizbang.Core.Workers;
@@ -73,6 +74,15 @@ public class OnlineTableRewriteStepTests {
 
     public Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
       Cleared.Add(tableName);
+      return Task.CompletedTask;
+    }
+
+    /// <summary>Each rewrite recorded as it was cleared (#2301).</summary>
+    public List<TableRewriteOutcome> Completed { get; } = [];
+
+    public Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+      Completed.Add(outcome);
+      Cleared.Add(outcome.TableName);
       return Task.CompletedTask;
     }
 
@@ -730,5 +740,319 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(coordinator.Measured).IsEmpty()
       .Because("a rewrite that did not run left nothing to re-measure, and a scan would only cost");
     await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  // ---- #2301: Online picks pg_squeeze, then pg_repack, then a blue-green rebuild of a perspective table ----
+
+  private const string ORDER_PERSPECTIVE = "Tests.OrderPerspective";
+
+  /// <summary>A server on which pg_squeeze, the pg_repack extension and its client read the given states.</summary>
+  private static async Task<CapabilityRegistry> _serverAsync(
+      CapabilityState squeeze, CapabilityState repack = CapabilityState.NotPermitted, CapabilityState client = CapabilityState.Ready) {
+    var postgres = new FakeCapabilityProvider("postgres", ["db-0"],
+      FakeCapabilityProvider.Describe("postgres", "pg_squeeze"), FakeCapabilityProvider.Describe("postgres", "pg_repack"));
+    postgres.States["pg_squeeze"] = squeeze;
+    postgres.States["pg_repack"] = repack;
+    var program = new FakeCapabilityProvider("program", ["pg_repack"], FakeCapabilityProvider.Describe("program", "pg_repack", provisionable: false));
+    program.States["pg_repack"] = client;
+    var registry = new CapabilityRegistry([postgres, program], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    return registry;
+  }
+
+  /// <summary>Which perspective writes each table, and which tables another rebuild holds.</summary>
+  private sealed class RebuildSwapper : IPerspectiveTableSwapper {
+    public Dictionary<string, string> Perspectives { get; init; } = new(StringComparer.Ordinal);
+    public HashSet<string> Held { get; init; } = new(StringComparer.Ordinal);
+    public List<string> Guarded { get; } = [];
+
+    public Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) =>
+      Task.FromResult(Perspectives.GetValueOrDefault(table));
+
+    public Task<IAsyncDisposable?> TryLockRebuildAsync(string liveTable, CancellationToken cancellationToken) {
+      if (Held.Contains(liveTable)) {
+        return Task.FromResult<IAsyncDisposable?>(null);
+      }
+      Guarded.Add(liveTable);
+      return Task.FromResult<IAsyncDisposable?>(NoRebuildGuard.Instance);
+    }
+
+    public Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string> CreateShadowAsync(string liveTable, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DeleteRowsAsync(string table, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string?> SwapAsync(PerspectiveTableSwap swap, Func<CancellationToken, Task> underWriteLock, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DropAsync(string table, CancellationToken cancellationToken) => throw new NotSupportedException();
+  }
+
+  /// <summary>Records each blue-green rebuild it is asked for; fails or reports in flight the perspectives named.</summary>
+  private sealed class RecordingRebuilder : IPerspectiveRebuilder {
+    public List<(string Perspective, RebuildTrigger Trigger)> Rebuilt { get; } = [];
+    public HashSet<string> Fails { get; init; } = new(StringComparer.Ordinal);
+    public HashSet<string> InFlight { get; init; } = new(StringComparer.Ordinal);
+
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, RebuildOrigin origin, CancellationToken ct = default) {
+      Rebuilt.Add((perspectiveName, origin.Trigger));
+      return Task.FromResult(new RebuildResult(perspectiveName, 3, 9, TimeSpan.FromSeconds(1), !Fails.Contains(perspectiveName),
+        Fails.Contains(perspectiveName) ? "the replay failed" : null));
+    }
+
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) => throw new NotSupportedException();
+
+    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) =>
+      Task.FromResult(InFlight.Contains(perspectiveName)
+        ? new RebuildStatus(perspectiveName, RebuildMode.BlueGreen, 10, 4, DateTimeOffset.UnixEpoch)
+        : null);
+
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) => throw new NotSupportedException();
+  }
+
+  private static async Task<(SqueezeCoordinator Coordinator, FakeLogger<OnlineTableRewriteStep> Logger)> _onlineAsync(
+      SqueezeCoordinator coordinator, ICapabilityRegistry registry, RebuildSwapper? swapper, RecordingRebuilder? rebuilder,
+      int maxRebuildsPerCycle = 1, TableRewriteStrategy strategy = TableRewriteStrategy.Online,
+      PgRepackMode mode = PgRepackMode.InProcess, long budgetBytes = 10 * 1024 * MIB,
+      FakeLogger<BlueGreenTableRewriter>? rewriterLogger = null) {
+    var settings = new MaintenanceWorkerOptions {
+      TableRewriteStrategy = strategy,
+      BlueGreenRewriteMaxPerCycle = maxRebuildsPerCycle,
+      OnlineRewriteMaxBytesPerCycle = budgetBytes,
+    };
+    settings.TableRewrite.PgRepack.Mode = mode;
+    var options = Options.Create(settings);
+    var collection = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator);
+    if (swapper is not null) {
+      collection.AddSingleton<IPerspectiveTableSwapper>(swapper);
+    }
+    if (rebuilder is not null) {
+      collection.AddSingleton<IPerspectiveRebuilder>(rebuilder);
+    }
+    var services = collection.BuildServiceProvider();
+    var logger = new FakeLogger<OnlineTableRewriteStep>();
+    var step = new OnlineTableRewriteStep(
+      [new PgSqueezeTableRewriter(),
+       new PgRepackTableRewriter(options, new CleanExitRunner(), registry, NullLogger<PgRepackTableRewriter>.Instance),
+       new BlueGreenTableRewriter(services.GetRequiredService<IServiceScopeFactory>(),
+         rewriterLogger ?? (ILogger<BlueGreenTableRewriter>)NullLogger<BlueGreenTableRewriter>.Instance)],
+      options, registry, logger);
+    await step.RunAsync(services, CancellationToken.None);
+    return (coordinator, logger);
+  }
+
+  private static RebuildSwapper _ordersSwapper(params string[] tables) =>
+    new() { Perspectives = tables.ToDictionary(t => t, t => ORDER_PERSPECTIVE + "." + t, StringComparer.Ordinal) };
+
+  [Test]
+  public async Task Online_WithPgSqueezeReady_RewritesThroughIt_AndRebuildsNothingAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_order", 4.0) } },
+      await _serverAsync(CapabilityState.Ready), _ordersSwapper("wh_per_order"), rebuilder);
+
+    await Assert.That(coordinator.Squeezed).IsEquivalentTo(["wh_per_order"]);
+    await Assert.That(rebuilder.Rebuilt).IsEmpty().Because("a rebuild replays every stream; pg_squeeze copies rows, so it goes first");
+    await Assert.That(coordinator.Completed.Single().Strategy).IsEqualTo(TableRewriteStrategies.PG_SQUEEZE);
+  }
+
+  [Test]
+  public async Task Online_WithPgSqueezeNotReady_AndPgRepackReady_RepacksAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_order", 4.0) } },
+      await _serverAsync(CapabilityState.NotPermitted, CapabilityState.Ready), _ordersSwapper("wh_per_order"), rebuilder);
+
+    await Assert.That(coordinator.Squeezed).IsEmpty();
+    await Assert.That(coordinator.Repacked).IsEquivalentTo(["wh_per_order"]);
+    await Assert.That(rebuilder.Rebuilt).IsEmpty();
+    await Assert.That(coordinator.Completed.Single().Strategy).IsEqualTo(TableRewriteStrategies.PG_REPACK);
+  }
+
+  /// <summary>
+  /// #2301: with neither extension usable, a perspective table is rewritten by a blue-green rebuild of the perspective
+  /// that writes it, recorded as such, and a framework table, which no rebuild can recreate from events, waits and the
+  /// cycle says so.
+  /// </summary>
+  [Test]
+  public async Task Online_WithNoExtensionUsable_RebuildsThePerspectiveTable_AndAFrameworkTableWaitsAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, logger) = await _onlineAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 6.0), _requested("wh_per_order", 1.1) with { Reason = TableRewriteReason.FillFactorDecrease } },
+      ApproxAfter = { ["wh_per_order"] = 1.3 },
+    }, await _serverAsync(CapabilityState.NotPermitted, CapabilityState.NotPermitted), _ordersSwapper("wh_per_order"), rebuilder);
+
+    await Assert.That(rebuilder.Rebuilt).IsEquivalentTo([(ORDER_PERSPECTIVE + ".wh_per_order", RebuildTrigger.TableRewrite)]);
+    await Assert.That(coordinator.Squeezed.Concat(coordinator.Repacked)).IsEmpty();
+    var outcome = coordinator.Completed.Single();
+    await Assert.That(outcome).IsEqualTo(new TableRewriteOutcome(
+      "wh_per_order", TableRewriteStrategies.BLUE_GREEN, TableRewriteReason.FillFactorDecrease, 1.1, 1.3));
+    await Assert.That(coordinator.Cleared).DoesNotContain("wh_outbox");
+    var waiting = _messages(logger).Where(m => m.Contains("wh_outbox", StringComparison.Ordinal)).ToList();
+    await Assert.That(waiting).Count().IsEqualTo(1);
+    await Assert.That(waiting[0]).Contains("not a perspective table").And.Contains("pg_squeeze").And.Contains("pg_repack");
+  }
+
+  /// <summary>#2301: at most <c>BlueGreenRewriteMaxPerCycle</c> perspectives are rebuilt in one cycle, largest bloat first.</summary>
+  [Test]
+  [Arguments(1, "wh_per_a")]
+  [Arguments(2, "wh_per_a,wh_per_c")]
+  [Arguments(0, "")]
+  public async Task Online_RebuildsAtMostTheCycleLimit_LargestBloatFirstAsync(int limit, string expected) {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, logger) = await _onlineAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_per_a", 9.0), _requested("wh_per_b", 4.0), _requested("wh_per_c", 6.0) },
+      ApproxAfter = { ["wh_per_a"] = 1.0, ["wh_per_b"] = 1.0, ["wh_per_c"] = 1.0 },
+    }, await _serverAsync(CapabilityState.NotPermitted), _ordersSwapper("wh_per_a", "wh_per_b", "wh_per_c"), rebuilder, limit);
+
+    await Assert.That(string.Join(",", rebuilder.Rebuilt.Select(r => r.Perspective[(ORDER_PERSPECTIVE.Length + 1)..]))).IsEqualTo(expected);
+    await Assert.That(string.Join(",", coordinator.Cleared)).IsEqualTo(expected);
+    await Assert.That(_messages(logger).Any(m => m.Contains("Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle", StringComparison.Ordinal)))
+      .IsEqualTo(limit < 3).Because("a table left for the next cycle by the limit is named with the setting that holds it back");
+  }
+
+  /// <summary>
+  /// #2301: a table another blue-green rebuild holds, on any instance, is not rebuilt again; the request stays queued
+  /// for a later cycle, and the next table is taken in its place, since a held table does not spend the limit.
+  /// </summary>
+  [Test]
+  public async Task Online_ATableAnotherRebuildHolds_IsNotRebuiltAgain_AndStaysQueuedAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var swapper = _ordersSwapper("wh_per_a", "wh_per_b");
+    swapper.Held.Add("wh_per_a");
+    var (coordinator, logger) = await _onlineAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_per_a", 9.0), _requested("wh_per_b", 4.0) },
+      ApproxAfter = { ["wh_per_b"] = 1.0 },
+    }, await _serverAsync(CapabilityState.NotPermitted), swapper, rebuilder);
+
+    await Assert.That(rebuilder.Rebuilt.Select(r => r.Perspective)).IsEquivalentTo([ORDER_PERSPECTIVE + ".wh_per_b"]);
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_per_b"]);
+    await Assert.That(_messages(logger).Any(m => m.Contains("wh_per_a", StringComparison.Ordinal)
+      && m.Contains("in flight", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>#2301: a rebuild of the perspective already running in this process satisfies the request for now.</summary>
+  [Test]
+  public async Task Online_APerspectiveAlreadyRebuildingHere_IsNotRebuiltAgainAsync() {
+    var rebuilder = new RecordingRebuilder { InFlight = { ORDER_PERSPECTIVE + ".wh_per_a" } };
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_a", 9.0) } },
+      await _serverAsync(CapabilityState.NotPermitted), _ordersSwapper("wh_per_a"), rebuilder);
+
+    await Assert.That(rebuilder.Rebuilt).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  /// <summary>#2301: a rebuild that fails leaves the request queued, as a failed rewrite of any strategy does.</summary>
+  [Test]
+  public async Task Online_ARebuildThatFails_LeavesTheRequestQueuedAsync() {
+    var rebuilder = new RecordingRebuilder { Fails = { ORDER_PERSPECTIVE + ".wh_per_a" } };
+    var rewriterLogger = new FakeLogger<BlueGreenTableRewriter>();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_a", 9.0) } },
+      await _serverAsync(CapabilityState.NotPermitted), _ordersSwapper("wh_per_a"), rebuilder, rewriterLogger: rewriterLogger);
+
+    await Assert.That(rebuilder.Rebuilt).Count().IsEqualTo(1);
+    await Assert.That(coordinator.Cleared).IsEmpty();
+    await Assert.That(rewriterLogger.Collector.GetSnapshot().Any(r => r.Message.Contains("wh_per_a", StringComparison.Ordinal)
+      && r.Message.Contains("the replay failed", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>#2301: a host with no swapper or no rebuilder can rebuild nothing, so every table waits.</summary>
+  [Test]
+  [Arguments(false, true)]
+  [Arguments(true, false)]
+  public async Task Online_WithNoSwapperOrRebuilder_EveryTableWaitsAsync(bool withSwapper, bool withRebuilder) {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_a", 9.0) } },
+      await _serverAsync(CapabilityState.NotPermitted), withSwapper ? _ordersSwapper("wh_per_a") : null,
+      withRebuilder ? rebuilder : null);
+
+    await Assert.That(rebuilder.Rebuilt).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  /// <summary>#2301: under Online, pg_repack run by an external job is not Whizbang's to start, so the cycle rebuilds.</summary>
+  [Test]
+  public async Task Online_WithPgRepackExternal_FallsThroughToTheRebuildAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_a", 9.0) }, ApproxAfter = { ["wh_per_a"] = 1.0 } },
+      await _serverAsync(CapabilityState.NotPermitted, CapabilityState.Ready), _ordersSwapper("wh_per_a"), rebuilder,
+      mode: PgRepackMode.External);
+
+    await Assert.That(coordinator.Repacked).IsEmpty();
+    await Assert.That(rebuilder.Rebuilt).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// #2301: only <c>Online</c> rebuilds. <c>Auto</c> and <c>None</c> start no online rewrite of any kind, and an
+  /// explicit <c>PgRepack</c> whose client is not Ready rewrites nothing, as before, rather than rebuilding.
+  /// </summary>
+  [Test]
+  [Arguments(TableRewriteStrategy.Auto)]
+  [Arguments(TableRewriteStrategy.None)]
+  [Arguments(TableRewriteStrategy.VacuumFull)]
+  [Arguments(TableRewriteStrategy.PgRepack)]
+  public async Task OnlyOnline_EverRebuildsAsync(TableRewriteStrategy strategy) {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_a", 9.0) } },
+      await _serverAsync(CapabilityState.NotPermitted, CapabilityState.Ready, CapabilityState.Missing), _ordersSwapper("wh_per_a"),
+      rebuilder, strategy: strategy);
+
+    await Assert.That(rebuilder.Rebuilt).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  /// <summary>#2301: every strategy records which one carried the request out, as the request is cleared.</summary>
+  [Test]
+  public async Task TheStrategyThatCarriedOutTheRequest_IsRecordedAsync() {
+    var (coordinator, _) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 4.0) },
+      RatioAfter = { ["wh_outbox"] = 1.25 },
+    });
+
+    await Assert.That(coordinator.Completed).IsEquivalentTo([
+      new TableRewriteOutcome("wh_outbox", TableRewriteStrategies.PG_SQUEEZE, TableRewriteReason.Bloat, 4.0, 1.25)]);
+  }
+
+  /// <summary>
+  /// #2301: called directly, the blue-green rewriter rewrites nothing for a table no single rebuild can recreate, and
+  /// says it can always run, since it needs nothing beyond Whizbang.
+  /// </summary>
+  [Test]
+  public async Task BlueGreenRewriter_OfATableNoRebuildCanRecreate_RewritesNothingAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var services = new ServiceCollection()
+      .AddSingleton<IPerspectiveTableSwapper>(_ordersSwapper("wh_per_a"))
+      .AddSingleton<IPerspectiveRebuilder>(rebuilder)
+      .BuildServiceProvider();
+    var rewriter = new BlueGreenTableRewriter(services.GetRequiredService<IServiceScopeFactory>(), NullLogger<BlueGreenTableRewriter>.Instance);
+
+    var ratio = await rewriter.RewriteAsync(new SqueezeCoordinator(), "wh_outbox", CancellationToken.None);
+
+    await Assert.That(ratio).IsNull();
+    await Assert.That(rebuilder.Rebuilt).IsEmpty();
+    await Assert.That(rewriter.CanRun).IsTrue();
+    await Assert.That(rewriter.CannotRunReason).StartsWith("none");
+    await Assert.That(rewriter.Strategy).IsEqualTo(TableRewriteStrategies.BLUE_GREEN);
+    await Assert.That(() => rewriter.RewriteAsync(null!, "wh_per_a", CancellationToken.None)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task BlueGreenRewriteMaxPerCycle_DefaultsToOne_AndBindsFromConfigurationAsync() {
+    await Assert.That(new MaintenanceWorkerOptions().BlueGreenRewriteMaxPerCycle).IsEqualTo(1);
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle"] = "3",
+    }).Build());
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.BlueGreenRewriteMaxPerCycle).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task AddWhizbangWorkers_RegistersTheBlueGreenRewriterAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddLogging();
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<ITableRewriter>().Count(r => r.Strategy == TableRewriteStrategies.BLUE_GREEN)).IsEqualTo(1);
   }
 }

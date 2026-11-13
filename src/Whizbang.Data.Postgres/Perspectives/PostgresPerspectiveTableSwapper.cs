@@ -185,6 +185,18 @@ public sealed class PostgresPerspectiveTableSwapper(
     return previous;
   }
 
+  /// <inheritdoc />
+  public Task<IAsyncDisposable?> TryLockRebuildAsync(string liveTable, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(liveTable);
+    return Task.FromResult<IAsyncDisposable?>(NoRebuildGuard.Instance);
+  }
+
+  /// <inheritdoc />
+  public Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(table);
+    return Task.FromResult<string?>(null);
+  }
+
   /// <summary>
   /// The live table's indexes, and each paired with the shadow index <c>LIKE … INCLUDING ALL</c> copied from it: the
   /// same uniqueness and the same definition after its name and table. The shadow index takes the live index's name.

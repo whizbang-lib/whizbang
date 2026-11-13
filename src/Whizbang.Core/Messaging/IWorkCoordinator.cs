@@ -1980,6 +1980,23 @@ public interface IWorkCoordinator {
       CancellationToken cancellationToken = default) =>
     RequestTableRewriteAsync(tableName, cancellationToken);
 
+  /// <summary>
+  /// Clears a table's recorded rewrite request, as <see cref="ClearTableRewriteRequestAsync"/> does, and records in the
+  /// rewrite history which strategy carried it out, why the table was owed it, and its ratio before and after (#2301).
+  /// Call only after verifying success.
+  /// </summary>
+  /// <param name="outcome">The rewrite that carried out the request.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the request is cleared and the rewrite recorded.</returns>
+  /// <remarks>Default: the request is cleared and nothing is recorded.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BlueGreenTableRewriteTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs</tests>
+  Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(outcome);
+    return ClearTableRewriteRequestAsync(outcome.TableName, cancellationToken);
+  }
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
@@ -5343,6 +5360,20 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
   /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
   public TableRewriteReason Reason { get; init; }
 }
+
+/// <summary>
+/// A rewrite that carried out a table's request: which strategy did it, why the table was owed it, and its bloat ratio
+/// before and after (#2301). Recorded in the rewrite history as the request is cleared.
+/// </summary>
+/// <param name="TableName">The bare table name.</param>
+/// <param name="Strategy">The <see cref="Whizbang.Core.Workers.ITableRewriter.Strategy"/> that rewrote it.</param>
+/// <param name="Reason">Why it was owed the rewrite.</param>
+/// <param name="BloatBefore">The ratio it was offered with.</param>
+/// <param name="BloatAfter">The ratio measured after the rewrite.</param>
+/// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BlueGreenTableRewriteTests.cs</tests>
+public sealed record TableRewriteOutcome(
+  string TableName, string Strategy, TableRewriteReason Reason, double BloatBefore, double BloatAfter);
 
 /// <summary>Why a table is offered for rewrite (<see cref="TableRewriteCandidate.Reason"/>).</summary>
 /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>

@@ -44,6 +44,14 @@ public class TableRewriteStartupStepTests {
       return Task.CompletedTask;
     }
 
+    public List<TableRewriteOutcome> Completed { get; } = [];
+
+    public Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+      Completed.Add(outcome);
+      Cleared.Add(outcome.TableName);
+      return Task.CompletedTask;
+    }
+
     /// <summary>The ratio pgstattuple_approx measures after the rewrite, per table.</summary>
     public Dictionary<string, double?> ApproxAfter { get; init; } = new(StringComparer.Ordinal);
     public List<(string Table, Whizbang.Core.Observability.BloatMeasurementMethod Method)> Measured { get; } = [];
@@ -536,5 +544,31 @@ public class TableRewriteStartupStepTests {
 
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
     await Assert.That(report.Reason).StartsWith("None: no table is rewritten");
+  }
+
+  /// <summary>#2301: <c>Online</c> is left to the maintenance cycle, which picks the strategy each cycle; nothing runs at boot.</summary>
+  [Test]
+  public async Task Online_IsLeftToTheMaintenanceCycle_NotRunAtBootAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_per_order", 4.0, Requested: true), _fillFactorDecrease("wh_per_item") } };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+    var (step, logger) = _loggedStep(coordinator, TableRewriteStrategy.Online, allow: true, vacuum);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).StartsWith("Online: ").And.Contains("the maintenance cycle performs it");
+    await Assert.That(vacuum.Rewritten).IsEmpty();
+    await Assert.That(_waiting(logger)).IsEmpty().Because("the cycle rewrites it, so nothing waits for a strategy");
+  }
+
+  /// <summary>#2301: the boot-time rewrite records the strategy that carried the request out, as the request is cleared.</summary>
+  [Test]
+  public async Task ARewriteAtBoot_RecordsItsStrategyAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 4.0, Requested: true) } };
+
+    await _stepOver(coordinator).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Completed).IsEquivalentTo([
+      new TableRewriteOutcome("wh_outbox", TableRewriteStrategies.VACUUM_FULL, TableRewriteReason.Bloat, 4.0, 1.0)]);
   }
 }

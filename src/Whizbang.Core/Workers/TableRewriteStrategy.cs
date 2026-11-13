@@ -51,6 +51,17 @@ public enum TableRewriteStrategy {
   /// </summary>
   [RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite (pg_repack)")]
   PgRepack = 4,
+
+  /// <summary>
+  /// Online rewrite with whatever the server allows, from the maintenance cycle (<see cref="OnlineTableRewriteStep"/>)
+  /// within <see cref="MaintenanceWorkerOptions.OnlineRewriteMaxBytesPerCycle"/>: pg_squeeze when it is Ready, else
+  /// pg_repack run in process when the extension and its client are Ready, else a blue-green rebuild of a perspective
+  /// table, at most <see cref="MaintenanceWorkerOptions.BlueGreenRewriteMaxPerCycle"/> per cycle (#2301). A framework
+  /// table cannot be rebuilt from events, so without an extension it waits and the cycle says so. It requires no
+  /// extension, so it never stops start, and it is never replaced by <c>VACUUM FULL</c>. Chosen explicitly: <see cref="Auto"/>
+  /// still never starts an online rewrite of any kind.
+  /// </summary>
+  Online = 5,
 }
 
 /// <summary>What the <c>Rewrite</c> step does on this start: the rewriter strategy to run, or none, and why.</summary>
