@@ -211,6 +211,40 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ProcessOutboxFailures_TakesTheRunItReleasesInStreamOrderAsync() {
+    // A failed row releases the rest of its run: the later rows of its stream its holder still leases (171). Those were
+    // updated by one multi-row statement in whatever order its plan read them, so on a heap whose order is not the
+    // stream's (rows moved by their updates, or written out of order) the release held a later row of the run while it
+    // waited on an earlier one, and a completion of the same rows, which locks them in stream order, closed the cycle:
+    // the deadlock the concurrent rounds below found once in 600 rounds. The run is written to the heap in reverse.
+    var instance = Guid.CreateVersion7();
+    var stream = Guid.CreateVersion7();
+    await using var setup = await _openAsync();
+    await _registerAsync(setup, instance);
+    var ids = Enumerable.Range(0, 4).Select(_ => Guid.CreateVersion7()).Order().ToList();
+    var failed = ids[0];
+    List<Guid> run = [.. ids.Skip(1)];
+    await _insertRowAtAsync(setup, failed, stream, instance, secondsAfterStart: 0);
+    for (var i = run.Count - 1; i >= 0; i--) {
+      await _insertRowAtAsync(setup, run[i], stream, instance, secondsAfterStart: i + 1);
+    }
+
+    var free = await _whileBlockedOnTheFirstAsync(OUTBOX, "message_id", [.. run], async flush => {
+      await using var cmd = flush.CreateCommand();
+      // The plan a busy table can get: no index scan, so a multi-row statement reads the stream's rows in heap order.
+      // The lock order must not depend on which plan the planner picks.
+      cmd.CommandText = "SET enable_indexscan = off; SELECT process_outbox_failures(@f::jsonb, NOW())";
+      cmd.Parameters.AddWithValue("f", _failuresJson([failed]));
+      await cmd.ExecuteScalarAsync();
+    });
+
+    await Assert.That(free).IsEquivalentTo(run.Skip(1))
+      .Because("waiting on the first row of the run it releases, it must hold none of the later ones, whatever the plan");
+    await Assert.That(await _countAsync(setup, run, "instance_id IS NULL")).IsEqualTo(3)
+      .Because("released, the failure releases the whole run behind the failed row");
+  }
+
+  [Test]
   public async Task RenewLeases_ForTheOutbox_TakesItsRowsInStreamOrderAsync() {
     var instance = Guid.CreateVersion7();
     await using var setup = await _openAsync();
@@ -667,6 +701,24 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", messageId);
     cmd.Parameters.AddWithValue(nameof(stream), stream);
     cmd.Parameters.Add(new NpgsqlParameter("inst", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)leasedTo ?? DBNull.Value });
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>A leased row created <paramref name="secondsAfterStart"/> seconds after a fixed instant, so a test can write
+  /// a stream's rows to the heap in any order while their (created_at, message_id) order stays the one it chose.</summary>
+  private static async Task _insertRowAtAsync(NpgsqlConnection conn, Guid messageId, Guid stream, Guid leasedTo, int secondsAfterStart) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id,
+         partition_number, instance_id, lease_expiry)
+      VALUES (@id, 'test-topic', 'TestEvent', '{}', '{}', 0, 1,
+              TIMESTAMPTZ '2026-01-01 00:00:00+00' + make_interval(secs => @seconds), @stream, 0,
+              @inst, NOW() + INTERVAL '5 minutes')";
+    cmd.Parameters.AddWithValue("id", messageId);
+    cmd.Parameters.AddWithValue(nameof(stream), stream);
+    cmd.Parameters.AddWithValue("inst", leasedTo);
+    cmd.Parameters.AddWithValue("seconds", (double)secondsAfterStart);
     await cmd.ExecuteNonQueryAsync();
   }
 
