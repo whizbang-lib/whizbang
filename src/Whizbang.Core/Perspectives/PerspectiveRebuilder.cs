@@ -198,9 +198,9 @@ public sealed partial class PerspectiveRebuilder(
 
   private void _logRebuildCompleted(bool partOfRun, RebuildRun run, long elapsedMs) {
     if (!partOfRun) {
-      LogRebuildCompleted(logger, run.Mode, run.PerspectiveName, run.StreamsProcessed, elapsedMs,
+      LogRebuildCompleted(logger, run.Mode, run.PerspectiveName, run.StreamsProcessed, elapsedMs, new RebuildOutcomeCounts(
           run.StreamsProcessed - run.StreamsAlreadyCorrect, run.StreamsAlreadyCorrect, run.StreamsWriteRefused,
-          run.StreamsWithoutModel, run.StreamsWithoutEvents);
+          run.StreamsWithoutModel, run.StreamsWithoutEvents));
     }
   }
 
@@ -921,9 +921,20 @@ public sealed partial class PerspectiveRebuilder(
   private static partial void LogRebuildNothingRebuilt(ILogger logger, RebuildMode mode, string perspective, int requested, int refused);
 
   [LoggerMessage(Level = LogLevel.Information,
-      Message = "Completed {Mode} rebuild of perspective {Perspective}: {Streams} streams in {ElapsedMs}ms ({Rewritten} rewritten, {AlreadyCorrect} already correct, {WriteRefused} write refused, {WithoutModel} without a model, {WithoutEvents} without events)")]
+      Message = "Completed {Mode} rebuild of perspective {Perspective}: {Streams} streams in {ElapsedMs}ms ({Outcomes})")]
   private static partial void LogRebuildCompleted(ILogger logger, RebuildMode mode, string perspective, int streams, long elapsedMs,
-      int rewritten, int alreadyCorrect, int writeRefused, int withoutModel, int withoutEvents);
+      RebuildOutcomeCounts outcomes);
+
+  /// <summary>
+  /// How each stream of a completed rebuild ended (#2252), logged as one value on the completion line. Formatted only
+  /// when the line is written, so a disabled log level costs nothing.
+  /// </summary>
+  internal readonly record struct RebuildOutcomeCounts(
+      int Rewritten, int AlreadyCorrect, int WriteRefused, int WithoutModel, int WithoutEvents) {
+    /// <inheritdoc />
+    public override string ToString() =>
+      $"{Rewritten} rewritten, {AlreadyCorrect} already correct, {WriteRefused} write refused, {WithoutModel} without a model, {WithoutEvents} without events";
+  }
 
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Rebuild of perspective {Perspective} stream {StreamId} folded a row that differs from the stored one, and the row's ordering guard refused the write; the row keeps what it holds")]

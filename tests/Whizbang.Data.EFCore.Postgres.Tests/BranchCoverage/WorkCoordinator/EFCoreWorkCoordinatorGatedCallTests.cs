@@ -198,6 +198,13 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("FindStuckOutboxRows", "_findStuckRowsAsync", async (c, _) =>
       await Assert.That(await c.FindStuckOutboxRowsAsync(5, 10)).IsEmpty());
     register("CleanupCompletedStreams", "CleanupCompletedStreamsAsync", (c, _) => c.CleanupCompletedStreamsAsync([_newId()]));
+    // #2273: the handled ledger's lookup (a non-empty batch; an empty one answers before the gate) and its sweep.
+    register("LookupHandledEvents", "LookupHandledEventsAsync", async (c, _) =>
+      await Assert.That((await c.LookupHandledEventsAsync([_newId()])).Handled).IsEmpty()
+        .Because("no completion recorded this event, so the ledger answers it as not handled"));
+    register("SweepHandledLedger", "SweepHandledLedgerAsync", async (c, _) =>
+      await Assert.That(await c.SweepHandledLedgerAsync(_fixedNow, TimeSpan.FromDays(7))).IsEqualTo(0L)
+        .Because("the ledger is empty, so the sweep removes nothing"));
 
     // ── Streams and event bodies ───────────────────────────────────────────
     register("TruncateStreamPrefix", "TruncateStreamPrefixAsync", async (c, conn) => {

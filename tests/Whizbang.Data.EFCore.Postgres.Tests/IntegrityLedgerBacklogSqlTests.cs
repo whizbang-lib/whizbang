@@ -415,10 +415,12 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
   private (EFCoreWorkCoordinator<WorkCoordinationDbContext> Coordinator, StreamIntegrityMetrics Metrics) _coordinator() {
     var ctx = CreateDbContext();
     _contexts.Add(ctx);
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
-      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var whizbangMetrics = new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
+    var metrics = new StreamIntegrityMetrics(whizbangMetrics);
+    // The ledger counts reach the coordinator through its work-coordinator metrics, as the container wires them.
     return (new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions(),
-      integrityMetrics: metrics), metrics);
+      metrics: new WorkCoordinatorMetrics(whizbangMetrics, metrics)), metrics);
   }
 
   [After(Test)]

@@ -4507,22 +4507,8 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    // Create scope to resolve scoped IWorkCoordinatorStrategy
-    // Guard against ObjectDisposedException during application shutdown or hot reload
-    IServiceScope scope;
-    try {
-      scope = _scopeFactory.CreateScope();
-    } catch (ObjectDisposedException ex) {
-      // Service provider is disposed - application is shutting down
-      // Dropping events during shutdown is acceptable behavior
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-        var eventTypeName = TypeNameFormatter.SimpleName(eventType);
-        CascadeLogger.LogWarning(ex,
-          "[CASCADE] PublishToOutboxAsync: Service provider disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
-          eventTypeName, messageId);
-      }
-#pragma warning restore CA1848
+    // Create scope to resolve scoped IWorkCoordinatorStrategy; none while the application shuts down
+    if (_tryCreateOutboxScope(eventType, messageId) is not { } scope) {
       return;
     }
 
@@ -4564,12 +4550,40 @@ public abstract partial class Dispatcher(
       await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, strategy, scheduledFor,
         options?.CancellationToken ?? _ambientCopyWriteToken());
     } finally {
-      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
-      if (scope is IAsyncDisposable asyncDisposable) {
-        await asyncDisposable.DisposeAsync();
-      } else {
-        scope.Dispose();
+      await _disposeOutboxScopeAsync(scope);
+    }
+  }
+
+  /// <summary>
+  /// The scope an outbox publish resolves its scoped strategy from, or null when the service provider is
+  /// already disposed (application shutdown or hot reload), in which case the event is dropped with a warning.
+  /// </summary>
+  private IServiceScope? _tryCreateOutboxScope(Type eventType, MessageId messageId) {
+    // Guard against ObjectDisposedException during application shutdown or hot reload
+    try {
+      return _scopeFactory.CreateScope();
+    } catch (ObjectDisposedException ex) {
+      // Service provider is disposed - application is shutting down
+      // Dropping events during shutdown is acceptable behavior
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+        var eventTypeName = TypeNameFormatter.SimpleName(eventType);
+        CascadeLogger.LogWarning(ex,
+          "[CASCADE] PublishToOutboxAsync: Service provider disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
+          eventTypeName, messageId);
       }
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <summary>Disposes an outbox publish's scope, asynchronously when it supports it, so services that only
+  /// implement <see cref="IAsyncDisposable"/> are disposed properly.</summary>
+  private static async ValueTask _disposeOutboxScopeAsync(IServiceScope scope) {
+    if (scope is IAsyncDisposable asyncDisposable) {
+      await asyncDisposable.DisposeAsync();
+    } else {
+      scope.Dispose();
     }
   }
 

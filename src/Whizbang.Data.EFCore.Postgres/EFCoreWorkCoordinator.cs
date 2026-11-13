@@ -38,8 +38,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   WorkCoordinatorMetrics? metrics = null,
   WorkCoordinatorGate? gate = null,
   IServiceInstanceProvider? instanceProvider = null,
-  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null,
-  Whizbang.Core.Observability.StreamIntegrityMetrics? integrityMetrics = null
+  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -110,8 +109,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly ILogger _log = (ILogger?)logger ?? NullLogger.Instance;
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   // #2256: the ledger functions answer how many buckets each call opened and closed; recorded here, the one place that
-  // calls them, so every caller is counted. Null when stream-integrity metrics are not registered.
-  private readonly Whizbang.Core.Observability.StreamIntegrityMetrics? _integrityMetrics = integrityMetrics;
+  // calls them, so every caller is counted. Reached through the coordinator's metrics; null when either is not registered.
+  private readonly Whizbang.Core.Observability.StreamIntegrityMetrics? _integrityMetrics = metrics?.Integrity;
   private readonly WorkCoordinatorGate? _gate = gate;
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
   // v0.657 slice 2: enforce EmptyStreamIdPolicy at StoreOutboxMessagesAsync /

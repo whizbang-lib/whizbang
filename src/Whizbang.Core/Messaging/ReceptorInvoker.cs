@@ -243,11 +243,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // the receptor body (exactly how ScopeContextAccessor.CurrentContext scope survives just below). Without
       // this, a worker-dispatched receptor's PublishAsync read a null InitiatingContext and its cascaded child
       // minted a fresh correlation while scope survived — the asymmetric boundary bug.
-      messageContextAccessor.Current = establishedContext;
-      var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
-      if (initiatingAccessor is not null) {
-        initiatingAccessor.InitiatingContext = establishedContext;
-      }
+      _publishEstablishedContext(messageContextAccessor, establishedContext);
     }
 
     // Extract both trace context and scope from envelope hops.
@@ -316,6 +312,19 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Process message tags after all receptors complete at the current lifecycle stage
     await _processTagsAsync(message, messageType, stage, scopeForTags, (context as LifecycleExecutionContext)?.Changes, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Sets the established message context on both accessors. Synchronous on purpose: called from
+  /// <see cref="InvokeAsync"/> after the awaited establish returns, so the AsyncLocal writes land on the flow that
+  /// reaches the receptor body rather than being lost across an await boundary.
+  /// </summary>
+  private void _publishEstablishedContext(IMessageContextAccessor messageContextAccessor, MessageContext establishedContext) {
+    messageContextAccessor.Current = establishedContext;
+    var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
+    if (initiatingAccessor is not null) {
+      initiatingAccessor.InitiatingContext = establishedContext;
+    }
   }
 
   /// <summary>
