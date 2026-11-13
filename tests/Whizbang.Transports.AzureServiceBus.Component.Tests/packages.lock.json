@@ -576,7 +576,7 @@
       },
       "System.Text.Json": {
         "type": "CentralTransitive",
-        "requested": "[10.0.14, )",
+        "requested": "[11.0.0, )",
         "resolved": "11.0.0",
         "contentHash": "hyLfq7fRYbq8m3ENGqgEYkqxLeLx2xmNMlf6UG1a7RQo9OsTsfm4Ch/E6O+A5vYQ2ThneLUn1CHF644lmH5QhA==",
         "dependencies": {
