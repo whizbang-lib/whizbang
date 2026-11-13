@@ -5,9 +5,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Workers;
-using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres;
 

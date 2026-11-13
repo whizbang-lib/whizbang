@@ -28,7 +28,7 @@
 --              The tally holds about two windows of minutes (120 rows by default), so neither function needs an index
 --              beyond the primary key.
 --
---              Number 401: 397 is the highest on develop, and the integrity bundle's changes take 398 to 403 in order.
+--              Number 405: 401 is the highest on develop, and the integrity bundle's changes take 402 to 407 in order.
 --
 -- Reversal: lossy (the reverse drops the tally, whose minutes are lost, and the kept watermarks; both are rebuilt by
 --           the next ticks and checkpoints after the migration is applied again)
@@ -40,7 +40,7 @@ ALTER TABLE __SCHEMA__.wh_integrity_known_origins
   ADD COLUMN IF NOT EXISTS last_commit_sequence BIGINT;
 
 COMMENT ON COLUMN __SCHEMA__.wh_integrity_known_origins.last_commit_sequence IS
-'401 (#2261): the highest commit sequence (inclusive) a checkpoint from this origin announced, the denominator of verified_percent. NULL until a checkpoint announces one.';
+'405 (#2261): the highest commit sequence (inclusive) a checkpoint from this origin announced, the denominator of verified_percent. NULL until a checkpoint announces one.';
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_integrity_ledger_tally (
   minute_start TIMESTAMPTZ NOT NULL PRIMARY KEY,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_integrity_ledger_tally (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_integrity_ledger_tally IS
-'401 (#2261): the integrity ledger buckets the service opened and closed, per minute, summed over every instance; the source of repair_progress_percent and backlog_eta_seconds. Holds about two windows of minutes.';
+'405 (#2261): the integrity ledger buckets the service opened and closed, per minute, summed over every instance; the source of repair_progress_percent and backlog_eta_seconds. Holds about two windows of minutes.';
 
 -- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_ledger_tally_add');
@@ -78,7 +78,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_ledger_tally_add(TIMESTAMPTZ, BIGINT, BIGINT, TIMESTAMPTZ) IS
-'401 (#2261): adds one instance''s ledger buckets opened and closed to the minute of p_at, and removes the minutes before p_keep_since.';
+'405 (#2261): adds one instance''s ledger buckets opened and closed to the minute of p_at, and removes the minutes before p_keep_since.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_ledger_tally_since');
 
@@ -99,4 +99,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_integrity_ledger_tally_since(TIMESTAMPTZ) IS
-'401 (#2261): the ledger buckets the service opened and closed in the minutes from p_since (its minute included).';
+'405 (#2261): the ledger buckets the service opened and closed in the minutes from p_since (its minute included).';

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using Npgsql;
 using TUnit.Assertions;
@@ -487,5 +488,53 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
 
     await Assert.That(await coordinator.GetIntegritySealGenerationAsync(TrackedGuid.New().Value)).IsNull();
+  }
+
+  // ── the reverse ───────────────────────────────────────────────────────────────────────────────
+
+  /// <summary>
+  /// 406's reverse restores what an older release runs: 093's bump, which moves the generation on every call, and 093's
+  /// guard, which resets a consumer's seal on any generation change; 093's refold and 092's fold no longer note a
+  /// rewrite; and the rewrite log is gone.
+  /// </summary>
+  [Test]
+  public async Task TheReverse_RestoresTheBumpTheGuardAndTheFolds_AndDropsTheLogAsync() {
+    await using var ctx = CreateDbContext();
+    await using var conn = await _openAsync();
+    var coordinator = _coordinator(ctx);
+    var origin = TrackedGuid.New().Value;
+    await coordinator.EnsureIntegritySealGenerationAsync(origin, 5);
+    await coordinator.AdvanceIntegritySealAsync(origin, 400);
+    var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
+      "Whizbang.Data.Postgres.MigrationReversals.406_ASealFallsOnlyAsFarAsARewriteReached.down.sql")
+      ?? throw new InvalidOperationException("406 ships its reverse");
+    using var reader = new StreamReader(down);
+    await _executeAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
+      (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));
+    var before = await _generationAsync(conn);
+
+    await _executeAsync(conn, "SELECT _wh_bump_origin_generation()");
+
+    await Assert.That(await _generationAsync(conn)).IsEqualTo(before + 1)
+      .Because("093's bump moves the generation whether or not anything was rewritten");
+
+    await using var guard = conn.CreateCommand();
+    guard.CommandText = "SELECT integrity_seal_generation_guard(@o, 6)";
+    guard.Parameters.AddWithValue("o", origin);
+    await Assert.That((bool)(await guard.ExecuteScalarAsync())!).IsFalse();
+    await Assert.That(await coordinator.GetIntegritySealAsync(origin)).IsEqualTo(0L)
+      .Because("093's guard resets the seal on any generation change");
+
+    await using var state = conn.CreateCommand();
+    state.CommandText = """
+      SELECT to_regclass('public.wh_integrity_origin_rewrites') IS NULL,
+             (SELECT count(*) FROM pg_proc
+              WHERE proname IN ('_wh_refold_epochs_covering', '_wh_fold_digest_epoch')
+                AND prosrc LIKE '%_wh_note_origin_rewrite%')
+      """;
+    await using var rows = await state.ExecuteReaderAsync();
+    await rows.ReadAsync();
+    await Assert.That(rows.GetBoolean(0)).IsTrue().Because("the rewrite log is dropped");
+    await Assert.That(rows.GetInt64(1)).IsEqualTo(0L).Because("the restored folds note no rewrite");
   }
 }

@@ -6,8 +6,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using Whizbang.Core.Data;
 using Whizbang.Core;
+using Whizbang.Core.Data;
 
 namespace Whizbang.Data.Postgres;
 

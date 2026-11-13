@@ -4,9 +4,9 @@
 using System.Globalization;
 using System.Text;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Versioning;
-using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres;
 

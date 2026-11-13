@@ -82,17 +82,17 @@ public class HandledLedgerWriteCostScenarioTests : EFCoreTestBase {
         .StoreInboxMessagesAsync([.. completed.Select(_message)], partitionCount: 100, cancellationToken);
     }
     var completions = "[" + string.Join(',', completed.Select(id => $$"""{"MessageId":"{{id}}","Status":2}""")) + "]";
-    var completion = await _explainAsync(conn, "SELECT count(*) FROM process_inbox_completions($1::jsonb, NOW())",
+    var (completionBlocks, completionMs) = await _explainAsync(conn, "SELECT count(*) FROM process_inbox_completions($1::jsonb, NOW())",
       new NpgsqlParameter { Value = completions, NpgsqlDbType = NpgsqlDbType.Jsonb });
 
     var alone = Enumerable.Range(0, EVENTS).Select(_ => TrackedGuid.New().Value).ToArray();
-    var ledger = await _explainAsync(conn, "INSERT INTO wh_receptor_handled (event_id) SELECT unnest($1) ON CONFLICT DO NOTHING",
+    var (ledgerBlocks, ledgerMs) = await _explainAsync(conn, "INSERT INTO wh_receptor_handled (event_id) SELECT unnest($1) ON CONFLICT DO NOTHING",
       new NpgsqlParameter { Value = alone });
 
-    var perRecord = (double)ledger.Blocks / EVENTS;
+    var perRecord = (double)ledgerBlocks / EVENTS;
     Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-      $"completion of {EVENTS}: {completion.Blocks} blocks, {completion.Milliseconds:F1} ms; " +
-      $"ledger write of {EVENTS} alone: {ledger.Blocks} blocks ({perRecord:F1}/record), {ledger.Milliseconds:F1} ms"));
+      $"completion of {EVENTS}: {completionBlocks} blocks, {completionMs:F1} ms; " +
+      $"ledger write of {EVENTS} alone: {ledgerBlocks} blocks ({perRecord:F1}/record), {ledgerMs:F1} ms"));
 
     await using (var count = conn.CreateCommand()) {
       count.CommandText = "SELECT count(*) FROM wh_receptor_handled WHERE event_id = ANY($1)";

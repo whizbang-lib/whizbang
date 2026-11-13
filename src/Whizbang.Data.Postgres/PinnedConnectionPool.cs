@@ -9,9 +9,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
-using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres;
 

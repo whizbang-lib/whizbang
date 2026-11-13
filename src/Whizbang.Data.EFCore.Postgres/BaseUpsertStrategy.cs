@@ -10,13 +10,13 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Data.Postgres;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 

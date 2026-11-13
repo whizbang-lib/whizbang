@@ -7,11 +7,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using NpgsqlTypes;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Perspectives;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 

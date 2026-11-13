@@ -4,9 +4,9 @@
 #pragma warning disable CS0618
 
 using Microsoft.EntityFrameworkCore;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 

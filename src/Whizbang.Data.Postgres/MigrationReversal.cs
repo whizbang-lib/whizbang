@@ -4,8 +4,8 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Npgsql;
-using Whizbang.Core.Versioning;
 using Whizbang.Core;
+using Whizbang.Core.Versioning;
 
 namespace Whizbang.Data.Postgres;
 

@@ -5,9 +5,9 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 

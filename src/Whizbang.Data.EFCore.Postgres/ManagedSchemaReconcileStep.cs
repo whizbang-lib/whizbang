@@ -6,11 +6,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 

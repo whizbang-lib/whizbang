@@ -34,7 +34,7 @@
 --              Cost: one primary-key insert per completed event (one heap tuple and one index entry, nothing read) in
 --              the completion that already deletes the inbox row.
 --
---              Number 403: 397 is the highest on develop, and the integrity bundle's changes take 398 to 403 in order.
+--              Number 407: 401 is the highest on develop, and the integrity bundle's changes take 402 to 407 in order.
 --
 -- Reversal: lossy (the ledger and its coverage are dropped and process_inbox_completions is restored from its last
 --           word, 236; a later forward run starts coverage afresh, so nothing reads the lost records as complete)
@@ -78,7 +78,7 @@ COMMENT ON TABLE __SCHEMA__.wh_receptor_handled_coverage IS
   'Issue #2273: one row, the moment from which wh_receptor_handled records every handled event. It only moves forward.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- process_inbox_completions: last word 236, copied whole with the 403 delta (the handled record).
+-- process_inbox_completions: last word 236, copied whole with the 407 delta (the handled record).
 -- <docs>fundamentals/work-coordinator/handler-commit</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs:AnEventCompletedAsProcessed_IsRecordedHandledAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs:ACompletionThatIsNotProcessed_ACommand_AndAnUntimedId_AreNotRecordedAsync</tests>
@@ -129,7 +129,7 @@ BEGIN
 
     v_new_status := v_current_status | v_completion.status_flags;
 
-    -- 403 (#2273): an event completed as processed is recorded handled, so a repair can later prove it was never
+    -- 407 (#2273): an event completed as processed is recorded handled, so a repair can later prove it was never
     -- handled here by its absence. Only a time-ordered (version 7) id: the ledger is kept by the time an id carries,
     -- and an event whose id carries none is never run on repair, so its record would be dead weight. One index entry.
     IF v_is_event AND (v_completion.status_flags & 2) = 2 AND substr(v_completion.msg_id::TEXT, 15, 1) = '7' THEN
@@ -185,7 +185,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.process_inbox_completions(JSONB, TIMESTAMPTZ, BOOLEAN) IS
-  'Applies inbox completions: deletes a row completed as EventStored, otherwise records the status (162: on wh_inbox_state). 236 (#1664): a recovered message settles the dead letter it re-entered from, Recovered when processed and HoldForReview with the outcome when a gate completed it unprocessed. 403 (#2273): an event completed as processed is recorded in wh_receptor_handled.';
+  'Applies inbox completions: deletes a row completed as EventStored, otherwise records the status (162: on wh_inbox_state). 236 (#1664): a recovered message settles the dead letter it re-entered from, Recovered when processed and HoldForReview with the outcome when a gate completed it unprocessed. 407 (#2273): an event completed as processed is recorded in wh_receptor_handled.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- The handled subset of p_event_ids and the coverage start. With partitions maintained, each id is pruned to the one

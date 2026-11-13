@@ -6,10 +6,10 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
-using Whizbang.Core;
 
 namespace Whizbang.SignalR.Hooks;
 

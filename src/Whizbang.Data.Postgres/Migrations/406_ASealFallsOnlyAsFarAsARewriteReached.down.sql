@@ -4,12 +4,14 @@
 -- The reverse of 406_ASealFallsOnlyAsFarAsARewriteReached.sql (#2262): the generation guard, the bump and the refold
 -- helper as 093 defined them, the epoch fold as 092 defined it, and the rewrite log, its settings, the note and the
 -- answer dropped. The log is lost: an older release never reads it, and resets a consumer's seal on every generation
--- change, as it did before 402. Seals and the generation itself are kept.
+-- change, as it did before 406. Seals and the generation itself are kept.
 
 -- ---------------------------------------------------------------------------------------------
 -- integrity_seal_generation_guard: 093's definition, whole.
 -- ---------------------------------------------------------------------------------------------
 
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:TheReverse_RestoresTheBumpTheGuardAndTheFolds_AndDropsTheLogAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.integrity_seal_generation_guard(
   p_origin     UUID,
   p_generation BIGINT
@@ -44,6 +46,8 @@ COMMENT ON FUNCTION __SCHEMA__.integrity_seal_generation_guard IS
 -- ---------------------------------------------------------------------------------------------
 -- _wh_bump_origin_generation: 093's definition, whole.
 -- ---------------------------------------------------------------------------------------------
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:TheReverse_RestoresTheBumpTheGuardAndTheFolds_AndDropsTheLogAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_bump_origin_generation() RETURNS VOID
 LANGUAGE plpgsql
 AS $$
@@ -60,6 +64,8 @@ COMMENT ON FUNCTION __SCHEMA__._wh_bump_origin_generation IS
 -- ---------------------------------------------------------------------------------------------
 -- _wh_refold_epochs_covering: 093's definition, whole.
 -- ---------------------------------------------------------------------------------------------
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:TheReverse_RestoresTheBumpTheGuardAndTheFolds_AndDropsTheLogAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_refold_epochs_covering(
   p_lane    UUID,
   p_min_seq BIGINT,
@@ -86,6 +92,8 @@ COMMENT ON FUNCTION __SCHEMA__._wh_refold_epochs_covering IS
 -- ---------------------------------------------------------------------------------------------
 -- _wh_fold_digest_epoch: 092's definition, whole.
 -- ---------------------------------------------------------------------------------------------
+-- <docs>resilience/stream-integrity</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:TheReverse_RestoresTheBumpTheGuardAndTheFolds_AndDropsTheLogAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_fold_digest_epoch(
   p_lane      UUID,
   p_epoch     BIGINT,
@@ -109,7 +117,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_fold_digest_epoch IS
 'Internal: (re)writes one epoch''s bucket rows from the canonical fold (_wh_epoch_buckets).';
 
 -- ---------------------------------------------------------------------------------------------
--- What 402 added.
+-- What 406 added.
 -- ---------------------------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_integrity_seal_guard(UUID, BIGINT, BIGINT, BIGINT);
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_integrity_history_rewrite(BIGINT);

@@ -4,8 +4,8 @@
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using Whizbang.Core.Perspectives;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Collective;
 

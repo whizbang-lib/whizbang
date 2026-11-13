@@ -6,10 +6,10 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Postgres.Collective;
-using Whizbang.Core;
 
 namespace Whizbang.Data.Dapper.Postgres.Collective;
 

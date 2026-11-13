@@ -7,9 +7,9 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using System.Text.Json.Serialization;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres.Collective;
 

@@ -3,10 +3,10 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Whizbang.Core;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 

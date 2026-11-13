@@ -5,8 +5,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
-using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives.Hooks;
 
 namespace Whizbang.Data.Postgres;
 

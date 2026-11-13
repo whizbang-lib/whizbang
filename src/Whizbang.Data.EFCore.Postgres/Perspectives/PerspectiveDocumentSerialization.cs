@@ -4,8 +4,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Whizbang.Core.Serialization;
 using Whizbang.Core;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 

@@ -10,13 +10,13 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Collective;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 

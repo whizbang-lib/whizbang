@@ -10,8 +10,8 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
-using Whizbang.Data.Postgres;
 using Whizbang.Core;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
