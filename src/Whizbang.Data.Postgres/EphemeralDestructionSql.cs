@@ -6,6 +6,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres;
 
@@ -63,6 +64,9 @@ internal static class EphemeralDestructionSql {
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_events pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_message_associations ma WHERE ma.normalized_message_type = es.event_type " +
       "  AND ma.association_type = 'perspective' " +
+      // 403 (#2295): a perspective that keeps no rewind floor holds no body back, as in the reap.
+      $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_message_associations nf WHERE nf.association_type = '{EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE}' " +
+      "    AND nf.target_name = ma.target_name) " +
       $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
       // 209: by version, matching the migration. Any drift from the DELETE this mirrors reports bodies that survive or
       // hides bodies that go.

@@ -3,7 +3,7 @@
 
 -- Migration: 403_EphemeralHistoryFollowsWhatAReadModelConsumes.sql
 -- Date: 2026-11-12
--- Description: The ephemeral body reap follows what each read model needs (#2294).
+-- Description: The ephemeral body reap follows what each read model needs (#2294, #2295).
 --
 --              A body is reaped only once every consuming perspective has a snapshot at or past it (Task 8's coverage
 --              gate). A perspective that purged its row (ApplyResult.Purge) can never take that snapshot: the bootstrap
@@ -15,6 +15,11 @@
 --                   destruction hook is offered, CoordinatorCatalogSql and EphemeralDestructionSql).
 --                2. Task 8b removes a purged row's cursor and every snapshot (_wh_remove_purged_row_companions), once
 --                   the stream has no work pending for the perspective and its table holds no row for the stream.
+--
+--                3. A perspective that keeps no rewind floor (it applies only ephemeral events and is not marked
+--                   [KeepEphemeralRewindFloor], #2295) holds no body back: the startup associations step registers a
+--                   __ASSOCIATION_NO_REWIND_FLOOR__ marker association for it, and Task 8 and both mirrors skip the
+--                   coverage check for a perspective with one. The other gates (consumption, grace, TTL, holds) stay.
 --
 --              The rest of wh_perform_maintenance is 366's body unchanged. perform_maintenance() is not redefined; it
 --              already calls wh_perform_maintenance(NULL).
@@ -153,6 +158,9 @@ COMMENT ON FUNCTION __SCHEMA__._wh_remove_purged_row_companions(INTEGER) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_TheBodiesOfAPurgedRow_AreReapedWithoutASnapshotAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AnOperatorPurgeOfEveryPerspective_DoesNotCoverTheBodyAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Maintenance_ReportsHowManyCompanionsItRemovedAsync</tests>
+-- <docs>fundamentals/events/ephemeral-events#snapshots-follow-what-a-read-model-consumes</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:Reap_TheBodyOfAReadModelThatKeepsNoFloor_IsReapedWithoutASnapshotAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:Reap_ABodyAnotherConsumerStillNeedsCoveredFor_IsHeldAsync</tests>
 -- <docs>fundamentals/events/ephemeral-events#reap-deletes-what-the-hook-saw</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapSeenSetTests.cs:Delete_ABodyThatBecomesEligibleWhileTheHookRuns_IsNotReapedUnseen_AndIsOfferedNextCycleAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapSeenSetTests.cs:Compact_ABodyThatBecomesEligibleWhileTheHandlerRuns_IsNotReapedUncompacted_AndIsCompactedNextCycleAsync</tests>
@@ -517,6 +525,16 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_message_associations ma
         WHERE ma.normalized_message_type = es.event_type
           AND ma.association_type = __CATEGORY_PERSPECTIVE__
+          -- 403 (#2295): a perspective that keeps no rewind floor (it applies only ephemeral events and is not marked
+          -- [KeepEphemeralRewindFloor]) never takes the snapshot this gate waits for, and needs none: its snapshot would
+          -- only be the floor of a rewind the grace window has already closed. The startup associations step registers
+          -- a marker for it; without the marker (another driver, an older instance) the gate stays, which holds bodies
+          -- rather than losing them.
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_message_associations nf
+            WHERE nf.association_type = __ASSOCIATION_NO_REWIND_FLOOR__
+              AND nf.target_name = ma.target_name
+          )
           AND NOT EXISTS (
             SELECT 1 FROM __SCHEMA__.wh_perspective_snapshots s
             WHERE s.stream_id = es.stream_id
@@ -749,4 +767,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_perform_maintenance(UUID[]) IS
   'ephemeral body reap to the bodies the destruction hook and the compaction handler were given; every other gate still '
   'applies to them. NULL reaps every eligible body, for a cycle that ran no hook or handler. 366: the completed-inbox '
   'purge deletes at most wh_settings.completed_inbox_purge_batch_size rows per call (default 50000, never below 1). 403: '
-  'a perspective''s purge marker covers its stream''s bodies, and Task 8b removes a purged row''s cursor and snapshots.';
+  'a perspective''s purge marker covers its stream''s bodies, Task 8b removes a purged row''s cursor and snapshots, and a '
+  'perspective with a no_rewind_floor marker association holds no body back.';

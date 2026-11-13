@@ -59,6 +59,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // are ephemeral). Gates the rewind fallback — an ephemeral stream's consumed bodies are reaped,
   // so a full replay-from-zero would read reaped/absent bodies and silently corrupt the model.
   private const bool _isEphemeralPerspective = false;
+  // Generated (#2295): false for a perspective that applies only ephemeral events and does not opt in with
+  // [KeepEphemeralRewindFloor]. It keeps no rewind floor: the runner is given no snapshot store, so it writes no
+  // snapshot, live or bootstrapped, and a late event that would need a floor is dropped as an ephemeral one is.
+  private const bool _keepsRewindFloor = true;
   #endregion
 
   #region UNCONDITIONAL_PURGE
@@ -174,7 +178,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     _tracingOptions = tracingOptions;
-    _snapshotStore = snapshotStore;
+    // #2295: a perspective that keeps no rewind floor takes no snapshots and restores from none.
+    _snapshotStore = _keepsRewindFloor ? snapshotStore : null;
     _snapshotOptions = snapshotOptions;
     _applyCoordinator = applyCoordinator;
     _collectiveReplayApplier = collectiveReplayApplier;

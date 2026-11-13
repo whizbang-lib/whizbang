@@ -5,6 +5,7 @@ using System.Data.Common;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres;
 
@@ -94,10 +95,13 @@ internal static class CoordinatorCatalogSql {
 
   /// <summary>
   /// The (stream, perspective) pairs with an ephemeral body past its rewind grace, consumed, that no snapshot covers by
-  /// version and whose row the perspective has not purged (#2294): the snapshots to take before the body is reaped.
+  /// version and whose row the perspective has not purged (#2294), for perspectives that keep a rewind floor (#2295): the
+  /// snapshots to take before the body is reaped.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_APurgedPair_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:PairsNeedingSnapshot_AReadModelThatKeepsNoFloor_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_AReadModelThatKeepsNoRewindFloor_IsNotATargetAsync</tests>
   internal static async Task<IReadOnlyList<EphemeralSnapshotTarget>> EphemeralPairsNeedingSnapshotAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     cmd.CommandText =
@@ -106,6 +110,9 @@ internal static class CoordinatorCatalogSql {
       $"JOIN {prefix}wh_event_store es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {prefix}wh_ephemeral_type_grace g ON g.event_type = es.event_type " +
       $"JOIN {prefix}wh_message_associations ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
+      // 403 (#2295): a perspective that keeps no rewind floor takes no snapshot, so it is never a target.
+      $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_message_associations nf WHERE nf.association_type = '{EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE}' " +
+      "    AND nf.target_name = ma.target_name) " +
       $"JOIN {prefix}wh_perspective_cursors c ON c.stream_id = es.stream_id AND c.perspective_name = ma.target_name " +
       // #13b4 safety gate: only EPHEMERAL events; consumed sourced bodies are never snapshot targets.
       "WHERE (es.flags & 8) = 8 " +

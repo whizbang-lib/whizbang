@@ -5,9 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
-using Whizbang.Generators.Shared.Utilities;
 
-namespace Whizbang.Generators.Utilities;
+namespace Whizbang.Generators.Shared.Utilities;
 
 /// <summary>
 /// Resolves a type's effective ephemeral mode from <c>[Ephemeral]</c> at compile time — the single
@@ -15,12 +14,12 @@ namespace Whizbang.Generators.Utilities;
 /// enforces the virality rules), so the two can never disagree.
 /// </summary>
 /// <remarks>
-/// The CLR only honours <c>AttributeUsage.Inherited</c> for base classes via reflection and never for
+/// The CLR only honors <c>AttributeUsage.Inherited</c> for base classes via reflection and never for
 /// interfaces, so the walk is explicit and generator-driven: own type → base records → implemented
 /// interfaces, <strong>most-specific wins</strong>. Interfaces are name-ordered so results are
 /// deterministic; genuine sibling-profile conflicts are reported separately (WHIZ134).
 /// </remarks>
-internal static class EphemeralResolver {
+public static class EphemeralResolver {
   private const string EPHEMERAL_ATTR = "global::Whizbang.Core.Attributes.EphemeralAttribute";
 
   /// <summary>True when the type resolves to ephemeral (directly or by composition).</summary>

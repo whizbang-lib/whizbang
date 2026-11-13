@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
@@ -31,7 +33,14 @@ public static class EphemeralRewindFloor {
   /// <param name="perspectiveName">The perspective, in the CLR form its cursors and associations name it.</param>
   /// <param name="serviceName">The service the associations belong to.</param>
   /// <returns>The entry, ready to follow at least one entry already in the array.</returns>
-#pragma warning disable RCS1163, IDE0060 // RED stub
-  public static string NoFloorAssociationEntryJson(string perspectiveName, string serviceName) => string.Empty;
-#pragma warning restore RCS1163, IDE0060
+  /// <remarks>
+  /// One marker per perspective: its message type is the perspective itself, never an event type, so no perspective
+  /// association can collide with it and the work-item cascade that follows an orphaned association matches nothing.
+  /// </remarks>
+  public static string NoFloorAssociationEntryJson(string perspectiveName, string serviceName) {
+    var name = JsonEncodedText.Encode(perspectiveName).ToString();
+    return string.Concat(
+      ",{\"MessageType\":\"", name, "\",\"AssociationType\":\"", NO_FLOOR_ASSOCIATION_TYPE, "\",",
+      "\"TargetName\":\"", name, "\",\"ServiceName\":\"", JsonEncodedText.Encode(serviceName).ToString(), "\"}");
+  }
 }
