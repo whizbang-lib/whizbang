@@ -354,7 +354,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// 399's reverse restores the existing names to their last words and drops what 399 added, so a rollback leaves an
+  /// 405's reverse restores the existing names to their last words and drops what 405 added, so a rollback leaves an
   /// older release the functions it was built against, working without the counting forms.
   /// </summary>
   [Test]
@@ -364,7 +364,7 @@ public class IntegrityLedgerBacklogSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     var down = typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly.GetManifestResourceStream(
       "Whizbang.Data.Postgres.MigrationReversals.405_TheLedgerCountsWhatItOpensAndCloses.down.sql")
-      ?? throw new InvalidOperationException("399 ships its reverse");
+      ?? throw new InvalidOperationException("405 ships its reverse");
     using var reader = new StreamReader(down);
     await _execAsync(conn, Whizbang.Data.Postgres.MigrationConstants.Apply(
       (await reader.ReadToEndAsync()).Replace("__SCHEMA__", "public", StringComparison.Ordinal)));

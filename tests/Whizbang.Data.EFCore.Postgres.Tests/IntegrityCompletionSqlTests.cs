@@ -122,7 +122,7 @@ public class IntegrityCompletionSqlTests : EFCoreTestBase {
   // ── the reverse ──────────────────────────────────────────────────────────────────────────────
 
   /// <summary>
-  /// 401's reverse drops what 401 added: the tally (its minutes are lost, which is why 401 is lossy) and the kept
+  /// 407's reverse drops what 407 added: the tally (its minutes are lost, which is why 407 is lossy) and the kept
   /// watermark, so a rollback leaves an older release the tables it was built against.
   /// </summary>
   [Test]
