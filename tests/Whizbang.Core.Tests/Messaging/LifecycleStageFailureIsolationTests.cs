@@ -39,6 +39,9 @@ public class LifecycleStageFailureIsolationTests {
 
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+    // The call also started the detached stage, which logs to the same logger; it is waited for, so the entries read
+    // below are the same whatever order the two stages finish in.
+    await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId, third.MessageId])
       .Because("the first message's failure must not skip the inline stage for the messages after it in the flush");
@@ -65,6 +68,9 @@ public class LifecycleStageFailureIsolationTests {
 
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+    // The call also started the detached stage, which logs to the same logger; it is waited for, so the entries read
+    // below are the same whatever order the two stages finish in.
+    await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId])
       .Because("inbox messages in the same flush are isolated the same way");
@@ -87,6 +93,9 @@ public class LifecycleStageFailureIsolationTests {
         LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context))
       .ThrowsExactly<InvalidOperationException>()
       .Because("the caller of a post-store stage still learns that a receptor failed, as it did before");
+    // The call also started the detached stage, which logs to the same logger; it is waited for, so the entries read
+    // below are the same whatever order the two stages finish in.
+    await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
     await Assert.That(thrown!.Message).Contains(first.MessageId.ToString())
       .Because("the exception thrown is the first failure's own, so a caller sees what it always saw");
@@ -127,6 +136,9 @@ public class LifecycleStageFailureIsolationTests {
 
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+    // The call also started the detached stage, which logs to the same logger; it is waited for, so the entries read
+    // below are the same whatever order the two stages finish in.
+    await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([readable.MessageId])
       .Because("a payload that cannot be read costs only its own message");
@@ -170,6 +182,9 @@ public class LifecycleStageFailureIsolationTests {
 
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+    // The call also started the detached stage, which logs to the same logger; it is waited for, so the entries read
+    // below are the same whatever order the two stages finish in.
+    await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
     await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([first.MessageId, second.MessageId]);
     await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Level == LogLevel.Error)).IsEqualTo(1);
@@ -373,7 +388,7 @@ public class LifecycleStageFailureIsolationTests {
       InboxMessage[] inbox,
       ILifecycleMessageDeserializer? deserializer = null) =>
     new(outbox, inbox, provider.GetRequiredService<IServiceScopeFactory>(), deserializer ?? new FailingForDeserializer(), logger,
-      EnableLifecycleTracing: false);
+      EnableLifecycleTracing: false, DetachedWork: new DetachedLifecycleWork());
 
   private static MessageEnvelope<JsonElement> _envelope(MessageId messageId) {
     using var document = JsonDocument.Parse($"{{\"id\":\"{messageId.Value}\"}}");
