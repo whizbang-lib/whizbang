@@ -137,7 +137,10 @@ public static class TestConstants {
   /// <para>ReceptorRegistryContributionTests.cs adds 1 (OnOrderPlaced: the receptor the composite receptor
   /// registry's runtime-registration tests register and unregister, #2197).</para>
   ///
-  /// <para>Total: 139 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>SuppressedReceptorRouteTests.cs adds 1 (SuppressedRouteProbeReceptor: a [SuppressReceptorRegistration] receptor, still
+  /// discovered and routed, whose compiled route skips when nothing registers it, #2309).</para>
+  ///
+  /// <para>Total: 140 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 139;
+  public const int EXPECTED_RECEPTOR_COUNT = 140;
 }
