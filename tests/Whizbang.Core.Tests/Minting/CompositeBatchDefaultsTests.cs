@@ -92,4 +92,15 @@ public class CompositeBatchDefaultsTests {
     await Assert.That(options.MaxBufferedMessages).IsNull();
     await Assert.That(options.DebounceInterval).IsEqualTo(TimeSpan.FromMilliseconds(100));
   }
+
+  [Test]
+  public async Task AHostWithNoConfiguration_KeepsTheCodeDefaultsAsync() {
+    // A service built with no IConfiguration (a bare container) binds nothing: every value is the code default.
+    var options = new CompositeBatchOptions { MaxBufferedMessages = 7 };
+
+    new ConfigureCompositeBatchOptions(configuration: null).Configure(options);
+
+    await Assert.That(options.MaxBufferedMessages).IsEqualTo(7);
+    await Assert.That(options.DebounceInterval).IsEqualTo(new CompositeBatchOptions().DebounceInterval);
+  }
 }

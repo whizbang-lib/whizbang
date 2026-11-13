@@ -387,7 +387,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static int _resolveWriteMode(INamedTypeSymbol classSymbol) =>
     classSymbol.GetAttributes()
       .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "PerspectiveWriteModeAttribute" or "PerspectiveWriteMode")
-      .Select(static a => a.ConstructorArguments is [{ Value: int mode }] ? mode : -1)
+      // The attribute's one argument is the mode; an attribute that binds no argument (code that does not compile)
+      // declares nothing, and the class takes the service's mode.
+      .Select(static a => a.ConstructorArguments)
+      .Where(static arguments => arguments.Length == 1)
+      .Select(static arguments => arguments[0].Value)
+      .OfType<int>()
       .DefaultIfEmpty(-1)
       .First();
 

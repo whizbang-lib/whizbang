@@ -38,6 +38,14 @@ public class BatchBufferTests {
     buffer.AdmitAsync(message, bytes, interactive, context ?? _standard, cancellationToken);
 
   [Test]
+  public async Task TheBuffer_EnforcesTheLimitsItWasBuiltWithAsync() {
+    var limits = _limits(messages: 2, bytes: 100);
+
+    await Assert.That(_buffer(limits).Limits).IsSameReferenceAs(limits)
+      .Because("the limits the startup report and the strategies read are the ones the buffer holds appends to");
+  }
+
+  [Test]
   public async Task UnderTheLimits_AnAppendIsAdmittedAtOnceAsync() {
     var buffer = _buffer(_limits(messages: 2, bytes: 100));
 

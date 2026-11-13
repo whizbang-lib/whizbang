@@ -156,7 +156,9 @@ public class CoalescingOutboxBatchStrategyTests {
 
   [Test]
   [Timeout(60000)]
-  public async Task ATransientFailure_IsRetried_ThenReportedLost_WhenNothingRecordsItAsync(CancellationToken cancellationToken) {
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task ATransientFailure_IsRetried_ThenReportedLost_WhenNothingRecordsItAsync(bool withMetrics, CancellationToken cancellationToken) {
     var clock = new TimerAdvancingClock(TimeSpan.FromMinutes(1));
     var attempts = 0;
     var reported = new TaskCompletionSource<OutboxFlushFailure>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -172,7 +174,8 @@ public class CoalescingOutboxBatchStrategyTests {
         reported.TrySetResult(failure);
         return Task.FromResult(false);
       },
-      new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: factory)));
+      // A host with metrics off retries exactly as one with them on; it only records no retry count.
+      withMetrics ? new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: factory)) : null);
     await sut.AppendAsync(_message(Guid.NewGuid()), cancellationToken);
 
     await clock.AdvanceTimersUntilAsync(reported.Task, cancellationToken);

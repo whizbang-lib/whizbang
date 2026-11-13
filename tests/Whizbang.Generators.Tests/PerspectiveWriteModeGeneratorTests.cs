@@ -71,6 +71,16 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task AnAttributeThatBindsNoMode_DeclaresNothing_AndTheServicesModeAppliesAsync() {
+    // Code that does not compile yet ([PerspectiveWriteMode] with no argument) still runs the generator: it registers
+    // no declared mode rather than inventing one.
+    var runner = _runner("[PerspectiveWriteMode]");
+
+    await Assert.That(runner).Contains(REGISTER + "null);");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task TheRunner_ExposesTheReadItsRunMakes_ForTheBatchAsync() {
     var runner = _runner("");
 

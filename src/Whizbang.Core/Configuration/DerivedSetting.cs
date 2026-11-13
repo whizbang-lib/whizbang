@@ -115,8 +115,10 @@ public static class DerivedSetting {
   public static DerivedSetting<T> Clamp<T>(string name, T requested, T min, T max, params SettingInput[] inputs)
       where T : INumber<T> {
     var value = T.Clamp(requested, min, max);
+    // Both rules are formatted through the interpolation handler with the invariant culture: the value as asked for,
+    // or the clamp and its bounds.
     var rule = value == requested
-      ? requested.ToString(null, CultureInfo.InvariantCulture)
+      ? string.Create(CultureInfo.InvariantCulture, $"{requested}")
       : string.Create(CultureInfo.InvariantCulture, $"{requested} clamped to [{min}, {max}]");
     return Of(name, value, rule, inputs);
   }

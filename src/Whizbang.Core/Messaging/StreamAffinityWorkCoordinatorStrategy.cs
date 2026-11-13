@@ -24,6 +24,7 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>extending/internals/outbox-batch-strategy</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/StreamAffinityWorkCoordinatorStrategyTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A public constructor: grouping its optional collaborators into a parameter object would break every caller that builds the strategy by name. The required three come first and the five optional ones default to null, so a caller names only what it supplies.")]
 public sealed class StreamAffinityWorkCoordinatorStrategy(
     IWorkCoordinatorStrategy inner,
     IOutboxBatchStrategy outboxBatch,

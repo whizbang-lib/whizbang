@@ -1944,7 +1944,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       await Assert.That(read[stream].Select(e => e.MessageId.Value)).IsEquivalentTo(ids, TUnit.Assertions.Enums.CollectionOrdering.Matching)
         .Because("each stream is answered as its own read answers it, in its order");
     }
-    await Assert.That(read[whole].Select(e => e.MessageId.Value)).IsEquivalentTo(new[] { wholeIds[0], wholeIds[2] });
+    await Assert.That(read[whole].Select(e => e.MessageId.Value)).IsEquivalentTo([wholeIds[0], wholeIds[2]]);
     await Assert.That(read[laterFirst].Select(e => e.MessageId.Value)).IsEquivalentTo(laterIds.Skip(1));
     await Assert.That(read[empty]).IsEmpty();
     await Assert.That(read[whole][0].IsFirstInLocalStream).IsTrue();

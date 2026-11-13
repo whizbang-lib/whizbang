@@ -138,24 +138,30 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static bool _isInsideRegisteredBuilder(IOperation creation) {
     for (var operation = creation.Parent; operation is not null; operation = operation.Parent) {
-      if (operation is not IAnonymousFunctionOperation) {
-        continue;
+      if (operation is IAnonymousFunctionOperation && _isConsumedByBuilder(operation)) {
+        return true;
       }
-      // The lambda's conversion/delegate-creation wrapper sits between it and the assignment.
-      for (var outer = operation.Parent; outer is not null; outer = outer.Parent) {
-        if (outer is IAssignmentOperation assignment
-            && assignment.Target is IPropertyReferenceOperation property
-            && _isBuilderSeam(property.Property)) {
-          return true;
-        }
-        // The factory of the composite batch helpers (#2285), which enforce the count cap and the byte budget.
-        if (outer is IArgumentOperation { Parameter: { } parameter } && _isBatchFactory(parameter)) {
-          return true;
-        }
-        // Stop climbing once past the expression that consumes the lambda.
-        if (outer is IAnonymousFunctionOperation or IBlockOperation) {
-          break;
-        }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// True when the expression that consumes <paramref name="lambda"/> hands it to a builder seam: an assignment to a
+  /// sanctioned builder property, or the factory argument of the composite batch helpers (#2285), which enforce the
+  /// count cap and the byte budget. The climb stops at the consuming expression.
+  /// </summary>
+  private static bool _isConsumedByBuilder(IOperation lambda) {
+    // The lambda's conversion/delegate-creation wrapper sits between it and the assignment.
+    for (var outer = lambda.Parent; outer is not null; outer = outer.Parent) {
+      if (outer is IAssignmentOperation { Target: IPropertyReferenceOperation property } && _isBuilderSeam(property.Property)) {
+        return true;
+      }
+      if (outer is IArgumentOperation { Parameter: { } parameter } && _isBatchFactory(parameter)) {
+        return true;
+      }
+      // Stop climbing once past the expression that consumes the lambda.
+      if (outer is IAnonymousFunctionOperation or IBlockOperation) {
+        return false;
       }
     }
     return false;

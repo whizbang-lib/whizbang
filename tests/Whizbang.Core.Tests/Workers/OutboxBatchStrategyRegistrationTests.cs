@@ -151,4 +151,15 @@ public class OutboxBatchStrategyRegistrationTests {
     await Assert.That(defaults.MaxWait).IsEqualTo(TimeSpan.FromSeconds(1));
     await Assert.That(defaults.MaxSize).IsEqualTo(100);
   }
+
+  [Test]
+  public async Task TheBatchBufferOptions_InAHostWithNoConfiguration_KeepTheCodeDefaultsAsync() {
+    // A service built with no IConfiguration (a bare container) binds nothing: every value is the code default.
+    var options = new BatchBufferOptions { MaxBufferedMessages = 7 };
+
+    new ConfigureBatchBufferOptions(configuration: null).Configure(options);
+
+    await Assert.That(options.MaxBufferedMessages).IsEqualTo(7);
+    await Assert.That(options.MaxBufferedBytesFraction).IsEqualTo(BatchBufferOptions.DEFAULT_MAX_BUFFERED_BYTES_FRACTION);
+  }
 }
