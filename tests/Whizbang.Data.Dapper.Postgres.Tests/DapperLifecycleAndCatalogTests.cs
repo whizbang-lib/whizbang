@@ -120,6 +120,28 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task EphemeralPairsNeedingSnapshot_AReadModelThatKeepsNoRewindFloor_IsNotATargetAsync() {
+    // #2295: a perspective that applies only ephemeral events (the no_rewind_floor marker) is never bootstrapped for the
+    // reap. Same SQL as the EF Core driver, proved here on this driver's connection.
+    var coordinator = _coordinator();
+    var stream = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    await _commitAsync(eventId, stream, EVENT_TYPE, flags: 8);
+    await _executeAsync("DELETE FROM wh_perspective_events WHERE stream_id = @stream", new { stream });
+    await _executeAsync("UPDATE wh_event_store SET created_at = NOW() - INTERVAL '1 hour' WHERE event_id = @eventId", new { eventId });
+    await _associateAsync();
+    await _cursorAsync(stream, eventId, status: 0);
+    await _executeAsync(
+      "INSERT INTO wh_message_associations (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at) " +
+      "VALUES (gen_random_uuid(), @perspective, @marker, @perspective, 'test', @perspective, NOW(), NOW())",
+      new { perspective = PERSPECTIVE, marker = Whizbang.Core.Perspectives.EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE });
+
+    var targets = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
+
+    await Assert.That(targets).IsEmpty().Because("the read model keeps no rewind floor, so no snapshot is taken for the reap");
+  }
+
+  [Test]
   public async Task Cursors_AreReadInABatch_AndThoseFlaggedForARewindAreListedAsync() {
     var coordinator = _coordinator();
     var stream = Guid.NewGuid();
