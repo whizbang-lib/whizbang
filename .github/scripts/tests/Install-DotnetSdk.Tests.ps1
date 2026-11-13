@@ -91,3 +91,36 @@ Describe 'Invoke-SdkInstall' -Skip:$IsWindows {
     $r.Error | Should -BeLike '*dotnet --version*exit 3*'
   }
 }
+
+# #2298: the installer is fetched from Microsoft's CDN first and the dot.net redirect second, so an outage of either
+# host alone does not stop a job before it builds anything.
+Describe 'Save-SdkInstaller' {
+  It 'tries the CDN before the dot.net redirect by default' {
+    $script:InstallerUrls[0] | Should -Be 'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh'
+    $script:InstallerUrls[1] | Should -Be 'https://dot.net/v1/dotnet-install.sh'
+  }
+
+  It 'returns the first address that downloads, without trying the rest' {
+    $calls = [System.Collections.Generic.List[string]]::new()
+    $download = { param($Uri, $OutFile) $calls.Add($Uri) }.GetNewClosure()
+    $result = Save-SdkInstaller -Urls @('https://a.invalid/i.sh', 'https://b.invalid/i.sh') -OutFile (Join-Path $TestDrive 'i.sh') -Download $download
+    $result.Ok | Should -BeTrue
+    $result.Url | Should -Be 'https://a.invalid/i.sh'
+    $calls | Should -Be @('https://a.invalid/i.sh')
+  }
+
+  It 'falls back to the next address when one fails' {
+    $download = { param($Uri, $OutFile) if ($Uri -like '*a.invalid*') { throw 'The SSL connection could not be established' } }
+    $result = Save-SdkInstaller -Urls @('https://a.invalid/i.sh', 'https://b.invalid/i.sh') -OutFile (Join-Path $TestDrive 'i.sh') -Download $download
+    $result.Ok | Should -BeTrue
+    $result.Url | Should -Be 'https://b.invalid/i.sh'
+  }
+
+  It 'names every address and its error when none downloads' {
+    $download = { param($Uri, $OutFile) throw "down: $Uri" }
+    $result = Save-SdkInstaller -Urls @('https://a.invalid/i.sh', 'https://b.invalid/i.sh') -OutFile (Join-Path $TestDrive 'i.sh') -Download $download
+    $result.Ok | Should -BeFalse
+    $result.Error | Should -Match 'https://a\.invalid/i\.sh: down: https://a\.invalid/i\.sh'
+    $result.Error | Should -Match 'https://b\.invalid/i\.sh: down: https://b\.invalid/i\.sh'
+  }
+}
