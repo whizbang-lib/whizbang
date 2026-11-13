@@ -14,6 +14,7 @@ namespace Whizbang.Testing.Tests.Lifecycle;
 /// </summary>
 public class CountingPerspectiveReceptorTests {
   private sealed class InventoryPerspective;
+  private sealed class CatalogPerspective;
 
   private static (CountingPerspectiveReceptor<TestEvent> Receptor,
                   TaskCompletionSource<bool> Tcs,
@@ -105,5 +106,38 @@ public class CountingPerspectiveReceptorTests {
 
     await Assert.That(tcs.Task.IsCompleted).IsFalse();
     await Assert.That(completed.Count).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Two perspectives of one event complete at once, as a set-based batch completes them (#2246): each invocation sets
+  /// its context and is then handled, and the other's context is set in between. Each must be counted under its own
+  /// perspective; a context kept in a field shared by every invocation counted the second perspective twice and the
+  /// first never, so a wait for both never completed.
+  /// </summary>
+  [Test]
+  public async Task HandleAsync_TwoPerspectivesCompletingAtOnce_CountsEachUnderItsOwnContextAsync() {
+    var (receptor, tcs, completed) = _makeReceptor(expected: 2);
+    var streamId = Guid.NewGuid();
+    var firstSet = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondSet = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Each invocation on its own flow, as the receptor invoker runs each perspective's stage.
+    var first = Task.Run(async () => {
+      receptor.SetLifecycleContext(new FakeLifecycleContext { PerspectiveType = typeof(InventoryPerspective), StreamId = streamId });
+      firstSet.SetResult();
+      await secondSet.Task;
+      await receptor.HandleAsync(new TestEvent("evt"));
+    });
+    var second = Task.Run(async () => {
+      await firstSet.Task;
+      receptor.SetLifecycleContext(new FakeLifecycleContext { PerspectiveType = typeof(CatalogPerspective), StreamId = streamId });
+      secondSet.SetResult();
+      await first;
+      await receptor.HandleAsync(new TestEvent("evt"));
+    });
+    await Task.WhenAll(first, second);
+
+    await Assert.That(completed.Keys).IsEquivalentTo([$"{nameof(InventoryPerspective)}:{streamId}", $"{nameof(CatalogPerspective)}:{streamId}"]);
+    await Assert.That(tcs.Task.IsCompleted).IsTrue();
   }
 }
