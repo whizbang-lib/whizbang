@@ -141,6 +141,33 @@ public class MaintenanceWorkerTableRewriteTests {
       .Because("a request already on the books needs no second recording");
   }
 
+  /// <summary>
+  /// #2300: a table offered only because its fillfactor was lowered is compact, so the cycle does not report it as
+  /// holding space it cannot use; a requested bloated table beside it still is. Neither is recorded again.
+  /// </summary>
+  [Test]
+  public async Task AFillFactorDecrease_IsNotReportedAsBloatAsync() {
+    var coord = new RewriteCoordinator {
+      Candidates = {
+        new TableRewriteCandidate("wh_event_store", 4.2, Requested: true),
+        new TableRewriteCandidate("wh_per_order", 1.1, Requested: true) { Reason = TableRewriteReason.FillFactorDecrease },
+      },
+    };
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<MaintenanceWorker>();
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coord).BuildServiceProvider();
+    var worker = new MaintenanceWorker(services.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }), logger);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    var messages = logger.Collector.GetSnapshot().Select(r => r.Message).ToList();
+    await Assert.That(messages.Any(m => m.Contains("wh_event_store holds", StringComparison.Ordinal))).IsTrue()
+      .Because("the control: a requested bloated table is reported every cycle");
+    await Assert.That(messages.Any(m => m.Contains("wh_per_order holds", StringComparison.Ordinal))).IsFalse()
+      .Because("the table is not bloated; it waits for one rewrite at its lowered fillfactor");
+    await Assert.That(coord.Requested).IsEmpty();
+  }
+
   // --- Failure paths ---------------------------------------------------------
   // Bloat detection is advisory. Neither a failed scan nor a failed recording may take
   // the maintenance cycle down with it — the sweep that actually reclaims rows runs in

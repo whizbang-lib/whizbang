@@ -280,6 +280,44 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(_messages(logger)).Contains("Online rewrite: wh_outbox rewritten through pg_squeeze, bloat 4x (estimate) -> 1.25x (estimate)");
   }
 
+  /// <summary>
+  /// #2300: a table offered only because its fillfactor was lowered is compact, and rewriting it at the lower
+  /// fillfactor makes it larger, not smaller. The request is honored by the rewrite itself, so it is cleared once the
+  /// rewrite ran, whatever the re-measure says, and the next cycle does not rewrite it again.
+  /// </summary>
+  [Test]
+  [Arguments(TableRewriteStrategy.PgSqueeze)]
+  [Arguments(TableRewriteStrategy.PgRepack)]
+  public async Task AFillFactorDecrease_IsClearedOnceRewritten_ThoughTheTableGrewAsync(TableRewriteStrategy strategy) {
+    var coordinator = new SqueezeCoordinator {
+      Candidates = { _requested("wh_per_order", 1.1) with { Reason = TableRewriteReason.FillFactorDecrease } },
+      RatioAfter = { ["wh_per_order"] = 1.25 },
+    };
+
+    var logger = strategy == TableRewriteStrategy.PgSqueeze
+      ? (await _runAsync(coordinator)).Logger
+      : (await _repackRunAsync(coordinator)).Logger;
+
+    await Assert.That(coordinator.Squeezed.Concat(coordinator.Repacked)).IsEquivalentTo(["wh_per_order"]);
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_per_order"])
+      .Because("the rewrite applied the lowered fillfactor to every page, which is what the request asked for");
+    await Assert.That(_messages(logger).Any(m => m.Contains("wh_per_order", StringComparison.Ordinal)
+        && m.Contains("lowered fillfactor", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(_messages(logger).Any(m => m.Contains("did not reduce bloat", StringComparison.Ordinal))).IsFalse();
+  }
+
+  /// <summary>#2300: a fillfactor-decrease rewrite that did not run (the coordinator answered nothing) stays queued.</summary>
+  [Test]
+  public async Task AFillFactorDecrease_ThatWasNotRewritten_StaysQueuedAsync() {
+    var (coordinator, _) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_per_order", 1.1) with { Reason = TableRewriteReason.FillFactorDecrease } },
+      RatioAfter = { ["wh_per_order"] = null },
+    });
+
+    await Assert.That(coordinator.Squeezed).IsEquivalentTo(["wh_per_order"]);
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
   [Test]
   [Arguments(4.0)]
   [Arguments(4.5)]

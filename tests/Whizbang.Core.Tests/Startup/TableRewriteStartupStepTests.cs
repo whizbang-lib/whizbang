@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -425,5 +426,106 @@ public class TableRewriteStartupStepTests {
 
     await Assert.That(coordinator.Measured).IsEmpty();
     await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+  }
+
+  // ---- #2300: a lowered fillfactor waits for an online strategy ----
+
+  private static TableRewriteCandidate _fillFactorDecrease(string table) =>
+    new(table, 1.1, Requested: true) { Reason = TableRewriteReason.FillFactorDecrease };
+
+  private static (TableRewriteStartupStep Step, FakeLogger<TableRewriteStartupStep> Logger) _loggedStep(
+      RewriteCoordinator coordinator, TableRewriteStrategy strategy, bool allow, params ITableRewriter[] rewriters) {
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
+    var logger = new FakeLogger<TableRewriteStartupStep>();
+    var step = new TableRewriteStartupStep(
+      scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
+      rewriters: rewriters,
+      options: Options.Create(new MaintenanceWorkerOptions { TableRewriteStrategy = strategy, AllowTableRewrite = allow }),
+      capabilities: null,
+      logger: logger);
+    return (step, logger);
+  }
+
+  private static string[] _waiting(FakeLogger<TableRewriteStartupStep> logger) =>
+    [.. logger.Collector.GetSnapshot().Select(r => r.Message).Where(m => m.Contains("lowered fillfactor", StringComparison.Ordinal))];
+
+  /// <summary>
+  /// #2300: VACUUM FULL is permitted for bloat, and still never takes a table offered only because its fillfactor was
+  /// lowered: that rewrite is for an online strategy alone. The bloated table beside it is rewritten as before, and the
+  /// start says once which tables wait and what would rewrite them.
+  /// </summary>
+  [Test]
+  public async Task VacuumFull_NeverTakesAFillFactorDecrease_AndTheStartSaysItWaitsAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 4.0, Requested: true), _fillFactorDecrease("wh_per_order"), _fillFactorDecrease("wh_per_item") },
+    };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+    var (step, logger) = _loggedStep(coordinator, TableRewriteStrategy.Auto, allow: true, vacuum);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(vacuum.Rewritten).IsEquivalentTo(["wh_outbox"])
+      .Because("a lowered fillfactor on a compact table is never worth an ACCESS EXCLUSIVE lock taken unattended");
+    await Assert.That(report.Reason).IsEqualTo("rewrote 1 table(s)");
+    var waiting = _waiting(logger);
+    await Assert.That(waiting).Count().IsEqualTo(1).Because("one line per start, naming every table that waits");
+    await Assert.That(waiting[0]).Contains("wh_per_order, wh_per_item")
+      .And.Contains("Whizbang:Workers:Maintenance:TableRewriteStrategy")
+      .And.Contains("PgSqueeze").And.Contains("PgRepack")
+      .And.Contains("VACUUM FULL is never used");
+  }
+
+  /// <summary>#2300: with no rewrite permitted at all, the request still waits and the start still says so.</summary>
+  [Test]
+  [Arguments(TableRewriteStrategy.Auto, false)]
+  [Arguments(TableRewriteStrategy.None, true)]
+  public async Task NoRewritePermitted_AFillFactorDecreaseWaits_AndTheStartSaysSoAsync(TableRewriteStrategy strategy, bool allow) {
+    var coordinator = new RewriteCoordinator { Candidates = { _fillFactorDecrease("wh_per_order") } };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+    var (step, logger) = _loggedStep(coordinator, strategy, allow, vacuum);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(vacuum.Rewritten).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+    await Assert.That(_waiting(logger)).Count().IsEqualTo(1);
+  }
+
+  /// <summary>#2300: only fillfactor decreases owed, VACUUM FULL permitted: nothing is rewritten and the start says why.</summary>
+  [Test]
+  public async Task OnlyFillFactorDecreasesOwed_VacuumFullRewritesNothingAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { _fillFactorDecrease("wh_per_order") } };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+    var (step, _) = _loggedStep(coordinator, TableRewriteStrategy.VacuumFull, allow: true, vacuum);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo("no rewrites owed");
+    await Assert.That(vacuum.Rewritten).IsEmpty();
+  }
+
+  /// <summary>#2300: under an online strategy the maintenance cycle honors the request, so the start logs no wait.</summary>
+  [Test]
+  public async Task AnOnlineStrategy_LogsNoWait_ForTheCycleHonorsItAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { _fillFactorDecrease("wh_per_order") } };
+    var (step, logger) = _loggedStep(coordinator, TableRewriteStrategy.PgSqueeze, allow: false,
+      new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE));
+
+    await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(_waiting(logger)).IsEmpty();
+  }
+
+  /// <summary>#2300: a start with no fillfactor decrease owed logs no wait.</summary>
+  [Test]
+  public async Task NoFillFactorDecreaseOwed_LogsNoWaitAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 4.0, Requested: true) } };
+    var (step, logger) = _loggedStep(coordinator, TableRewriteStrategy.Auto, allow: false);
+
+    await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(_waiting(logger)).IsEmpty();
   }
 }

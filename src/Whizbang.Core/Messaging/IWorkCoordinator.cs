@@ -5334,6 +5334,30 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
   public double RewriteThreshold { get; init; }
+
+  /// <summary>
+  /// Why the table is offered: <see cref="TableRewriteReason.Bloat"/> (the default) when it measures over the bloat
+  /// threshold, or <see cref="TableRewriteReason.FillFactorDecrease"/> when it is offered only because its fillfactor
+  /// was lowered while it held rows (#2300), which an online strategy honors once and a blocking rewrite never does.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
+  public TableRewriteReason Reason { get; init; }
+}
+
+/// <summary>Why a table is offered for rewrite (<see cref="TableRewriteCandidate.Reason"/>).</summary>
+/// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+public enum TableRewriteReason {
+  // Each value is explicit: the numbers are public API, so a new member takes the next free number and is declared last.
+  /// <summary>The table measures over the bloat threshold; rewritten under every strategy's usual rules.</summary>
+  Bloat = 0,
+
+  /// <summary>
+  /// The table is compact, but its fillfactor was lowered while it held rows, so its pages are packed fuller than the
+  /// new value. Rewritten once, and only by an online strategy (pg_squeeze or pg_repack); never by <c>VACUUM FULL</c>.
+  /// </summary>
+  FillFactorDecrease = 1,
 }
 
 /// <summary>What vacuuming one work table did (#1351).</summary>
