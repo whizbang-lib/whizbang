@@ -448,9 +448,13 @@ public class ClaimWorkerCoverageTests {
       }
     };
     // The test drives every claim cycle itself: both poll intervals are far longer than the test, so the loop claims
-    // only when SignalNewWork wakes it (which also skips the repeat-spacing nap), and each step waits for exactly the
-    // claim it caused. Timer-paced cycles made the phases below a race against the scheduler: on a loaded runner four
-    // 20-60 ms cycles did not arrive within the wait's bound.
+    // only when SignalNewWork wakes it, and each step waits for exactly the claim it caused. A step rings as soon as the
+    // previous claim has STARTED, so the doorbell often lands while that claim is still running. That is correct by
+    // construction: a doorbell that rings during a claim which served nothing new (an empty or a repeat claim, which
+    // every claim here after the first is) is kept for the next claim, which then skips the repeat-spacing nap
+    // (ClaimWorkerReemissionBackoffTests.RepeatedWorkSet_DoorbellDuringTheRepeatClaim_IsKeptForTheNextClaim_WhichSkipsTheNapAsync).
+    // Before that fix the repeat claim spent the doorbell and the loop napped the full ten minutes, which is how this
+    // test still timed out after it stopped racing the loop's 20-60 ms timers.
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 600_000,
       PollingMaxIntervalMilliseconds = 600_000,
