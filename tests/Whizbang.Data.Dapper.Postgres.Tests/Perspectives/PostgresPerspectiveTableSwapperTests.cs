@@ -137,36 +137,6 @@ public class PostgresPerspectiveTableSwapperTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// #2301: the guard that lets only one blue-green rebuild of a table run at a time is held across connections and
-  /// instances (a session advisory lock on the schema and table), is released on dispose, and excludes nothing else.
-  /// A swapper naming the schema and one using the search path compute the same guard for the same table.
-  /// </summary>
-  [Test]
-  public async Task TryLockRebuild_ExcludesASecondRebuildOfTheTable_UntilTheFirstReleasesAsync() {
-    await _createLiveAsync();
-    var named = new PostgresPerspectiveTableSwapper(async ct => {
-      var connection = new NpgsqlConnection(ConnectionString);
-      await connection.OpenAsync(ct);
-      return connection;
-    }, schema: "public");
-    var searchPath = _swapper();
-
-    var first = await searchPath.TryLockRebuildAsync(LIVE, CancellationToken.None);
-    var second = await named.TryLockRebuildAsync(LIVE, CancellationToken.None);
-    var other = await named.TryLockRebuildAsync("wh_per_swap_other", CancellationToken.None);
-
-    await Assert.That(first).IsNotNull();
-    await Assert.That(second).IsNull().Because("a second rebuild would drop the first one's shadow mid-replay");
-    await Assert.That(other).IsNotNull().Because("another table's rebuild is not excluded");
-    await first!.DisposeAsync();
-    await other!.DisposeAsync();
-    var afterRelease = await named.TryLockRebuildAsync(LIVE, CancellationToken.None);
-    await Assert.That(afterRelease).IsNotNull().Because("disposing the guard releases it, though its connection goes back to the pool");
-    await afterRelease!.DisposeAsync();
-    await afterRelease.DisposeAsync();
-  }
-
-  /// <summary>
   /// #2301: the perspective a table can be rebuilt by is the one the registry records as writing it; a table written by
   /// several perspectives, by none recorded, or not registered at all has none, since no single rebuild recreates it.
   /// </summary>

@@ -14,6 +14,7 @@ using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Processes;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Tests.Capabilities;
 using Whizbang.Core.Workers;
 
@@ -760,28 +761,25 @@ public class OnlineTableRewriteStepTests {
     return registry;
   }
 
-  /// <summary>Which perspective writes each table, and which tables another rebuild holds.</summary>
+  /// <summary>Which perspective writes each table.</summary>
   private sealed class RebuildSwapper : IPerspectiveTableSwapper {
     public Dictionary<string, string> Perspectives { get; init; } = new(StringComparer.Ordinal);
-    public HashSet<string> Held { get; init; } = new(StringComparer.Ordinal);
-    public List<string> Guarded { get; } = [];
 
     public Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) =>
       Task.FromResult(Perspectives.GetValueOrDefault(table));
-
-    public Task<IAsyncDisposable?> TryLockRebuildAsync(string liveTable, CancellationToken cancellationToken) {
-      if (Held.Contains(liveTable)) {
-        return Task.FromResult<IAsyncDisposable?>(null);
-      }
-      Guarded.Add(liveTable);
-      return Task.FromResult<IAsyncDisposable?>(NoRebuildGuard.Instance);
-    }
 
     public Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<string> CreateShadowAsync(string liveTable, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task DeleteRowsAsync(string table, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<string?> SwapAsync(PerspectiveTableSwap swap, Func<CancellationToken, Task> underWriteLock, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task DropAsync(string table, CancellationToken cancellationToken) => throw new NotSupportedException();
+  }
+
+  /// <summary>The role assignments the database reports: each duty named, in the state given.</summary>
+  private sealed class RoleReader(params (string Role, RoleAssignmentState State)[] roles) : IRoleAssignmentReader {
+    public Task<IReadOnlyList<RoleAssignmentSnapshot>> ReadAssignmentsAsync(CancellationToken cancellationToken) =>
+      Task.FromResult<IReadOnlyList<RoleAssignmentSnapshot>>([.. roles.Select(r => new RoleAssignmentSnapshot(
+        r.Role, r.State, Guid.NewGuid(), 1, null, null, null, 1, null, null, null, null, 0))]);
   }
 
   /// <summary>Records each blue-green rebuild it is asked for; fails or reports in flight the perspectives named.</summary>
@@ -811,7 +809,7 @@ public class OnlineTableRewriteStepTests {
       SqueezeCoordinator coordinator, ICapabilityRegistry registry, RebuildSwapper? swapper, RecordingRebuilder? rebuilder,
       int maxRebuildsPerCycle = 1, TableRewriteStrategy strategy = TableRewriteStrategy.Online,
       PgRepackMode mode = PgRepackMode.InProcess, long budgetBytes = 10 * 1024 * MIB,
-      FakeLogger<BlueGreenTableRewriter>? rewriterLogger = null) {
+      FakeLogger<BlueGreenTableRewriter>? rewriterLogger = null, IRoleAssignmentReader? roles = null) {
     var settings = new MaintenanceWorkerOptions {
       TableRewriteStrategy = strategy,
       BlueGreenRewriteMaxPerCycle = maxRebuildsPerCycle,
@@ -825,6 +823,9 @@ public class OnlineTableRewriteStepTests {
     }
     if (rebuilder is not null) {
       collection.AddSingleton<IPerspectiveRebuilder>(rebuilder);
+    }
+    if (roles is not null) {
+      collection.AddSingleton(roles);
     }
     var services = collection.BuildServiceProvider();
     var logger = new FakeLogger<OnlineTableRewriteStep>();
@@ -907,23 +908,27 @@ public class OnlineTableRewriteStepTests {
   }
 
   /// <summary>
-  /// #2301: a table another blue-green rebuild holds, on any instance, is not rebuilt again; the request stays queued
-  /// for a later cycle, and the next table is taken in its place, since a held table does not spend the limit.
+  /// #2301: a table whose duty another instance holds is being rebuilt there, so it is not rebuilt again; the request
+  /// stays queued for a later cycle, and the next table is taken in its place, since a held table does not spend the
+  /// limit. A lapsed or vacant duty holds nothing back. The duty is read, never voted for, so probing takes nothing.
   /// </summary>
   [Test]
-  public async Task Online_ATableAnotherRebuildHolds_IsNotRebuiltAgain_AndStaysQueuedAsync() {
+  [Arguments(RoleAssignmentState.Held, "wh_per_b")]
+  [Arguments(RoleAssignmentState.Lapsed, "wh_per_a")]
+  [Arguments(RoleAssignmentState.Vacant, "wh_per_a")]
+  public async Task Online_ATableWhoseDutyAnotherInstanceHolds_IsNotRebuiltAgain_AndStaysQueuedAsync(
+      RoleAssignmentState state, string rebuilt) {
     var rebuilder = new RecordingRebuilder();
-    var swapper = _ordersSwapper("wh_per_a", "wh_per_b");
-    swapper.Held.Add("wh_per_a");
     var (coordinator, logger) = await _onlineAsync(new SqueezeCoordinator {
       Candidates = { _requested("wh_per_a", 9.0), _requested("wh_per_b", 4.0) },
-      ApproxAfter = { ["wh_per_b"] = 1.0 },
-    }, await _serverAsync(CapabilityState.NotPermitted), swapper, rebuilder);
+      ApproxAfter = { ["wh_per_a"] = 1.0, ["wh_per_b"] = 1.0 },
+    }, await _serverAsync(CapabilityState.NotPermitted), _ordersSwapper("wh_per_a", "wh_per_b"), rebuilder,
+      roles: new RoleReader(("perspective-rebuild:wh_per_a", state), ("maintainer", RoleAssignmentState.Held)));
 
-    await Assert.That(rebuilder.Rebuilt.Select(r => r.Perspective)).IsEquivalentTo([ORDER_PERSPECTIVE + ".wh_per_b"]);
-    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_per_b"]);
+    await Assert.That(rebuilder.Rebuilt.Select(r => r.Perspective)).IsEquivalentTo([ORDER_PERSPECTIVE + "." + rebuilt]);
+    await Assert.That(coordinator.Cleared).IsEquivalentTo([rebuilt]);
     await Assert.That(_messages(logger).Any(m => m.Contains("wh_per_a", StringComparison.Ordinal)
-      && m.Contains("in flight", StringComparison.Ordinal))).IsTrue();
+      && m.Contains("in flight", StringComparison.Ordinal))).IsEqualTo(state == RoleAssignmentState.Held);
   }
 
   /// <summary>#2301: a rebuild of the perspective already running in this process satisfies the request for now.</summary>

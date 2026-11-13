@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,8 +19,10 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
@@ -253,28 +256,92 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// #2301: a table another blue-green rebuild holds, on any instance, is not rebuilt by the maintenance cycle; its
-  /// request stays queued for a later cycle.
+  /// #2301: a table whose duty another instance holds, through the real elector, is not rebuilt by this instance's
+  /// maintenance cycle; its request stays queued. Once the other instance releases the duty, the next cycle rebuilds it:
+  /// the positive control that the first cycle was held back by the duty and nothing else.
   /// </summary>
   [Test]
   [Timeout(300000)]
-  public async Task Online_SkipsATableAnotherRebuildHolds_AndLeavesItQueuedAsync(CancellationToken cancellationToken) {
+  public async Task Online_SkipsATableWhoseDutyAnotherInstanceHolds_AndRebuildsItOnceReleasedAsync(CancellationToken cancellationToken) {
+    var (rebuilding, here) = (new Pod(), new Pod());
+    await _joinFleetAsync(rebuilding, cancellationToken);
+    await _joinFleetAsync(here, cancellationToken);
     var stream = Guid.NewGuid();
-    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask);
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask, elector: _electorFor(here));
     await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 5m });
     await _seedStaleLiveRowsAsync([stream]);
     await _registerTableAsync();
     await _lowerFillFactorAsync();
-    var before = await _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass");
-    await using var held = await sp.GetRequiredService<IPerspectiveTableSwapper>().TryLockRebuildAsync(TABLE, cancellationToken);
+    var before = await _relfilenodeAsync();
+    var held = (await _electorFor(rebuilding).TryAcquireAsync(PerspectiveRebuildDuty.For(TABLE), cancellationToken)).Grant;
     await Assert.That(held).IsNotNull();
 
     await _maintenanceCycleAsync(sp, TableRewriteStrategy.Online);
 
-    await Assert.That(await _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass")).IsEqualTo(before);
+    await Assert.That(await _relfilenodeAsync()).IsEqualTo(before);
     await Assert.That(await _scalarAsync<string>("SELECT setting_value FROM wh_settings WHERE setting_key = 'pending_table_rewrites'"))
       .Contains(TABLE);
+
+    await held!.DisposeAsync();
+    await _maintenanceCycleAsync(sp, TableRewriteStrategy.Online);
+
+    await Assert.That(await _relfilenodeAsync()).IsNotEqualTo(before).Because("released, the duty no longer holds the table back");
   }
+
+  /// <summary>
+  /// #2301: an operator's blue-green rebuild of a table whose duty another instance holds fails at once with the reason
+  /// and creates no shadow; once that instance releases the duty, the same rebuild runs. The duty is a per-table role
+  /// in the service's own role assignments, voted for like any other.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task ARebuild_WhileAnotherInstanceHoldsTheTablesDuty_Fails_AndRunsOnceItIsReleasedAsync(CancellationToken cancellationToken) {
+    var (rebuilding, here) = (new Pod(), new Pod());
+    await _joinFleetAsync(rebuilding, cancellationToken);
+    await _joinFleetAsync(here, cancellationToken);
+    var stream = Guid.NewGuid();
+    await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask, elector: _electorFor(here));
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 5m });
+    await _registerTableAsync();
+    var held = (await _electorFor(rebuilding).TryAcquireAsync(PerspectiveRebuildDuty.For(TABLE), cancellationToken)).Grant;
+
+    var refused = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE, cancellationToken);
+
+    await Assert.That(refused.Success).IsFalse();
+    await Assert.That(refused.Error).Contains("another blue-green rebuild of " + TABLE + " is in flight");
+    await Assert.That(await _scalarAsync<bool>($"SELECT to_regclass('{TABLE}_bg') IS NULL")).IsTrue()
+      .Because("the refused rebuild never created a shadow, so it could not have dropped the holder's");
+
+    await held!.DisposeAsync();
+    var rebuilt = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE, cancellationToken);
+
+    await Assert.That(rebuilt.Success).IsTrue().Because(rebuilt.Error ?? "");
+    await Assert.That(await _liveBalancesAsync()).IsEquivalentTo(new Dictionary<Guid, decimal> { [stream] = 5m });
+  }
+
+  private sealed class Pod : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
+    public string ServiceName => "rebuild-svc";
+    public string HostName => "rebuild-host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
+  }
+
+  private PgRoleElector _electorFor(Pod pod) => new(
+    Options.Create(new Whizbang.Core.Notifications.WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+    Options.Create(new RoleAssignmentOptions()),
+    new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+    pod,
+    NullLogger<PgRoleElector>.Instance,
+    libraryVersion: null);
+
+  private async Task _joinFleetAsync(Pod pod, CancellationToken cancellationToken) {
+    await using var context = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(context, JsonContextRegistry.CreateCombinedOptions());
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), cancellationToken);
+  }
+
+  private Task<long> _relfilenodeAsync() => _scalarAsync<long>($"SELECT relfilenode::bigint FROM pg_class WHERE oid = '{TABLE}'::regclass");
 
   /// <summary>#2301: a framework table cannot be rebuilt from events, so with no extension it waits; nothing rewrites it.</summary>
   [Test]
@@ -361,8 +428,12 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
 
   // ── Fixture ─────────────────────────────────────────────────────────────────────────────────
 
-  private ServiceProvider _services(Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun) {
+  private ServiceProvider _services(Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun, PgRoleElector? elector = null) {
     var services = new ServiceCollection();
+    if (elector is not null) {
+      services.AddSingleton<IDutyElector>(elector);
+      services.AddSingleton<IRoleAssignmentReader>(elector);
+    }
     services.AddLogging();
     services.AddScoped(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(s => s.GetRequiredService<WorkCoordinationDbContext>());
