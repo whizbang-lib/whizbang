@@ -199,7 +199,7 @@ public static partial class PerspectiveStorageParameters {
       var failed = new List<string>();
       foreach (var declaration in declarations.Where(d => !manual.Contains(d.Table) && held.ContainsKey(d.Table))) {
         var current = held[declaration.Table];
-        if (Plan(declaration, current.Item1) is not { } change) {
+        if (Plan(declaration, current.Options) is not { } change) {
           continue;
         }
         if (await _applyAsync(connection, schema, change, current, lockTimeout ?? DefaultLockTimeout, logger, cancellationToken)
@@ -244,7 +244,7 @@ public static partial class PerspectiveStorageParameters {
       """, connection);
     command.Parameters.AddWithValue(nameof(schema), schema);
     command.Parameters.AddWithValue("tables", declarations.Select(d => d.Table).ToArray());
-    var held = new Dictionary<string, (List<string>, bool)>(StringComparer.Ordinal);
+    var held = new Dictionary<string, (List<string> Options, bool HasPages)>(StringComparer.Ordinal);
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       held[reader.GetString(0)] = ([.. reader.GetFieldValue<string[]>(1), .. reader.GetFieldValue<string[]>(2)], reader.GetBoolean(3));
