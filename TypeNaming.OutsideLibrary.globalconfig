@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 is_global = true
 # WHIZ606 and WHIZ607 (#2267) guard the library: type names in src/ come from the shared naming code
 # (TypeNameFormatter, EventTypeMatchingHelper, TypeNameUtilities). Tests, tools, samples and benchmarks name
