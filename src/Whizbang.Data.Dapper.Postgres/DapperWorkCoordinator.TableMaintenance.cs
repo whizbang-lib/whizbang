@@ -55,6 +55,17 @@ public partial class DapperWorkCoordinator {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:CompleteTableRewrite_ClearsTheRequest_AndRecordsTheStrategyAsync</tests>
+  public Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(outcome);
+    TableMaintenanceSql.RequireFrameworkTable(outcome.TableName);
+    return _withGatedCommandAsync(async (cmd, prefix) => {
+      await TableMaintenanceSql.CompleteRewriteAsync(cmd, prefix, outcome, cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public Task RequestMeasuredTableRewriteAsync(
       string tableName, BloatMeasurement measurement, double estimatedRatio, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);

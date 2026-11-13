@@ -965,6 +965,44 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(coordinator.Cleared).IsEmpty();
   }
 
+  /// <summary>#2301: a host that registers no blue-green rewriter can rebuild nothing, so under Online every table waits.</summary>
+  [Test]
+  public async Task Online_WithNoBlueGreenRewriterRegistered_EveryTableWaitsAsync() {
+    var (coordinator, logger) = await _runAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_a", 9.0) } },
+      strategy: TableRewriteStrategy.Online, registry: await _serverAsync(CapabilityState.NotPermitted, CapabilityState.Ready));
+
+    await Assert.That(coordinator.Squeezed).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+    await Assert.That(_messages(logger).Single(m => m.Contains("wait:", StringComparison.Ordinal)))
+      .Contains("no table rewriter is registered for PgRepack");
+  }
+
+  /// <summary>#2301: under Online with nothing queued, or no coordinator, the cycle does nothing and logs nothing.</summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Online_WithNothingQueuedOrNoCoordinator_DoesNothingAsync(bool withCoordinator) {
+    var rebuilder = new RecordingRebuilder();
+    var swapper = _ordersSwapper("wh_per_a");
+    var services = new ServiceCollection().AddSingleton<IPerspectiveTableSwapper>(swapper).AddSingleton<IPerspectiveRebuilder>(rebuilder);
+    var coordinator = new SqueezeCoordinator();
+    if (withCoordinator) {
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+    }
+    var provider = services.BuildServiceProvider();
+    var logger = new FakeLogger<OnlineTableRewriteStep>();
+    var step = new OnlineTableRewriteStep(
+      [new BlueGreenTableRewriter(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<BlueGreenTableRewriter>.Instance)],
+      Options.Create(new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.Online }),
+      await _serverAsync(CapabilityState.NotPermitted), logger);
+
+    await step.RunAsync(provider, CancellationToken.None);
+
+    await Assert.That(coordinator.Scans).IsEqualTo(withCoordinator ? 1 : 0);
+    await Assert.That(rebuilder.Rebuilt).IsEmpty();
+    await Assert.That(_messages(logger)).IsEmpty();
+  }
+
   /// <summary>#2301: under Online, pg_repack run by an external job is not Whizbang's to start, so the cycle rebuilds.</summary>
   [Test]
   public async Task Online_WithPgRepackExternal_FallsThroughToTheRebuildAsync() {

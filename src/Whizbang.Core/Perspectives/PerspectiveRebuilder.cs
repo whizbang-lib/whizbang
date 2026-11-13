@@ -498,6 +498,14 @@ public sealed partial class PerspectiveRebuilder(
         "nothing to rebuild blue-green.");
     var options = sp.GetOptionsValue<BlueGreenRebuildOptions>() ?? new BlueGreenRebuildOptions();
 
+    // Two rebuilds of one table share its shadow, and creating the shadow drops one left behind, so a second rebuild
+    // would destroy the first one's replay. The guard is fleet-wide and held until the swap is done (#2301); a rebuild
+    // that cannot take it fails before it touches anything, as any rebuild that cannot start fails: with the reason.
+    await using var guard = await swapper.TryLockRebuildAsync(table, ct).ConfigureAwait(false)
+      ?? throw new InvalidOperationException(
+        $"Perspective '{run.PerspectiveName}' was not rebuilt: another blue-green rebuild of {table} is in flight, on this " +
+        "instance or another. Run it again once that rebuild has finished.");
+
     var mark = await changes.WatermarkAsync(ct).ConfigureAwait(false);
     var shadow = await swapper.CreateShadowAsync(table, ct).ConfigureAwait(false);
     LogBlueGreenShadowCreated(logger, run.PerspectiveName, table, shadow);

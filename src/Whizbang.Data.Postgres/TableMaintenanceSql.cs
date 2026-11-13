@@ -104,6 +104,19 @@ internal static class TableMaintenanceSql {
   internal static Task RequestRewriteAsync(DbCommand cmd, string prefix, string tableName, CancellationToken cancellationToken) =>
     _tableFunctionAsync(cmd, prefix + "wh_request_table_rewrite", tableName, cancellationToken);
 
+  /// <summary>
+  /// Records a completed rewrite in the history and clears its request (<c>wh_complete_table_rewrite</c>, #2301).
+  /// </summary>
+  internal static async Task CompleteRewriteAsync(DbCommand cmd, string prefix, TableRewriteOutcome outcome, CancellationToken cancellationToken) {
+    cmd.CommandText = $"SELECT {prefix}wh_complete_table_rewrite(@t, @strategy, @reason, @before::NUMERIC, @after::NUMERIC)";
+    cmd.Parameters.Add(new NpgsqlParameter("t", outcome.TableName));
+    cmd.Parameters.Add(new NpgsqlParameter("strategy", outcome.Strategy));
+    cmd.Parameters.Add(new NpgsqlParameter("reason", outcome.Reason.ToString()));
+    cmd.Parameters.Add(new NpgsqlParameter("before", outcome.BloatBefore));
+    cmd.Parameters.Add(new NpgsqlParameter("after", outcome.BloatAfter));
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   /// <summary>Clears the table's rewrite request and its measurement (<c>wh_clear_table_rewrite</c>).</summary>
   internal static Task ClearRewriteRequestAsync(DbCommand cmd, string prefix, string tableName, CancellationToken cancellationToken) =>
     _tableFunctionAsync(cmd, prefix + "wh_clear_table_rewrite", tableName, cancellationToken);

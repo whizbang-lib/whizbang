@@ -268,6 +268,11 @@ public static class WorkerPipelineExtensions {
     // The online strategy: pg_squeeze, run from the maintenance cycle within a byte budget when TableRewriteStrategy is
     // PgSqueeze (the step does nothing, not even a scan, for any other strategy).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, PgSqueezeTableRewriter>());
+    // #2301: the last online choice under TableRewriteStrategy = Online, a blue-green rebuild of a perspective table.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, BlueGreenTableRewriter>(sp =>
+      new BlueGreenTableRewriter(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<BlueGreenTableRewriter>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, OnlineTableRewriteStep>(sp =>
       new OnlineTableRewriteStep(
         sp.GetServices<ITableRewriter>(),

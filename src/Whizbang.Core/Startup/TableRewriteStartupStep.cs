@@ -108,7 +108,7 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
       }
       return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
     }
-    if (string.Equals(plan.Strategy, TableRewriteStrategies.PG_SQUEEZE, StringComparison.Ordinal) || PgRepackClient.RunsInProcess(options)) {
+    if (plan.Strategy is TableRewriteStrategies.PG_SQUEEZE or TableRewriteStrategies.ONLINE || PgRepackClient.RunsInProcess(options)) {
       // An online rewrite Whizbang runs itself is budgeted per maintenance cycle (OnlineTableRewriteStep); run here it
       // would be unbounded. pg_repack in External mode falls through: its rewriter cannot run, and says why.
       return new StartupStepReport(StartupStepOutcome.Skipped,
@@ -163,7 +163,9 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
       rewritten++;
       LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
       if (candidate.Requested) {
-        await coordinator.ClearTableRewriteRequestAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
+        await coordinator.CompleteTableRewriteAsync(
+          new TableRewriteOutcome(candidate.TableName, rewriter.Strategy, candidate.Reason, candidate.BloatRatio, measured.Ratio),
+          cancellationToken).ConfigureAwait(false);
       }
     }
 
