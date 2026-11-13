@@ -63,9 +63,11 @@ public static class PinnedPoolServiceCollectionExtensions {
       return new Microsoft.Extensions.Options.ConfigureOptions<WhizbangPinnedPoolOptions>(options => {
         if (configuration is not null) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
-          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
-            configuration.GetSection("Whizbang:Workers:PinnedPool"), options);
+          var section = configuration.GetSection("Whizbang:Workers:PinnedPool");
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(section, options);
 #pragma warning restore IL2026
+          // The binder source generator skips a SensitiveString property; it is bound here.
+          Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(section, "ConnectionString", value => options.ConnectionString = value);
         }
       });
     });
@@ -77,7 +79,7 @@ public static class PinnedPoolServiceCollectionExtensions {
       .Validate(
         static opts =>
           !opts.Enabled
-          || string.IsNullOrWhiteSpace(opts.ConnectionString)
+          || string.IsNullOrWhiteSpace(opts.ConnectionString?.Reveal())
           || opts.Size > 0,
         "WhizbangPinnedPoolOptions.Size must be > 0 when Enabled is true with a ConnectionString set.");
 

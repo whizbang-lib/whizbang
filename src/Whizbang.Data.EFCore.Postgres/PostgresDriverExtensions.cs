@@ -113,6 +113,28 @@ public static class PostgresDriverExtensions {
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
+        // TURNKEY: Register IPerspectiveWriteSink, the write seam of set-based perspective writes (#2246): a batch's
+        // prepared rows are written with one statement per table and shape over the consumer's DbContext. TryAdd,
+        // so a service's own sink still wins.
+        selector.Services.TryAddScoped<IPerspectiveWriteSink>(sp =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+        // One sink per DbContext as well, under the context's type: each store keys the rows it prepares to its own
+        // context (PendingPerspectiveWrite.SinkKey), so a service with several contexts writes every perspective through
+        // its own. A second context registered through this driver gets its own keyed sink.
+        selector.Services.TryAddKeyedScoped<IPerspectiveWriteSink>(dbContextType, (sp, _) =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+
+        // TURNKEY: Register IPerspectiveStateSource, the read seam of set-based perspective writes (#2246): a batch's
+        // rows are read with one statement per perspective table, no row is read for a stream known to be new, and the
+        // purge-marker and history probes of missing rows are asked once per perspective. TryAdd, so a service's own
+        // state source still wins. The container takes the logging constructor when logging is registered, and the
+        // parameterless one when it is not.
+        selector.Services.TryAddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
+
         // TURNKEY: Register IPerspectiveRowDigest so a rebuild of named streams can record what those rows
         // looked like before and after it ran. Without this the rebuild still happens and still reports its
         // outcome; the Completed event simply carries no digests, which reads as "not known" rather than as

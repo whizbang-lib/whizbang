@@ -12,6 +12,7 @@ namespace Whizbang.Testing.Lifecycle;
 /// Used for deterministic test synchronization when multiple events trigger perspectives across different streams.
 /// Tracks (perspectiveName, streamId) pairs to support multiple invocations of the same perspective for different events/streams.
 /// </summary>
+/// <tests>tests/Whizbang.Testing.Component.Tests/Lifecycle/CountingPerspectiveReceptorTests.cs:HandleAsync_TwoPerspectivesCompletingAtOnce_CountsEachUnderItsOwnContextAsync</tests>
 /// <typeparam name="TEvent">The event type to wait for.</typeparam>
 [FireAt(LifecycleStage.PostPerspectiveInline)]
 public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAcceptsLifecycleContext
@@ -21,7 +22,11 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
   private readonly ConcurrentDictionary<string, byte> _completedPerspectives;
   private readonly int _expectedCount;
   private int _completionCount;
-  private ILifecycleContext? _context;
+
+  // One per invocation, not one per receptor: the invoker sets the context and then handles the event on the same
+  // async flow, and the perspectives of one event can complete together on flows of their own (#2246). A field shared
+  // by every invocation let one perspective's context overwrite another's before it was handled.
+  private readonly AsyncLocal<ILifecycleContext?> _context = new();
 
   /// <summary>
   /// Creates a new counting receptor.
@@ -45,14 +50,15 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
 
   /// <inheritdoc/>
   public void SetLifecycleContext(ILifecycleContext context) {
-    _context = context;
+    _context.Value = context;
   }
 
   /// <inheritdoc/>
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
     // Get perspective name and stream ID from lifecycle context
-    var perspectiveName = _context?.PerspectiveType is { } perspectiveType ? TypeNameFormatter.SimpleName(perspectiveType) : "Unknown";
-    var streamId = _context?.StreamId?.ToString() ?? "Unknown";
+    var context = _context.Value;
+    var perspectiveName = context?.PerspectiveType is { } perspectiveType ? TypeNameFormatter.SimpleName(perspectiveType) : "Unknown";
+    var streamId = context?.StreamId?.ToString() ?? "Unknown";
 
     Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {TypeNameFormatter.ForLog(typeof(TEvent))} on stream {streamId}");
 

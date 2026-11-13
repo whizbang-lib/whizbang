@@ -92,7 +92,7 @@ public sealed class ShardCategoryAnalyzer : DiagnosticAnalyzer {
     context.RegisterSymbolAction(symbol => _analyzeType(symbol, test, category), SymbolKind.NamedType);
   }
 
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "WHIZ606:A type name is read outside the shared naming code", Justification = "A test-code analyzer, which does not reference the generator naming helpers; the type is named only in the diagnostic message it reports (#2267)")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "WHIZ607:A type name is read outside the shared naming code", Justification = "A test-code analyzer, which does not reference the generator naming helpers; the type is named only in the diagnostic message it reports (#2267)")]
   private static void _analyzeType(SymbolAnalysisContext context, INamedTypeSymbol test, INamedTypeSymbol? category) {
     var type = (INamedTypeSymbol)context.Symbol;
     if (type.TypeKind != TypeKind.Class || type.IsAbstract || !_hasTests(type, test)) {

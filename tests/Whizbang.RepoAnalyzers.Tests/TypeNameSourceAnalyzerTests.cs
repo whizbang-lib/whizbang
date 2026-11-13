@@ -7,10 +7,10 @@ using Microsoft.CodeAnalysis;
 namespace Whizbang.RepoAnalyzers.Tests;
 
 /// <summary>
-/// WHIZ606: a type's name is produced or resolved only by the shared naming code (#2267). Outside a type marked
+/// WHIZ607: a type's name is produced or resolved only by the shared naming code (#2267). Outside a type marked
 /// <c>[TypeNameAuthority]</c>, reading a name off a <see cref="System.Type"/>, a <see cref="System.Reflection.TypeInfo"/>,
 /// an assembly or an assembly name, resolving a type from a string, or (in a generator) reading a type, namespace or
-/// assembly symbol's name is an error. WHIZ607: the only other way out is a <c>[SuppressMessage]</c> that says why; one
+/// assembly symbol's name is an error. WHIZ608: the only other way out is a <c>[SuppressMessage]</c> that says why; one
 /// with no justification, or a <c>#pragma</c> that hides the rule, is an error.
 /// </summary>
 public class TypeNameSourceAnalyzerTests {
@@ -38,7 +38,7 @@ public class TypeNameSourceAnalyzerTests {
   public async Task Descriptors_AreTheRepositoryRulesReportedAsErrorsAsync() {
     var descriptors = new TypeNameSourceAnalyzer().SupportedDiagnostics;
 
-    await Assert.That(descriptors.Select(d => d.Id).ToList()).IsEquivalentTo(["WHIZ606", "WHIZ607"]);
+    await Assert.That(descriptors.Select(d => d.Id).ToList()).IsEquivalentTo(["WHIZ607", "WHIZ608"]);
     await Assert.That(descriptors.All(d => d.DefaultSeverity == DiagnosticSeverity.Error && d.IsEnabledByDefault)).IsTrue();
   }
 
@@ -64,7 +64,7 @@ public class TypeNameSourceAnalyzerTests {
       }
       """);
 
-    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ606")).IsGreaterThanOrEqualTo(1)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ607")).IsGreaterThanOrEqualTo(1)
       .Because($"'{expression}' renders a type name outside the shared naming code");
   }
 
@@ -77,7 +77,7 @@ public class TypeNameSourceAnalyzerTests {
       }
       """);
 
-    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ606")).IsEqualTo(2);
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ607")).IsEqualTo(2);
     await Assert.That(diagnostics[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("TypeNameFormatter");
   }
 
@@ -116,7 +116,7 @@ public class TypeNameSourceAnalyzerTests {
   public async Task Runtime_ASuppressionThatSaysWhy_IsHonoredAsync() {
     var diagnostics = await _analyzeAsync(RUNTIME_USINGS + """
       class C {
-        [SuppressMessage("Naming", "WHIZ606:A type name is read outside the shared naming code", Justification = "the exception message names the type for a reader")]
+        [SuppressMessage("Naming", "WHIZ607:A type name is read outside the shared naming code", Justification = "the exception message names the type for a reader")]
         static string M() => typeof(C).Name;
       }
       """);
@@ -124,13 +124,13 @@ public class TypeNameSourceAnalyzerTests {
     await Assert.That(diagnostics).IsEmpty();
   }
 
-  // ===== WHIZ607: suppressions =====
+  // ===== WHIZ608: suppressions =====
 
   [Test]
   [RequiresAssemblyFiles()]
-  [Arguments("[SuppressMessage(\"Naming\", \"WHIZ606\")]")]
-  [Arguments("[SuppressMessage(\"Naming\", \"WHIZ606\", Justification = \"\")]")]
-  [Arguments("[SuppressMessage(\"Naming\", \"WHIZ606:anything\", Justification = \"   \")]")]
+  [Arguments("[SuppressMessage(\"Naming\", \"WHIZ607\")]")]
+  [Arguments("[SuppressMessage(\"Naming\", \"WHIZ607\", Justification = \"\")]")]
+  [Arguments("[SuppressMessage(\"Naming\", \"WHIZ607:anything\", Justification = \"   \")]")]
   public async Task Suppression_WithoutAJustification_IsReportedAsync(string attribute) {
     var diagnostics = await _analyzeAsync(RUNTIME_USINGS + $$"""
       class C {
@@ -139,7 +139,7 @@ public class TypeNameSourceAnalyzerTests {
       }
       """);
 
-    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ607")).IsEqualTo(1);
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ608")).IsEqualTo(1);
   }
 
   [Test]
@@ -160,14 +160,14 @@ public class TypeNameSourceAnalyzerTests {
   public async Task Pragma_ThatHidesTheRule_IsReportedAsync() {
     var diagnostics = await _analyzeAsync(RUNTIME_USINGS + """
       class C {
-      #pragma warning disable WHIZ606
+      #pragma warning disable WHIZ607
         static string M() => typeof(C).Name;
-      #pragma warning restore WHIZ606
+      #pragma warning restore WHIZ607
       #pragma warning disable CS0168
       }
       """);
 
-    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ607")).IsEqualTo(1)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ608")).IsEqualTo(1)
       .Because("a pragma carries no justification; the restore and an unrelated pragma are fine");
   }
 
@@ -190,7 +190,7 @@ public class TypeNameSourceAnalyzerTests {
       }
       """, roslyn: true);
 
-    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ606")).IsGreaterThanOrEqualTo(1)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ607")).IsGreaterThanOrEqualTo(1)
       .Because($"'{expression}' renders a type name outside TypeNameUtilities");
   }
 

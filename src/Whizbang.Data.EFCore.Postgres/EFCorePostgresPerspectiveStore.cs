@@ -227,6 +227,69 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       : Task.FromResult(PerspectiveApplyRead.Unchecked);
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// Two statements for the whole batch, whatever its size: the versions, metadata and scopes with one
+  /// <c>id = ANY</c> read (the per-stream read's own columns), then the models of the rows it found with one Entity
+  /// Framework query, materialized exactly as <see cref="GetByStreamIdAsync"/> materializes one (a Split model read
+  /// tracked, hydrated from its promoted columns and let go). Null, so each stream is read on its own, for a provider
+  /// other than Npgsql and while a blue-green rebuild redirects this flow to its shadow table.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
+  public async Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?> ReadForApplyManyAsync(
+      IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (!PerspectiveRowVersionSql.Supports(_context) || PerspectiveTableRedirect.IsActive) {
+      return null;
+    }
+    var rows = new Dictionary<Guid, PerspectiveStoredRow<TModel>>(streamIds.Count);
+    var ids = streamIds.Distinct().ToArray();
+    if (ids.Length == 0) {
+      return rows;
+    }
+    // The versions first, then the models: no model is older than the version its write is checked against.
+    var reads = await PerspectiveRowVersionSql.ReadForApplyManyAsync(
+      _context, PerspectiveRowVersionSql.QualifiedTable<TModel>(_context), ids, cancellationToken);
+    if (reads.Count == 0) {
+      return rows;
+    }
+    var models = await _loadManyAsync([.. reads.Keys], cancellationToken);
+    foreach (var (id, read) in reads) {
+      rows[id] = new PerspectiveStoredRow<TModel>(read, models.GetValueOrDefault(id));
+    }
+    return rows;
+  }
+
+  /// <summary>
+  /// Reads the models of many rows in one query, each as <see cref="_loadAsync"/> reads one.
+  /// </summary>
+  private async Task<Dictionary<Guid, TModel>> _loadManyAsync(Guid[] ids, CancellationToken cancellationToken) {
+    var set = _context.Set<PerspectiveRow<TModel>>();
+    var models = new Dictionary<Guid, TModel>(ids.Length);
+    if (!SplitPhysicalFieldRegistry.TryGet<TModel>(out var split)) {
+      foreach (var row in await set.AsNoTracking().Where(r => ids.Contains(r.Id)).ToListAsync(cancellationToken)) {
+        models[row.Id] = PerspectiveDataCoalescer.CoalescedData(row)!; // WORKAROUND(dotnet/efcore#38625)
+      }
+      return models;
+    }
+    // A row the context holds unchanged is let go first, so the read materializes it afresh (see _loadAsync).
+    foreach (var held in set.Local.Where(r => ids.Contains(r.Id)).ToList()) {
+      if (_context.Entry(held).State == EntityState.Unchanged) {
+        _context.Entry(held).State = EntityState.Detached;
+      }
+    }
+    foreach (var row in await set.Where(r => ids.Contains(r.Id)).ToListAsync(cancellationToken)) {
+      var entry = _context.Entry(row);
+      if (entry.State == EntityState.Unchanged) {
+        row.Data = split.Hydrate(row.Data, new EntityEntryPhysicalColumnReader(entry));
+        entry.State = EntityState.Detached;
+      }
+      models[row.Id] = PerspectiveDataCoalescer.CoalescedData(row)!; // WORKAROUND(dotnet/efcore#38625)
+    }
+    return models;
+  }
+
+  /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
@@ -450,6 +513,45 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     _upsertStrategy.TryUpsertPerspectiveRowWithPhysicalFieldsAsync(
         _context, _tableName, streamId, model, metadata, scope ?? new PerspectiveScope(),
         physicalFieldValues, forceUpdateScope, expectedVersion, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Prepared by the upsert strategy's own preparation (<see cref="BaseUpsertStrategy"/>), the one the per-stream
+  /// atomic upsert writes from, so both paths store the same bytes. Null for a strategy that is not one, and wherever
+  /// that preparation declines (a provider other than Npgsql, a name that is not a plain identifier, a model the
+  /// persistence profile cannot serialize). The write is keyed to the sink of this store's context
+  /// (<see cref="PendingPerspectiveWrite.SinkKey"/>), so a batch writes it through that context.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStorePrepareTests.cs</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the preparing IPerspectiveStore member, whose shape is fixed by the interface.")]
+  public PendingPerspectiveWrite? PrepareWrite(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      IDictionary<string, object?>? physicalFieldValues) =>
+    _upsertStrategy is BaseUpsertStrategy strategy
+      ? strategy.PreparePendingWrite(_context, new BaseUpsertStrategy.UpsertRowArgs<TModel>(
+          _tableName, streamId, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion))
+        ?.ForSink(_context.GetType())
+      : null;
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The row's mapped table, or the shadow table a blue-green rebuild redirected this flow to, as
+  /// <see cref="PurgeAsync"/> deletes from. Null for a provider other than Npgsql.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStorePrepareTests.cs</tests>
+  public PendingPerspectiveWrite? PreparePurge(Guid streamId) =>
+    PerspectiveRowVersionSql.Supports(_context)
+      ? PendingPerspectiveWrite.Purge(PerspectiveRowVersionSql.QualifiedTable<TModel>(_context), streamId).ForSink(_context.GetType())
+      : null;
 
   /// <inheritdoc/>
   public async Task FlushAsync(CancellationToken cancellationToken = default) {

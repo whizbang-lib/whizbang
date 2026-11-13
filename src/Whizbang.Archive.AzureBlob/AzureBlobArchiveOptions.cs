@@ -48,9 +48,10 @@ public sealed class AzureBlobArchiveOptions {
 
   /// <summary>
   /// A storage connection string, for the Azurite emulator (<c>UseDevelopmentStorage=true</c>) or an account key kept
-  /// in the host's secret store. Set this or <see cref="ServiceUri"/>, not both.
+  /// in the host's secret store. Set this or <see cref="ServiceUri"/>, not both. Held as a
+  /// <see cref="Whizbang.Core.Configuration.SensitiveString"/>, so writing the options out writes its redaction.
   /// </summary>
-  public string? ConnectionString { get; set; }
+  public Whizbang.Core.Configuration.SensitiveString? ConnectionString { get; set; }
 
   /// <summary>The container that holds the archive objects; created on the first write when it does not exist.</summary>
   public string ContainerName { get; set; } = DEFAULT_CONTAINER_NAME;

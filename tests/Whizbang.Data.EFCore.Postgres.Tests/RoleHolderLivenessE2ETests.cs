@@ -326,12 +326,25 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     var checks = System.Threading.Channels.Channel.CreateUnbounded<bool?>();
     elector.WatchChecked += (_, confirmed) => checks.Writer.TryWrite(confirmed);
 
+    // The release is HELD at the database by a lock on the table it writes, so it still holds the tenure when the
+    // tick fires, by construction. Without the hold, a release whose round trip finished before the test thread
+    // advanced the clock had already stopped the watch, no tick fired, and the wait below never ended.
+    await using var hold = new NpgsqlConnection(ConnectionString);
+    await hold.OpenAsync(cancellationToken);
+    var holdTx = await hold.BeginTransactionAsync(cancellationToken);
+    await using (var lockCmd = new NpgsqlCommand("LOCK TABLE wh_role_assignments IN ACCESS EXCLUSIVE MODE", hold, holdTx)) {
+      await lockCmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // The release takes the tenure's gate before its first wait, so it holds the tenure once this call returns.
     var release = grant.DisposeAsync().AsTask();
     time.Advance(_defaults.RenewInterval);
+    await holdTx.RollbackAsync(cancellationToken);
+    await holdTx.DisposeAsync();
     await release;
 
-    // The release's round trip to the database yields, so the tick fired while the release held the tenure.
-    await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsNull();
+    await Assert.That(await checks.Reader.ReadAsync(cancellationToken)).IsNull()
+      .Because("the tick waited for the release, found the role let go, and asked the database nothing");
     await Assert.That(grant.LostToken.IsCancellationRequested).IsTrue();
   }
   [Test]

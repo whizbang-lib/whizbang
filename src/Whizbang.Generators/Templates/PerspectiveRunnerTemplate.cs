@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -113,6 +114,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private const string _archivedStreamRowsName = "";
   #endregion
 
+  #region WRITE_MODE_REGISTRATION
+  // Generated (#2246): a [ModuleInitializer] registering the perspective's write mode (the one it declares with
+  // [PerspectiveWriteMode], or null for the service's), so the worker knows which pairs it can write set-based.
+  #endregion
+
   #region PHYSICAL_FIELD_REGISTRATION
   // Generated: a model with [PhysicalField]/[VectorField] properties registers each column and the model's
   // storage mode via a [ModuleInitializer], so a collective apply can write and filter the column without
@@ -154,7 +160,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // Null when no driver registered it (or the model has no [CollectiveApplyFor] handler) — then the runner
   // behaves exactly as before. See ICollectiveReplayApplier.
   private readonly global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? _collectiveReplayApplier;
-  private int _eventsSinceLastSnapshot;
+  // Events folded since each stream's last snapshot, per stream: one runner prepares many pairs of a batch (#2246), and
+  // a single count added one stream's events to another's and snapshotted the wrong stream at the wrong time.
+  private readonly global::System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _eventsSinceLastSnapshot = new();
+
+  private int _eventsSinceSnapshot(Guid streamId) => _eventsSinceLastSnapshot.GetValueOrDefault(streamId);
 
   public __RUNNER_CLASS_NAME__(
       IServiceProvider serviceProvider,
@@ -191,6 +201,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid? lastProcessedEventId,
       CancellationToken cancellationToken = default) {
 
+    var events = await ReadEventsAsync(streamId, lastProcessedEventId, cancellationToken);
+
+    // Delegate to RunWithEventsAsync
+    return await RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events!, cancellationToken);
+  }
+
+  /// <summary>
+  /// The read <see cref="RunAsync"/> makes before it applies: the stream's events after the cursor, of the types this
+  /// perspective folds. A set-based batch reads a claimed pair's events through it, then prepares them (#2246).
+  /// </summary>
+  public async Task<IReadOnlyList<MessageEnvelope<IEvent>>?> ReadEventsAsync(
+      Guid streamId,
+      Guid? lastProcessedEventId,
+      CancellationToken cancellationToken = default) {
+
     // Build event types list for polymorphic deserialization
     var eventTypes = new[] {
       #region EVENT_TYPES
@@ -204,9 +229,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         streamId, lastProcessedEventId, eventTypes, cancellationToken)) {
       events.Add(envelope);
     }
+    return events;
+  }
 
-    // Delegate to RunWithEventsAsync
-    return await RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events, cancellationToken);
+  /// <summary>
+  /// The events <see cref="ReadEventsAsync"/> would read, selected from a stream's events a claimed set-based batch read
+  /// once for all its pairs (#2246): the ones of the types this perspective folds, in the order they came.
+  /// </summary>
+  public global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>? SelectEvents(
+      global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> streamEvents) {
+    var selected = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(streamEvents.Count);
+    foreach (var envelope in streamEvents) {
+      if (global::System.Array.IndexOf(_handledEventTypes, envelope.Payload.GetType()) >= 0) {
+        selected.Add(envelope);
+      }
+    }
+    return selected;
   }
 
   /// <summary>
@@ -356,15 +394,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
-    // Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
-    // order the rewind uses (origin, then stream version, then commit, then id; #1352): sorting it by id applied a stream's first committed
-    // event last whenever that event carried the highest id, and checkpointed on it (#1331). The live drain keeps
-    // id order; an inversion there is the rewind's to correct.
-    if (events.Count > 1) {
-      events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
-          ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
-          : events.OrderByMessageId().ToList();
-    }
+    return await _runWithEventsLockedAsync(
+        streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle: true, new List<Task>(), cancellationToken);
+  }
+
+  /// <summary>
+  /// The per-pair path, ASSUMING the apply lock is already held. Two callers: <see cref="RunWithEventsAsync"/>, which
+  /// takes the lock, and <see cref="CompleteAsync"/>, whose caller holds the locks of its whole batch (#2246).
+  /// </summary>
+  /// <param name="firePreLifecycle">
+  /// Whether the pre-perspective stages fire. False when a prepare already fired them for this batch, which hands its
+  /// pending detached stages in <paramref name="backgroundTasks"/>.
+  /// </param>
+  private async Task<PerspectiveCursorCompletion> _runWithEventsLockedAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      bool firePreLifecycle,
+      List<Task> backgroundTasks,
+      CancellationToken cancellationToken) {
+
+    events = _orderForApply(events);
 
     // Lost-update guard (issue #928). The apply reads the row, folds the batch in memory and writes the
     // whole row back; a writer that commits in between (a collective apply, a second apply of this
@@ -374,11 +425,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // not a loop to spin in. Detached lifecycle tasks one attempt started are awaited by the attempt that
     // completes, so none is left unobserved.
     // <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-    var backgroundTasks = new List<Task>();
     for (var attempt = 1; ; attempt++) {
       try {
         return await _runWithEventsAttemptAsync(
-            streamId, perspectiveName, lastProcessedEventId, events, attempt == 1, backgroundTasks, cancellationToken);
+            streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle && attempt == 1, backgroundTasks, cancellationToken);
       } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) when (attempt < MAX_ROW_CONFLICT_ATTEMPTS) {
         _logger.LogDebug(
             conflict,
@@ -402,6 +452,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
+  /// Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
+  /// order the rewind uses (origin, then stream version, then commit, then id; #1352): sorting it by id applied a
+  /// stream's first committed event last whenever that event carried the highest id, and checkpointed on it (#1331).
+  /// The live drain keeps id order; an inversion there is the rewind's to correct.
+  /// </summary>
+  private static IReadOnlyList<MessageEnvelope<IEvent>> _orderForApply(IReadOnlyList<MessageEnvelope<IEvent>> events) {
+    if (events.Count > 1) {
+      events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
+          ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
+          : events.OrderByMessageId().ToList();
+    }
+    return events;
+  }
+
+  /// <summary>
   /// How many times one batch is re-read and re-applied when its write is refused because the row moved.
   /// </summary>
   private const int MAX_ROW_CONFLICT_ATTEMPTS = 5;
@@ -418,6 +483,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// the caller re-runs it. The pre-perspective lifecycle stages fire on the first attempt only: they announce
   /// the batch, and a retry re-folds the same batch.
   /// </summary>
+  /// <remarks>
+  /// Built from the same pieces as the set-based split (#2246): <see cref="_readBatchAsync"/> and
+  /// <see cref="_foldAsync"/> are what <see cref="PrepareAsync"/> runs, <see cref="_finishApplyAsync"/> is what
+  /// <see cref="CompleteAsync"/> runs, and only the write between them differs.
+  /// </remarks>
   private async Task<PerspectiveCursorCompletion> _runWithEventsAttemptAsync(
       Guid streamId,
       string perspectiveName,
@@ -427,15 +497,306 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       List<Task> backgroundTasks,
       CancellationToken cancellationToken) {
 
-    // #1963: when this apply may end in a snapshot of a row with collectives, the collective fence is read BEFORE the row,
-    // and read again after the write; the snapshot records the first read's mark only when no collective of the row moved
-    // across both reads, and is deferred otherwise.
-    var collectiveFence = await _readCollectiveFenceBeforeLiveReadAsync(events, cancellationToken);
+    var read = await _readBatchAsync(streamId, perspectiveName, lastProcessedEventId, events, backgroundTasks, preparing: false, batchState: null, cancellationToken);
+    if (read.Completion is { } decided) {
+      return decided;
+    }
+    var state = read.State!;
 
-    // Read the row's version and metadata FIRST, then the model. The model can then never be older than
-    // the version the write is checked against: a writer that commits between the two reads moves the
-    // version and the write is refused, never landed. A store that tracks no versions returns Unchecked
-    // and the reads below are exactly the ones the runner always made.
+    try {
+      await _foldAsync(state, firePreLifecycle, cancellationToken);
+      var rowChanged = false;  // True once this batch actually wrote or purged the row
+      if (state.EventsProcessed > 0) {
+        await _beginRowWriteAsync(state, cancellationToken);
+        rowChanged = await _writeRowAsync(state, cancellationToken);
+      }
+      return await _finishApplyAsync(state, rowChanged, cancellationToken);
+    } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
+      // A refused write (the row moved) is not a partial failure: nothing was written and the caller re-runs
+      // the whole batch onto the moved row, so it passes straight through.
+      await _savePartialProgressAsync(state, ex, cancellationToken);
+      // Re-throw - let PerspectiveWorker catch and convert to failure
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// The first half of a set-based write (#2246): the read and the fold <see cref="RunWithEventsAsync"/> makes, with
+  /// the row write prepared for the batch's write sink instead of made. The caller holds the pair's apply lock until
+  /// <see cref="CompleteAsync"/> returns (<see cref="global::Whizbang.Core.Perspectives.PerspectiveApplyLockSet"/>), so
+  /// this takes none.
+  /// </summary>
+  /// <remarks>
+  /// A pair the batch write does not take is handed back with a reason, before anything is folded where the reason is
+  /// known from the read (a rewind, an evicted or purged row), so the per-pair path that completes it fires the
+  /// pre-perspective stages once. A purge records its marker here, before the batch removes the row, as the per-pair
+  /// purge does.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  public async Task<PreparedPerspectiveApply> PrepareAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken = default) {
+
+    events = _orderForApply(events);
+    var read = await _readBatchAsync(streamId, perspectiveName, lastProcessedEventId, events, new List<Task>(), preparing: true, batchState, cancellationToken);
+    if (read.State is null) {
+      return new Prepared(this, streamId, perspectiveName, lastProcessedEventId, events, null, read.PerPair, null, read.Completion);
+    }
+    var state = read.State;
+
+    try {
+      await _foldAsync(state, firePreLifecycle: true, cancellationToken);
+      global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? write = null;
+      if (state.EventsProcessed > 0) {
+        await _beginRowWriteAsync(state, cancellationToken);
+        if (state.RowWrite == RowWriteKind.Purge) {
+          write = _perspectiveStore.PreparePurge(streamId);
+          if (write is not null) {
+            // Record the purge FIRST, then let the batch remove the row (as the per-pair purge does).
+            await _markPurgedAsync(streamId, perspectiveName, state.PurgeEventId, cancellationToken);
+          }
+        } else if (state.RowWrite == RowWriteKind.Upsert) {
+          write = await _prepareRowWriteAsync(state, cancellationToken);
+        }
+        if (write is null && state.RowWrite != RowWriteKind.None) {
+          // The store cannot write this row set-based: the per-pair path writes it, re-reading the row, so nothing
+          // prepared here is kept but the detached stages already started.
+          state.DisposeSnapshots();
+          return new Prepared(
+              this, streamId, perspectiveName, lastProcessedEventId, events, null,
+              global::Whizbang.Core.Perspectives.PerspectivePerPairReason.WriteNotPreparable, state, null);
+        }
+      }
+      return new Prepared(
+          this, streamId, perspectiveName, lastProcessedEventId, events, write,
+          global::Whizbang.Core.Perspectives.PerspectivePerPairReason.None, state, null);
+    } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
+      await _savePartialProgressAsync(state, ex, cancellationToken);
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// The second half of a set-based write (#2246): given the outcome of the write <see cref="PrepareAsync"/> prepared,
+  /// does what follows the write on the per-pair path and returns the same completion. The caller still holds the
+  /// pair's apply lock, so this takes none, and a pair it reruns goes through the lock-free per-pair core.
+  /// </summary>
+  /// <remarks>
+  /// Written finishes the pair. Refused is the per-pair path's refused write, which rewinds the stream (#1608). A
+  /// conflict reruns the batch on the moved row with the per-pair retries, and a row the database rejected reruns it
+  /// per-pair too, where it fails exactly as it would have (or takes the store's fallback write).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  public async Task<PerspectiveCursorCompletion> CompleteAsync(
+      PreparedPerspectiveApply prepared,
+      global::Whizbang.Core.Perspectives.PerspectiveWriteOutcome? outcome,
+      CancellationToken cancellationToken = default) {
+
+    ArgumentNullException.ThrowIfNull(prepared);
+    if (prepared is not Prepared mine || !ReferenceEquals(mine.Runner, this)) {
+      throw new ArgumentException(
+          "A prepared perspective apply is completed by the runner that prepared it.", nameof(prepared));
+    }
+    if (mine.Decided is { } decided) {
+      return decided;
+    }
+    var state = mine.State;
+    if (mine.RunsPerPair) {
+      // A pair handed back before its fold has fired nothing yet; one handed back after it has fired its
+      // pre-perspective stages, and its detached ones are still to be awaited.
+      return await _runWithEventsLockedAsync(
+          mine.StreamId, mine.PerspectiveName, mine.LastProcessedEventId, mine.Events,
+          firePreLifecycle: state is null, state?.BackgroundTasks ?? new List<Task>(), cancellationToken);
+    }
+    if (mine.Write is not null && outcome is null) {
+      throw new ArgumentNullException(nameof(outcome), "A prepared write is completed with the outcome of its write.");
+    }
+    var status = mine.Write is null ? (global::Whizbang.Core.Perspectives.PerspectiveWriteStatus?)null : outcome!.Value.Status;
+    if (status is global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Conflict
+        or global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Failed) {
+      state!.DisposeSnapshots();
+      if (status == global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Failed) {
+        _logger.LogWarning(
+            outcome!.Value.Error,
+            "[diag.write.failed] {PerspectiveName} stream {StreamId}: the database rejected the row in a set-based write; applying the batch per-pair",
+            mine.PerspectiveName,
+            mine.StreamId);
+      } else {
+        _logger.LogDebug(
+            "Row for {PerspectiveName} stream {StreamId} changed after it was read for a set-based write; re-reading and re-applying per-pair",
+            mine.PerspectiveName,
+            mine.StreamId);
+      }
+      return await _runWithEventsLockedAsync(
+          mine.StreamId, mine.PerspectiveName, mine.LastProcessedEventId, mine.Events,
+          firePreLifecycle: false, state.BackgroundTasks, cancellationToken);
+    }
+
+    try {
+      return await _finishApplyAsync(
+          state!, rowChanged: status == global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Written, cancellationToken);
+    } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
+      await _savePartialProgressAsync(state!, ex, cancellationToken);
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// A pair <see cref="PrepareAsync"/> prepared, with the state <see cref="CompleteAsync"/> needs: the fold, or the
+  /// completion already decided (a batch the row already holds).
+  /// </summary>
+  private sealed class Prepared : PreparedPerspectiveApply {
+    public Prepared(
+        __RUNNER_CLASS_NAME__ runner,
+        Guid streamId,
+        string perspectiveName,
+        Guid? lastProcessedEventId,
+        IReadOnlyList<MessageEnvelope<IEvent>> events,
+        global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? write,
+        global::Whizbang.Core.Perspectives.PerspectivePerPairReason perPairReason,
+        ApplyState? state,
+        PerspectiveCursorCompletion? decided)
+        : base(streamId, perspectiveName, lastProcessedEventId, events, write, perPairReason) {
+      Runner = runner;
+      State = state;
+      Decided = decided;
+    }
+
+    public __RUNNER_CLASS_NAME__ Runner { get; }
+    public ApplyState? State { get; }
+    public PerspectiveCursorCompletion? Decided { get; }
+  }
+
+  /// <summary>What a batch's row write does.</summary>
+  private enum RowWriteKind {
+    /// <summary>Nothing: no Apply produced a model, or a purged stream stayed purged.</summary>
+    None,
+    /// <summary>Remove the row an Apply purged.</summary>
+    Purge,
+    /// <summary>Write the folded model.</summary>
+    Upsert,
+  }
+
+  /// <summary>
+  /// One apply of one batch, from the row it read to the write it makes: what the per-pair attempt keeps in locals,
+  /// kept here so a prepare can hand it to its completion (#2246). Fields, so the fold can alias them by reference.
+  /// </summary>
+  private sealed class ApplyState {
+    public Guid StreamId;
+    public string PerspectiveName = string.Empty;
+    public Guid? LastProcessedEventId;
+    public IReadOnlyList<MessageEnvelope<IEvent>> Events = Array.Empty<MessageEnvelope<IEvent>>();
+    public List<Task> BackgroundTasks = new();
+    public __PERSPECTIVE_CLASS_NAME__ Perspective = null!;
+    // The batch a prepare reads from (#2246), or null on the per-pair path.
+    public global::Whizbang.Core.Perspectives.IPerspectiveBatchState? BatchState;
+
+    // The read.
+    public CollectiveFenceRead? CollectiveFence;
+    public global::Whizbang.Core.Perspectives.PerspectiveApplyRead ApplyRead = global::Whizbang.Core.Perspectives.PerspectiveApplyRead.Unchecked;
+    public global::Whizbang.Core.Perspectives.PerspectiveRowVersion RowVersion;
+    public bool ModelLoadedFromDb;
+    public bool StartedPurged;
+    public bool Rebuilding;
+    public global::Whizbang.Core.Lenses.PerspectiveMetadata? ExistingMetadata;
+    // The row as stored, kept so a rebuild whose write is refused can tell an already-correct row from a stale one (#2252).
+    public __MODEL_TYPE_NAME__? StoredModel;
+
+    // The fold.
+    public int EventsProcessed;
+    public Guid? LastSuccessfulEventId;
+    public string? LastSuccessfulEventType;
+    public DateTime? LastSuccessfulEventAt;
+    public List<MessageEnvelope<IEvent>> ProcessedEvents = new();
+    public __MODEL_TYPE_NAME__? UpdatedModel;
+    public bool HasWrittenUpdate;
+    public bool CollectiveInFlight;
+    public bool PendingPurge;
+    public Guid? PurgeEventId;
+    public string? PurgeEventType;
+    public bool Resurrected;
+    public int PurgedEventsSkipped;
+    public PerspectiveScope? LastScope;
+    public PerspectiveScope? ScopeEventScope;
+    public JsonDocument? ModelAtLastEvent;
+
+    // The write.
+    public RowWriteKind RowWrite;
+    public long SaveStartTicks;
+    public bool SnapshotDue;
+    public JsonDocument? SnapshotBeforeWrite;
+    public long? CheckpointCommitSequence;
+    public global::Whizbang.Core.Lenses.ScopeWrite ScopeWrite;
+    // #2252: a rebuild's fold, taken before the write strips a Split class model's promoted fields; null for any other
+    // apply. Taken for the per-pair write and a prepared one alike, since both strip the model the same way.
+    public JsonDocument? FoldBeforeWrite;
+
+    /// <summary>Releases the serialized models this apply took for a snapshot or a comparison it will no longer make.</summary>
+    public void DisposeSnapshots() {
+      SnapshotBeforeWrite?.Dispose();
+      SnapshotBeforeWrite = null;
+      ModelAtLastEvent?.Dispose();
+      ModelAtLastEvent = null;
+      FoldBeforeWrite?.Dispose();
+      FoldBeforeWrite = null;
+    }
+  }
+
+  /// <summary>
+  /// What reading a batch decided: an apply to fold (<see cref="State"/>), a completion already reached (a rewind the
+  /// read started, or a batch the row already holds), or, when preparing, a hand-back to the per-pair path.
+  /// </summary>
+  private sealed record BatchRead(
+      ApplyState? State,
+      PerspectiveCursorCompletion? Completion,
+      global::Whizbang.Core.Perspectives.PerspectivePerPairReason PerPair) {
+    public static implicit operator BatchRead(ApplyState state) =>
+        new(state, null, global::Whizbang.Core.Perspectives.PerspectivePerPairReason.None);
+    public static implicit operator BatchRead(PerspectiveCursorCompletion completion) =>
+        new(null, completion, global::Whizbang.Core.Perspectives.PerspectivePerPairReason.None);
+    public static implicit operator BatchRead(global::Whizbang.Core.Perspectives.PerspectivePerPairReason perPair) =>
+        new(null, null, perPair);
+  }
+
+  /// <summary>The row as an apply reads it: its version, scope and metadata, and the model.</summary>
+  private readonly record struct RowLoad(
+      global::Whizbang.Core.Perspectives.PerspectiveApplyRead ApplyRead,
+      __MODEL_TYPE_NAME__? Model,
+      global::Whizbang.Core.Lenses.PerspectiveMetadata? Metadata);
+
+  /// <summary>
+  /// Reads the row a live apply folds onto: the one place it is read, and the seam a batched state source replaces
+  /// with one read for every stream of a batch (#2246).
+  /// </summary>
+  /// <remarks>
+  /// The row's version and metadata are read FIRST, then the model. The model can then never be older than the
+  /// version the write is checked against: a writer that commits between the two reads moves the version and the
+  /// write is refused, never landed. A store that tracks no versions returns Unchecked and the reads are exactly the
+  /// ones the runner always made: the metadata is read on its own, and only for a row that exists outside a rebuild.
+  /// </remarks>
+  private async Task<RowLoad> _loadRowForApplyAsync(
+      Guid streamId,
+      string perspectiveName,
+      bool rebuilding,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken) {
+    // A set-based batch's state source (#2246): no read for a stream it knows is new, and its one read per perspective
+    // table for the rest. Whatever it cannot answer is read per stream, below.
+    if (batchState is not null && !rebuilding) {
+      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+        return new RowLoad(
+            new global::Whizbang.Core.Perspectives.PerspectiveApplyRead(global::Whizbang.Core.Perspectives.PerspectiveRowVersion.Absent, null),
+            null,
+            null);
+      }
+      if (await batchState.ReadRowAsync(_perspectiveStore, streamId, perspectiveName, cancellationToken) is { } batched) {
+        return new RowLoad(batched.ApplyRead, batched.Model, batched.Model is null ? null : batched.ApplyRead.Metadata);
+      }
+    }
     var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
     var rowVersion = applyRead.Version;
 
@@ -446,12 +807,49 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             streamId,
             cancellationToken
         );
+    var existingMetadata = currentModel == null || rebuilding
+        ? null
+        : rowVersion.IsChecked
+            ? applyRead.Metadata
+            : await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken);
+    return new RowLoad(applyRead, currentModel, existingMetadata);
+  }
+
+  /// <summary>
+  /// Reads the row and decides what the batch does before it is folded: re-fold the stream (an evicted row whose
+  /// stream woke, or an event below the row's position), report a batch the row already holds, or fold. When
+  /// <paramref name="preparing"/>, the decisions that re-fold are handed back to the per-pair path instead of run.
+  /// </summary>
+  private async Task<BatchRead> _readBatchAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      List<Task> backgroundTasks,
+      bool preparing,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken) {
+
+    // #1963: when this apply may end in a snapshot of a row with collectives, the collective fence is read BEFORE the row,
+    // and read again after the write; the snapshot records the first read's mark only when no collective of the row moved
+    // across both reads, and is deferred otherwise.
+    var collectiveFence = await _readCollectiveFenceBeforeLiveReadAsync(streamId, events, cancellationToken);
+
+    // A rebuild re-derives the row from its events (see below), so it reads no recorded position.
+    var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
+        is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
+    var loaded = await _loadRowForApplyAsync(streamId, perspectiveName, rebuilding, batchState, cancellationToken);
+    var applyRead = loaded.ApplyRead;
+    var rowVersion = applyRead.Version;
+    var currentModel = loaded.Model;
 
     // Track whether the stream already exists in the DB. When it does not, the pre-created
     // empty default below is scaffolding for Apply input only — it must NOT be persisted
     // unless Apply actually returns a model. Otherwise ApplyResult.None() on a new stream
     // would insert a phantom default row.
     var modelLoadedFromDb = currentModel != null;
+    // The row as stored, kept so a rebuild whose write is refused can tell an already-correct row from a stale one (#2252).
+    var storedModel = rebuilding && modelLoadedFromDb ? currentModel : null;
 
     // Purge stays purged (issue #1027): true when the row is missing BECAUSE it was purged.
     var startedPurged = false;
@@ -481,7 +879,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (events.Count > 0
           && (global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
               || global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_archivedStreamRowsName))
-          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)) {
+          && await _hasHistoryBeforeAsync(streamId, perspectiveName, events[0].MessageId.Value, batchState, cancellationToken)) {
+        if (preparing) {
+          return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.MissingRowWithHistory;
+        }
         var floor = !_isEphemeralPerspective
             ? (State: EvictedRowFloor.Readable, SnapshotEventId: Guid.Empty)
             : await _evictedRowFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken);
@@ -517,7 +918,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // only here, on a missing row, and a marker exists only after a purge, so a stream that was never purged
       // (new or live) is never affected and the steady state pays nothing.
       // <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-      startedPurged = events.Count > 0 && await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
+      startedPurged = events.Count > 0 && await _isPurgedForApplyAsync(streamId, perspectiveName, batchState, cancellationToken);
+      if (startedPurged && preparing) {
+        return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.PurgedStream;
+      }
 
       _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
@@ -544,10 +948,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // success (#1313). Blue-green escaped this only because it writes into a fresh shadow table, where
     // no row loads and there is no position to compare against. The ambient mode is how the rebuilder
     // already tells generated runners what it is doing, which is what ProcessingModeAccessor is for.
-    var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
-        is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
-    // The row as stored, kept so a rebuild whose write is refused can tell an already-correct row from a stale one (#2252).
-    var storedModel = rebuilding && modelLoadedFromDb ? currentModel : null;
     if (rebuilding) {
       // Re-derive, do not fold on top. A rebuild reads the stream whole, so starting from the stored row
       // applies every event a second time: an assignment survives that, an additive fold (Balance += Amount)
@@ -556,21 +956,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // alone on purpose: it still describes the DATABASE, which is what decides insert versus update below.
       currentModel = CreateEmptyModel(streamId);
     }
-    var existingMetadata = !modelLoadedFromDb || rebuilding
-        ? null
-        : rowVersion.IsChecked
-            ? applyRead.Metadata
-            : await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken);
+    var existingMetadata = loaded.Metadata;
     var lastAppliedEventId = existingMetadata?.EventId;
     var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
       // An event below the row's recorded position is not dropped on that evidence alone (#1347): the row can have been
       // moved past it by a later batch without ever folding it, and the worker's cursor check cannot see that when the
       // stream has no cursor or a cursor behind the row. Re-fold the stream from the earliest such event instead; this
-      // runs under the apply lock already held, which is why it calls the core and not RewindAndRunAsync.
+      // runs under the apply lock already held, which is why it calls the core and not RewindAndRunAsync. A prepare
+      // hands the pair to the per-pair path, which re-folds it the same way.
       var rewindAnchor = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.FindRewindAnchor(
           lastAppliedEventId, lastAppliedCommitSequence, events.Select(e => (e.MessageId.Value, e.LocalCommitSequence)));
       if (rewindAnchor is Guid anchorEventId) {
+        if (preparing) {
+          return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.RewindBelowPosition;
+        }
         var anchorCommitSequence = events.First(e => e.MessageId.Value == anchorEventId).LocalCommitSequence;
         _logger.LogWarning(
             "[diag.filter.rewind-below-position] {PerspectiveName} stream {StreamId}: event {AnchorEventId} at commit sequence {AnchorCs} is below the row's recorded position {LastCs} ({LastEventId}); rewinding instead of filtering {Count} event(s) as already applied",
@@ -652,35 +1052,43 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       events = filtered;
     }
 
-    // Get perspective instance from DI
-    var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
+    // Get perspective instance from DI, and track progress from the row the batch folds onto.
+    return new ApplyState {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = lastProcessedEventId,
+      Events = events,
+      BackgroundTasks = backgroundTasks,
+      BatchState = batchState,
+      Perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>(),
+      CollectiveFence = collectiveFence,
+      ApplyRead = applyRead,
+      RowVersion = rowVersion,
+      ModelLoadedFromDb = modelLoadedFromDb,
+      StartedPurged = startedPurged,
+      Rebuilding = rebuilding,
+      StoredModel = storedModel,
+      ExistingMetadata = existingMetadata,
+      LastSuccessfulEventId = lastProcessedEventId,
+      LastSuccessfulEventType = existingMetadata?.EventType,
+      UpdatedModel = currentModel,
+      // True once Apply has contributed a concrete model OR the row came from DB.
+      // When false at save time, updatedModel is only the scaffolded default and must not be written.
+      HasWrittenUpdate = modelLoadedFromDb,
+      PendingPurge = startedPurged,  // True while the stream is purged: the row is (to be) removed
+    };
+  }
 
-    // Track progress
-    var eventsProcessed = 0;
-    var lastSuccessfulEventId = lastProcessedEventId;
-    string? lastSuccessfulEventType = existingMetadata?.EventType;
-    DateTime? lastSuccessfulEventAt = null;
-    var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
-    __MODEL_TYPE_NAME__? updatedModel = currentModel;
-    // True once Apply has contributed a concrete model OR the row came from DB.
-    // When false at save time, updatedModel is only the scaffolded default and must not be written.
-    var hasWrittenUpdate = modelLoadedFromDb;
-    var collectiveInFlight = false;
-    var rowChanged = false;  // True once this batch actually wrote or purged the row
-    // Why a rebuild that folded events left the row untouched (#2252)
-    var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
-    var pendingPurge = startedPurged;  // True while the stream is purged: the row is (to be) removed
-    Guid? purgeEventId = null;  // The event whose Apply purged in this batch, if one did
-    string? purgeEventType = null;  // Its type, reported on the completion (#1151)
-    var resurrected = false;  // An Apply returned Resurrect while the stream was purged
-    var purgedEventsSkipped = 0;  // Events skipped because the stream was purged
-    PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
-    PerspectiveScope? scopeEventScope = null;  // The scope an IScopeEvent set; forces a scope UPDATE (#1432)
-    // The row at its last event, taken when collectives committed after that event fold into it (#1956): a snapshot this
-    // run takes is taken at that event, so it must not hold them, or a rewind from it would fold them again.
-    JsonDocument? modelAtLastEvent = null;
+  /// <summary>
+  /// Folds the batch onto the row it read: the pre-perspective stages, the collectives a replay interleaves, and every
+  /// event's Apply, in order and in memory. The fold of the per-pair path and of a prepare.
+  /// </summary>
+  private async Task _foldAsync(ApplyState state, bool firePreLifecycle, CancellationToken cancellationToken) {
+    var streamId = state.StreamId;
+    var lastProcessedEventId = state.LastProcessedEventId;
+    var events = state.Events;
+    var backgroundTasks = state.BackgroundTasks;
 
-    try {
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event, and not again
       // when a refused write re-runs the batch)
       if (firePreLifecycle && events.Count > 0) {
@@ -760,7 +1168,61 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (_collectiveReplayApplier is not null && events.Count > 0) {
         events = await _collectiveReplayApplier.InterleaveForReplayAsync(
             typeof(__MODEL_TYPE_NAME__), events, cancellationToken);
+        state.Events = events;
       }
+
+      _foldEvents(state, events, enableEventSpans, appliedEventTypes, cancellationToken);
+
+      // Add summary tags to parent activity (Perspective RunAsync span from PerspectiveWorker)
+      // These tags show which events were processed even when per-event spans are disabled
+      var eventsProcessed = state.EventsProcessed;
+      if (eventsProcessed > 0) {
+        var currentActivity = Activity.Current;
+        if (currentActivity is not null) {
+          currentActivity.SetTag("whizbang.perspective.events_applied", eventsProcessed);
+          // Group event types with counts (e.g., "OrderCreated:3, OrderUpdated:2")
+          var eventTypeCounts = appliedEventTypes
+            .GroupBy(t => t)
+            .Select(g => $"{g.Key}:{g.Count()}")
+            .ToArray();
+          currentActivity.SetTag("whizbang.perspective.event_types", string.Join(", ", eventTypeCounts));
+        }
+      }
+  }
+
+  /// <summary>
+  /// Applies each event of the batch to the model, in memory: the one live fold. Synchronous, so it can alias the
+  /// apply's state by reference and keep the fold's own names; each step lands in the state as it is taken, so a
+  /// failure part-way saves exactly the progress made.
+  /// </summary>
+  private void _foldEvents(
+      ApplyState state,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      bool enableEventSpans,
+      List<string> appliedEventTypes,
+      CancellationToken cancellationToken) {
+    var streamId = state.StreamId;
+    var perspectiveName = state.PerspectiveName;
+    var perspective = state.Perspective;
+    var applyRead = state.ApplyRead;
+    ref var eventsProcessed = ref state.EventsProcessed;
+    ref var lastSuccessfulEventId = ref state.LastSuccessfulEventId;
+    ref var lastSuccessfulEventType = ref state.LastSuccessfulEventType;
+    ref var lastSuccessfulEventAt = ref state.LastSuccessfulEventAt;
+    var processedEvents = state.ProcessedEvents;  // Track envelopes for PostPerspectiveInline (fires AFTER save)
+    ref var updatedModel = ref state.UpdatedModel;
+    ref var hasWrittenUpdate = ref state.HasWrittenUpdate;
+    ref var collectiveInFlight = ref state.CollectiveInFlight;
+    ref var pendingPurge = ref state.PendingPurge;
+    ref var purgeEventId = ref state.PurgeEventId;  // The event whose Apply purged in this batch, if one did
+    ref var purgeEventType = ref state.PurgeEventType;  // Its type, reported on the completion (#1151)
+    ref var resurrected = ref state.Resurrected;  // An Apply returned Resurrect while the stream was purged
+    ref var purgedEventsSkipped = ref state.PurgedEventsSkipped;  // Events skipped because the stream was purged
+    ref var lastScope = ref state.LastScope;  // Track scope from last processed envelope
+    ref var scopeEventScope = ref state.ScopeEventScope;  // The scope an IScopeEvent set; forces a scope UPDATE (#1432)
+    // The row at its last event, taken when collectives committed after that event fold into it (#1956): a snapshot this
+    // run takes is taken at that event, so it must not hold them, or a rewind from it would fold them again.
+    ref var modelAtLastEvent = ref state.ModelAtLastEvent;
 
       // A rebuild or rewind whose last event always purges the row (#1151) discards whatever the events before it
       // fold, so they are not folded: they count as processed and only the purge is applied. The list is the row's
@@ -922,97 +1384,177 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         eventsProcessed++;
       }
 
-      // Add summary tags to parent activity (Perspective RunAsync span from PerspectiveWorker)
-      // These tags show which events were processed even when per-event spans are disabled
-      if (eventsProcessed > 0) {
-        var currentActivity = Activity.Current;
-        if (currentActivity is not null) {
-          currentActivity.SetTag("whizbang.perspective.events_applied", eventsProcessed);
-          // Group event types with counts (e.g., "OrderCreated:3, OrderUpdated:2")
-          var eventTypeCounts = appliedEventTypes
-            .GroupBy(t => t)
-            .Select(g => $"{g.Key}:{g.Count()}")
-            .ToArray();
-          currentActivity.SetTag("whizbang.perspective.event_types", string.Join(", ", eventTypeCounts));
-        }
-      }
+  }
 
-      // Unit of Work: Save model + checkpoint ONCE at end
-      if (eventsProcessed > 0) {
+  /// <summary>
+  /// Decides the row write a folded batch makes, before it is made: a purge, a write of the folded model, or nothing;
+  /// whether this run ends in a snapshot, and the snapshot taken before the write; the position and scope the row is
+  /// written with. Shared by the per-pair write and a prepare, so both write the same row.
+  /// </summary>
+  private async Task _beginRowWriteAsync(ApplyState state, CancellationToken cancellationToken) {
+    var eventsProcessed = state.EventsProcessed;
+    var pendingPurge = state.PendingPurge;
+    var updatedModel = state.UpdatedModel;
+    var hasWrittenUpdate = state.HasWrittenUpdate;
+    var lastSuccessfulEventId = state.LastSuccessfulEventId;
+    var collectiveInFlight = state.CollectiveInFlight;
+    var modelAtLastEvent = state.ModelAtLastEvent;
+
         // Slice 29 instrumentation: capture SaveModelAndCheckpoint + Flush wall time. A
         // production run measured a much lower than expected events/sec drain despite high
         // concurrency configured — need to know whether DB write or in-memory apply or
         // lifecycle dominates per drain.
-        var saveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        state.SaveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
         JsonDocument? snapshotBeforeWrite = null;
         // Issue #1002: whether this run ends in a snapshot, decided before the write, so a model the write strips in
         // place is serialized before it only when a snapshot is actually due.
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue
-            && _eventsSinceLastSnapshot + eventsProcessed >= _snapshotCadence().Threshold
+            && _eventsSinceSnapshot(state.StreamId) + eventsProcessed >= _snapshotCadence().Threshold
             && !collectiveInFlight;
+        state.SnapshotDue = snapshotDue;
         if (pendingPurge) {
           // A stream that began this batch purged and stayed so has no row to remove.
-          if (purgeEventId.HasValue) {
-            // Hard delete: record the purge FIRST, then remove the row — a crash between the two leaves a marker
-            // on a live row (harmless), never a missing row a later event could recreate.
-            await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
-            await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
-            rowChanged = true;
-            _logger.LogDebug(
-                "Model purged for {PerspectiveName} stream {StreamId}",
-                perspectiveName,
-                streamId
-            );
-          }
+          state.RowWrite = state.PurgeEventId.HasValue ? RowWriteKind.Purge : RowWriteKind.None;
         } else if (updatedModel != null && hasWrittenUpdate) {
-          var checkpointCommitSequence = _recordedCommitSequence(
-              await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId!.Value, cancellationToken),
-              processedEvents,
-              rebuilding);
+          state.CheckpointCommitSequence = _recordedCommitSequence(
+              await _commitSequenceOfAsync(lastSuccessfulEventId!.Value, state.BatchState, cancellationToken),
+              state.ProcessedEvents,
+              state.Rebuilding);
           // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
           snapshotBeforeWrite = snapshotDue ? modelAtLastEvent ?? SnapshotBeforeWrite(updatedModel) : null;
           if (snapshotDue) {
-            modelAtLastEvent = null;  // handed to the snapshot write
+            state.ModelAtLastEvent = null;  // handed to the snapshot write
           }
+          state.SnapshotBeforeWrite = snapshotBeforeWrite;
+          // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
+          state.FoldBeforeWrite = state.StoredModel is null ? null : SnapshotBeforeWrite(updatedModel);
           // The model's [InheritScope] decides the scope: OnCreate and Always fields on a new row, the Always
           // fields merged into the row's stored scope on an existing one (#1425).
-          var scopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
-          // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
-          using var foldBeforeWrite = storedModel is null ? null : SnapshotBeforeWrite(updatedModel);
-          // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
-          // left untouched is not a changed row (#1342).
-          rowChanged = await SaveModelAndCheckpointAsync(
+          state.ScopeWrite = _resolveScopeWrite(state.LastScope, state.ApplyRead, state.ModelLoadedFromDb, state.ScopeEventScope);
+          state.RowWrite = RowWriteKind.Upsert;
+        } else {
+          state.RowWrite = RowWriteKind.None;
+        }
+  }
+
+  /// <summary>Makes the row write <see cref="_beginRowWriteAsync"/> decided, one row at a time: the per-pair write.</summary>
+  /// <returns>Whether the row was written or purged.</returns>
+  private async Task<bool> _writeRowAsync(ApplyState state, CancellationToken cancellationToken) {
+    var streamId = state.StreamId;
+    var perspectiveName = state.PerspectiveName;
+    if (state.RowWrite == RowWriteKind.Purge) {
+      // Hard delete: record the purge FIRST, then remove the row, a crash between the two leaves a marker
+      // on a live row (harmless), never a missing row a later event could recreate.
+      await _markPurgedAsync(streamId, perspectiveName, state.PurgeEventId, cancellationToken);
+      await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+      _logger.LogDebug(
+          "Model purged for {PerspectiveName} stream {StreamId}",
+          perspectiveName,
+          streamId
+      );
+      return true;
+    }
+    if (state.RowWrite == RowWriteKind.None) {
+      return false;
+    }
+    var updatedModel = state.UpdatedModel!;
+    var hasWrittenUpdate = state.HasWrittenUpdate;
+    var modelLoadedFromDb = state.ModelLoadedFromDb;
+    var processedEvents = state.ProcessedEvents;
+    // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
+    // left untouched is not a changed row (#1342).
+    return await SaveModelAndCheckpointAsync(
               streamId,
               perspectiveName,
               updatedModel,
               hasWrittenUpdate,
-              lastSuccessfulEventId!.Value,
-              lastSuccessfulEventType ?? string.Empty,
-              checkpointCommitSequence,
-              lastSuccessfulEventAt ?? DateTime.UtcNow,
+              state.LastSuccessfulEventId!.Value,
+              state.LastSuccessfulEventType ?? string.Empty,
+              state.CheckpointCommitSequence,
+              state.LastSuccessfulEventAt ?? DateTime.UtcNow,
               modelLoadedFromDb,
               processedEvents,
               cancellationToken,
-              scopeWrite.Scope,
-              scopeWrite.ForceUpdate,
-              rowVersion
+              state.ScopeWrite.Scope,
+              state.ScopeWrite.ForceUpdate,
+              state.RowVersion
           );
+  }
+
+  /// <summary>
+  /// Prepares the row write <see cref="_writeRowAsync"/> would make, for the batch's write sink: the same metadata, row
+  /// start, physical values and Split stripping, handed to the store's preparation instead of its upsert. Null when the
+  /// store cannot prepare it. Called only for a model an Apply produced, which the write guard always admits.
+  /// </summary>
+  private async Task<global::Whizbang.Core.Perspectives.PendingPerspectiveWrite?> _prepareRowWriteAsync(
+      ApplyState state, CancellationToken cancellationToken) {
+    var streamId = state.StreamId;
+    var (metadata, rowStartedAt) = await _rowWriteStartAsync(
+        streamId,
+        state.LastSuccessfulEventId!.Value,
+        state.LastSuccessfulEventType ?? string.Empty,
+        state.CheckpointCommitSequence,
+        state.LastSuccessfulEventAt ?? DateTime.UtcNow,
+        state.ModelLoadedFromDb,
+        state.ProcessedEvents,
+        cancellationToken);
+    using var rowStart = global::Whizbang.Core.Perspectives.PerspectiveRowStart.Begin(streamId, rowStartedAt);
+    return PrepareRowWrite(
+        streamId, state.UpdatedModel!, metadata, state.ScopeWrite.Scope, state.ScopeWrite.ForceUpdate, state.RowVersion);
+  }
+
+  /// <summary>
+  /// What follows the row write: forget a purge a resurrection undid, rewind a batch the ordering guard refused (#1608),
+  /// flush, snapshot, fire the detached post-perspective stage and return the completion. The end of the per-pair path
+  /// and of a completion.
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _finishApplyAsync(
+      ApplyState state, bool rowChanged, CancellationToken cancellationToken) {
+    var streamId = state.StreamId;
+    var perspectiveName = state.PerspectiveName;
+    var lastProcessedEventId = state.LastProcessedEventId;
+    var events = state.Events;
+    var backgroundTasks = state.BackgroundTasks;
+    var collectiveFence = state.CollectiveFence;
+    var eventsProcessed = state.EventsProcessed;
+    var lastSuccessfulEventId = state.LastSuccessfulEventId;
+    var processedEvents = state.ProcessedEvents;
+    var updatedModel = state.UpdatedModel;
+    var hasWrittenUpdate = state.HasWrittenUpdate;
+    var pendingPurge = state.PendingPurge;
+    var purgeEventId = state.PurgeEventId;
+    var purgeEventType = state.PurgeEventType;
+    var snapshotDue = state.SnapshotDue;
+    var snapshotBeforeWrite = state.SnapshotBeforeWrite;
+    var modelAtLastEvent = state.ModelAtLastEvent;
+    state.SnapshotBeforeWrite = null;  // owned here from now on
+    state.ModelAtLastEvent = null;
+    using var foldBeforeWrite = state.FoldBeforeWrite;
+    state.FoldBeforeWrite = null;
+    // Why a rebuild that folded events left the row untouched (#2252)
+    var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
+
+      // Unit of Work: Save model + checkpoint ONCE at end
+      if (eventsProcessed > 0) {
+        if (state.RowWrite == RowWriteKind.Upsert) {
           // Forget the purge only once the resurrected row is written.
-          if (rowChanged && resurrected && startedPurged) {
+          if (rowChanged && state.Resurrected && state.StartedPurged) {
             await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
           }
-          if (!rowChanged && rebuilding) {
-            unchangedReason = _readRefusedRebuildWrite(foldBeforeWrite, updatedModel, storedModel);
+          // A rebuild's write the ordering guard refused, whether made per pair or by the batch write (#2252).
+          if (!rowChanged && state.Rebuilding) {
+            unchangedReason = _readRefusedRebuildWrite(foldBeforeWrite, updatedModel!, state.StoredModel);
           }
           // A live write the ordering guard refused folded this batch onto a row that is already past it: the row
           // holds a later event and lacks these (#1608). Reporting the batch applied would retire its work rows with
           // nothing left pending to repair the row, so the stream is re-folded from its earliest event in the batch
           // instead, exactly as for an event below the row's recorded position (#1347). A rebuild's refusal stands:
           // it already folded the whole stream.
-          if (!rowChanged && !rebuilding && processedEvents.Count > 0) {
+          if (!rowChanged && !state.Rebuilding && processedEvents.Count > 0) {
             snapshotBeforeWrite?.Dispose();
+            modelAtLastEvent?.Dispose();
             if (backgroundTasks.Count > 0) {
               await Task.WhenAll(backgroundTasks);
             }
@@ -1025,11 +1567,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             return await _rewindAndRunCoreAsync(
                 streamId, perspectiveName, earliest.MessageId.Value, earliest.LocalCommitSequence, cancellationToken);
           }
-        } else {
+        } else if (!pendingPurge) {
           // No event produced a model, so there was nothing to write (#2252).
           unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.NoModel;
         }
-        _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);
+        _reportPurgedEventsSkipped(perspectiveName, streamId, state.PurgedEventsSkipped);
 
         // CRITICAL: Explicitly flush all changes to ensure data is committed and queryable
         // PostgresUpsertStrategy.UpsertPerspectiveRowAsync() calls SaveChangesAsync() internally,
@@ -1037,7 +1579,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - saveStartTicks)
+          var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - state.SaveStartTicks)
             * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
           if (saveMs > 50 || eventsProcessed >= 10) {
             _logger.LogDebug(
@@ -1061,7 +1603,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
           // The cadence is the perspective's own (_snapshotCadence); whether this run is due was decided before the write.
           var snapshotRetention = _snapshotCadence().Retention;
-          _eventsSinceLastSnapshot += eventsProcessed;
+          _eventsSinceLastSnapshot.AddOrUpdate(streamId, eventsProcessed, (_, count) => count + eventsProcessed);
           if (snapshotDue) {
             // #1963: the collectives mark this snapshot records, or a deferral when a collective of the row moved across
             // the fence's two reads. A deferred snapshot stays due: the count is not reset, so the next apply takes it.
@@ -1082,7 +1624,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               snapshotBeforeWrite = null; // handed to the store
               await _snapshotStore.PruneOldSnapshotsAsync(
                   streamId, perspectiveName, snapshotRetention, cancellationToken);
-              _eventsSinceLastSnapshot = 0;
+              _eventsSinceLastSnapshot.TryRemove(streamId, out _);
             }
           }
         }
@@ -1160,10 +1702,30 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray(),
         PurgedBy = pendingPurge && purgeEventId.HasValue ? purgeEventType : null
       };
+  }
 
-    } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
-      // A refused write (the row moved) is not a partial failure: nothing was written and the caller re-runs
-      // the whole batch onto the moved row, so it passes straight through.
+  /// <summary>
+  /// The partial-success path of a failed apply: saves the row up to the last event that applied, so the checkpoint
+  /// moves past what was folded. The caller rethrows the failure; a failure of this save is thrown in its place.
+  /// </summary>
+  private async Task _savePartialProgressAsync(ApplyState state, Exception ex, CancellationToken cancellationToken) {
+    var streamId = state.StreamId;
+    var perspectiveName = state.PerspectiveName;
+    var lastProcessedEventId = state.LastProcessedEventId;
+    var lastSuccessfulEventId = state.LastSuccessfulEventId;
+    var eventsProcessed = state.EventsProcessed;
+    var updatedModel = state.UpdatedModel;
+    var hasWrittenUpdate = state.HasWrittenUpdate;
+    var processedEvents = state.ProcessedEvents;
+    var rebuilding = state.Rebuilding;
+    var lastScope = state.LastScope;
+    var applyRead = state.ApplyRead;
+    var modelLoadedFromDb = state.ModelLoadedFromDb;
+    var scopeEventScope = state.ScopeEventScope;
+    var lastSuccessfulEventType = state.LastSuccessfulEventType;
+    var lastSuccessfulEventAt = state.LastSuccessfulEventAt;
+    var rowVersion = state.RowVersion;
+
       // Partial success: save checkpoint up to last successful event
       if (lastSuccessfulEventId != null && lastSuccessfulEventId != lastProcessedEventId) {
         _logger.LogWarning(
@@ -1221,10 +1783,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             streamId
         );
       }
-
-      // Re-throw - let PerspectiveWorker catch and convert to failure
-      throw;
-    }
   }
 
   /// <summary>
@@ -1300,6 +1858,57 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private global::Whizbang.Core.Perspectives.IPerspectivePurgeMarkerStore? _PurgeMarkers =>
       _serviceProvider.GetService<global::Whizbang.Core.Perspectives.IPerspectivePurgeMarkerStore>();
 
+  /// <summary>
+  /// The purge probe of a missing row: false for a stream the batch knows is new, the batch's answer where it has one,
+  /// and otherwise the stream's own query.
+  /// </summary>
+  private async Task<bool> _isPurgedForApplyAsync(
+      Guid streamId, string perspectiveName, global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken) {
+    if (batchState is not null) {
+      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+        return false;
+      }
+      if (_PurgeMarkers is { } markers
+          && await batchState.IsPurgedAsync(markers, streamId, perspectiveName, cancellationToken) is { } batched) {
+        return batched;
+      }
+    }
+    return await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
+  }
+
+  /// <summary>
+  /// The history probe of a missing row of a perspective whose rows can be evicted: false for a stream the batch knows
+  /// is new, the batch's answer where it has one, and otherwise the stream's own query.
+  /// </summary>
+  private async Task<bool> _hasHistoryBeforeAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState, CancellationToken cancellationToken) {
+    if (batchState is not null) {
+      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+        return false;
+      }
+      if (await batchState.HasHistoryBeforeAsync(
+              _eventStore, streamId, perspectiveName, beforeEventId, _handledEventTypes, cancellationToken) is { } batched) {
+        return batched;
+      }
+    }
+    return await _eventStore.HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken);
+  }
+
+  /// <summary>
+  /// The commit sequence the row's write records for its last applied event: the batch's one read for all its pairs
+  /// where it planned this event (#2246), otherwise the event's own read.
+  /// </summary>
+  private async Task<long?> _commitSequenceOfAsync(
+      Guid eventId, global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState, CancellationToken cancellationToken) {
+    if (batchState is not null
+        && await batchState.CommitSequenceOfAsync(_eventStore, eventId, cancellationToken) is { } batched) {
+      return batched.Value;
+    }
+    return await _eventStore.GetCommitSequenceAsync(eventId, cancellationToken);
+  }
+
   private async Task<bool> _isPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) {
     var markers = _PurgeMarkers;
     return markers is not null && await markers.IsPurgedAsync(streamId, perspectiveName, cancellationToken);
@@ -1338,13 +1947,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// Moves the replay frontier (max event id, max local commit sequence) past an envelope.
   /// </summary>
   /// <summary>
-  /// The commit sequence a fold records as its position. A live apply records its last event's; a rebuild records
-  /// the highest among the events it folded (#1352), as the rewind's frontier does. A rebuild folds a stream in
-  /// version order, and where rows were stamped after the fact the last version can carry the lowest commit sequence
-  /// on the stream: recording it would put the row's position below events it already folded, and the store's
-  /// ordering guard refuses a write whose position sits below the stored one, so the corrected row was never written.
-  /// </summary>
-  /// <summary>
   /// Why a rebuild's write was refused (#2252): the fold compared with the row as it was stored, both serialized by the
   /// snapshot serializer. Equal documents mean the read model was already right. A Split class model's fold is the
   /// document taken before the write stripped its promoted fields.
@@ -1359,6 +1961,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return global::Whizbang.Core.Perspectives.PerspectiveRowUnchanged.OfRefusedWrite(foldBeforeWrite ?? foldAfter, storedDocument);
   }
 
+  /// <summary>
+  /// The commit sequence a fold records as its position. A live apply records its last event's; a rebuild records
+  /// the highest among the events it folded (#1352), as the rewind's frontier does. A rebuild folds a stream in
+  /// version order, and where rows were stamped after the fact the last version can carry the lowest commit sequence
+  /// on the stream: recording it would put the row's position below events it already folded, and the store's
+  /// ordering guard refuses a write whose position sits below the stored one, so the corrected row was never written.
+  /// </summary>
   private static long? _recordedCommitSequence(
       long? lastEventsCommitSequence,
       List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
@@ -1440,28 +2049,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       return false;
     }
 
-    // Build metadata that captures the last applied event's identity AND commit_sequence.
-    // The runner reads metadata back on the next run (ReadForApplyAsync, or GetMetadataByStreamIdAsync) to filter
-    // out already-applied events (idempotency across worker crashes between row upsert and
-    // cursor advance). CommitSequence is the load-bearing field for that filter: UUIDv7
-    // event_ids can invert under concurrent emission, so event_id-only comparison silently
-    // drops late-delivered events with smaller event_id but larger commit_sequence (a
-    // production bug). When commit_sequence is available on both sides, the filter prefers it.
-    var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
-      EventId = checkpointEventId.ToString("D"),
-      EventType = checkpointEventType,
-      Timestamp = checkpointEventAt,
-      CommitSequence = checkpointCommitSequence
-    };
-
-    // A row this write may insert is dated at the first event folded into it (#2154), not at the write's own time, which
-    // is the last folded event's and goes to updated_at; or at its stream's recorded start once the stream no longer holds
-    // its first event (#2152, the superseding reaper or a prefix truncate removed it). The event store is asked only when
-    // the row is not known to exist and the fold does not begin with the stream's first event; an update never moves
-    // created_at.
-    // <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
-    var rowStartedAt = await global::Whizbang.Core.Perspectives.PerspectiveRowStart.ResolveAsync(
-        _eventStore, streamId, rowExists, folded, cancellationToken);
+    var (metadata, rowStartedAt) = await _rowWriteStartAsync(
+        streamId, checkpointEventId, checkpointEventType, checkpointCommitSequence, checkpointEventAt, rowExists, folded,
+        cancellationToken);
     using var rowStart = global::Whizbang.Core.Perspectives.PerspectiveRowStart.Begin(streamId, rowStartedAt);
 
     #region UPSERT_CALL
@@ -1488,6 +2078,70 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken
       );
     }
+    #endregion
+  }
+
+  /// <summary>
+  /// What every write of a folded row is stamped with, whichever statement writes it (#2246): the metadata of the last
+  /// applied event, and the time the row started, which an inserted row is dated at.
+  /// </summary>
+  private async Task<(global::Whizbang.Core.Lenses.PerspectiveMetadata Metadata, DateTime? RowStartedAt)> _rowWriteStartAsync(
+      Guid streamId,
+      Guid checkpointEventId,
+      string checkpointEventType,
+      long? checkpointCommitSequence,
+      DateTime checkpointEventAt,
+      bool rowExists,
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
+      CancellationToken cancellationToken) {
+    // Build metadata that captures the last applied event's identity AND commit_sequence.
+    // The runner reads metadata back on the next run (ReadForApplyAsync, or GetMetadataByStreamIdAsync) to filter
+    // out already-applied events (idempotency across worker crashes between row upsert and
+    // cursor advance). CommitSequence is the load-bearing field for that filter: UUIDv7
+    // event_ids can invert under concurrent emission, so event_id-only comparison silently
+    // drops late-delivered events with smaller event_id but larger commit_sequence (a
+    // production bug). When commit_sequence is available on both sides, the filter prefers it.
+    var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
+      EventId = checkpointEventId.ToString("D"),
+      EventType = checkpointEventType,
+      Timestamp = checkpointEventAt,
+      CommitSequence = checkpointCommitSequence
+    };
+
+    // A row this write may insert is dated at the first event folded into it (#2154), not at the write's own time, which
+    // is the last folded event's and goes to updated_at; or at its stream's recorded start once the stream no longer holds
+    // its first event (#2152, the superseding reaper or a prefix truncate removed it). The event store is asked only when
+    // the row is not known to exist and the fold does not begin with the stream's first event; an update never moves
+    // created_at.
+    // <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+    var rowStartedAt = await global::Whizbang.Core.Perspectives.PerspectiveRowStart.ResolveAsync(
+        _eventStore, streamId, rowExists, folded, cancellationToken);
+    return (metadata, rowStartedAt);
+  }
+
+  /// <summary>
+  /// Prepares the write <see cref="SaveModelAndCheckpointAsync"/> makes, for a set-based write (#2246): the same
+  /// physical values and Split stripping, handed to the store's preparation. Called inside the row start
+  /// <see cref="_rowWriteStartAsync"/> resolved, as the upsert is.
+  /// </summary>
+  private global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? PrepareRowWrite(
+      Guid streamId,
+      __MODEL_TYPE_NAME__ model,
+      global::Whizbang.Core.Lenses.PerspectiveMetadata metadata,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      global::Whizbang.Core.Perspectives.PerspectiveRowVersion expectedVersion) {
+    #region PREPARE_WRITE_CALL
+    // Prepare the row write the upsert would make; a null scope is written as an empty one that forces no update.
+    return _perspectiveStore.PrepareWrite(
+        streamId,
+        model,
+        scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope(),
+        scope != null && forceUpdateScope,
+        metadata,
+        expectedVersion,
+        null
+    );
     #endregion
   }
 
@@ -2260,7 +2914,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         snapshotBeforeWrite = null; // handed to the store
         await _snapshotStore.PruneOldSnapshotsAsync(
             streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
-        _eventsSinceLastSnapshot = 0;
+        _eventsSinceLastSnapshot.TryRemove(streamId, out _);
       }
       snapshotBeforeWrite?.Dispose(); // no snapshot taken
     }
@@ -2504,11 +3158,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// exactly the ones before its event. The row's tenant is its events', as a replay of the row takes it.
   /// </summary>
   private async Task<CollectiveFenceRead?> _readCollectiveFenceBeforeLiveReadAsync(
+      Guid streamId,
       IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
       CancellationToken cancellationToken) {
     var snapshotMayBeDue = events.Count > 0
         && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-        && _eventsSinceLastSnapshot + events.Count >= _snapshotCadence().Threshold;
+        && _eventsSinceSnapshot(streamId) + events.Count >= _snapshotCadence().Threshold;
     if (!snapshotMayBeDue
         || global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
         || !_collectiveFenceApplies()) {

@@ -12,7 +12,7 @@ namespace Whizbang.Generators.Tests.Utilities;
 
 /// <summary>
 /// The naming routes the generators take through TypeNameUtilities (#2267): every read of a type, namespace or
-/// assembly symbol's name goes through these, so WHIZ606 can hold everywhere else.
+/// assembly symbol's name goes through these, so WHIZ607 can hold everywhere else.
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators.Shared/Utilities/TypeNameUtilities.cs</code-under-test>
 public class TypeNameUtilitiesNamingTests {

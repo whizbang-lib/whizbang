@@ -36,6 +36,37 @@ public interface IPerspectiveRunner {
   );
 
   /// <summary>
+  /// Reads the events <see cref="RunAsync"/> would apply: the stream's events after
+  /// <paramref name="lastProcessedEventId"/>, of the types this perspective folds. <see cref="RunAsync"/> is exactly this
+  /// read followed by <see cref="RunWithEventsAsync"/>, so a set-based batch reads a claimed pair's events here and
+  /// prepares them (#2246).
+  /// </summary>
+  /// <remarks>The default returns null: a hand-written runner is run with <see cref="RunAsync"/> on the per-pair path.</remarks>
+  /// <param name="streamId">Stream ID to read</param>
+  /// <param name="lastProcessedEventId">Last event ID processed (null = from the beginning)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The events, in the order <see cref="RunAsync"/> reads them, or null when the runner does not expose its read.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:ReadEventsAsync_Default_ReturnsNullAsync</tests>
+  Task<IReadOnlyList<MessageEnvelope<IEvent>>?> ReadEventsAsync(
+    Guid streamId,
+    Guid? lastProcessedEventId,
+    CancellationToken cancellationToken = default
+  ) => Task.FromResult<IReadOnlyList<MessageEnvelope<IEvent>>?>(null);
+
+  /// <summary>
+  /// Selects, from a stream's events read once for every perspective of a set-based batch, the ones
+  /// <see cref="ReadEventsAsync"/> would have read: the events of the types this perspective folds, in the order they
+  /// came. A claimed batch reads its pairs' events with one read and hands each runner its stream's (#2246).
+  /// </summary>
+  /// <remarks>The default returns null, and the pair reads its own events with <see cref="ReadEventsAsync"/>.</remarks>
+  /// <param name="streamEvents">The stream's events after the pair's cursor, of every type the batch read.</param>
+  /// <returns>The events this perspective applies, or null when the runner does not select from a shared read.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:SelectEvents_Default_ReturnsNullAsync</tests>
+  IReadOnlyList<MessageEnvelope<IEvent>>? SelectEvents(IReadOnlyList<MessageEnvelope<IEvent>> streamEvents) => null;
+
+  /// <summary>
   /// Processes perspective checkpoint using pre-fetched events (drain mode optimization).
   /// Same as RunAsync but skips ReadPolymorphicAsync — uses supplied events directly.
   /// Eliminates redundant DB reads when events are already fetched by get_stream_events.
@@ -59,6 +90,103 @@ public interface IPerspectiveRunner {
     Status = PerspectiveProcessingStatus.None,
     RowChanged = false,  // the default implementation runs nothing, so it writes nothing
   });
+
+  /// <summary>
+  /// The first half of a set-based write: reads the row, filters and folds the batch exactly as
+  /// <see cref="RunWithEventsAsync"/> does, and returns the write for the batch's write sink instead of writing it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The caller holds the pair's apply lock from before this call until <see cref="CompleteAsync"/> returns
+  /// (<see cref="PerspectiveApplyLockSet"/>); this method takes none, so a batch's locks are held across its write.
+  /// Every prepared pair is completed with <see cref="CompleteAsync"/>, whether or not it carries a write.
+  /// </para>
+  /// <para>
+  /// A pair the set-based write does not take is returned with a <see cref="PreparedPerspectiveApply.PerPairReason"/>,
+  /// and <see cref="CompleteAsync"/> runs it through the per-pair path. The default implementation returns every pair
+  /// that way (<see cref="PerspectivePerPairReason.RunnerDoesNotPrepare"/>), so a hand-written runner keeps working.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamId">Stream ID to process</param>
+  /// <param name="perspectiveName">Name of the perspective to run</param>
+  /// <param name="lastProcessedEventId">Last event ID processed (null = start from beginning)</param>
+  /// <param name="events">The batch's events (already deserialized)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The prepared pair.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:PrepareAsync_Default_HandsThePairToThePerPairPathAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  Task<PreparedPerspectiveApply> PrepareAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid? lastProcessedEventId,
+    IReadOnlyList<MessageEnvelope<IEvent>> events,
+    CancellationToken cancellationToken = default
+  ) => PrepareAsync(streamId, perspectiveName, lastProcessedEventId, events, batchState: null, cancellationToken);
+
+  /// <summary>
+  /// <see cref="PrepareAsync(Guid, string, Guid?, IReadOnlyList{MessageEnvelope{IEvent}}, CancellationToken)"/>, reading
+  /// the row from the batch's state source (<see cref="IPerspectiveStateSource"/>) where it can answer: no read at all
+  /// for a stream the batch knows is new, and the batch's one read per perspective table for the rest.
+  /// </summary>
+  /// <param name="streamId">Stream ID to process</param>
+  /// <param name="perspectiveName">Name of the perspective to run</param>
+  /// <param name="lastProcessedEventId">Last event ID processed (null = start from beginning)</param>
+  /// <param name="events">The batch's events (already deserialized)</param>
+  /// <param name="batchState">The batch's reads, or null to read the row per stream.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The prepared pair.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:PrepareAsync_Default_HandsThePairToThePerPairPathAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
+  Task<PreparedPerspectiveApply> PrepareAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid? lastProcessedEventId,
+    IReadOnlyList<MessageEnvelope<IEvent>> events,
+    IPerspectiveBatchState? batchState,
+    CancellationToken cancellationToken = default
+  ) => Task.FromResult(PreparedPerspectiveApply.PerPair(
+    streamId, perspectiveName, lastProcessedEventId, events, PerspectivePerPairReason.RunnerDoesNotPrepare));
+
+  /// <summary>
+  /// The second half of a set-based write: given the outcome of the prepared write, does what
+  /// <see cref="RunWithEventsAsync"/> does after its write, and returns the same completion.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="PerspectiveWriteStatus.Written"/> takes the snapshot, fires the detached post-perspective stage and
+  /// completes the pair. <see cref="PerspectiveWriteStatus.Refused"/> rewinds the stream, as a write the ordering guard
+  /// refused does on the per-pair path (#1608). <see cref="PerspectiveWriteStatus.Conflict"/> runs the pair again
+  /// through the per-pair path, with its retries on a moved row. <see cref="PerspectiveWriteStatus.Failed"/> is handled
+  /// as a write that threw on the per-pair path, and the error is thrown to the caller.
+  /// </para>
+  /// <para>
+  /// <paramref name="outcome"/> is required for a pair that carries a <see cref="PreparedPerspectiveApply.Write"/>
+  /// and ignored otherwise. The caller still holds the pair's apply lock. The default implementation runs a per-pair
+  /// pair through <see cref="RunWithEventsAsync"/>.
+  /// </para>
+  /// </remarks>
+  /// <param name="prepared">The pair <see cref="PrepareAsync"/> returned, from this runner.</param>
+  /// <param name="outcome">The outcome of its write, or null when it carries none.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The pair's cursor completion.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:CompleteAsync_Default_RunsAPerPairPairThroughRunWithEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  Task<PerspectiveCursorCompletion> CompleteAsync(
+    PreparedPerspectiveApply prepared,
+    PerspectiveWriteOutcome? outcome,
+    CancellationToken cancellationToken = default
+  ) {
+    ArgumentNullException.ThrowIfNull(prepared);
+    if (!prepared.RunsPerPair) {
+      throw new ArgumentException(
+        $"{GetType().Name} prepares no writes, so it completes only a pair it handed to the per-pair path.", nameof(prepared));
+    }
+    return RunWithEventsAsync(
+      prepared.StreamId, prepared.PerspectiveName, prepared.LastProcessedEventId, prepared.Events, cancellationToken);
+  }
 
   /// <summary>
   /// Replays a physical stream during a perspective REBUILD, honouring event upcasters that

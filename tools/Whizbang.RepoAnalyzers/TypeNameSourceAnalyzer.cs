@@ -12,14 +12,14 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Whizbang.RepoAnalyzers;
 
 /// <summary>
-/// WHIZ606 and WHIZ607: a type's name is produced or resolved only by the shared naming code (#2267).
+/// WHIZ607 and WHIZ608: a type's name is produced or resolved only by the shared naming code (#2267).
 /// </summary>
 /// <remarks>
 /// <para>
 /// A type name is a key: a perspective's table, a message's route, a composite child's id, a priority rule. Every
 /// place that renders one its own way is a place two services, or two builds of one assembly, can disagree, and #2266
 /// was one. So the names come from one place: <c>TypeNameFormatter</c> and <c>EventTypeMatchingHelper</c> at runtime,
-/// <c>TypeNameUtilities</c> in the generators, each marked <c>[TypeNameAuthority]</c>. Anywhere else, WHIZ606 reports:
+/// <c>TypeNameUtilities</c> in the generators, each marked <c>[TypeNameAuthority]</c>. Anywhere else, WHIZ607 reports:
 /// </para>
 /// <list type="bullet">
 /// <item><description>runtime: <c>Name</c>, <c>FullName</c>, <c>Namespace</c>, <c>AssemblyQualifiedName</c> or
@@ -33,20 +33,20 @@ namespace Whizbang.RepoAnalyzers;
 /// <para>
 /// A member's name read through a member receiver (<c>MethodInfo.Name</c>, <c>IMethodSymbol.Name</c>) is not a type
 /// name and is not reported. The one other way out is <c>[SuppressMessage]</c> with a Justification that says why;
-/// WHIZ607 reports one with no justification, and any <c>#pragma warning disable WHIZ606</c>, which cannot carry one.
+/// WHIZ608 reports one with no justification, and any <c>#pragma warning disable WHIZ607</c>, which cannot carry one.
 /// </para>
 /// </remarks>
 /// <tests>tests/Whizbang.RepoAnalyzers.Tests/TypeNameSourceAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class TypeNameSourceAnalyzer : DiagnosticAnalyzer {
   private const string AUTHORITY_ATTRIBUTE = "TypeNameAuthorityAttribute";
-  private const string RULE_ID = "WHIZ606";
+  private const string RULE_ID = "WHIZ607";
 
-  /// <summary>WHIZ606: Error. A type's name is read or resolved outside the shared naming code.</summary>
-  /// <docs>operations/diagnostics/whiz606</docs>
+  /// <summary>WHIZ607: Error. A type's name is read or resolved outside the shared naming code.</summary>
+  /// <docs>operations/diagnostics/whiz607</docs>
   /// <tests>tests/Whizbang.RepoAnalyzers.Tests/TypeNameSourceAnalyzerTests.cs:Runtime_ANameReadOffATypeOrAssembly_IsReportedAsync</tests>
   private static readonly DiagnosticDescriptor _rule = new(
-    id: "WHIZ606",
+    id: "WHIZ607",
     title: "A type name is read outside the shared naming code",
     messageFormat: "'{0}' reads or resolves a type name outside the shared naming code; use TypeNameFormatter or EventTypeMatchingHelper (runtime) or TypeNameUtilities (generators), or suppress it with [SuppressMessage] and a Justification",
     category: "Naming",
@@ -54,13 +54,13 @@ public sealed class TypeNameSourceAnalyzer : DiagnosticAnalyzer {
     isEnabledByDefault: true,
     description: "Type names are keys; one rendering lives in the shared naming code, so two services or two builds never disagree (#2266, #2267).");
 
-  /// <summary>WHIZ607: Error. A suppression of WHIZ606 does not say why.</summary>
-  /// <docs>operations/diagnostics/whiz607</docs>
+  /// <summary>WHIZ608: Error. A suppression of WHIZ607 does not say why.</summary>
+  /// <docs>operations/diagnostics/whiz608</docs>
   /// <tests>tests/Whizbang.RepoAnalyzers.Tests/TypeNameSourceAnalyzerTests.cs:Suppression_WithoutAJustification_IsReportedAsync</tests>
   private static readonly DiagnosticDescriptor _unjustified = new(
-    id: "WHIZ607",
+    id: "WHIZ608",
     title: "A type-naming exception does not say why",
-    messageFormat: "{0} suppresses WHIZ606 without saying why; use [SuppressMessage] with a non-empty Justification",
+    messageFormat: "{0} suppresses WHIZ607 without saying why; use [SuppressMessage] with a non-empty Justification",
     category: "Naming",
     defaultSeverity: DiagnosticSeverity.Error,
     isEnabledByDefault: true,

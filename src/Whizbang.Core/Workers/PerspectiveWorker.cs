@@ -192,6 +192,16 @@ public partial class PerspectiveWorker(
     return Math.Max(1, Math.Min(requested, perConsumer));
   }
 
+  /// <summary>The configured drain width as <see cref="ClampWidthToGate"/> caps it, with its inputs, for the startup settings report.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DeriveWidth(int consumers, int width, int gateMaxConcurrent) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:Workers:Perspective:MaxConcurrentPerspectives",
+      ClampWidthToGate(consumers, width, gateMaxConcurrent),
+      "per consumer, at most half the gate split across the drain consumers",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxConcurrentPerspectives", width),
+      Whizbang.Core.Configuration.SettingInput.Of("MaxConcurrentDrainConsumers", consumers),
+      Whizbang.Core.Configuration.SettingInput.Of("GateMaxConcurrent", gateMaxConcurrent));
+
   private int _effectiveWidth() {
     var width = Math.Max(1, _governor.CurrentWidth);
     if (_gate is null || _gate.MaxConcurrent <= 0) {
@@ -425,7 +435,8 @@ public partial class PerspectiveWorker(
     ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> BatchProcessedEvents,
     ConcurrentDictionary<Guid, bool> BatchIsNewByEventId,
     ILifecycleCoordinator? LifecycleCoordinator,
-    ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> AppliedGroups);
+    ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> AppliedGroups,
+    IReadOnlySet<Guid> CursorsReadFor);
 
   // Metrics tracking
   private int _consecutiveEmptyPolls;
@@ -1392,186 +1403,38 @@ public partial class PerspectiveWorker(
     // funnel through the same per-stream channel + worker. Cross-stream parallelism is
     // preserved exactly as today (different streams → different per-stream workers); only
     // same-stream concurrency is serialized.
-    await Parallel.ForEachAsync(
-      groupedWork,
-      new ParallelOptions {
-        MaxDegreeOfParallelism = _effectiveWidth(),
-        CancellationToken = cancellationToken
-      },
-      async (group, ct) => {
-        var streamId = group.Key.StreamId;
-        var perspectiveName = group.Key.PerspectiveName;
+    var claimedBatch = new ClaimedBatchContext(batchActivity, effectiveParent, batchProcessedEvents, batchIsNewByEventId);
+    if (groupedWork.Exists(g => _writeModeOf(g.Key.PerspectiveName) == PerspectiveWriteMode.SetBased)) {
+      // #2246: the batch's set-based pairs are prepared together, written with one statement per table and shape, and
+      // completed; every other pair runs the per-pair path inside the same batch.
+      await _processClaimedGroupsSetBasedAsync(groupedWork, claimedBatch, cancellationToken).ConfigureAwait(false);
+    } else {
+      await Parallel.ForEachAsync(
+        groupedWork,
+        new ParallelOptions {
+          MaxDegreeOfParallelism = _effectiveWidth(),
+          CancellationToken = cancellationToken
+        },
+        async (group, ct) => {
+          var streamId = group.Key.StreamId;
+          var perspectiveName = group.Key.PerspectiveName;
 
-        // Intra-pod stream-affinity gate — serializes all perspective application for
-        // this stream across consumer loops AND across batches within the same pod.
-        // wh_active_streams pins streams to a single pod cross-pod; this gate closes
-        // the same-pod hole that caused a production strand race. See
-        // plans/perspective-worker-stream-affinity.md.
-        _ensureCursorCacheEvictionSubscribed();
-        var gateEntry = _getStreamAffinityGate(streamId, perspectiveName);
-        await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
-        _markAffinityHeld(gateEntry, "standard");
-        try {
-          await using var groupScope = _scopeFactory.CreateAsyncScope();
-          var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-
-          // Collective-event sink: a collective event is routed (migration 061) to the fixed
-          // __collective__ perspective, not a per-stream runner. Dispatch it via ICollectiveDispatcher
-          // and skip the normal runner path entirely.
-          if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
-            // The leased group IS the set of __collective__ work rows for this stream; their WorkIds
-            // (event_work_id) are what the sink must complete on success so the rows are deleted.
-            var sinkWorkIds = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToArray();
-            _markAffinityPhase(streamId, perspectiveName, "collective");
-            await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
-            return;
-          }
-
-          var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
-          var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
-
-          _markAffinityPhase(streamId, perspectiveName, "resolve");
-          var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
-            await _resolveDependenciesAndLoadEventsAsync(
-              groupScope, groupWorkCoordinator, groupReceptorInvoker, streamId, perspectiveName,
-              batchActivity, effectiveParent, ct);
-
-          if (runner is null) {
-            return;
-          }
-
-          var lastProcessedEventId = checkpoint?.LastEventId;
-          var enablePerspectiveSpans = _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives);
-          using var perspectiveActivity = enablePerspectiveSpans
-            ? WhizbangActivitySource.Tracing.StartActivity(
-                $"Perspective {perspectiveName}",
-                ActivityKind.Internal,
-                parentContext: perspectiveParentContext)
-            : null;
-          _tagPerspectiveActivity(perspectiveActivity, perspectiveName, streamId, upcomingEvents, perspectiveParentContext);
-
-          var enableLifecycleSpans = _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Lifecycle);
-          var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
-
+          // Intra-pod stream-affinity gate, serializes all perspective application for
+          // this stream across consumer loops AND across batches within the same pod.
+          // wh_active_streams pins streams to a single pod cross-pod; this gate closes
+          // the same-pod hole that caused a production strand race. See
+          // plans/perspective-worker-stream-affinity.md.
+          _ensureCursorCacheEvictionSubscribed();
+          var gateEntry = _getStreamAffinityGate(streamId, perspectiveName);
+          await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
+          _markAffinityHeld(gateEntry, "standard");
           try {
-            _markAffinityPhase(streamId, perspectiveName, "pre-lifecycle");
-            await _invokePrePerspectiveLifecycleAsync(
-              upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
-              streamCtx, runner, ct);
-
-            _markAffinityPhase(streamId, perspectiveName, "apply");
-            var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
-              group, runner, checkpoint, streamCtx, enablePerspectiveSpans, ct);
-
-            if (rewindLockSkipped) {
-              return;
-            }
-            if (result.Status == PerspectiveProcessingStatus.Completed) {
-              _storedFormFailures.Recovered(perspectiveName, streamId);
-            }
-
-            _markAffinityPhase(streamId, perspectiveName, "load-processed");
-            var processedEvents = await _loadAndLogProcessedEventsAsync(
-              groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
-              lastProcessedEventId, ct);
-
-            // Rewind path: the range-based load above covers events above the pre-rewind
-            // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
-            // that accumulated during the rewind window) live in the perspective work queue —
-            // IPerspectiveReplayReader is the authoritative source for that "is_new" set.
-            // When registered, we use it to pull every pending event the rewind should fire
-            // handlers for. When not registered, we fall back to the narrow trigger-only
-            // lookup so existing deployments keep working.
-            if (processingMode == ProcessingMode.Replay) {
-              // Replay is returned only for a checkpoint that carries a rewind trigger
-              // (_executePerspectiveRunnerAsync).
-              var triggerId = checkpoint!.RewindTriggerEventId!.Value;
-              var replayReader = groupScope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveReplayReader>();
-              if (replayReader is not null && _eventTypeProvider.IsAvailable) {
-                var eventTypes = _eventTypeProvider.GetEventTypes();
-                var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
-                await foreach (var annotated in replayReader.ReadReplayEventsAsync(
-                    streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct)) {
-                  if (annotated.IsNew && seen.Add(annotated.Envelope.MessageId.Value)) {
-                    processedEvents.Insert(0, annotated.Envelope);
-                  }
-                }
-              } else if (eventStore is not null
-                         && _eventTypeProvider.IsAvailable
-                         && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
-                var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
-                  streamId,
-                  afterEventId: null,
-                  upToEventId: triggerId,
-                  _eventTypeProvider.GetEventTypes(),
-                  ct);
-                var triggerEnvelope = envelopesUpToTrigger
-                  .FirstOrDefault(e => e.MessageId.Value == triggerId);
-                if (triggerEnvelope is not null) {
-                  processedEvents.Insert(0, triggerEnvelope);
-                }
-              }
-            }
-
-            foreach (var envelope in processedEvents) {
-              var id = envelope.MessageId.Value;
-              batchProcessedEvents.TryAdd(id, (envelope, streamId));
-              batchIsNewByEventId.AddOrUpdate(id, true, (_, _) => true);
-            }
-
-            _markAffinityPhase(streamId, perspectiveName, "report");
-            await _reportCompletionAndSignalSyncAsync(
-              result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
-            _markAffinityPhase(streamId, perspectiveName, "post-lifecycle");
-            await _invokePostPerspectiveLifecycleAsync(
-              processedEvents, groupReceptorInvoker, streamCtx, result,
-              new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode), ct);
-            _bufferCompletionsAndUpdateCache(group, processedEvents, groupLifecycleCoordinator, perspectiveName);
-
-            if (processedEvents.Count > 0) {
-              OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
-                PerspectiveName = perspectiveName,
-                StreamId = streamId,
-                EventCount = processedEvents.Count,
-                EventIds = processedEvents.ConvertAll(e => e.MessageId.Value)
-              });
-            }
-            _metrics?.StreamsUpdated.Add(1);
-            if (processedEvents.Count > 0) {
-              _metrics?.EventsProcessed.Add(processedEvents.Count);
-            }
-          } catch (Exception ex) when (ex is not OperationCanceledException) {
-            // Contained here, never rethrown. This handler is the group's whole failure treatment:
-            // the failure is recorded, the group's rows are parked and the cursor failure is
-            // reported. Letting it out as well made the fan-out cancel its token and stop taking
-            // groups, so every sibling group in the batch that had not yet passed its first
-            // cancellable wait (the affinity gate above) was dropped without running, and the
-            // successful groups' PostLifecycle was skipped with the rest of the batch. One poison
-            // perspective starved every other perspective that shared its batch (issue #993).
-            var leasedRows = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToList();
-            var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
-            if (storedForm is null) {
-              LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
-              await _parkLeasedRowsAsync(leasedRows, ex.Message, MessageFailureReason.Unknown, ct);
-            }
-            _metrics?.Errors.Add(1);
-            if (upcomingEvents is { Count: > 0 }) {
-              var failedEventIds = upcomingEvents.ConvertAll(e => e.MessageId.Value);
-              _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)failedEventIds, perspectiveName);
-            }
-            var failure = new PerspectiveCursorFailure {
-              StreamId = streamId,
-              PerspectiveName = perspectiveName,
-              LastEventId = Guid.Empty,
-              Status = PerspectiveProcessingStatus.Failed,
-              Error = storedForm ?? ex.Message
-            };
-            await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
+            await _runClaimedGroupAsync(claimedBatch, group, ct).ConfigureAwait(false);
+          } finally {
+            _releaseStreamAffinityGate(streamId, perspectiveName, gateEntry, abandoned: false);
           }
-        } finally {
-          _releaseStreamAffinityGate(streamId, perspectiveName, gateEntry, abandoned: false);
-        }
-      });
+        });
+    }
 
     if (!batchProcessedEvents.IsEmpty) {
       var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
@@ -2023,10 +1886,16 @@ public partial class PerspectiveWorker(
     var typeNameCache = _buildDrainModeTypeNameCache(typedEvents);
     var eventsByStream = _groupAndDedupeDrainModeEventsByStream(typedEvents, rawByEventId);
 
-    await _prefetchMissingDrainModeCursorsAsync(scope, eventsByStream.Keys, cancellationToken);
+    var cursorsReadFor = await _prefetchMissingDrainModeCursorsAsync(scope, eventsByStream.Keys, cancellationToken);
 
     var drainBatchContext = new DrainBatchContext(
-      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups);
+      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups, cursorsReadFor);
+    if (eventsByStream.Any(stream => _collectDrainModePerspectiveNames(stream.Value, typeNameCache)
+          .Any(name => _writeModeOf(name) == PerspectiveWriteMode.SetBased))) {
+      // #2246: the first lap of every stream is applied as one set-based batch; later laps run per pair.
+      await _processDrainModeStreamsSetBasedAsync(scope, workCoordinator, eventsByStream, drainBatchContext, cancellationToken).ConfigureAwait(false);
+      return;
+    }
     await Parallel.ForEachAsync(
       eventsByStream,
       new ParallelOptions {
@@ -2418,21 +2287,28 @@ public partial class PerspectiveWorker(
         g => g.DistinctBy(e => e.MessageId.Value).OrderByMessageId().ToList());
   }
 
-  /// <summary>Batch-fetches cursors for any streams not already in the local cache.</summary>
-  private async Task _prefetchMissingDrainModeCursorsAsync(
+  /// <summary>
+  /// Batch-fetches cursors for any streams not already in the local cache. Returns the streams it read: a pair of one of
+  /// them that the read left out of the cache has no cursor, so its own read can be skipped (#2246).
+  /// </summary>
+  private async Task<IReadOnlySet<Guid>> _prefetchMissingDrainModeCursorsAsync(
       AsyncServiceScope scope,
       IEnumerable<Guid> streamIds,
       CancellationToken cancellationToken) {
     var cursorsNotCached = streamIds.Where(sid => !_cursorCache.HasStream(sid)).ToArray();
     if (cursorsNotCached.Length == 0) {
-      return;
+      return _noStreams;
     }
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var batchCursors = await workCoordinator.GetPerspectiveCursorsBatchAsync(cursorsNotCached, cancellationToken);
     foreach (var cursor in batchCursors) {
       _hydrateCursorCacheEntry(_cursorCache, cursor);
     }
+    // Only a coordinator that reads the cursors makes a pair it left out one with no cursor.
+    return workCoordinator.ReadsCursorsInBatches ? cursorsNotCached.ToHashSet() : _noStreams;
   }
+
+  private static readonly IReadOnlySet<Guid> _noStreams = new HashSet<Guid>();
 
   /// <summary>
   /// Slice 26.13 — hydrates both halves of the cursor cache from a single
@@ -2463,7 +2339,10 @@ public partial class PerspectiveWorker(
       Guid streamId,
       List<MessageEnvelope<IEvent>> streamEvents,
       DrainBatchContext batchContext,
-      CancellationToken ct) {
+      CancellationToken ct,
+      bool firstLapApplied = false) {
+    // firstLapApplied: a set-based batch already applied the first lap of this stream with the rest of its batch
+    // (#2246); the drain continues from its refetch, exactly as it would after a first lap of its own.
     // scope + workCoordinator come from the parent _processDrainModeStreamsAsync; they were
     // used SAFELY there because the initial fetch happens BEFORE Parallel.ForEachAsync fans
     // out. Inside this method we run concurrently with up to MaxConcurrentPerspectives peers
@@ -2494,48 +2373,8 @@ public partial class PerspectiveWorker(
       var currentContext = batchContext;
       while (iter < _options.DrainLoopMaxIterations) {
         iter++;
-        var perspectiveNames = _collectDrainModePerspectiveNames(currentEvents, currentContext.TypeNameCache);
-        _registerDrainModeLifecycleTracking(currentEvents, currentContext.TypeNameCache, streamId, currentContext.LifecycleCoordinator);
-
-        foreach (var perspectiveName in perspectiveNames) {
-          // The __collective__ sink has no registered IPerspectiveFor, so it can't be matched via
-          // _perspectivesPerEventType — select the collective events directly. _processCollectiveSinkAsync
-          // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
-          var filteredEvents = perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
-              ? currentEvents.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
-              : [.. currentEvents
-                  .Where(e => _perspectivesFor(currentContext.TypeNameCache, e.Payload).Contains(perspectiveName))
-                  .OrderByMessageId()];
-
-          if (filteredEvents.Count == 0) {
-            continue;
-          }
-          // Slice 30 defensive: an OCE bubbling out of the drain-mode perspective method
-          // — for example shutdown cancellation with both ct + lease.Token canceled so its
-          // own catch filter does not match — must not abort the loop for other perspectives
-          // on this stream. The single perspective's lease-handle catch already routes
-          // failure-mode OCEs; anything that bubbles is either expected shutdown propagation
-          // or an unhandled edge case, neither of which should poison sibling perspectives.
-          try {
-            // Intra-pod stream-affinity gate — serialize apply for this (stream, perspective) across
-            // the parallel consumer loops AND against the standard path, closing the same-pod
-            // double-apply window the standard path already gated. See WithStreamAffinityGateAsync.
-            var pName = perspectiveName;
-            var pEvents = filteredEvents;
-            var pContext = currentContext;
-            await WithStreamAffinityGateAsync(streamId, pName, keepGateHeldUntil =>
-              _runDrainModePerspectiveAsync(streamId, pName, pEvents, pContext, keepGateHeldUntil, ct), ct);
-          } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-            // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.
-            throw;
-          } catch (OperationCanceledException ex) {
-            // Lease-handle OCE that wasn't caught by _runDrainModePerspectiveAsync's filter.
-            // Log + continue with next perspective; the row's lease will expire and
-            // claim_orphaned will re-issue.
-#pragma warning disable CA1848
-            _logger.LogWarning(ex, "Drain mode: unhandled OCE from {Perspective} on stream {StreamId} — skipping to next perspective", perspectiveName, streamId);
-#pragma warning restore CA1848
-          }
+        if (iter > 1 || !firstLapApplied) {
+          await _drainLapAsync(streamId, currentEvents, currentContext, ct).ConfigureAwait(false);
         }
 
         // Slice 30 — refetch gate. Skip the refetch SQL roundtrip when this iteration only
@@ -2612,7 +2451,9 @@ public partial class PerspectiveWorker(
       sharedContext.BatchProcessedEvents,
       sharedContext.BatchIsNewByEventId,
       sharedContext.LifecycleCoordinator,
-      sharedContext.AppliedGroups);
+      sharedContext.AppliedGroups,
+      // A refetch lap reads its cursors itself: the batch's read is older than the lap before it.
+      _noStreams);
     return (eventsForStream, nextContext);
   }
 
@@ -2685,351 +2526,6 @@ public partial class PerspectiveWorker(
       if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
           && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var expected)) {
         lifecycleCoordinator.ExpectPerspectiveCompletions(envelope.MessageId.Value, expected);
-      }
-    }
-  }
-
-  /// <summary>
-  /// Runs a single perspective's RunWithEventsAsync for a stream, reports completion/failure,
-  /// and flushes the supporting trackers/signalers/metrics. Keeps the pre-report and post-report
-  /// completed-only blocks separate to preserve the observable ordering of the original monolith.
-  /// </summary>
-  /// <param name="keepGateHeldUntil">Hands the affinity gate an apply the lease executor stopped waiting
-  /// for while it is still running, so the gate stays held until that apply ends.</param>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single-perspective dispatch handles cooldown filtering + cursor inversion rewind + forward apply + failure routing + completion flush enqueue in one site. Splitting risks reordering the cache-mark / completion-enqueue / lifecycle-signal sequence; the comment block ahead of each section already documents the rationale.")]
-  private async Task _runDrainModePerspectiveAsync(
-      Guid streamId,
-      string perspectiveName,
-      List<MessageEnvelope<IEvent>> filteredEvents,
-      DrainBatchContext batchContext,
-      Action<Task> keepGateHeldUntil,
-      CancellationToken ct) {
-    var groupScope = _scopeFactory.CreateAsyncScope();
-    // Disposes the scope when the group ends, unless an apply the lease executor abandoned is still
-    // running on it: that apply's runner, coordinator and DbContext (with a command possibly in flight)
-    // live in this scope, so it is then disposed after the apply ends (#1382).
-    await using var groupScopeLifetime = new DrainGroupScopeLifetime(groupScope, _logger, streamId, perspectiveName);
-    var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    _markAffinityPhase(streamId, perspectiveName, "resolve");
-
-    // Collective-event sink (drain path twin of the channel-path guard): dispatch via
-    // ICollectiveDispatcher and skip the per-stream runner. See _processCollectiveSinkAsync.
-    if (perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME) {
-      // Resolve the sink rows' event_work_ids from this drain batch's raw rows so the sink can complete
-      // (DELETE) them on success — without it the row loops forever (a production re-dispatch death spiral).
-      var sinkWorkIds = filteredEvents
-        .SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
-        .Where(raw => string.Equals(raw.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal))
-        .Select(raw => raw.EventWorkId)
-        .Where(id => id != Guid.Empty)
-        .Distinct()
-        .ToArray();
-      _markAffinityPhase(streamId, perspectiveName, "collective");
-      await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
-      batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
-      return;
-    }
-
-    var registry = groupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
-    var runner = registry?.GetRunner(perspectiveName, groupScope.ServiceProvider);
-
-    if (runner is null) {
-      return;
-    }
-
-    // Cold-cache fix: when the cursor cache is cold (process start,
-    // post-rewind invalidate, eviction), TryGet returns false and the
-    // inversion detector below sees null cursors. Late events would then slip
-    // past detection into the runner's forward-apply path, where the runner's
-    // own idempotency filter (which DOES see the persisted metadata.EventId)
-    // silently drops them — the "5 lost events, 0 rewinds" symptom seen in a consumer deployment.
-    //
-    // Cold-cache fallback: read persisted wh_perspective_cursors via the
-    // already-scoped IWorkCoordinator and warm the cache. Subsequent
-    // in-process readers (incl. PerspectiveCursorCache.TryGet callers
-    // elsewhere) now see the same truth source the runner filter uses.
-    // Contract is also locked at PerspectiveCursorResolver for any other
-    // component that needs the same cold-fallback semantics.
-    var eventIdInCache = _cursorCache.TryGet(streamId, perspectiveName, out var cachedEventId);
-    var commitSeqInCache = _cursorCache.TryGetCommitSequence(streamId, perspectiveName, out var cachedCommitSeq);
-
-    Guid? lastProcessedEventId;
-    long? lastProcessedCommitSequence;
-    if (eventIdInCache && commitSeqInCache) {
-      lastProcessedEventId = cachedEventId;
-      lastProcessedCommitSequence = cachedCommitSeq;
-    } else {
-      var persisted = await groupWorkCoordinator
-        .GetPerspectiveCursorAsync(streamId, perspectiveName, ct)
-        .ConfigureAwait(false);
-      lastProcessedEventId = persisted?.LastEventId;
-      lastProcessedCommitSequence = persisted?.LastCommitSequence;
-      if (persisted is not null) {
-        // Warm the cache so subsequent calls in this and other code paths see
-        // the same cursor without paying for another round-trip.
-        _cursorCache.Set(streamId, perspectiveName, persisted.LastEventId);
-        _cursorCache.SetCommitSequence(streamId, perspectiveName, persisted.LastCommitSequence);
-      }
-    }
-
-    // Slice 26.15: partition cooled vs fresh BEFORE the inversion check. The cursor-flush
-    // race between drain finish and PerspectiveCompletionFlushWorker DELETE produces a
-    // window where just-applied event_work_ids are still in DB pending. Pre-26.15 the
-    // inversion detector ran on the full set, saw those cooled events as "pending ≤ cursor",
-    // and triggered a spurious rewind — measured as ~1100 phantom rewinds per consumer bulk-import
-    // when sagas commit N events in two close transactions (drainer re-fetches between flush
-    // ticks, sees first-batch events still warm, second-batch fresh, mixed bag).
-    var (cooledEvents, freshEvents) = _partitionByCooldown(
-      filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache, perspectiveName);
-
-    // Signal cooled events into the batch's completion bookkeeping so PostAllPerspectives
-    // can fire correctly — same reasoning as the all-cooled short-circuit.
-    // SignalPerspectiveComplete + BatchProcessedEvents.TryAdd are idempotent so re-signaling
-    // is safe even when the previous drain already signaled them.
-    if (cooledEvents.Count > 0) {
-      _signalCooldownSkippedEvents(
-        cooledEvents, perspectiveName, streamId,
-        batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
-      // Diagnostic: surface cooled event_ids + work_ids so we can correlate against
-      // wh_event_store and confirm whether the cooldown decision was correct
-      // (event was truly applied previously) or a silent-drop bug (event never applied).
-      // Gated on IsEnabled to avoid materializing the id strings when Debug logging is off.
-      // CA1873 fires on the string.Join args even with the IsEnabled guard — the analyzer
-      // doesn't look through the surrounding conditional for source-generated LoggerMessage.
-#pragma warning disable CA1873
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        LogDiagnosticCooldown(_logger, streamId, perspectiveName, cooledEvents.Count,
-          string.Join(",", cooledEvents.Select(e => e.MessageId.Value.ToString("D"))),
-          string.Join(",", cooledEvents.SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
-            .Where(raw => string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal))
-            .Select(raw => raw.EventWorkId.ToString("D"))));
-      }
-#pragma warning restore CA1873
-    }
-
-    // #1361: an event a completed rewind was already run for is covered, whatever row brought it back: the
-    // rewind's own rows still pending before the completion flush deletes them, or the same event delivered again
-    // under a new work row. Neither is a new inversion. Their rows are completed, with nothing applied; rewinding again
-    // would replay the whole stream once per lap of the drain loop.
-    var coveredEvents = _takeReplayedEvents(freshEvents, streamId, perspectiveName);
-    if (coveredEvents.Count > 0) {
-      _signalCooldownSkippedEvents(
-        coveredEvents, perspectiveName, streamId,
-        batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
-      _markProcessedInCooldown(_recentlyProcessedEventCache, coveredEvents, batchContext.RawByEventId, perspectiveName);
-      _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, coveredEvents, batchContext.RawByEventId);
-      LogEventsCoveredByRewind(_logger, streamId, perspectiveName, coveredEvents.Count);
-    }
-
-    // Everything cooled or covered → a previous run handled it; nothing left to do.
-    if (freshEvents.Count == 0) {
-      return;
-    }
-
-    // Phase H step 6 slice 4: cursor-inversion detector — now scoped to the fresh remainder
-    // so cursor-flush-race events don't masquerade as real inversions.
-    Guid? inversionAnchor = _resolveInversionAnchor(
-      freshEvents, batchContext.RawByEventId, lastProcessedEventId, lastProcessedCommitSequence);
-
-    // freshEvents is what we'll apply (or rewind around).
-    filteredEvents = freshEvents;
-
-    // Phase H step 9 slice 4: lease-tied cancellation. Wrap the apply + post-apply housekeeping
-    // in a LeaseHandle whose token cancels at lease_expiry - LeaseGraceSeconds. The runner
-    // template's apply loop now also calls ThrowIfCancellationRequested between events so a
-    // hot stream with many pending events can be canceled mid-batch. The DispatchExecutor
-    // abandons hung receptors that ignore the CT.
-    var leaseDeadline = _timeProvider.GetUtcNow()
-      + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
-    using var lease = new LeaseHandle(
-      workId: streamId,
-      category: WorkCategory.PerspectiveEvent,
-      deadline: leaseDeadline,
-      maxRenewals: _leaseHandleOptions.MaxRenewalsPerWork,
-      timeProvider: _timeProvider,
-      linkedTokens: [ct]);
-
-    var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-    _markAffinityPhase(streamId, perspectiveName, "apply");
-    // The apply as a task of its own: when the lease runs out (or the worker stops) the executor stops
-    // waiting for it, but it keeps running, so the finally below hands it to the affinity gate.
-    var apply = Task.CompletedTask;
-    try {
-      await LeaseDispatchExecutor.RunWithLeaseAsync(lease, leaseCt => apply = applyUnderLeaseAsync(leaseCt));
-
-      async Task applyUnderLeaseAsync(CancellationToken leaseCt) {
-        PerspectiveCursorCompletion result;
-        if (inversionAnchor.HasValue) {
-          // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
-          _cursorCache.Invalidate(streamId, perspectiveName);
-          // Slice 26.11: look up the violator's commit_sequence so RewindAndRunAsync can
-          // use the commit-sequence-anchored snapshot path for full determinism. Falls
-          // back to event_id-anchored snapshot when the violator wasn't stamped yet.
-          long? anchorCommitSequence = batchContext.RawByEventId[inversionAnchor.Value]
-            .Select(raw => raw.CommitSequence)
-            .FirstOrDefault(seq => seq.HasValue);
-          // Slice 26.16 instrumentation: emit detailed inversion diagnostics so we can
-          // classify the residual ~400 inversions per consumer import. Captures whether the
-          // commit_sequence detector or the event_id fallback fired, the gap, and the
-          // partition counts so we can spot cooldown misses.
-          long? pendingSeq = anchorCommitSequence;
-          LogInversionDiagnostics(
-            _logger,
-            streamId,
-            perspectiveName,
-            inversionAnchor.Value,
-            lastProcessedEventId ?? Guid.Empty,
-            pendingSeq ?? -1,
-            lastProcessedCommitSequence ?? -1,
-            cooledEvents.Count,
-            freshEvents.Count);
-          LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId ?? Guid.Empty);
-          // Through the same helper the rewind work-item path uses, so this rewind is counted and
-          // traced like any other. It used to call the runner directly, which is why the rewind
-          // meters read zero while these rewinds ran (#1362).
-          result = await _rewindAndCountAsync(
-            runner,
-            new RewindRequest(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, EventsBehind: null),
-            _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives),
-            leaseCt);
-          // #1361: the rewind applied this batch's events. A later lap or batch that brings any of them back is
-          // covered, not a new inversion.
-          if (result.Status == PerspectiveProcessingStatus.Completed) {
-            _cursorCache.MarkReplayed(streamId, perspectiveName, filteredEvents.Select(e => e.MessageId.Value));
-          }
-        } else {
-          result = await runner.RunWithEventsAsync(
-            streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
-        }
-        // #1862: an ephemeral runner with no snapshot floor drops a late event instead of rewinding for it. What it
-        // dropped is retired here, once, and the rest of the batch is handed back; otherwise the event's work stays
-        // pending and every lap and claim finds it, skips the same rewind and drops it again.
-        if (result.DroppedStragglers.Length > 0) {
-          (result, filteredEvents) = await _retireDroppedStragglersAsync(
-            runner, result, filteredEvents,
-            new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider),
-            batchContext, leaseCt);
-        }
-        // The runner ran for this (stream, perspective): the batch's claimed copy of the same
-        // group is redundant. Only a real runner invocation records here; a pass that cooled
-        // everything returned above and left the group unrecorded on purpose (issue #700).
-        batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
-        if (result.Status == PerspectiveProcessingStatus.Completed) {
-          _storedFormFailures.Recovered(perspectiveName, streamId);
-        }
-
-        // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
-        // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
-        // completion-enqueue + signaler. Surfaces the per-drain cost dominant when a consumer's
-        // service drains at ~40 events/sec despite 4×30 concurrency configured.
-        var runnerEndTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-        var runnerMs = (runnerEndTicks - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-
-        if (result.Status == PerspectiveProcessingStatus.Completed) {
-          var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
-          _markAffinityPhase(streamId, perspectiveName, "completion");
-          await _applyDrainModePerspectiveCompletionAsync(
-            streamCtx, filteredEvents, result, batchContext, leaseCt);
-        }
-        var completionMs = (System.Diagnostics.Stopwatch.GetTimestamp() - runnerEndTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-
-        _markAffinityPhase(streamId, perspectiveName, "report");
-        await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, leaseCt);
-
-        if (filteredEvents.Count > 0) {
-          var processedEventIds = filteredEvents.ConvertAll(e => e.MessageId.Value);
-          // Only a committed apply marks the events applied: a waiter for an event from another service
-          // reads this as "the read model has it", which a failure must never claim (#959). Marked before
-          // the processed release, so anything that observes the release has seen the mark decided.
-          if (result.Status == PerspectiveProcessingStatus.Completed) {
-            _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
-          }
-          _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
-        }
-
-        // Belt-and-suspenders sweep — when the runner short-circuits its batch
-        // (already-applied / cooldown / dedup filtered all events) filteredEvents
-        // is empty and the per-event MarkProcessedByPerspective above doesn't fire,
-        // leaving any waiter that registered against those tracked events stuck
-        // on its TCS for the full sync-wait timeout. The stream-level sweep wakes
-        // them as soon as the perspective reports Completed for the stream.
-        if (result.Status == PerspectiveProcessingStatus.Completed) {
-          _syncEventTracker.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
-        }
-
-        if (result.PerspectiveType is not null) {
-          _syncSignaler.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
-        }
-
-        if (result.Status == PerspectiveProcessingStatus.Completed) {
-          _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
-          // Slice 26.17: cooldown is now marked at the top of _applyDrainModePerspectiveCompletionAsync,
-          // before any cursor cache update or lifecycle invocation that could throw. The
-          // late-mark site here was the source of residual inversions in a consumer's
-          // bulk run — keep the call site comment as a regression breadcrumb.
-        }
-
-        _metrics?.StreamsUpdated.Add(1);
-        if (filteredEvents.Count > 0) {
-          _metrics?.EventsProcessed.Add(filteredEvents.Count);
-        }
-
-        // Slice 29 instrumentation: emit per-drain perf breakdown at Debug when we processed
-        // >= 5 events or the drain took more than 100ms. Surfaces whether per-drain time
-        // scales with event count (apply is the cost) or is fixed-per-call (lifecycle / DI
-        // scope is the cost). Enable Debug logging for the worker to see these.
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-          if (filteredEvents.Count >= 5 || totalMs > 100) {
-#pragma warning disable CA1848
-            _logger.LogDebug(
-              "PERF Drain {Perspective} stream {StreamId}: events={EventCount} total={TotalMs:F0}ms runner={RunnerMs:F0}ms completion={CompletionMs:F0}ms cooled={Cooled}",
-              perspectiveName, streamId, filteredEvents.Count, totalMs, runnerMs, completionMs, cooledEvents.Count);
-#pragma warning restore CA1848
-          }
-        }
-      }
-    } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
-      // Lease deadline fired (not worker shutdown). Route to failure path same as any other
-      // exception so the row's lease releases and claim_orphaned re-issues with bumped attempts.
-#pragma warning disable CA1848
-      _logger.LogWarning(leaseExpired, "Drain mode: lease deadline exceeded for {Perspective} stream {StreamId} — routing to failure", perspectiveName, streamId);
-#pragma warning restore CA1848
-      _metrics?.Errors.Add(1);
-      var failure = new PerspectiveCursorFailure {
-        StreamId = streamId,
-        PerspectiveName = perspectiveName,
-        LastEventId = Guid.Empty,
-        Status = PerspectiveProcessingStatus.Failed,
-        Error = "Lease deadline exceeded — handler did not complete within the configured lease window."
-      };
-      await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      var leasedRows = _drainGroupWorkIds(filteredEvents, batchContext, perspectiveName).ToList();
-      var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
-      if (storedForm is null) {
-#pragma warning disable CA1848
-        // #1976: the parked rows are retried and dead-lettered at the bound, so the attempt is a Warning.
-        _logger.LogWarning(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
-#pragma warning restore CA1848
-        await _parkLeasedRowsAsync(leasedRows, ex.Message, MessageFailureReason.Unknown, ct);
-      }
-      _metrics?.Errors.Add(1);
-
-      var failure = new PerspectiveCursorFailure {
-        StreamId = streamId,
-        PerspectiveName = perspectiveName,
-        LastEventId = Guid.Empty,
-        Status = PerspectiveProcessingStatus.Failed,
-        Error = storedForm ?? ex.Message
-      };
-      await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
-    } finally {
-      // An apply the executor abandoned is still running and has not marked its events processed. The
-      // gate stays held until it ends, so no other consumer can apply the same events in the meantime,
-      // and the group's scope, which the apply is still using, is disposed only after it ends.
-      if (!apply.IsCompleted) {
-        keepGateHeldUntil(groupScopeLifetime.DisposeAfterAsync(apply));
       }
     }
   }
@@ -3808,13 +3304,20 @@ public partial class PerspectiveWorker(
       string perspectiveName,
       Activity? batchActivity,
       ActivityContext effectiveParent,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      ClaimedPrefetch? prefetched = null) {
 
-    // Look up the checkpoint to get the LastProcessedEventId
-    var checkpointSw = System.Diagnostics.Stopwatch.StartNew();
-    var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
-      streamId, perspectiveName, cancellationToken);
-    _metrics?.CheckpointDuration.Record(checkpointSw.Elapsed.TotalMilliseconds);
+    // Look up the checkpoint to get the LastProcessedEventId: a set-based batch read every group's with one statement
+    // (#2246); otherwise the group's own read.
+    PerspectiveCursorInfo? checkpoint;
+    if (prefetched is { } batchRead) {
+      checkpoint = batchRead.Checkpoint;
+    } else {
+      var checkpointSw = System.Diagnostics.Stopwatch.StartNew();
+      checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
+        streamId, perspectiveName, cancellationToken);
+      _metrics?.CheckpointDuration.Record(checkpointSw.Elapsed.TotalMilliseconds);
+    }
 
     var lastProcessedEventId = checkpoint?.LastEventId;
 
@@ -3856,9 +3359,12 @@ public partial class PerspectiveWorker(
       perspectiveName, streamId,
       receptorInvoker is not null, eventStore is not null, _eventTypeProvider.IsAvailable);
 
-    // Load events early to extract trace context for distributed tracing
-    var (upcomingEvents, perspectiveParentContext) = await _loadUpcomingEventsAndExtractTraceContextAsync(
-      eventStore, streamId, lastProcessedEventId, batchActivity, effectiveParent, cancellationToken);
+    // Load events early to extract trace context for distributed tracing; a set-based batch read every group's events
+    // with one read (#2246).
+    var (upcomingEvents, perspectiveParentContext) = prefetched is { } batchEvents
+      ? (batchEvents.Upcoming, _traceContextOf(batchEvents.Upcoming, batchActivity, effectiveParent))
+      : await _loadUpcomingEventsAndExtractTraceContextAsync(
+          eventStore, streamId, lastProcessedEventId, batchActivity, effectiveParent, cancellationToken);
 
     return (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext);
   }
@@ -4590,22 +4096,29 @@ public partial class PerspectiveWorker(
         _metrics?.EventLoadDuration.Record(eventLoadSw.Elapsed.TotalMilliseconds);
         _metrics?.BatchEventCount.Record(upcomingEvents.Count);
 
-        // Extract trace context from the first event's hops
-        if (upcomingEvents.Count > 0) {
-          var firstEvent = upcomingEvents[0];
-          var traceParent = firstEvent.Hops
-            .Where(h => h.Type == HopType.Current)
-            .Select(h => h.TraceParent)
-            .LastOrDefault(tp => tp is not null);
-
-          if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var extractedContext)) {
-            perspectiveParentContext = extractedContext;
-          }
-        }
+        perspectiveParentContext = _traceContextOf(upcomingEvents, batchActivity, effectiveParent);
       }
     }
 
     return (upcomingEvents, perspectiveParentContext);
+  }
+
+  /// <summary>
+  /// The trace context a perspective span is parented under: the first event's current hop, when it carries one (this
+  /// links perspective spans to the request that created the events), else the batch's parent.
+  /// </summary>
+  private static ActivityContext _traceContextOf(
+      List<MessageEnvelope<IEvent>> upcomingEvents, Activity? batchActivity, ActivityContext effectiveParent) {
+    var parent = batchActivity is null ? effectiveParent : default;
+    var traceParent = upcomingEvents.Count == 0
+      ? null
+      : upcomingEvents[0].Hops
+          .Where(h => h.Type == HopType.Current)
+          .Select(h => h.TraceParent)
+          .LastOrDefault(tp => tp is not null);
+    return traceParent is not null && ActivityContext.TryParse(traceParent, null, out var extractedContext)
+      ? extractedContext
+      : parent;
   }
 
   /// <summary>
@@ -4978,13 +4491,10 @@ public partial class PerspectiveWorker(
   /// Only loads when receptor invoker and event store are available and processing completed.
   /// </summary>
   private async Task<List<MessageEnvelope<IEvent>>> _loadAndLogProcessedEventsAsync(
-      IReceptorInvoker? receptorInvoker,
-      IEventStore? eventStore,
-      PerspectiveCursorCompletion result,
-      Guid streamId,
-      string perspectiveName,
-      Guid? lastProcessedEventId,
-      CancellationToken cancellationToken) {
+      ClaimedGroup group, PerspectiveCursorCompletion result, CancellationToken cancellationToken) {
+    var (receptorInvoker, eventStore, streamId, perspectiveName) = (group.ReceptorInvoker, group.EventStore, group.StreamId, group.PerspectiveName);
+    var lastProcessedEventId = group.Checkpoint?.LastEventId;
+    var prefetched = group.Prefetched;
 
     var shouldLoadEvents = receptorInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
     if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -4996,9 +4506,14 @@ public partial class PerspectiveWorker(
       LogDiagnosticLoadingEvents(_logger, perspectiveName, streamId, shouldLoadEvents, hasInvoker, hasStore, statusStr, lastProcessed, current);
     }
 
-    var processedEvents = shouldLoadEvents
-      ? await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
-      : [];
+    // A claimed set-based batch read the pair's events already (#2246): the processed ones are those up to the
+    // completion's last event, as the range read below returns them.
+    List<MessageEnvelope<IEvent>> processedEvents = [];
+    if (shouldLoadEvents && prefetched is { } batchRead) {
+      processedEvents = [.. batchRead.Upcoming.Where(e => e.MessageId.Value.CompareTo(result.LastEventId) <= 0)];
+    } else if (shouldLoadEvents) {
+      processedEvents = await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken);
+    }
 
     if (_logger.IsEnabled(LogLevel.Debug)) {
       var eventsCount = processedEvents.Count;
@@ -6416,6 +5931,17 @@ public class PerspectiveWorkerOptions {
   public int MaxConcurrentPerspectives { get; set; } = 30;
 
   /// <summary>
+  /// How the service writes its perspectives' rows (#2246). <see cref="PerspectiveWriteMode.SetBased"/>, the default,
+  /// prepares every (stream, perspective) pair of a batch and writes the batch's rows with a few set-based statements
+  /// per table; <see cref="PerspectiveWriteMode.PerStream"/> writes each pair on its own, as before set-based writes. A
+  /// perspective overrides it with <see cref="PerspectiveWriteModeAttribute"/>; a perspective with no generated runner
+  /// is always written per stream.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#selection</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
+
+  /// <summary>
   /// Slice 17: number of parallel consumer loops running on the channel reader. Each loop
   /// independently waits for work, builds a batch, and runs <c>ProcessChannelBatchAsync</c>
   /// (which itself parallelizes per-stream-perspective up to <see cref="MaxConcurrentPerspectives"/>).
@@ -6468,8 +5994,7 @@ public class PerspectiveWorkerOptions {
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from the perspective drain
-  /// channel — this IS the apply-batching window the user-facing
-  /// <see cref="Messaging.IApplyBatchStrategy"/> interface advertises. After the first
+  /// channel: the coalescing window that forms a drain batch. After the first
   /// signal arrives, the worker waits up to
   /// <see cref="SlidingWindowBatcherOptions.SlidingWindow"/> for additional signals
   /// before fetching events — letting more arrivals accumulate so the per-stream

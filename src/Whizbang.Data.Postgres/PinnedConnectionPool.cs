@@ -54,7 +54,7 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   // source won (ConnectionStringName-via-IConfiguration vs inline ConnectionString). Internal
   // because tests need visibility but the value would leak passwords if surfaced publicly.
   // The constructor refuses options without a connection string.
-  internal string ConnectionStringForTesting => _options.ConnectionString!;
+  internal string ConnectionStringForTesting => _options.ConnectionString!.Reveal();
 
   /// <summary>Builds the pool from options + worker registry. The Npgsql connection pool is constructed once and reused for the pool's lifetime.</summary>
   /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="registry"/> is null.</exception>
@@ -70,14 +70,14 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
     _registry = registry;
     _metrics = metrics;
 
-    if (string.IsNullOrWhiteSpace(options.ConnectionString)) {
+    if (string.IsNullOrWhiteSpace(options.ConnectionString?.Reveal())) {
       throw new InvalidOperationException(
         "PinnedConnectionPool requires a non-empty WhizbangPinnedPoolOptions.ConnectionString; " +
         "register NoOpPinnedConnectionPool when the pool is disabled instead.");
     }
 
     var poolSize = options.Size < 1 ? 1 : options.Size;
-    var connStrBuilder = new NpgsqlConnectionStringBuilder(options.ConnectionString) {
+    var connStrBuilder = new NpgsqlConnectionStringBuilder(options.ConnectionString.Reveal()) {
       MinPoolSize = poolSize,
       MaxPoolSize = poolSize,
       ConnectionLifetime = options.ConnectionLifetimeSeconds,

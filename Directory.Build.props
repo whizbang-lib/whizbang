@@ -183,7 +183,7 @@
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- WHIZ606/WHIZ607 (#2267) apply to the library only: every project outside src/ turns them off. -->
+  <!-- WHIZ607/WHIZ608 (#2267) apply to the library only: every project outside src/ turns them off. -->
   <ItemGroup Condition="!$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/').StartsWith($([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)src/'))))">
     <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)TypeNaming.OutsideLibrary.globalconfig" />
   </ItemGroup>

@@ -5,9 +5,9 @@ namespace Whizbang.Core;
 
 /// <summary>
 /// Marks the shared naming code: the one place in the runtime code that may read a type's name or resolve a type from a
-/// name (#2267). WHIZ606 reports any other place; this attribute is how the analyzer knows where names come from.
+/// name (#2267). WHIZ607 reports any other place; this attribute is how the analyzer knows where names come from.
 /// </summary>
-/// <docs>operations/diagnostics/whiz606</docs>
+/// <docs>operations/diagnostics/whiz607</docs>
 /// <tests>tests/Whizbang.RepoAnalyzers.Tests/TypeNameSourceAnalyzerTests.cs:Runtime_InsideANamingAuthority_IsNotReportedAsync</tests>
 [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false)]
 internal sealed class TypeNameAuthorityAttribute : System.Attribute;

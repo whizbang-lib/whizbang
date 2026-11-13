@@ -360,6 +360,22 @@ public sealed class AllOptionsBindingMatrixTests {
   }
 
   [Test]
+  public async Task WhizbangPinnedPoolOptions_BindsTheConnectionStringAsASensitiveValueAsync() {
+    // #2251: the binder source generator skips a SensitiveString property, so the registration binds it by hand.
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Workers:PinnedPool:ConnectionString"] = "Host=direct;Password=hunter2",
+    }).Build();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddWhizbangPinnedWorkerPool(_ => { });
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<WhizbangPinnedPoolOptions>>().Value;
+    await Assert.That(options.ConnectionString?.Reveal()).IsEqualTo("Host=direct;Password=hunter2");
+    await Assert.That(options.ConnectionString!.ToString()).IsEqualTo("Host=direct;" + Whizbang.Core.Configuration.SensitiveString.REDACTED);
+  }
+
+  [Test]
   public async Task SignalBusOptions_BindsTurnkeyAsync() {
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       ["Whizbang:SignalBus:ProbeTimeoutMilliseconds"] = "1234",

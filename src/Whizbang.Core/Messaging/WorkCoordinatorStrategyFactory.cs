@@ -56,7 +56,8 @@ public static class WorkCoordinatorStrategyFactory {
   public static IWorkCoordinatorStrategy WrapWithStreamAffinity(IWorkCoordinatorStrategy inner, IServiceProvider sp) {
     ArgumentNullException.ThrowIfNull(inner);
     ArgumentNullException.ThrowIfNull(sp);
-    var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
+    // A strategy registered directly is bounded here too (#2220).
+    var outboxBatch = Whizbang.Core.Workers.BatchStrategyResolution.Outbox(sp);
     if (outboxBatch is null) {
       return inner;
     }
@@ -69,7 +70,9 @@ public static class WorkCoordinatorStrategyFactory {
       auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
       systemEventOptions: sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
-      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>());
+      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      // #2220: the scope is the publisher's, so its open transaction is the one the publish runs inside.
+      holdsOpenTransaction: () => OpenTransactionProbe.HoldsOpenTransaction(sp));
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
