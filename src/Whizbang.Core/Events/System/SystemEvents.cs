@@ -28,7 +28,7 @@ public record PerspectiveRebuildStarted(
     int TotalStreams,
     DateTimeOffset StartedAt,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted periodically during a rebuild to report progress.
@@ -52,7 +52,7 @@ public record PerspectiveRebuildProgress(
     int EventsReplayed,
     DateTimeOffset StartedAt,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted when a perspective rebuild completes successfully.
@@ -87,7 +87,7 @@ public record PerspectiveRebuildCompleted(
     string? RowDigestBefore = null,
     string? RowDigestAfter = null,
     string? RowDigestUnavailableReason = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted when a perspective rebuild fails.
@@ -111,7 +111,7 @@ public record PerspectiveRebuildFailed(
     int StreamsProcessedBeforeFailure,
     TimeSpan Duration,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 // --- Perspective rewind events ---
 
@@ -143,7 +143,7 @@ public record PerspectiveRewindStarted(
     Guid? ReplayFromSnapshotEventId,
     bool HasSnapshot,
     DateTimeOffset StartedAt
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted when a perspective rewind completes successfully.
@@ -174,7 +174,7 @@ public record PerspectiveRewindCompleted(
     int EventsReplayed,
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted once per stream before any per-perspective rewinds begin.

@@ -486,6 +486,22 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var status = await coordinator.GetTableRewriteQueueStatusAsync();
+
+    await Assert.That(status).IsEqualTo(new TableRewriteQueueStatus(0, 3.0, 0));
+  }
+
+  [Test]
+  public async Task GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetTableTotalBytesAsync("wh_outbox")).IsNull();
+  }
+
+  [Test]
   public async Task MeasureTableBloatAsync_WithoutProviderSupport_MeasuresNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

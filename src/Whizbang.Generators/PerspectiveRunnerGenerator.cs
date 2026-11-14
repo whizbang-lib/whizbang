@@ -403,8 +403,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       .First();
 
   /// <summary>
-  /// Reads [RowCap] on the perspective class. PerScope is the more specific partition, so it outranks
-  /// PerTenant when both are declared. Returns (-1, null) when no cap is declared.
+  /// Reads [RowCap] on the perspective class. PerProperty (with Max) is the most specific partition, then PerScope, then
+  /// PerTenant. Returns (-1, null) when no cap is declared.
   /// </summary>
   private static (int PerScope, string? ScopeKey) _resolveRowCap(INamedTypeSymbol classSymbol) {
     var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
@@ -414,12 +414,28 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
     var perScope = -1;
     var perTenant = -1;
+    var max = -1;
+    string? perProperty = null;
     foreach (var namedArg in rowCapAttribute.NamedArguments) {
-      if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
-        perScope = ps;
-      } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
-        perTenant = pt;
+      switch (namedArg.Key) {
+        case "PerScope" when namedArg.Value.Value is int ps:
+          perScope = ps;
+          break;
+        case "PerTenant" when namedArg.Value.Value is int pt:
+          perTenant = pt;
+          break;
+        case "Max" when namedArg.Value.Value is int m:
+          max = m;
+          break;
+        case "PerProperty" when namedArg.Value.Value is string prop && !string.IsNullOrWhiteSpace(prop):
+          perProperty = prop;
+          break;
       }
+    }
+    // #2330: a per-property cap is the most specific partition: the newest Max rows per value of that model property,
+    // read by the sweep from the stored document (data ->> name).
+    if (perProperty is not null && max >= 0) {
+      return (max, "data:" + perProperty);
     }
     if (perScope >= 0) {
       return (perScope, "u");

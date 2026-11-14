@@ -17,7 +17,11 @@ public sealed class EphemeralOptionsValidator : IValidateOptions<EphemeralOption
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, EphemeralOptions options) {
     ArgumentNullException.ThrowIfNull(options);
-    var failures = RetentionSettingsBridge.Validate(options);
+    var failures = new List<string>(RetentionSettingsBridge.Validate(options));
+    var ttl = options.SystemEvents.Ttl;
+    if (ttl <= TimeSpan.Zero || ttl.TotalSeconds > int.MaxValue) {
+      failures.Add($"Whizbang:Ephemeral:SystemEvents:Ttl must be greater than zero and at most {int.MaxValue} seconds; it is {ttl}.");
+    }
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 }

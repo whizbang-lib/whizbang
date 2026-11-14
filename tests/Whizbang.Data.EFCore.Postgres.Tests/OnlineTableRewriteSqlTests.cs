@@ -63,9 +63,10 @@ public class OnlineTableRewriteSqlTests : EFCoreTestBase {
 
     var candidate = (await coordinator.GetTablesNeedingRewriteAsync(cancellationToken)).Single(c => c.TableName == "wh_settings");
 
-    var heap = await _scalarAsync<long>("SELECT pg_relation_size('wh_settings')");
-    await Assert.That(candidate.SizeBytes).IsEqualTo(heap);
-    await Assert.That(heap).IsGreaterThan(0L);
+    // #2319: the heap and its TOAST relation, since an online rewrite copies both.
+    var table = await _scalarAsync<long>("SELECT pg_table_size('wh_settings')");
+    await Assert.That(candidate.SizeBytes).IsEqualTo(table);
+    await Assert.That(table).IsGreaterThanOrEqualTo(await _scalarAsync<long>("SELECT pg_relation_size('wh_settings')"));
   }
 
   [Test]

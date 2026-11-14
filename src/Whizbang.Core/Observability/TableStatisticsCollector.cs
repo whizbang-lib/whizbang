@@ -138,6 +138,9 @@ public sealed partial class TableStatisticsCollector(
         metrics.UpdateUnusedIndexes(unused);
         _reportUnusedIndexes(unused);
 
+        // Where each table's last rewrite left it: the floor the post-rewrite guard measures regrowth from (#2319).
+        metrics.UpdateRewriteFloors(await provider.GetRewriteFloorsAsync(stoppingToken));
+
         CycleCompleted?.Invoke();
       } catch (ObjectDisposedException) {
         break;  // Host is shutting down — exit the collection loop

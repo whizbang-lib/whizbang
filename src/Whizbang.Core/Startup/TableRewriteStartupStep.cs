@@ -33,9 +33,11 @@ namespace Whizbang.Core.Startup;
 /// EXCLUSIVE lock mid-traffic; the pipeline gives it the window it should always have had.
 /// The maintenance cycle detects and records. A strategy that resolves to no rewrite, or to a strategy
 /// with no registered rewriter, skips with the resolution as its reason, and so does a rewriter that cannot run.
-/// <see cref="TableRewriteStrategy.PgSqueeze"/>, and <see cref="TableRewriteStrategy.PgRepack"/> with the client run in
-/// process, are left to the maintenance cycle (<see cref="OnlineTableRewriteStep"/>), which rewrites online within a
-/// per-cycle byte budget; pg_repack in <see cref="PgRepackMode.External"/> mode is skipped with the reason its rewriter
+/// <see cref="TableRewriteStrategy.PgSqueeze"/>, <see cref="TableRewriteStrategy.PgRepack"/> with the client run in
+/// process, and <see cref="TableRewriteStrategy.Auto"/> when one of those two is Ready on this start (#2319), are left to
+/// the maintenance cycle (<see cref="OnlineTableRewriteStep"/>), which rewrites online within a per-cycle byte budget, so
+/// such a table is never also taken by <c>VACUUM FULL</c>; before anything else, every start writes the detector's
+/// settings (<see cref="TableRewriteSettings"/>) to <c>wh_settings</c>; pg_repack in <see cref="PgRepackMode.External"/> mode is skipped with the reason its rewriter
 /// gives, because an operator's job runs it. <c>VACUUM FULL</c> stays behind the operator permission
 /// (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>), because the framework cannot know how
 /// large a consumer's table is, and taking that lock unattended must be opted into.
@@ -100,7 +102,9 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
     var options = _options.Value;
-    var plan = TableRewriteStrategyResolver.Resolve(options.TableRewriteStrategy, options.AllowTableRewrite, _pgSqueezeUsable());
+    var plan = TableRewriteStrategyResolver.Resolve(options.TableRewriteStrategy, options.AllowTableRewrite, _pgSqueezeUsable(),
+      OnlineRewriteTools.AutoTool(_capabilities, options, _rewriters));
+    await _publishSettingsAsync(options, plan, cancellationToken).ConfigureAwait(false);
     if (plan.Strategy is null) {
       using var waitScope = _scopeFactory.CreateScope();
       if (waitScope.ServiceProvider.GetService<IWorkCoordinator>() is { } waitCoordinator) {
@@ -108,7 +112,7 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
       }
       return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
     }
-    if (plan.Strategy is TableRewriteStrategies.PG_SQUEEZE or TableRewriteStrategies.ONLINE || PgRepackClient.RunsInProcess(options)) {
+    if (_runsInTheCycle(plan, options)) {
       // An online rewrite Whizbang runs itself is budgeted per maintenance cycle (OnlineTableRewriteStep); run here it
       // would be unbounded. pg_repack in External mode falls through: its rewriter cannot run, and says why.
       return new StartupStepReport(StartupStepOutcome.Skipped,
@@ -143,11 +147,13 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     // While pgstattuple is Ready, "did it shrink" is answered by pgstattuple_approx, the measurement that queued the
     // table, rather than by the rewriter's catalog estimate (#1807).
     var approxReady = ApproxBloatMeasurement.IsReady(_capabilities);
+    var meter = new RewriteMeter(scope.ServiceProvider.GetService<TableStatisticsMetrics>(),
+      scope.ServiceProvider.GetService<TimeProvider>() ?? TimeProvider.System);
     var rewritten = 0;
     var leftQueued = 0;
     foreach (var candidate in candidates) {
       cancellationToken.ThrowIfCancellationRequested();
-      if (await _rewriteOneAsync(rewriter, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false)) {
+      if (await _rewriteOneAsync(rewriter, coordinator, candidate, approxReady, meter, cancellationToken).ConfigureAwait(false)) {
         rewritten++;
       } else {
         leftQueued++;
@@ -160,9 +166,67 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
         : $"rewrote {rewritten} table(s); {leftQueued} ineffective, left queued for the next boot");
   }
 
+  /// <summary>
+  /// Whether the plan's tool is one the maintenance cycle runs within its byte budget: pg_squeeze, the Online choice, or
+  /// pg_repack with its client in process, whether chosen explicitly or by <see cref="TableRewriteStrategy.Auto"/>
+  /// (#2319), so the boot step never takes such a table with <c>VACUUM FULL</c> as well.
+  /// </summary>
+  private static bool _runsInTheCycle(TableRewritePlan plan, MaintenanceWorkerOptions options) =>
+    plan.Strategy is TableRewriteStrategies.PG_SQUEEZE or TableRewriteStrategies.ONLINE
+    || (plan.Strategy == TableRewriteStrategies.PG_REPACK && options.TableRewrite.PgRepack.Mode == PgRepackMode.InProcess);
+
+  /// <summary>
+  /// Writes the detector's settings (the threshold, the row floor, the regrowth factor) to <c>wh_settings</c>, each the
+  /// configured value or its default for this start's plan, before the candidates are read (#2319). Configuration is the
+  /// source of truth, so a hand-edited row is put back. Best-effort: a failed write is logged with the keys it did not
+  /// write, and the step goes on with the values already stored. Cancellation is shutdown and propagates.
+  /// </summary>
+  private async Task _publishSettingsAsync(MaintenanceWorkerOptions options, TableRewritePlan plan, CancellationToken cancellationToken) {
+    var settings = TableRewriteSettings.SettingsFor(options, plan);
+    using var scope = _scopeFactory.CreateScope();
+    if (scope.ServiceProvider.GetService<IWorkCoordinator>() is not { } coordinator) {
+      return;
+    }
+    try {
+      await coordinator.SyncRetentionSettingsAsync(settings, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogSettingsNotPublished(_logger, string.Join(", ", settings.Select(s => $"{s.Key}={s.Value}")), ex);
+    }
+  }
+
   // Rewrites one table and measures it again; true when it shrank. One that did not shrink keeps its request, so the
   // next boot retries it, and says so rather than clearing it and reporting a success that was not achieved.
+  // Each attempt is recorded on the rewrite meters (#2319): its outcome, how long it took and what it returned.
   private async Task<bool> _rewriteOneAsync(
+      ITableRewriter rewriter, IWorkCoordinator coordinator, TableRewriteCandidate candidate, bool approxReady,
+      RewriteMeter meter, CancellationToken cancellationToken) {
+    var started = meter.Time.GetTimestamp();
+    var size = meter.Metrics is null
+      ? null
+      : await coordinator.GetTableTotalBytesAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
+    TableRewriteMetricOutcome outcome;
+    try {
+      outcome = await _attemptOneAsync(rewriter, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      meter.Metrics?.RecordRewrite(new TableRewriteAttempt(
+        candidate.TableName, rewriter.Strategy, candidate.Reason, TableRewriteMetricOutcome.Failed, meter.Time.GetElapsedTime(started), null));
+      throw;
+    }
+    if (meter.Metrics is { } metrics) {
+      var reclaimed = outcome == TableRewriteMetricOutcome.Rewritten
+        ? TableStatisticsMetrics.Reclaimed(size,
+            await coordinator.GetTableTotalBytesAsync(candidate.TableName, cancellationToken).ConfigureAwait(false))
+        : null;
+      metrics.RecordRewrite(new TableRewriteAttempt(
+        candidate.TableName, rewriter.Strategy, candidate.Reason, outcome, meter.Time.GetElapsedTime(started), reclaimed));
+    }
+    return outcome == TableRewriteMetricOutcome.Rewritten;
+  }
+
+  /// <summary>Where the boot step's rewrites are recorded and timed: the table statistics meter, when registered, and the host's clock.</summary>
+  private sealed record RewriteMeter(TableStatisticsMetrics? Metrics, TimeProvider Time);
+
+  private async Task<TableRewriteMetricOutcome> _attemptOneAsync(
       ITableRewriter rewriter, IWorkCoordinator coordinator, TableRewriteCandidate candidate, bool approxReady,
       CancellationToken cancellationToken) {
     var ratio = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
@@ -172,7 +236,7 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     var afterMethod = after?.Method.ToValue() ?? "none";
     if (after is not { } measured || measured.Ratio >= candidate.BloatRatio) {
       LogRewriteIneffective(_logger, candidate.TableName, candidate.BloatRatio, before, after?.Ratio ?? -1, afterMethod);
-      return false;
+      return after is null ? TableRewriteMetricOutcome.Failed : TableRewriteMetricOutcome.NoGain;
     }
     LogRewriteDone(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
     if (candidate.Requested) {
@@ -180,7 +244,7 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
         new TableRewriteOutcome(candidate.TableName, rewriter.Strategy, candidate.Reason, candidate.BloatRatio, measured.Ratio),
         cancellationToken).ConfigureAwait(false);
     }
-    return true;
+    return TableRewriteMetricOutcome.Rewritten;
   }
 
   /// <summary>Logs once, naming them, the tables that wait for an online strategy to apply a lowered fillfactor.</summary>
@@ -208,6 +272,10 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
     Message = "Rewrite step: {Tables} wait for one rewrite to apply their lowered fillfactor to the rows already stored. Only an online rewrite performs it: set {Key} to PgSqueeze, or to PgRepack with its client, and the maintenance cycle rewrites them within its budget. VACUUM FULL is never used for it; the requests stay queued")]
   static partial void LogFillFactorWaiting(ILogger logger, string tables, string key);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+    Message = "Rewrite step: the table-rewrite settings ({Settings}) could not be written to wh_settings; the values already stored stand until the next start")]
+  static partial void LogSettingsNotPublished(ILogger logger, string settings, Exception exception);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Rewrite step: {Table} rewritten, bloat {Before}x ({BeforeMethod}) -> {After}x ({AfterMethod})")]

@@ -46,6 +46,21 @@ public class OnlineTableRewriteStepTests {
     public List<string> Cleared { get; } = [];
     public int Scans { get; private set; }
 
+    /// <summary>The queue status the coordinator reports (#2319).</summary>
+    public TableRewriteQueueStatus Status { get; init; } = new(0, 3.0, 0);
+
+    /// <summary>The whole size each read of a table answers, in order: before the rewrite, then after it.</summary>
+    public Dictionary<string, Queue<long?>> Sizes { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>Runs inside each squeeze or repack, as the rewrite takes its time.</summary>
+    public Action? DuringRewrite { get; init; }
+
+    public Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Status);
+
+    public Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
+      Task.FromResult(Sizes.TryGetValue(tableName, out var sizes) && sizes.Count > 0 ? sizes.Dequeue() : null);
+
     public Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken cancellationToken = default) {
       Scans++;
       return Task.FromResult<IReadOnlyList<TableRewriteCandidate>>(Candidates);
@@ -53,6 +68,7 @@ public class OnlineTableRewriteStepTests {
 
     public Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) {
       Squeezed.Add(tableName);
+      DuringRewrite?.Invoke();
       if (Throws.Contains(tableName)) {
         throw Failure ?? new InvalidOperationException($"squeeze of {tableName} failed");
       }
@@ -387,24 +403,192 @@ public class OnlineTableRewriteStepTests {
       Candidates = { _requested("wh_outbox", 9.0), _requested("wh_inbox", 4.0, 20 * 1024 * MIB) },
     });
 
-    await Assert.That(_messages(logger)).Contains("Online rewrite: 1 of 2 queued table(s) rewritten this cycle; 1 left queued");
+    await Assert.That(_messages(logger)).Contains("Online rewrite: 1 of 2 queued table(s) rewritten this cycle; 1 left queued; 0 held back by their post-rewrite floor");
   }
 
   [Test]
-  public async Task NothingQueued_RewritesNothing_AndLogsNothingAsync() {
+  public async Task NothingQueued_RewritesNothing_AndSaysSoOnce_WithTheQueueAndTheThresholdAsync() {
+    // #2319: 55 requested tables and no candidate used to read as a step that never ran.
     var (coordinator, logger) = await _runAsync(new SqueezeCoordinator {
       Candidates = { new TableRewriteCandidate("wh_outbox", 9.0, Requested: false) { SizeBytes = MIB } },
+      Status = new TableRewriteQueueStatus(55, 2.5, 6),
     });
 
     await Assert.That(coordinator.Scans).IsEqualTo(1);
     await Assert.That(coordinator.Squeezed).IsEmpty();
-    await Assert.That(logger.Collector.Count).IsEqualTo(0);
+    var record = logger.Collector.GetSnapshot().Single();
+    await Assert.That(record.Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(record.Message).IsEqualTo(
+      "Online rewrite: no table needs a rewrite: 55 requested, none at or above 2.5x; 6 held back by their post-rewrite floor");
+  }
+
+  [Test]
+  public async Task Summary_SaysHowManyThePostRewriteFloorHeldBackAsync() {
+    var (_, logger) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 9.0) },
+      Status = new TableRewriteQueueStatus(3, 2.0, 2),
+    });
+
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: 1 of 1 queued table(s) rewritten this cycle; 0 left queued; 2 held back by their post-rewrite floor");
+  }
+
+  // ---- the rewrite meters (#2319) ----
+
+  /// <summary>Reads the table statistics meter's instruments for one test.</summary>
+  private sealed class RewriteMeters : IDisposable {
+    private readonly Whizbang.Core.Tests.Observability.TestMeterFactory _factory = new();
+    private readonly System.Diagnostics.Metrics.MeterListener _listener = new();
+    private readonly List<(string Name, double Value, Dictionary<string, object?> Tags, bool Observable)> _readings = [];
+
+    public RewriteMeters() {
+      Metrics = new Whizbang.Core.Observability.TableStatisticsMetrics(new Whizbang.Core.Observability.WhizbangMetrics(_factory));
+      var meter = _factory.CreatedMeters[0];
+      _listener.InstrumentPublished = (instrument, listener) => {
+        if (instrument.Meter == meter) {
+          listener.EnableMeasurementEvents(instrument);
+        }
+      };
+      _listener.SetMeasurementEventCallback<long>((i, v, tags, _) => _add(i, v, tags));
+      _listener.SetMeasurementEventCallback<double>((i, v, tags, _) => _add(i, v, tags));
+      _listener.Start();
+    }
+
+    public Whizbang.Core.Observability.TableStatisticsMetrics Metrics { get; }
+
+    private void _add(System.Diagnostics.Metrics.Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags) {
+      // A passive counter reports its untagged series at zero from construction; the tests read the tagged ones.
+      if (tags.IsEmpty) {
+        return;
+      }
+      var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+      foreach (var tag in tags) {
+        map[tag.Key] = tag.Value;
+      }
+      _readings.Add((instrument.Name, value, map, instrument.IsObservable));
+    }
+
+    public List<(string Name, double Value, Dictionary<string, object?> Tags, bool Observable)> Of(string name) {
+      _readings.RemoveAll(r => r.Observable);
+      _listener.RecordObservableInstruments();
+      return [.. _readings.Where(r => r.Name == name)];
+    }
+
+    public void Dispose() {
+      _listener.Dispose();
+      _factory.Dispose();
+    }
+  }
+
+  private static async Task<FakeLogger<OnlineTableRewriteStep>> _meteredAsync(
+      SqueezeCoordinator coordinator, RewriteMeters meters, TimeProvider clock, long budgetBytes = 10 * 1024 * MIB) {
+    var logger = new FakeLogger<OnlineTableRewriteStep>();
+    var step = new OnlineTableRewriteStep([new PgSqueezeTableRewriter()],
+      Options.Create(new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.PgSqueeze, OnlineRewriteMaxBytesPerCycle = budgetBytes }),
+      await _squeezeAsync(CapabilityState.Ready), logger);
+    var services = new ServiceCollection()
+      .AddSingleton<IWorkCoordinator>(coordinator)
+      .AddSingleton(meters.Metrics)
+      .AddSingleton(clock)
+      .BuildServiceProvider();
+    await step.RunAsync(services, CancellationToken.None);
+    return logger;
+  }
+
+  [Test]
+  public async Task EachAttempt_IsMetered_WithItsOutcome_Duration_AndReturnedBytesAsync() {
+    using var meters = new RewriteMeters();
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+    var coordinator = new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 9.0), _requested("wh_inbox", 4.0), _requested("wh_settings", 3.5) },
+      RatioAfter = { ["wh_inbox"] = 5.0 },
+      Throws = { "wh_settings" },
+      Sizes = { ["wh_outbox"] = new Queue<long?>([10_000L, 4_000L]), ["wh_inbox"] = new Queue<long?>([7_000L]) },
+      DuringRewrite = () => clock.Advance(TimeSpan.FromSeconds(2)),
+    };
+
+    await _meteredAsync(coordinator, meters, clock);
+
+    var counts = meters.Of("whizbang.table.rewrites");
+    await Assert.That(counts.Select(c => ((string)c.Tags["table_name"]!, (string)c.Tags["outcome"]!, (string)c.Tags["tool"]!))).IsEquivalentTo([
+      ("wh_outbox", "rewritten", "pg_squeeze"), ("wh_inbox", "no_gain", "pg_squeeze"), ("wh_settings", "failed", "pg_squeeze"),
+    ]);
+    await Assert.That(meters.Of("whizbang.table.rewrite.duration").Select(d => d.Value)).IsEquivalentTo([2000d, 2000d, 2000d])
+      .Because("each rewrite is timed by the host's clock, not the wall clock");
+    var reclaimed = meters.Of("whizbang.table.rewrite.reclaimed_bytes").Single();
+    await Assert.That(reclaimed.Value).IsEqualTo(6000d);
+    await Assert.That(reclaimed.Tags["table_name"]).IsEqualTo("wh_outbox");
+  }
+
+  [Test]
+  public async Task TheQueueGauge_ReportsTheCycle_IncludingWhatTheBudgetPassedOverAsync() {
+    using var meters = new RewriteMeters();
+    var coordinator = new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 9.0, 5 * MIB), _requested("wh_inbox", 4.0, 2 * MIB) },
+      Status = new TableRewriteQueueStatus(4, 2.0, 1),
+    };
+
+    await _meteredAsync(coordinator, meters, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(), budgetBytes: 3 * MIB);
+
+    await Assert.That(meters.Of("whizbang.table.rewrite.queue").Select(r => ((string)r.Tags["state"]!, r.Value))).IsEquivalentTo([
+      ("requested", 4d), ("candidate", 2d), ("held_by_floor", 1d), ("over_budget", 1d),
+    ]);
+  }
+
+  [Test]
+  public async Task AnEmptyCycle_StillReportsTheQueueAsync() {
+    using var meters = new RewriteMeters();
+
+    await _meteredAsync(new SqueezeCoordinator { Status = new TableRewriteQueueStatus(7, 2.0, 3) }, meters, new Microsoft.Extensions.Time.Testing.FakeTimeProvider());
+
+    await Assert.That(meters.Of("whizbang.table.rewrite.queue").Select(r => ((string)r.Tags["state"]!, r.Value))).IsEquivalentTo([
+      ("requested", 7d), ("candidate", 0d), ("held_by_floor", 3d), ("over_budget", 0d),
+    ]);
+  }
+
+  // ---- Auto (#2319) ----
+
+  [Test]
+  public async Task Auto_WithPgSqueezeReady_RewritesThroughItAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_order", 4.0) } },
+      await _serverAsync(CapabilityState.Ready), _ordersSwapper("wh_per_order"), rebuilder, strategy: TableRewriteStrategy.Auto);
+
+    await Assert.That(coordinator.Squeezed).IsEquivalentTo(["wh_per_order"]);
+    await Assert.That(coordinator.Completed.Single().Strategy).IsEqualTo(TableRewriteStrategies.PG_SQUEEZE);
+  }
+
+  [Test]
+  public async Task Auto_WithOnlyPgRepackReadyInProcess_RepacksAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, _) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_order", 4.0) } },
+      await _serverAsync(CapabilityState.NotPermitted, CapabilityState.Ready), _ordersSwapper("wh_per_order"), rebuilder,
+      strategy: TableRewriteStrategy.Auto);
+
+    await Assert.That(coordinator.Squeezed).IsEmpty();
+    await Assert.That(coordinator.Repacked).IsEquivalentTo(["wh_per_order"]);
+    await Assert.That(coordinator.Completed.Single().Strategy).IsEqualTo(TableRewriteStrategies.PG_REPACK);
+  }
+
+  [Test]
+  [Arguments(PgRepackMode.InProcess)]
+  [Arguments(PgRepackMode.External)]
+  public async Task Auto_WithNoOnlineToolThatCanRun_DoesNothing_AndNeverRebuildsAsync(PgRepackMode mode) {
+    var rebuilder = new RecordingRebuilder();
+    var (coordinator, logger) = await _onlineAsync(new SqueezeCoordinator { Candidates = { _requested("wh_per_order", 4.0) } },
+      await _serverAsync(CapabilityState.NotPermitted, mode == PgRepackMode.External ? CapabilityState.Ready : CapabilityState.NotPermitted),
+      _ordersSwapper("wh_per_order"), rebuilder, strategy: TableRewriteStrategy.Auto, mode: mode);
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0).Because("Auto without an online tool keeps the boot-time VACUUM FULL or detection only");
+    await Assert.That(coordinator.Squeezed).IsEmpty();
+    await Assert.That(coordinator.Repacked).IsEmpty();
+    await Assert.That(rebuilder.Rebuilt).IsEmpty().Because("a blue-green rebuild is opted into with Online; Auto never starts one");
+    await Assert.That(_messages(logger)).IsEmpty();
   }
 
   // ---- prerequisites ----
 
   [Test]
-  [Arguments(TableRewriteStrategy.Auto)]
   [Arguments(TableRewriteStrategy.VacuumFull)]
   [Arguments(TableRewriteStrategy.None)]
   public async Task OtherStrategies_DoNothing_NotEvenScanAsync(TableRewriteStrategy strategy) {
@@ -982,7 +1166,7 @@ public class OnlineTableRewriteStepTests {
       .Contains("no table rewriter is registered for PgRepack");
   }
 
-  /// <summary>#2301: under Online with nothing queued, or no coordinator, the cycle does nothing and logs nothing.</summary>
+  /// <summary>#2301: under Online with nothing queued, or no coordinator, the cycle rewrites nothing; with a coordinator it says so once (#2319).</summary>
   [Test]
   [Arguments(true)]
   [Arguments(false)]
@@ -1005,7 +1189,8 @@ public class OnlineTableRewriteStepTests {
 
     await Assert.That(coordinator.Scans).IsEqualTo(withCoordinator ? 1 : 0);
     await Assert.That(rebuilder.Rebuilt).IsEmpty();
-    await Assert.That(_messages(logger)).IsEmpty();
+    await Assert.That(_messages(logger).Count).IsEqualTo(withCoordinator ? 1 : 0)
+      .Because("with a coordinator the cycle says once that nothing needs a rewrite (#2319)");
   }
 
   /// <summary>#2301: under Online, pg_repack run by an external job is not Whizbang's to start, so the cycle rebuilds.</summary>

@@ -142,8 +142,10 @@ public class FillFactorDecreaseRewriteTests : EFCoreTestBase {
     var before = await _relfilenodeAsync();
     var client = new StandInClient(ConnectionString);
 
-    await _onlineCycleAsync(TableRewriteStrategy.Auto, client);
-    var (report, logger) = await _bootAsync(TableRewriteStrategy.Auto, allowTableRewrite: true);
+    // VacuumFull, not Auto: with pg_repack Ready, Auto now rewrites online (#2319), so it is no longer a start without
+    // an online strategy.
+    await _onlineCycleAsync(TableRewriteStrategy.VacuumFull, client);
+    var (report, logger) = await _bootAsync(TableRewriteStrategy.VacuumFull, allowTableRewrite: true);
 
     await Assert.That(client.Tables).IsEmpty();
     await Assert.That(await _relfilenodeAsync()).IsEqualTo(before)

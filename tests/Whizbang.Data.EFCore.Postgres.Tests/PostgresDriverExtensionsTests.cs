@@ -254,6 +254,22 @@ public class PostgresDriverExtensionsTests {
   /// The driver registers the step that converts historical full metadata to the slim form (#1727), once however often
   /// the driver is selected.
   /// </summary>
+  /// <summary>#2326: the audit body conversion is registered once, however many times the driver is selected.</summary>
+  [Test]
+  public async Task Postgres_RegistersTheAuditBodyConversionStep_OnceAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Data.Postgres.AuditBodyConversionStep>().ToList();
+    await Assert.That(steps).Count().IsEqualTo(1);
+  }
+
   [Test]
   public async Task Postgres_RegistersTheMetadataHistoryConversionStep_OnceAsync() {
     var services = new ServiceCollection();

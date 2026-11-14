@@ -2152,6 +2152,28 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
+  public async Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await TableMaintenanceSql.QueueStatusAsync(cmd, PgIdentifier.QualifyPrefix(schema), cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsATablesTotalBytesAsync</tests>
+  public async Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await TableMaintenanceSql.TotalBytesAsync(cmd, PgIdentifier.QualifyPrefix(schema), tableName, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   /// <remarks>
   /// VACUUM FULL cannot be parameterised and cannot run inside a transaction, so the table name is
   /// validated against the framework's own naming rule and quoted before interpolation, and the
@@ -2187,7 +2209,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await TableMaintenanceSql.VacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
 
-    return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false);
+    return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, _resolveSchema(typeof(OutboxRecord)), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -2231,7 +2253,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } else {
       await TableMaintenanceSql.AnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
-    return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false);
+    return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, _resolveSchema(typeof(OutboxRecord)), cancellationToken).ConfigureAwait(false);
   }
 
 
@@ -2266,7 +2288,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     if (method == BloatMeasurementMethod.Estimate) {
-      return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false);
+      return await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, _resolveSchema(typeof(OutboxRecord)), cancellationToken).ConfigureAwait(false);
     }
 
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
@@ -2322,7 +2344,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } else {
       squeezed = await _squeezeAndAnalyzeAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false);
     }
-    return squeezed ? await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, null, cancellationToken).ConfigureAwait(false) : null;
+    return squeezed ? await TableMaintenanceSql.MeasureRatioAsync(conn, tableName, _resolveSchema(typeof(OutboxRecord)), cancellationToken).ConfigureAwait(false) : null;
   }
 
   /// <summary>Checks the prerequisites, then squeezes and analyzes the table; false (and logged) when one is unmet.</summary>

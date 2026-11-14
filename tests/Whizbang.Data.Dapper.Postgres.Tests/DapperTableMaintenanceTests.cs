@@ -75,7 +75,7 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
     await Assert.That(queue[0].BloatRatio).IsEqualTo(999.5);
     await Assert.That(queue[0].Method).IsEqualTo(BloatMeasurementMethod.Approx);
     await Assert.That(queue[0].Requested).IsTrue();
-    await Assert.That(queue[0].SizeBytes).IsEqualTo(await _scalarAsync<long>("SELECT pg_relation_size('wh_settings')"));
+    await Assert.That(queue[0].SizeBytes).IsEqualTo(await _scalarAsync<long>("SELECT pg_table_size('wh_settings')"));
     await Assert.That(queue[0].RewriteThreshold).IsEqualTo(0.0);
 
     await coordinator.ClearTableRewriteRequestAsync("wh_outbox");
@@ -87,6 +87,23 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
   }
 
   /// <summary>#2301: completing a rewrite clears its request and records which strategy carried it out, as on EF Core.</summary>
+  /// <summary>#2319: the queue status and a table's whole size are read as on EF Core.</summary>
+  [Test]
+  public async Task TheQueueStatus_IsReadAsOnEfCoreAsync() {
+    var coordinator = _coordinator();
+    await _executeAsync("UPDATE wh_settings SET setting_value = '2.5' WHERE setting_key = 'table_rewrite_bloat_threshold'");
+    var queued = (await _scalarAsync<string>(
+      "SELECT COALESCE(setting_value, '') FROM wh_settings WHERE setting_key = 'pending_table_rewrites'"))
+      .Split(',', StringSplitOptions.RemoveEmptyEntries).Length;
+
+    var status = await coordinator.GetTableRewriteQueueStatusAsync();
+    var total = await coordinator.GetTableTotalBytesAsync("wh_settings");
+
+    await Assert.That(status).IsEqualTo(new TableRewriteQueueStatus(queued, 2.5, 0));
+    await Assert.That(total).IsEqualTo(await _scalarAsync<long>("SELECT pg_total_relation_size('wh_settings')"));
+    await Assert.That(await coordinator.GetTableTotalBytesAsync("wh_no_such_table")).IsNull();
+  }
+
   [Test]
   public async Task CompleteTableRewrite_ClearsTheRequest_AndRecordsTheStrategyAsync() {
     var coordinator = _coordinator();

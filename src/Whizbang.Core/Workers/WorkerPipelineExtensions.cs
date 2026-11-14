@@ -469,6 +469,11 @@ public static class WorkerPipelineExtensions {
     // #1487: the ephemeral retention settings publish to wh_settings; a negative one is rejected at host start.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IValidateOptions<Whizbang.Core.Configuration.EphemeralOptions>, Whizbang.Core.Configuration.EphemeralOptionsValidator>());
+    // #2322: how much of the historical metadata conversion one maintenance cycle does.
+    services.AddOptions<Whizbang.Core.Configuration.MetadataHistoryConversionOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IValidateOptions<Whizbang.Core.Configuration.MetadataHistoryConversionOptions>,
+      Whizbang.Core.Configuration.MetadataHistoryConversionOptionsValidator>());
     // Perspective row retention (operator rung of the override ladder): the options are applied
     // to the TTL registry at startup so a TTL can be retuned — or retention switched off — per
     // environment without a redeploy. Registered as a hosted configurator; inert on defaults.
@@ -777,6 +782,17 @@ public static class WorkerPipelineExtensions {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:Ephemeral"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.MetadataHistoryConversionOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.MetadataHistoryConversionOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Maintenance:MetadataHistoryConversion"), options);
 #pragma warning restore IL2026
         }
       });
