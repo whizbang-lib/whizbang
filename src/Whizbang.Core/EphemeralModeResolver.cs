@@ -83,6 +83,12 @@ public sealed class EphemeralModeResolver : IEphemeralModeResolver {
   public EphemeralModeResolver(IMessageTypeCatalog catalog, Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions> options)
     : this(catalog) {
     ArgumentNullException.ThrowIfNull(options);
+    var ttl = options.Value.SystemEvents.Ttl;
+    foreach (var entry in catalog.GetAll().Where(e => e.Ephemeral is not null)) {
+      var applied = Whizbang.Core.Events.System.SystemEventRetention.Apply(entry.Type, entry.Ephemeral!, ttl);
+      _byClrTypeName[entry.ClrTypeName] = applied;
+      _byType[entry.Type] = applied;
+    }
   }
 
   /// <inheritdoc/>

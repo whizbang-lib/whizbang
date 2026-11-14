@@ -71,8 +71,11 @@ public sealed partial class TypeDefinitionReconciler(
     // The reaper joins the override to wh_event_store.event_type, so it is keyed by the stored form the append path
     // writes, under the type's current name and every former one (#2254); the bare CLR name matched no event.
     var graceOverrides = new List<EphemeralTypeGrace>();
+    // #2320: the framework's rewind and rebuild events take their grace from Whizbang:Ephemeral:SystemEvents:Ttl, so a
+    // reclassified historical event, which carries no stamped expiry, is kept for the same retention as a new one.
     foreach (var e in _catalog.GetAll()) {
-      if (e.Ephemeral is { RewindGraceSeconds: >= 0 } eph) {
+      var declared = e.Ephemeral is null ? null : Whizbang.Core.Events.System.SystemEventRetention.Apply(e.Type, e.Ephemeral, _options.SystemEvents.Ttl);
+      if (declared is { RewindGraceSeconds: >= 0 } eph) {
         graceOverrides.Add(new EphemeralTypeGrace(TypeNameFormatter.Format(e.Type), eph.RewindGraceSeconds));
         graceOverrides.AddRange(e.FormerNames
           .Where(n => !string.IsNullOrWhiteSpace(n))

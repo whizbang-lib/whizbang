@@ -28,8 +28,10 @@ public static class SystemEventRetention {
   /// <returns>The mode to use.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:Apply_ToASystemEvent_SetsTtlAndGrace_AndLeavesOtherTypesAloneAsync</tests>
   public static EphemeralInfo Apply(Type type, EphemeralInfo info, TimeSpan ttl) {
-    _ = (type, ttl);
-    return info;
+    if (!typeof(IEphemeralSystemEvent).IsAssignableFrom(type)) {
+      return info;
+    }
+    var seconds = (int)ttl.TotalSeconds;
+    return info with { TtlSeconds = seconds, RewindGraceSeconds = seconds };
   }
-
 }

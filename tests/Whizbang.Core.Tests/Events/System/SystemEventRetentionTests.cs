@@ -109,15 +109,20 @@ public class SystemEventRetentionTests {
       ["Whizbang:Ephemeral:SystemEvents:Ttl"] = "7.00:00:00",
     }).Build();
     var services = new ServiceCollection();
+    // The catalog a host's generated code registers; registered first so the defaults keep it.
+    services.AddSingleton<IMessageTypeCatalog>(new Whizbang.Core.Generated.GeneratedMessageTypeCatalog());
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(provider.GetRequiredService<IOptions<EphemeralOptions>>().Value.SystemEvents.Ttl)
-      .IsEqualTo(TimeSpan.FromDays(7));
-    await Assert.That(provider.GetRequiredService<IEphemeralModeResolver>().Resolve(typeof(PerspectiveRebuildStarted))!.TtlSeconds)
-      .IsEqualTo(SEVEN_DAYS).Because("the registered resolver is built with the options, so dispatch stamps the configured TTL");
+    var bound = provider.GetRequiredService<IOptions<EphemeralOptions>>().Value.SystemEvents;
+    var info = provider.GetRequiredService<IEphemeralModeResolver>().Resolve(typeof(PerspectiveRebuildStarted));
+
+    await Assert.That(bound.Ttl).IsEqualTo(TimeSpan.FromDays(7));
+    await Assert.That(info).IsNotNull();
+    await Assert.That(info!.TtlSeconds).IsEqualTo(SEVEN_DAYS)
+      .Because("the registered resolver is built with the options, so dispatch stamps the configured TTL");
   }
 
   [Test]

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Whizbang.Core.Attributes;
+
 namespace Whizbang.Core.Events.System;
 
 /// <summary>
@@ -12,4 +14,8 @@ namespace Whizbang.Core.Events.System;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:EveryRewindAndRebuildEvent_IsEphemeral_ForThirtyDaysByDefaultAsync</tests>
+[Ephemeral(
+  Destruction = Destruction.AfterTtl,
+  TtlSeconds = SystemEventRetention.DEFAULT_TTL_SECONDS,
+  RewindGraceSeconds = SystemEventRetention.DEFAULT_TTL_SECONDS)]
 public interface IEphemeralSystemEvent : IEvent;

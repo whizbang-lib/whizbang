@@ -31,8 +31,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard5")]
 public class SystemEventRetentionSqlTests : EFCoreTestBase {
-  private const long EPHEMERAL = 8;
-
   [Test]
   [Timeout(120000)]
   public async Task HistoricalRewindEvents_AreReclassified_AndReapedOnlyOnceTheirRetentionHasPassedAsync(CancellationToken cancellationToken) {
