@@ -28,7 +28,7 @@ BEGIN
     RETURN;
   END IF;
 
-  -- debug_mode retains forensic rows — the reaper (073) and completed-message purges honor it, so must this.
+  -- debug_mode retains forensic rows: the reaper (073) and completed-message purges honor it, so must this.
   SELECT COALESCE(
     (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'),
     FALSE) INTO v_debug;
@@ -42,7 +42,7 @@ BEGIN
     30) INTO v_interval_days;
 
   -- Self-gate (multi-pod safe): atomically claim this tick by advancing the watermark ONLY if the interval
-  -- has elapsed. If no row is updated, another pod already claimed it this interval (or it is not yet due) —
+  -- has elapsed. If no row is updated, another pod already claimed it this interval (or it is not yet due):
   -- return without pruning. The conditional UPDATE is the atomic CAS; no advisory lock needed.
   UPDATE __SCHEMA__.wh_settings
     SET setting_value = NOW()::TEXT
@@ -60,7 +60,7 @@ BEGIN
   SELECT COALESCE(
     (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'dedup_retention_days'),
     30) INTO v_dedup_days;
-  -- Safety floor: the horizon can NEVER be shorter than the dedup window — a still-deduped redelivery must
+  -- Safety floor: the horizon can NEVER be shorter than the dedup window: a still-deduped redelivery must
   -- never find its pointer already gone. Operators widen ephemeral_pointer_retention_days for longer
   -- cross-service replay windows; they can never accidentally shorten it below dedup.
   v_horizon_days := GREATEST(v_retention_days, v_dedup_days);
