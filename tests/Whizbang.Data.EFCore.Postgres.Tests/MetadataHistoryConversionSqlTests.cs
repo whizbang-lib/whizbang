@@ -385,6 +385,8 @@ public class MetadataHistoryConversionSqlTests : EFCoreTestBase {
     await Assert.That(MetadataHistoryConversionStep.FromServices(new ServiceCollection().BuildServiceProvider())).IsNotNull();
     await Assert.That(() => MetadataHistoryConversionStep.FromServices(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => new MetadataHistoryConversionStep(null!, 1, 1)).Throws<ArgumentNullException>();
+    await Assert.That(new MetadataHistoryConversionStep(NullLogger<MetadataHistoryConversionStep>.Instance).Name).IsEqualTo(MetadataHistoryConversionStep.FromServices(withLogging).Name);
+    await Assert.That(() => new MetadataHistoryConversionStep((ILogger<MetadataHistoryConversionStep>)null!)).Throws<ArgumentNullException>();
     await Assert.That(async () => await MetadataHistoryConversionStep.FromServices(withLogging).ConvertAsync(null!, CancellationToken.None))
       .Throws<ArgumentNullException>();
   }
