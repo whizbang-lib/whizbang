@@ -124,6 +124,8 @@ public class TableStatisticsCollectorTests {
                + "is indistinguishable from a lean table");
     await Assert.That(floorWhenSignalled).IsEqualTo(1.8)
       .Because("the post-rewrite floors are read in the same cycle, before it is signaled (#2319)");
+    await Assert.That(metrics.GetRewriteFloorForTest("wh_inbox")).IsNull()
+      .Because("a table no rewrite has measured has no floor, so the floor gauge reports no series for it");
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }

@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -198,6 +199,24 @@ public class ToastAwareBloatEstimateSqlTests : EFCoreTestBase {
     await Assert.That(toastBytes).IsGreaterThan(8192L * 3).Because("the dead chunks still hold their pages");
     await Assert.That(estimate).IsLessThan((decimal)THRESHOLD)
       .Because("a TOAST relation is measured against at least table_rewrite_min_rows chunks, as a heap below that many rows is not measured");
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TheReMeasure_ReadsTheSameEstimate_WithOrWithoutANamedSchemaAsync(CancellationToken cancellationToken) {
+    await _createToastedAsync(2000, cancellationToken);
+    await _executeAsync($"UPDATE {TOASTED} SET body = 'short' WHERE id % 10 <> 0", cancellationToken);
+    await _vacuumOnceRemovableAsync(TOASTED, cancellationToken);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+
+    var named = await TableMaintenanceSql.MeasureRatioAsync(conn, TOASTED, "public", cancellationToken);
+    var searchPath = await TableMaintenanceSql.MeasureRatioAsync(conn, TOASTED, schema: null, cancellationToken);
+
+    await Assert.That(named!.Value).IsGreaterThanOrEqualTo(THRESHOLD)
+      .Because("the re-measure in a named schema calls that schema's estimate, which reads the mostly dead TOAST relation");
+    await Assert.That(searchPath).IsEqualTo(named)
+      .Because("with no schema the re-measure resolves the same function through search_path, so both forms agree");
   }
 
   [Test]
