@@ -771,4 +771,181 @@ public class MaintenanceTests : EFCoreTestBase {
     }
   }
 
+  // ================================================================
+  // #2173: the completed-outbox, completed perspective-event, deduplication and stuck-inbox purges are bounded per
+  // cycle, as the completed-inbox purge is (366, #2171)
+  //
+  // Each was one unbounded DELETE inside the single maintenance call, which runs under a fixed command budget. A backlog
+  // larger than one DELETE finishes inside that budget timed the call out, the cycle rolled back, and the backlog only
+  // grew. Each now deletes at most its own batch per call; the rest goes on later cycles.
+  // ================================================================
+
+  /// <summary>One purge: its batch setting, the task that reports it, and how to store one row it removes.</summary>
+  private static readonly Dictionary<string, (string Task, string BatchKey, Func<NpgsqlConnection, Task> AddEligible, string CountEligible)> _boundedPurges =
+    new(StringComparer.Ordinal) {
+      ["outbox"] = ("purge_completed_outbox", "completed_outbox_purge_batch_size", _addCompletedOutboxRowAsync,
+        "SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NOT NULL"),
+      ["perspective_events"] = ("purge_completed_perspective_events", "completed_perspective_event_purge_batch_size",
+        _addCompletedPerspectiveEventAsync, "SELECT COUNT(*) FROM wh_perspective_events WHERE processed_at IS NOT NULL"),
+      ["deduplication"] = ("purge_old_deduplication", "deduplication_purge_batch_size", _addAgedDeduplicationRowAsync,
+        "SELECT COUNT(*) FROM wh_message_deduplication WHERE first_seen_at < NOW() - INTERVAL '30 days'"),
+      ["stuck_inbox"] = ("purge_stuck_inbox", "stuck_inbox_purge_batch_size", _addAncientStuckInboxRowAsync,
+        "SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NULL AND received_at < NOW() - INTERVAL '7 days'"),
+    };
+
+  private static Task _addCompletedOutboxRowAsync(NpgsqlConnection conn) =>
+    conn.ExecuteAsync($@"
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number, processed_at)
+      VALUES ('{Guid.CreateVersion7()}', 'topic', 'Type', '{{}}', '{{}}', 5, 0, NOW(), '{Guid.CreateVersion7()}', 0, NOW())");
+
+  private static Task _addCompletedPerspectiveEventAsync(NpgsqlConnection conn) =>
+    conn.ExecuteAsync($@"
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at, processed_at)
+      VALUES ('{Guid.CreateVersion7()}', '{Guid.CreateVersion7()}', 'TestPerspective', '{Guid.CreateVersion7()}', 1, 0, NOW(), NOW())");
+
+  private static Task _addAgedDeduplicationRowAsync(NpgsqlConnection conn) =>
+    conn.ExecuteAsync($@"
+      INSERT INTO wh_message_deduplication (message_id, first_seen_at)
+      VALUES ('{Guid.CreateVersion7()}', NOW() - INTERVAL '31 days')");
+
+  private static Task _addAncientStuckInboxRowAsync(NpgsqlConnection conn) =>
+    conn.ExecuteAsync($@"
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{Guid.CreateVersion7()}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '8 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0 FROM m");
+
+  private static Task _setSettingAsync(NpgsqlConnection conn, string key, string value) =>
+    conn.ExecuteAsync($@"
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('{key}', '{value}', 'integer', 'test override')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value");
+
+  private static async Task<long> _rowsOfTaskAsync(NpgsqlConnection conn, string task) =>
+    (await _runMaintenanceAsync(conn)).Single(r => r.TaskName == task).RowsAffected;
+
+  [Test]
+  [Arguments("outbox")]
+  [Arguments("perspective_events")]
+  [Arguments("deduplication")]
+  [Arguments("stuck_inbox")]
+  public async Task PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync(string purge) {
+    var (task, batchKey, addEligible, countEligible) = _boundedPurges[purge];
+    await using var conn = await _openConnectionAsync();
+    await _setSettingAsync(conn, batchKey, "3");
+    for (var i = 0; i < 5; i++) {
+      await addEligible(conn);
+    }
+
+    await Assert.That(await _rowsOfTaskAsync(conn, task)).IsEqualTo(3L)
+      .Because("one cycle deletes at most the batch, so the call fits its budget however large the backlog is");
+    await Assert.That(await conn.ExecuteScalarAsync<long>(countEligible)).IsEqualTo(2L);
+
+    await Assert.That(await _rowsOfTaskAsync(conn, task)).IsEqualTo(2L)
+      .Because("the rest of the backlog goes on the next cycle");
+    await Assert.That(await conn.ExecuteScalarAsync<long>(countEligible)).IsEqualTo(0L);
+  }
+
+  [Test]
+  [Arguments("outbox")]
+  [Arguments("perspective_events")]
+  [Arguments("deduplication")]
+  [Arguments("stuck_inbox")]
+  public async Task PerformMaintenance_ABoundedPurgeSetBelowOne_StillDeletesOneRowPerCycleAsync(string purge) {
+    var (task, batchKey, addEligible, _) = _boundedPurges[purge];
+    await using var conn = await _openConnectionAsync();
+    await _setSettingAsync(conn, batchKey, "0");
+    await addEligible(conn);
+    await addEligible(conn);
+
+    await Assert.That(await _rowsOfTaskAsync(conn, task)).IsEqualTo(1L)
+      .Because("a batch of zero written by hand would stop the purge for good");
+  }
+
+  [Test]
+  [Arguments("outbox")]
+  [Arguments("perspective_events")]
+  [Arguments("deduplication")]
+  [Arguments("stuck_inbox")]
+  public async Task PerformMaintenance_ABoundedPurgeWithNoSetting_DeletesUpToTheDefaultAsync(string purge) {
+    var (task, batchKey, addEligible, _) = _boundedPurges[purge];
+    await using var conn = await _openConnectionAsync();
+    await conn.ExecuteAsync($"DELETE FROM wh_settings WHERE setting_key = '{batchKey}'");
+    await addEligible(conn);
+    await addEligible(conn);
+
+    await Assert.That(await _rowsOfTaskAsync(conn, task)).IsEqualTo(2L)
+      .Because("a database without the row uses the default, which is far above two rows");
+  }
+
+  [Test]
+  [Arguments("completed_outbox_purge_batch_size")]
+  [Arguments("completed_perspective_event_purge_batch_size")]
+  [Arguments("deduplication_purge_batch_size")]
+  [Arguments("stuck_inbox_purge_batch_size")]
+  public async Task Migration_SeedsEachPurgeBatchDefaultAsync(string key) {
+    await using var conn = await _openConnectionAsync();
+
+    var value = await conn.ExecuteScalarAsync<string>($"SELECT setting_value FROM wh_settings WHERE setting_key = '{key}'");
+
+    await Assert.That(value).IsEqualTo("50000")
+      .Because("the knob is visible to an operator reading wh_settings, at the value the function falls back to");
+  }
+
+  // ================================================================
+  // #2174: one failed task does not stop the tasks after it
+  //
+  // The maintenance tasks share one call. A task that raised rolled the whole call back, so the purges before it were
+  // undone and every task after it was skipped, cycle after cycle. Each task now runs in its own block: a failure is
+  // reported as that task's row, with status 'failed: <the error>', and the rest of the call runs and commits.
+  // ================================================================
+
+  [Test]
+  public async Task PerformMaintenance_ATaskThatFails_IsReportedByName_AndTheTasksBeforeAndAfterItStillCommitAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _addCompletedOutboxRowAsync(conn);
+    await _addAgedDeduplicationRowAsync(conn);
+    await conn.ExecuteAsync(
+      "INSERT INTO wh_instance_evictions (instance_id, evicted_at) VALUES (gen_random_uuid(), NOW() - INTERVAL '3 days')");
+    // A value the deduplication purge cannot read: its ::INTEGER cast raises, inside that task only.
+    await _setSettingAsync(conn, "dedup_retention_days", "not-a-number");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var (_, failedRows, _, failedStatus) = results.Single(r => r.TaskName == "purge_old_deduplication");
+    await Assert.That(failedStatus).StartsWith("failed: ").Because("the failed task is named, with the error it raised");
+    await Assert.That(failedStatus).Contains("not-a-number");
+    await Assert.That(failedRows).IsEqualTo(0L);
+    await Assert.That(results.Where(r => r.TaskName != "purge_old_deduplication").All(r => !r.Status.StartsWith("failed", StringComparison.Ordinal)))
+      .IsTrue().Because("no other task depends on the deduplication purge");
+    await Assert.That(results.Single(r => r.TaskName == "purge_instance_evictions").RowsAffected).IsEqualTo(1L)
+      .Because("a task after the failed one still runs");
+    await Assert.That(results.Single(r => r.TaskName == "reap_superseded_events").Status).IsEqualTo("ok")
+      .Because("the last task still runs");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NOT NULL"))
+      .IsEqualTo(0L).Because("a task before the failed one commits with the call instead of rolling back");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_instance_evictions")).IsEqualTo(0L);
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_message_deduplication")).IsEqualTo(1L)
+      .Because("the failed task's own work is undone, and only its own");
+  }
+
+  [Test]
+  public async Task PerformMaintenance_TheDeduplicationTaskFailing_LeavesTheDeadLetterPurgeItsRetentionAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setSettingAsync(conn, "dedup_retention_days", "not-a-number");
+    await _setSettingAsync(conn, "dead_letter_retention_days", "1");
+    var settled = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, settled, recoveryStatus: 3, age: "2 days");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    await Assert.That(results.Single(r => r.TaskName == "purge_recovered_dead_letters").RowsAffected).IsEqualTo(1L)
+      .Because("the dead-letter purge reads its own retention, so a failure in the deduplication task cannot leave it unset");
+    await Assert.That(await _countDeadLetterAsync(conn, settled)).IsEqualTo(0L);
+  }
 }

@@ -38,6 +38,8 @@ public class RetentionSettingsBridgeTests {
     "log_retention_days", "schedule_run_retention_days", "stream_purge_audit_retention_days", "integrity_ledger_max_entries",
     "collective_apply_progress_retention_days",
     "trace_retention_days", "route_idle_days", "instance_exit_retention_days", "completed_inbox_purge_batch_size",
+    "completed_outbox_purge_batch_size", "completed_perspective_event_purge_batch_size", "deduplication_purge_batch_size",
+    "stuck_inbox_purge_batch_size",
     "ephemeral_rewind_grace_seconds", "ephemeral_deep_maintenance_enabled",
     "ephemeral_pointer_retention_days", "ephemeral_pointer_prune_interval_days",
     "partition_maintenance_enabled",
@@ -60,6 +62,10 @@ public class RetentionSettingsBridgeTests {
     RouteIdleDays = 27,
     InstanceExitDays = 28,
     CompletedInboxPurgeBatchSize = 29,
+    CompletedOutboxPurgeBatchSize = 30,
+    CompletedPerspectiveEventPurgeBatchSize = 31,
+    DeduplicationPurgeBatchSize = 32,
+    StuckInboxPurgeBatchSize = 33,
   };
 
   private static EphemeralOptions _allEphemeralSet() => new() {
@@ -91,6 +97,10 @@ public class RetentionSettingsBridgeTests {
   [Arguments("route_idle_days", "27", "Whizbang:Workers:Maintenance:Retention:RouteIdleDays")]
   [Arguments("instance_exit_retention_days", "28", "Whizbang:Workers:Maintenance:Retention:InstanceExitDays")]
   [Arguments("completed_inbox_purge_batch_size", "29", "Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize")]
+  [Arguments("completed_outbox_purge_batch_size", "30", "Whizbang:Workers:Maintenance:Retention:CompletedOutboxPurgeBatchSize")]
+  [Arguments("completed_perspective_event_purge_batch_size", "31", "Whizbang:Workers:Maintenance:Retention:CompletedPerspectiveEventPurgeBatchSize")]
+  [Arguments("deduplication_purge_batch_size", "32", "Whizbang:Workers:Maintenance:Retention:DeduplicationPurgeBatchSize")]
+  [Arguments("stuck_inbox_purge_batch_size", "33", "Whizbang:Workers:Maintenance:Retention:StuckInboxPurgeBatchSize")]
   [Arguments("ephemeral_rewind_grace_seconds", "18", "Whizbang:Ephemeral:RewindGraceSeconds")]
   [Arguments("ephemeral_pointer_retention_days", "19", "Whizbang:Ephemeral:PointerPrune:RetentionDays")]
   [Arguments("ephemeral_pointer_prune_interval_days", "20", "Whizbang:Ephemeral:PointerPrune:IntervalDays")]

@@ -378,59 +378,125 @@ public sealed partial class MaintenanceWorker(
       new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", table));
   }
 
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One maintenance cycle: each guarded task is a documented sweep and their order is the contract.")]
+  /// <summary>
+  /// One maintenance cycle: its tasks in order, each run through <see cref="_isolatedAsync"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// #2174: a task that threw used to end the cycle, so every task after it was skipped. When the maintenance call timed
+  /// out on a large backlog, a service ran none of the perspective row sweeps, the lifecycle-completion cleanup, the
+  /// offload sweep, bloat detection, the stuck-row sentinel or the registered steps for days, although none of them
+  /// depended on it. The cycle is therefore a list of named tasks and the loop isolates each one: a failure is logged by
+  /// the task's name with its exception and the next task runs. A task added to the list is isolated without asking.
+  /// </para>
+  /// <para>
+  /// The one dependency is kept in the data, not in the order: the reap may delete only what the destruction hooks were
+  /// given, so the batch starts empty and a failed read leaves it empty (nothing is reaped this cycle), and the
+  /// PostDestruction hooks fire only after a maintenance call that committed.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#a-failed-task-does-not-stop-the-cycle</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs</tests>
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
-    // Publish debug retention and every configured retention window BEFORE the sweep reads them. The sweep
-    // decides from stored settings, not from this process's options, and nothing used to write them, so
-    // enabling debug retention marked rows the sweep then deleted, and every other window needed hand-written
-    // SQL. One write per cycle rather than at startup, so a configuration change takes effect without a
-    // restart and a stale value cannot outlive the option that set it.
-    await _syncRetentionSettingsAsync(coordinator, sp, ct).ConfigureAwait(false);
-
-    // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
-    // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
-    // about to delete. This is what makes the coverage gate safe on low-volume / idle streams.
-    await _reapDrivenEphemeralSnapshotAsync(coordinator, sp, ct);
-
-    // E2 PreDestruction hooks — run BEFORE the reap so a registered IDestructionHook can preserve / compact /
-    // archive each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
-    // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Returns the
-    // targets so PostDestruction can fire after the delete. Inert without a registered hook.
-    var destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct);
-
     // The ledger gauges are published at the start of every tick (_refreshLedgerGaugesAsync, #2024), not here.
     var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    // #2174: empty until the destruction read succeeds, so a failed read reaps nothing rather than everything.
+    var destruction = DestructionBatch.Seen([]);
 
-    // Digest-epoch closure (migration 092). The substrate is inert without a caller — nothing
-    // else advances the frontier, and an unclosed frontier means manifests keep re-aggregating
-    // live history. The settle window is the AUDIT's settle window on purpose: closure and the
-    // audit must agree on what "settled" means, or a seal could disagree with a manifest folded
-    // over the same range. Best-effort — the frontier just advances on a later cycle.
-    if (integrity is { EpochClosureEnabled: true }) {
-      try {
-        var closed = await coordinator.CloseDigestEpochsAsync(
-          integrity.AuditSettleWindowMinutes * 60, integrity.MaxEpochClosuresPerMaintenanceCycle, ct);
-        if (closed > 0) {
-          LogEpochsClosed(_logger, closed);
-        }
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogEpochClosureFailed(_logger, ex);
-      }
+    (string Name, Func<Task> Run)[] tasks = [
+      // Publish debug retention and every configured retention window BEFORE the sweep reads them. The sweep decides
+      // from stored settings, not from this process's options, and nothing used to write them, so enabling debug
+      // retention marked rows the sweep then deleted, and every other window needed hand-written SQL. One write per
+      // cycle rather than at startup, so a configuration change takes effect without a restart and a stale value cannot
+      // outlive the option that set it.
+      ("retention_settings_sync", () => _syncRetentionSettingsAsync(coordinator, sp, ct)),
+      // Reap-driven ephemeral snapshots: run BEFORE perform_maintenance so a snapshot rewind-floor exists for every
+      // (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is about to delete.
+      // This is what makes the coverage gate safe on low-volume / idle streams.
+      ("reap_driven_snapshots", () => _reapDrivenEphemeralSnapshotAsync(coordinator, sp, ct)),
+      // E2 PreDestruction hooks: run BEFORE the reap so a registered IDestructionHook can preserve / compact / archive
+      // each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
+      // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Inert without a
+      // registered hook.
+      ("ephemeral_destruction_hooks", async () => destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct)),
+      ("digest_epoch_closure", () => _closeDigestEpochsAsync(coordinator, integrity, ct)),
+      ("integrity_traffic_sweep", () => _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct)),
+      // The maintenance call, then the E2 PostDestruction hooks (detached, after the reap committed).
+      ("perform_maintenance", () => _performMaintenanceAsync(coordinator, sp, destruction, ct)),
+      ("lifecycle_completion_cleanup", () => _cleanupLifecycleCompletionsAsync(coordinator, ct)),
+      // #2273: the handled ledger, kept to the repair receptor lookback. The completion records every handled event on
+      // any driver, so this runs whether or not integrity is on. Before the steps, so the coverage start moves before the
+      // partition step drops the partitions behind it.
+      ("handled_ledger_sweep", () => _sweepHandledLedgerAsync(coordinator, sp, integrity, ct)),
+      ("ephemeral_pointer_prune", () => _pruneAncientEphemeralPointersAsync(coordinator, ct)),
+      // Passive offload-claim sweep: drain the expired half of the blob ledger (delete the blob, then remove the row,
+      // successes only). Age-based (fan-out safe: no consumer's action can break a sibling's download) and fleet-elected
+      // (settings CAS watermark), so N replicas never issue N delete storms against one container.
+      ("offload_claim_sweep", () => _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct)),
+      // The perspective-row retention sweeps (the [RowTtl]/max-age ladder and the [RowCap] overflow eviction), fronted by
+      // the pre-destruction seam: registered guards are offered the exact set the sweeps would destroy and may defer or
+      // cancel per row before anything dies. This is the sweeps' production invocation; the SQL alone has no caller.
+      ("perspective_row_sweeps", () => _sweepPerspectiveRowsAsync(coordinator, sp, ct)),
+      // Detect space held but unusable: churn leaves free space inside pages that autovacuum returns to the free space
+      // map but never to the OS, and a dropped column leaves bytes that autovacuum can never reclaim at all. Detection
+      // RECORDS the rewrite request; the post-ready Rewrite startup step performs it.
+      ("table_rewrite_detection", () => _rewriteBloatedTablesAsync(coordinator, sp, ct)),
+      // v0.657 slice 5: structural stuck-row sentinel, after the regular maintenance cycle so backings that don't
+      // implement it (default no-op returning empty list) pay zero cost.
+      ("stuck_row_sentinel", () => _options.StuckRowSentinelEnabled ? _runStuckRowSentinelAsync(coordinator, ct) : Task.CompletedTask),
+      // #2117: the rows the sentinel reports past the dispatcher's ceiling are concluded here, since the dispatcher that
+      // enforces it never saw them.
+      ("exhausted_inbox_conclusion",
+        () => _options.ConcludeExhaustedInboxRows ? _concludeExhaustedInboxRowsAsync(coordinator, sp, ct) : Task.CompletedTask),
+      // Steps other packages add. Last, so everything they read has been through this cycle's own housekeeping first.
+      ("maintenance_steps", () => _runMaintenanceStepsAsync(sp, ct)),
+    ];
+
+    foreach (var (name, run) in tasks) {
+      await _isolatedAsync(name, run).ConfigureAwait(false);
     }
+  }
 
-    await _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
+  /// <summary>
+  /// Runs one task of the cycle. A failure is logged with the task's name and its exception, and the cycle goes on to
+  /// the next task (#2174); cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>operations/infrastructure/maintenance#a-failed-task-does-not-stop-the-cycle</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:AFailedTask_IsLoggedByName_AndEveryLaterTaskStillRunsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:Cancellation_StillStopsTheCycleAsync</tests>
+  private async Task _isolatedAsync(string taskName, Func<Task> run) {
+    try {
+      await run().ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      // Shutdown, as every step of the cycle treats it: it ends the cycle instead of being logged and passed over.
+      throw;
+    } catch (Exception ex) {
+      LogMaintenanceTaskFailed(_logger, taskName, ex);
+    }
+  }
+
+  /// <summary>
+  /// The maintenance call, its per-task report, and the PostDestruction hooks once the reap it ran has committed. A task
+  /// the database reports failed (status <c>failed: ...</c>, #2174) is a warning by name; the call's other tasks ran.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:ATaskTheDatabaseReportsFailed_IsLoggedAsAWarningByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:TheDestructionReadFailing_GivesTheReapNothing_AndTheCycleGoesOnAsync</tests>
+  private async Task _performMaintenanceAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, DestructionBatch destruction, CancellationToken ct) {
     var results = destruction.ReapOnly is null
       ? await coordinator.PerformMaintenanceAsync(ct)
       : await coordinator.PerformMaintenanceAsync(destruction.ReapOnly, ct);
     var sweptRows = 0L;
     foreach (var r in results) {
       sweptRows += Math.Max(0, r.RowsAffected);
-      LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
+      if (r.Status.StartsWith(FAILED_STATUS, StringComparison.Ordinal)) {
+        LogMaintenanceTaskFailedInDatabase(_logger, r.TaskName, r.DurationMs, r.Status);
+      } else {
+        LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
+      }
       // Fleet-visible per-task outcomes (row retention's "is it working" signal rides
-      // task=reap_expired_perspective_rows). Optional — null when metrics aren't registered.
+      // task=reap_expired_perspective_rows). Optional: null when metrics aren't registered.
       metrics?.Record(r.TaskName, r.RowsAffected, r.DurationMs);
       _recordLedgerTrim(sp, r);
     }
@@ -438,36 +504,62 @@ public sealed partial class MaintenanceWorker(
     sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()
       ?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, sweptRows);
 
-    // E2 PostDestruction hooks — detached, after the reap committed.
     await _firePostDestructionHooksAsync(sp, destruction, ct);
+  }
 
-    // Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035
-    // documented the table as periodically cleaned, but no production path ever called it, so the
-    // table grew once per event forever while appearing to have retention. Best-effort: a failed
-    // sweep must not fail the cycle, but it is logged with the retention it was trying to apply so a
-    // permanently detached sweep is visible instead of silently reverting to unbounded growth.
-    if (_options.LifecycleCompletionRetentionDays > 0) {
-      try {
-        var retention = TimeSpan.FromDays(_options.LifecycleCompletionRetentionDays);
-        var removed = await coordinator.CleanupLifecycleCompletionsAsync(retention, ct);
-        if (removed > 0) {
-          LogLifecycleCompletionsPurged(_logger, removed, _options.LifecycleCompletionRetentionDays);
-        }
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogLifecycleCompletionPurgeFailed(_logger, _options.LifecycleCompletionRetentionDays, ex);
-      }
+  /// <summary>
+  /// Digest-epoch closure (migration 092). The substrate is inert without a caller: nothing else advances the frontier,
+  /// and an unclosed frontier means manifests keep re-aggregating live history. The settle window is the AUDIT's settle
+  /// window on purpose: closure and the audit must agree on what "settled" means, or a seal could disagree with a
+  /// manifest folded over the same range. Best-effort: the frontier just advances on a later cycle.
+  /// </summary>
+  private async Task _closeDigestEpochsAsync(
+      IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
+    if (integrity is not { EpochClosureEnabled: true }) {
+      return;
     }
+    try {
+      var closed = await coordinator.CloseDigestEpochsAsync(
+        integrity.AuditSettleWindowMinutes * 60, integrity.MaxEpochClosuresPerMaintenanceCycle, ct);
+      if (closed > 0) {
+        LogEpochsClosed(_logger, closed);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogEpochClosureFailed(_logger, ex);
+    }
+  }
 
-    // #2273: the handled ledger, kept to the repair receptor lookback. The completion records every handled event on any
-    // driver, so this runs whether or not integrity is on. Before the steps, so the coverage start moves before the
-    // partition step drops the partitions behind it.
-    await _sweepHandledLedgerAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
+  /// <summary>
+  /// Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035 documented the table
+  /// as periodically cleaned, but no production path ever called it, so the table grew once per event forever while
+  /// appearing to have retention. Best-effort: a failed sweep is logged with the retention it was trying to apply so a
+  /// permanently detached sweep is visible instead of silently reverting to unbounded growth.
+  /// </summary>
+  private async Task _cleanupLifecycleCompletionsAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+    if (_options.LifecycleCompletionRetentionDays <= 0) {
+      return;
+    }
+    try {
+      var retention = TimeSpan.FromDays(_options.LifecycleCompletionRetentionDays);
+      var removed = await coordinator.CleanupLifecycleCompletionsAsync(retention, ct);
+      if (removed > 0) {
+        LogLifecycleCompletionsPurged(_logger, removed, _options.LifecycleCompletionRetentionDays);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLifecycleCompletionPurgeFailed(_logger, _options.LifecycleCompletionRetentionDays, ex);
+    }
+  }
 
-    // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
-    // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
-    // no-op when disabled or not due. Best-effort: a prune failure is logged and never fails the cycle.
+  /// <summary>
+  /// Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on the opt-in flag
+  /// (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap no-op when disabled or not due.
+  /// Best-effort: a prune failure is logged and never fails the cycle.
+  /// </summary>
+  private async Task _pruneAncientEphemeralPointersAsync(IWorkCoordinator coordinator, CancellationToken ct) {
     try {
       var prune = await coordinator.PruneAncientEphemeralPointersAsync(ct);
       if (prune.RowsPruned > 0) {
@@ -478,42 +570,6 @@ public sealed partial class MaintenanceWorker(
     } catch (Exception ex) {
       LogPointerPruneFailed(_logger, ex);
     }
-
-    // Passive offload-claim sweep: drain the expired half of the blob ledger — delete the blob,
-    // then remove the row, successes only. Age-based (fan-out safe: no consumer's action can break
-    // a sibling's download) and fleet-elected (settings CAS watermark), so N replicas never issue
-    // N delete storms against one container. Best-effort — a failed sweep retries next cycle.
-    await _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct);
-
-    // The perspective-row retention sweeps (the [RowTtl]/max-age ladder and the [RowCap] overflow
-    // eviction), fronted by the pre-destruction seam: registered guards are offered the exact set
-    // the sweeps would destroy and may defer or cancel per row before anything dies. This is the
-    // sweeps' production invocation — the SQL alone has no caller.
-    await _sweepPerspectiveRowsAsync(coordinator, sp, ct);
-
-    // Detect space held but unusable — churn leaves free space inside pages that autovacuum
-    // returns to the free space map but never to the OS, and a dropped column leaves bytes that
-    // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
-    // Rewrite startup step performs it, in the window it should always have had.
-    await _rewriteBloatedTablesAsync(coordinator, sp, ct);
-
-    // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
-    // maintenance cycle so backings that don't implement it (default no-op
-    // returning empty list) pay zero cost; Postgres backends use the partial
-    // indexes added in migration 054 for O(log N) scan on a ~0-sized index.
-    if (_options.StuckRowSentinelEnabled) {
-      await _runStuckRowSentinelAsync(coordinator, ct);
-    }
-
-    // #2117: the rows the sentinel reports past the dispatcher's ceiling are concluded here, since the dispatcher that
-    // enforces it never saw them.
-    if (_options.ConcludeExhaustedInboxRows) {
-      await _concludeExhaustedInboxRowsAsync(coordinator, sp, ct);
-    }
-
-    // Steps other packages add. Last, so everything they read has been through this cycle's own
-    // housekeeping first.
-    await _runMaintenanceStepsAsync(sp, ct).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -1477,6 +1533,8 @@ public sealed partial class MaintenanceWorker(
 
   /// <summary>The maintenance task that trims the integrity ledger to its row cap (migration 221).</summary>
   private const string TRIM_INTEGRITY_LEDGER_TASK = "trim_integrity_ledger";
+  // #2174: the status prefix wh_perform_maintenance reports for a task it rolled back alone.
+  private const string FAILED_STATUS = "failed";
 
   // #2256: rows the ledger's row-cap trim removed are buckets closed without a heal. The trim counts every row it removes,
   // so a row already closed by an unhealable mark is counted again; the cap is reached only by a ledger past
@@ -1558,6 +1616,16 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal)")]
   static partial void LogPostDestructionFailed(ILogger logger, Exception ex, int targetCount);
+
+  // #2174: a task of the cycle failed; the cycle's other tasks still run.
+  [LoggerMessage(EventId = 79, Level = LogLevel.Warning,
+    Message = "Maintenance task '{TaskName}' failed; the cycle's other tasks still run, and this one is tried again next cycle")]
+  private static partial void LogMaintenanceTaskFailed(ILogger logger, string taskName, Exception exception);
+
+  // #2174: a task inside the maintenance call failed and was rolled back alone; the call's other tasks committed.
+  [LoggerMessage(EventId = 80, Level = LogLevel.Warning,
+    Message = "Maintenance task '{TaskName}' failed in the database after {DurationMs}ms and was rolled back alone; the other tasks committed: {Status}")]
+  private static partial void LogMaintenanceTaskFailedInDatabase(ILogger logger, string taskName, double durationMs, string status);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Maintenance task '{TaskName}' affected {RowsAffected} rows in {DurationMs}ms")]

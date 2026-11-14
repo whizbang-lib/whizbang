@@ -38,11 +38,16 @@ test (tests with different keys in parallel, the same key one at a time, still u
 `[NotInParallel]` test, one at a time, alone. A keyed test never overlaps an unconstrained one, but it does overlap
 keyed tests with other keys; only the keyless attribute guarantees nothing else is running.
 
+A test gets one `[NotInParallel]`, and when its class has one the class's wins: the method's keys are dropped without
+a warning. A class that serializes therefore names on the class every key any of its tests needs (a test running
+with the class's TTL key alone swapped the apply-hook registry beside another class restoring it, and failed in the
+merge queue on PR #2318). Check what a test really holds with `TestContext.Current.Parallelism.Constraints`.
+
 ## Enforcement
 
 | Guard | Fails when |
 |---|---|
-| `TestIsolation/ParallelismPolicyGuardTests` | the base class serializes; any test holds the retired key; a `[NotInParallel]` line has no reason (files older than the rule sit on a list that only shrinks); the assembly limit is missing; the live container's `max_connections` cannot hold the limit |
+| `TestIsolation/ParallelismPolicyGuardTests` | the base class serializes; any test holds the retired key; a `[NotInParallel]` line has no reason (files older than the rule sit on a list that only shrinks); a class that serializes has a member that serializes too (TUnit ignores the member's keys); the assembly limit is missing; the live container's `max_connections` cannot hold the limit |
 | `TestIsolation/SharedRegistryResetIsolationTests` | a test resets a registry, coalescer, hydrator or test seam without running alone |
 | `TestIsolation/ScratchDatabaseLifecycleGuardTests` | a fixture issues its own `CREATE DATABASE` (two deliberate exceptions) |
 | `TestIsolation/BackendTerminationScopeTests` | a test ends backends without naming its database |

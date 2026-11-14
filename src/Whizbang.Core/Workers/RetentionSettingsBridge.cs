@@ -68,6 +68,16 @@ public static class RetentionSettingsBridge {
     new("instance_exit_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.InstanceExitDays), o => o.InstanceExitDays),
     new("completed_inbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedInboxPurgeBatchSize),
       o => o.CompletedInboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges completed inbox rows"),
+    new("completed_outbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedOutboxPurgeBatchSize),
+      o => o.CompletedOutboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges completed outbox rows"),
+    new("completed_perspective_event_purge_batch_size",
+      MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedPerspectiveEventPurgeBatchSize),
+      o => o.CompletedPerspectiveEventPurgeBatchSize, Minimum: 1,
+      BelowMinimum: "a batch below one never purges completed perspective events"),
+    new("deduplication_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.DeduplicationPurgeBatchSize),
+      o => o.DeduplicationPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges deduplication rows"),
+    new("stuck_inbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.StuckInboxPurgeBatchSize),
+      o => o.StuckInboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges stuck inbox rows"),
   ];
 
   private static readonly IntegerSetting<EphemeralOptions>[] _ephemeral = [
