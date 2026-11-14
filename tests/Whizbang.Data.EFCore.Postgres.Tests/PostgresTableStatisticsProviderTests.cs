@@ -180,6 +180,71 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
       .Because("estimated_bytes and the component split come from one reading, so they agree exactly");
   }
 
+  // ==== #2319: the TOAST relation's bloat, what a rewrite would free now, and where the last rewrite left each table ====
+
+  [Test]
+  [Timeout(120000)]
+  public async Task GetTableStorageAsync_ReportsTheToastRelationsBloat_AndTheBytesARewriteWouldFreeAsync(CancellationToken cancellationToken) {
+    await _runAsync(
+      "CREATE SCHEMA stats_dead_toast",
+      "CREATE TABLE stats_dead_toast.wh_toast_probe (id int PRIMARY KEY, body text) WITH (autovacuum_enabled = false, toast.autovacuum_enabled = false)",
+      "ALTER TABLE stats_dead_toast.wh_toast_probe ALTER COLUMN body SET STORAGE EXTERNAL",
+      "INSERT INTO stats_dead_toast.wh_toast_probe SELECT g, repeat('x', 4000) FROM generate_series(1, 2000) g",
+      "UPDATE stats_dead_toast.wh_toast_probe SET body = 'short' WHERE id % 10 <> 0");
+    await using (var connection = await _dataSource.OpenConnectionAsync(cancellationToken)) {
+      await TableBloat.WaitUntilTheDeletedRowsAreRemovableAsync(connection, cancellationToken);
+    }
+    await _runAsync("VACUUM ANALYZE stats_dead_toast.wh_toast_probe", "SELECT pg_stat_force_next_flush()");
+
+    var probe = (await new PostgresTableStatisticsProvider(_dataSource, "stats_dead_toast").GetTableStorageAsync(cancellationToken))["wh_toast_probe"];
+    var toastBytes = await _scalarAsync(
+      "SELECT pg_relation_size(reltoastrelid) FROM pg_class WHERE oid = 'stats_dead_toast.wh_toast_probe'::regclass");
+    var liveChunks = await _scalarAsync(
+      "SELECT t.reltuples::bigint FROM pg_class c JOIN pg_class t ON t.oid = c.reltoastrelid WHERE c.oid = 'stats_dead_toast.wh_toast_probe'::regclass");
+
+    await Assert.That(probe.ToastBloatRatio.HasValue).IsTrue();
+    await Assert.That(probe.ToastBloatRatio!.Value).IsGreaterThanOrEqualTo(3.0)
+      .Because("nine in ten of the TOAST relation's chunks are dead, which the heap's ratio never showed");
+    await Assert.That(probe.ReclaimableToastBytes).IsEqualTo(toastBytes - (Math.Max(liveChunks, 1000) * 2048))
+      .Because("a rewrite keeps the live chunks, each a quarter page, and frees the rest");
+    await Assert.That(probe.ReclaimableHeapBytes.HasValue).IsTrue();
+    await Assert.That(probe.ReclaimableHeapBytes!.Value).IsGreaterThanOrEqualTo(0L);
+  }
+
+  [Test]
+  public async Task GetRewriteFloorsAsync_ReadsTheLatestRewritePerTableAsync() {
+    await _runAsync("""
+      INSERT INTO wh_table_rewrite_history (table_name, strategy, reason, bloat_before, bloat_after) VALUES
+        ('wh_outbox', 'PgSqueeze', 'Bloat', 5.0, 1.8),
+        ('wh_outbox', 'PgSqueeze', 'Bloat', 4.0, 1.6),
+        ('wh_inbox', 'VacuumFull', 'Bloat', 3.5, 2.0),
+        ('wh_settings', 'PgSqueeze', 'Bloat', 3.5, NULL)
+      """);
+
+    var floors = await _provider.GetRewriteFloorsAsync();
+
+    await Assert.That(floors).IsEquivalentTo(new Dictionary<string, double> { ["wh_outbox"] = 1.6, ["wh_inbox"] = 2.0 })
+      .Because("the newest rewrite of each table is where it was left, and a rewrite that recorded no ratio sets no floor");
+  }
+
+  [Test]
+  public async Task GetRewriteFloorsAsync_InASchemaWithoutTheHistory_ReportsNoneAsync() {
+    await _runAsync("CREATE SCHEMA stats_no_history");
+
+    var floors = await new PostgresTableStatisticsProvider(_dataSource, "stats_no_history").GetRewriteFloorsAsync();
+
+    await Assert.That(floors).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetRewriteFloorsAsync_WithoutASchema_ReadsTheConnectionsOwnAsync() {
+    await _runAsync("INSERT INTO wh_table_rewrite_history (table_name, strategy, reason, bloat_before, bloat_after) VALUES ('wh_outbox', 'PgSqueeze', 'Bloat', 5.0, 1.7)");
+
+    var floors = await new PostgresTableStatisticsProvider(_dataSource, schema: null).GetRewriteFloorsAsync();
+
+    await Assert.That(floors["wh_outbox"]).IsEqualTo(1.7);
+  }
+
   [Test]
   public async Task GetTableStorageAsync_ReportsLiveRowsAsync() {
     await _runAsync(

@@ -46,6 +46,16 @@ public partial class DapperWorkCoordinator {
     _withGatedCommandAsync((cmd, prefix) => TableMaintenanceSql.TablesNeedingRewriteAsync(cmd, prefix, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  public Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) =>
+    _withGatedCommandAsync((cmd, prefix) => TableMaintenanceSql.QueueStatusAsync(cmd, prefix, cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  public Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
+    _withGatedCommandAsync((cmd, prefix) => TableMaintenanceSql.TotalBytesAsync(cmd, prefix, tableName, cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
   public Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     return _withGatedCommandAsync(async (cmd, prefix) => {

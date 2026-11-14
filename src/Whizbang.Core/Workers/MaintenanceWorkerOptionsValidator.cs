@@ -9,7 +9,8 @@ namespace Whizbang.Core.Workers;
 /// Rejects a negative retention window in <see cref="MaintenanceWorkerOptions.Retention"/>, and a partition
 /// <see cref="MaintenancePartitioningOptions.CreateAhead"/> below one, and a
 /// <see cref="MaintenanceWorkerOptions.ReindexBloatThreshold"/> that is neither 0 nor a finite value above 1, where the
-/// options are read, naming the configuration key, instead of letting it reach the sweep.
+/// options are read, and a table-rewrite threshold or regrowth factor that is not above 1, or a negative row floor
+/// (#2319), naming the configuration key, instead of letting it reach the sweep.
 /// </summary>
 /// <remarks>
 /// The sweep turns each window into <c>NOW() - n * INTERVAL</c>. A negative value puts the cutoff in the future,
@@ -20,6 +21,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs:TheThreshold_IsValidatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:TheValidator_RejectsTheTableRewriteSettingsByNameAsync</tests>
 public sealed class MaintenanceWorkerOptionsValidator : IValidateOptions<MaintenanceWorkerOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, MaintenanceWorkerOptions options) {
@@ -27,6 +29,7 @@ public sealed class MaintenanceWorkerOptionsValidator : IValidateOptions<Mainten
     var failures = RetentionSettingsBridge.Validate(options.Retention);
     failures.AddRange(MaintenancePartitioningOptions.Validate(options.Partitioning));
     failures.AddRange(QueueIndexReindexStep.ValidateThreshold(options.ReindexBloatThreshold));
+    failures.AddRange(TableRewriteSettings.Validate(options));
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 }

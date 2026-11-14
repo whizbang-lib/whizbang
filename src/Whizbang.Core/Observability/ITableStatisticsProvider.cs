@@ -163,6 +163,18 @@ public interface ITableStatisticsProvider {
     Task.FromResult<IReadOnlyDictionary<string, UnusedIndex>>(new Dictionary<string, UnusedIndex>());
 
   /// <summary>
+  /// The ratio each table's latest recorded rewrite left it at (<c>wh_table_rewrite_history.bloat_after</c>, #2319):
+  /// the floor the post-rewrite guard measures regrowth from.
+  /// </summary>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The latest post-rewrite ratio by table, or empty where the provider keeps no rewrite history (the default).</returns>
+  /// <docs>operations/observability/metrics#table-rewrites</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderWithoutRewriteHistory_ReportsNoFloorsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:GetRewriteFloorsAsync_ReadsTheLatestRewritePerTableAsync</tests>
+  Task<IReadOnlyDictionary<string, double>> GetRewriteFloorsAsync(CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, double>>(new Dictionary<string, double>());
+
+  /// <summary>
   /// Returns, per table, how much reading has been done by sequential scan rather than by index.
   /// </summary>
   /// <remarks>
@@ -262,6 +274,28 @@ public readonly record struct TableStorageStatistics(
     long HeapBytes, long ToastBytes, long IndexBytes, long LiveRows, double? BloatRatio) {
   /// <summary>The table's whole size on disk: heap, TOAST and indexes together.</summary>
   public long TotalBytes => HeapBytes + ToastBytes + IndexBytes;
+
+  /// <summary>
+  /// The TOAST relation's bloat ratio (#2319): its bytes over its live chunks times a quarter page, the chunk count
+  /// floored at the row floor; null where there is no TOAST relation, its chunk count is unknown, or the table is too
+  /// small for a ratio. <see cref="BloatRatio"/> is the heap's.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  public double? ToastBloatRatio { get; init; }
+
+  /// <summary>
+  /// The heap bytes a rewrite would free now (#2319): the heap's size less what its live rows are expected to occupy,
+  /// at least 0; null where <see cref="BloatRatio"/> is. Summed under the cap's rollup.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  public long? ReclaimableHeapBytes { get; init; }
+
+  /// <summary>
+  /// The TOAST bytes a rewrite would free now (#2319): the TOAST relation's size less what its live chunks occupy, at
+  /// least 0; null where <see cref="ToastBloatRatio"/> is. Summed under the cap's rollup.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  public long? ReclaimableToastBytes { get; init; }
 }
 
 /// <summary>An index nothing has scanned since the statistics were last reset, and what it costs on disk.</summary>
