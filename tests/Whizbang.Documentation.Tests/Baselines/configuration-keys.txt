@@ -141,6 +141,7 @@ Whizbang:Ephemeral:PointerPrune:RetentionDays
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup
 Whizbang:Ephemeral:ReleaseBlockers:*:*
 Whizbang:Ephemeral:RewindGraceSeconds
+Whizbang:Ephemeral:SystemEvents:Ttl
 Whizbang:EventStore:Metadata:ConvertHistory
 Whizbang:EventStore:Metadata:FullFor:*
 Whizbang:EventStore:Metadata:StagingDays
@@ -617,6 +618,9 @@ Whizbang:Workers:Maintenance:IntervalMinutes
 Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
+Whizbang:Workers:Maintenance:MetadataHistoryConversion:BatchSize
+Whizbang:Workers:Maintenance:MetadataHistoryConversion:MaxBatchesPerCycle
+Whizbang:Workers:Maintenance:MetadataHistoryConversion:TimeBudget
 Whizbang:Workers:Maintenance:OnDestroyFailure
 Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle
 Whizbang:Workers:Maintenance:Partitioning:CreateAhead
