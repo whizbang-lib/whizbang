@@ -30,7 +30,8 @@ public class LifecycleStageFailureIsolationTests {
     var first = _outbox();
     var second = _outbox();
     var third = _outbox();
-    var invoker = new FailingForInvoker(first.MessageId);
+    // The detached stage fails for the same message; it is made to fail first, the order that once mixed the two up.
+    var invoker = new FailingForInvoker(first.MessageId) { DetachedThrowsFirst = true };
     var logger = new FakeLogger();
     await using var provider = _provider(invoker);
     var context = _context(provider, logger, [first, second, third], []) with {
@@ -446,15 +447,28 @@ public class LifecycleStageFailureIsolationTests {
 
     public Guid[] InvokedAt(LifecycleStage stage) => [.. _invoked.Where(i => i.Stage == stage).Select(i => i.MessageId)];
 
-    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+    private readonly TaskCompletionSource _detachedThrew = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// When set, the inline stage's failure waits until the detached stage has thrown, fixing the order the two stages
+    /// fail in (the detached stage is started first, so the wait always ends).
+    /// </summary>
+    public bool DetachedThrowsFirst { get; init; }
+
+    public async ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       var messageId = envelope.MessageId.Value;
       _invoked.Enqueue((stage, messageId));
       if (_failFor.Contains(messageId) && (FailOnlyAt is null || FailOnlyAt == stage)) {
+        if (DetachedThrowsFirst && stage == LifecycleStage.PostDistributeInline) {
+          await _detachedThrew.Task;
+        }
         var thrown = toThrow ?? new InvalidOperationException($"receptor failed for {messageId}");
         Thrown ??= thrown;
+        if (stage == LifecycleStage.PostDistributeDetached) {
+          _detachedThrew.TrySetResult();
+        }
         throw thrown;
       }
-      return ValueTask.CompletedTask;
     }
   }
 
