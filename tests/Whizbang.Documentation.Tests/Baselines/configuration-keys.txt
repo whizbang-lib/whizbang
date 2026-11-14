@@ -627,7 +627,10 @@ Whizbang:Workers:Maintenance:Retention:AbandonedStreamHours
 Whizbang:Workers:Maintenance:Retention:CollectiveApplyProgressDays
 Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
 Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize
+Whizbang:Workers:Maintenance:Retention:CompletedOutboxPurgeBatchSize
+Whizbang:Workers:Maintenance:Retention:CompletedPerspectiveEventPurgeBatchSize
 Whizbang:Workers:Maintenance:Retention:DeduplicationDays
+Whizbang:Workers:Maintenance:Retention:DeduplicationPurgeBatchSize
 Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours
 Whizbang:Workers:Maintenance:Retention:InstanceExitDays
 Whizbang:Workers:Maintenance:Retention:IntegrityLedgerMaxEntries
@@ -638,6 +641,7 @@ Whizbang:Workers:Maintenance:Retention:RouteIdleDays
 Whizbang:Workers:Maintenance:Retention:ScheduleRunDays
 Whizbang:Workers:Maintenance:Retention:StreamPurgeAuditDays
 Whizbang:Workers:Maintenance:Retention:StuckInboxDays
+Whizbang:Workers:Maintenance:Retention:StuckInboxPurgeBatchSize
 Whizbang:Workers:Maintenance:Retention:TraceDays
 Whizbang:Workers:Maintenance:RowCapSweepClaimWindowMinutes
 Whizbang:Workers:Maintenance:RowCascadeDrainLimit
