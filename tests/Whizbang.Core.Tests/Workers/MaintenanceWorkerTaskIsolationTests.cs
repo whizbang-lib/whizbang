@@ -115,7 +115,7 @@ public class MaintenanceWorkerTaskIsolationTests {
   }
 
   private static (MaintenanceWorker Worker, CapturingLogger<MaintenanceWorker> Logger) _build(
-      FailingCoordinator coordinator, List<string> log, bool withHook = false) {
+      FailingCoordinator coordinator, List<string> log, bool withHook = false, int lifecycleRetentionDays = 7) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IMaintenanceStep>(new Step(log));
@@ -128,7 +128,11 @@ public class MaintenanceWorkerTaskIsolationTests {
     var logger = new CapturingLogger<MaintenanceWorker>();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, ConcludeExhaustedInboxRows = true }),
+      Options.Create(new MaintenanceWorkerOptions {
+        IntervalMinutes = 1,
+        ConcludeExhaustedInboxRows = true,
+        LifecycleCompletionRetentionDays = lifecycleRetentionDays,
+      }),
       logger);
     return (worker, logger);
   }
@@ -220,6 +224,27 @@ public class MaintenanceWorkerTaskIsolationTests {
     await Assert.That(warnings.Count).IsEqualTo(1).Because("only the failed task is a warning; the ok one is information");
     await Assert.That(warnings[0]).Contains("purge_old_deduplication");
     await Assert.That(warnings[0]).Contains("canceling statement due to lock timeout");
+  }
+
+  /// <summary>
+  /// A lifecycle-completion retention of zero or less turns that task off: it calls nothing and logs nothing, and the
+  /// tasks after it still run.
+  /// </summary>
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task TheLifecycleCleanup_WithNoRetention_CallsNothing_AndTheCycleGoesOnAsync(int retentionDays) {
+    var log = new List<string>();
+    var coordinator = new FailingCoordinator(log);
+    var (worker, logger) = _build(coordinator, log, lifecycleRetentionDays: retentionDays);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(log).DoesNotContain("lifecycle_cleanup")
+      .Because("a retention of zero or less is the off switch, not a window that removes every marker at once");
+    await Assert.That(log).Contains("perform_maintenance");
+    await Assert.That(log).Contains("step").Because("a task that is off is not a task that failed");
+    await Assert.That(logger.Snapshot().Where(e => e.Level >= LogLevel.Warning)).IsEmpty();
   }
 
   [Test]
