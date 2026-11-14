@@ -139,8 +139,14 @@ public sealed partial class AuditBodyConversionStep : IMaintenanceStep {
   /// <returns>The names, sorted and distinct.</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditBodyConversionSqlTests.cs:KeptBodyNames_AreBothFormsOfEachIncludeBodyType_SortedAsync</tests>
   public static string[] KeptBodyNames(IMessageTypeCatalog? catalog) {
-    _ = catalog;
-    return [];
+    if (catalog is null) {
+      return [];
+    }
+    return [.. catalog.GetAll()
+      .Where(e => AuditEventRegistry.Find(e.Type)?.IncludeBody == true)
+      .SelectMany(e => new[] { TypeNameFormatter.SimpleName(e.Type), TypeNameFormatter.GetFullName(TypeNameFormatter.Format(e.Type)) })
+      .Distinct(StringComparer.Ordinal)
+      .Order(StringComparer.Ordinal)];
   }
 
   private static async Task<TypeHistoryBatch> _applyAsync(
