@@ -250,12 +250,20 @@ public class BaseUpsertStrategyCoverageTests {
 /// forceUpdateScope forwarding.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Two tests register a TTL for the widget model in the process-wide <see cref="PerspectiveTtlRegistry"/> and the
 /// teardown takes it away again, while the others need it absent, so the class's tests serialize on that one
 /// registration (<see cref="WIDGET_TTL_KEY"/>). No other class registers the widget model, so nothing else waits.
+/// </para>
+/// <para>
+/// Two tests swap the process-wide apply-hook registry, and every test here upserts through it, so the class also
+/// holds <see cref="BaseUpsertStrategyCoverageTests.REGISTRY_KEY"/>. Both keys are on the class because TUnit runs
+/// a test with its class's <c>[NotInParallel]</c> keys and ignores the method's: a key on the method was dropped, and
+/// a swap here ran beside another class's restore (ParallelismPolicyGuardTests holds the rule).
+/// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
-[NotInParallel(BaseUpsertStrategyCoverageIntegrationTests.WIDGET_TTL_KEY)] // the widget model's TTL registration is process-wide
+[NotInParallel([BaseUpsertStrategyCoverageIntegrationTests.WIDGET_TTL_KEY, BaseUpsertStrategyCoverageTests.REGISTRY_KEY])] // the widget model's TTL registration and the apply-hook registry are process-wide
 [Category("Shard1")]
 public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   /// <summary>The widget model's entry in the process-wide TTL registry, which these tests set and take away.</summary>
@@ -455,7 +463,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // The atomic path binds updated_at itself, so it must honor a hook-supplied stamp exactly as the tracked
   // path does; binding the event time instead would silently discard the hook's decision.
   [Test]
-  [NotInParallel([WIDGET_TTL_KEY, BaseUpsertStrategyCoverageTests.REGISTRY_KEY])] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithAHookThatSetsUpdatedAt_StampsTheHooksValueViaTheAtomicPathAsync() {
     var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
@@ -493,7 +500,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // A hook that clears the stamp leaves the atomic path to bind the applied event's business time, never a
   // null the column cannot hold and never the clock, which would make a replayed row differ from the original.
   [Test]
-  [NotInParallel([WIDGET_TTL_KEY, BaseUpsertStrategyCoverageTests.REGISTRY_KEY])] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithAHookThatClearsUpdatedAt_StampsTheEventsBusinessTimeViaTheAtomicPathAsync() {
     var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
