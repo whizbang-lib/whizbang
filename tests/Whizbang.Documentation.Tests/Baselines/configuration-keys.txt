@@ -141,6 +141,7 @@ Whizbang:Ephemeral:PointerPrune:RetentionDays
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup
 Whizbang:Ephemeral:ReleaseBlockers:*:*
 Whizbang:Ephemeral:RewindGraceSeconds
+Whizbang:Ephemeral:SystemEvents:Ttl
 Whizbang:EventStore:Metadata:ConvertHistory
 Whizbang:EventStore:Metadata:FullFor:*
 Whizbang:EventStore:Metadata:StagingDays
@@ -617,6 +618,9 @@ Whizbang:Workers:Maintenance:IntervalMinutes
 Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
+Whizbang:Workers:Maintenance:MetadataHistoryConversion:BatchSize
+Whizbang:Workers:Maintenance:MetadataHistoryConversion:MaxBatchesPerCycle
+Whizbang:Workers:Maintenance:MetadataHistoryConversion:TimeBudget
 Whizbang:Workers:Maintenance:OnDestroyFailure
 Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle
 Whizbang:Workers:Maintenance:Partitioning:CreateAhead
@@ -656,6 +660,9 @@ Whizbang:Workers:Maintenance:StuckRowSentinelLimit
 Whizbang:Workers:Maintenance:StuckRowSentinelMaxAttempts
 Whizbang:Workers:Maintenance:TableRewrite:PgRepack:ClientPath
 Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode
+Whizbang:Workers:Maintenance:TableRewriteBloatThreshold
+Whizbang:Workers:Maintenance:TableRewriteMinRows
+Whizbang:Workers:Maintenance:TableRewriteRegrowthFactor
 Whizbang:Workers:Maintenance:TableRewriteStrategy
 Whizbang:Workers:OutboxBatch:FlushRetryBackoff
 Whizbang:Workers:OutboxBatch:FlushRetryMaxBackoff

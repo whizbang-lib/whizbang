@@ -66,6 +66,14 @@ public class TableStatisticsContractTests {
   }
 
   [Test]
+  public async Task AProviderWithoutRewriteHistory_ReportsNoFloorsAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.GetRewriteFloorsAsync()).IsEmpty()
+      .Because("an engine that keeps no rewrite history has no post-rewrite floor to report (#2319)");
+  }
+
+  [Test]
   public async Task AProviderThatDoesNotSample_AnswersNullAsync() {
     ITableStatisticsProvider provider = new SizesOnlyProvider();
 

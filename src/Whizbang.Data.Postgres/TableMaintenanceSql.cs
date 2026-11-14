@@ -69,8 +69,8 @@ internal static class TableMaintenanceSql {
   }
 
   /// <summary>
-  /// The rewrite candidates: every table the scan estimates bloated, and every queued one, with the heap size an online
-  /// rewrite copies, a queued table's measurement and method when it was measured before it was queued (#1807), and the
+  /// The rewrite candidates: every table the scan estimates bloated, and every queued one, with the size an online
+  /// rewrite copies (the heap and its TOAST relation, <c>pg_table_size</c>, #2319), a queued table's measurement and method when it was measured before it was queued (#1807), and the
   /// threshold the scan compared with; then every queued table owed a rewrite for a lowered fillfactor that the scan
   /// did not offer, as <see cref="TableRewriteReason.FillFactorDecrease"/> (#2300). Largest ratio first.
   /// </summary>
@@ -81,7 +81,7 @@ internal static class TableMaintenanceSql {
       + $"UNION ALL SELECT f.table_name, f.bloat_ratio, TRUE, TRUE FROM {prefix}wh_tables_owed_fillfactor_rewrite() f "
       + "WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.table_name = f.table_name)) "
       + "SELECT r.table_name, COALESCE(m.bloat_ratio, r.bloat_ratio), r.requested, "
-      + "COALESCE(pg_relation_size(to_regclass(@prefix || quote_ident(r.table_name))), 0), m.method, "
+      + "COALESCE(pg_table_size(to_regclass(@prefix || quote_ident(r.table_name))), 0), m.method, "
       + $"COALESCE((SELECT s.setting_value FROM {prefix}wh_settings s WHERE s.setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC, "
       + "r.decrease "
       + $"FROM r LEFT JOIN {prefix}wh_table_rewrite_measurements m ON r.requested AND m.table_name = r.table_name "
@@ -98,6 +98,25 @@ internal static class TableMaintenanceSql {
       });
     }
     return results;
+  }
+
+  /// <summary>
+  /// The queue's length, the threshold and how many tables the post-rewrite floor held back
+  /// (<c>wh_table_rewrite_queue_status</c>, #2319).
+  /// </summary>
+  internal static async Task<TableRewriteQueueStatus> QueueStatusAsync(DbCommand cmd, string prefix, CancellationToken cancellationToken) {
+    cmd.CommandText = $"SELECT requested, threshold, held_back FROM {prefix}wh_table_rewrite_queue_status()";
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new TableRewriteQueueStatus(reader.GetInt32(0), (double)reader.GetDecimal(1), reader.GetInt32(2));
+  }
+
+  /// <summary>A framework table's <c>pg_total_relation_size</c>, or null when it is not there.</summary>
+  internal static async Task<long?> TotalBytesAsync(DbCommand cmd, string prefix, string tableName, CancellationToken cancellationToken) {
+    RequireFrameworkTable(tableName);
+    cmd.CommandText = "SELECT pg_total_relation_size(to_regclass(@q))";
+    cmd.Parameters.Add(new NpgsqlParameter("q", prefix + tableName));
+    return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as long?;
   }
 
   /// <summary>Queues a rewrite of the table (<c>wh_request_table_rewrite</c>); queuing it again is absorbed.</summary>
@@ -143,28 +162,20 @@ internal static class TableMaintenanceSql {
   }
 
   /// <summary>
-  /// The table's bloat ratio, measured as <c>wh_tables_needing_rewrite</c> measures it, in <paramref name="schema"/>, or in
-  /// the connection's <c>current_schema()</c> when it is null.
+  /// The table's bloat ratio, measured as <c>wh_tables_needing_rewrite</c> measures it (<c>wh_estimate_table_bloat</c>,
+  /// the worse of the heap and its TOAST relation, #2319), in <paramref name="schema"/>, or through the connection's
+  /// <c>search_path</c> when it is null.
   /// </summary>
   /// <remarks>
-  /// <c>pg_class.reltuples</c>, not <c>pg_stat_user_tables.n_live_tup</c>: the stats collector is asynchronous, so
-  /// <c>n_live_tup</c> can lag the rewrite that just ran and the effectiveness comparison then races it. Rounded exactly as
-  /// the scan rounds the ratio it is compared with: unrounded, a rewrite that reclaimed nothing measured as an improvement.
+  /// One SQL function answers for the scan and for this re-measure, so the effectiveness comparison after a rewrite
+  /// compares like with like: it reads <c>pg_class.reltuples</c>, which VACUUM and ANALYZE write transactionally, never
+  /// the asynchronous statistics collector, and it rounds as the scan rounds.
   /// </remarks>
   internal static async Task<double?> MeasureRatioAsync(
       DbConnection conn, string tableName, string? schema, CancellationToken cancellationToken) {
     await using var measure = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
-    measure.CommandText = """
-      SELECT round((pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1), 2)
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      JOIN LATERAL (
-        SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
-        FROM pg_stats s WHERE s.schemaname = n.nspname AND s.tablename = c.relname
-      ) w ON TRUE
-      WHERE n.nspname = COALESCE(@s, current_schema()) AND c.relname = @t
-      """;
-    measure.Parameters.Add(new NpgsqlParameter("s", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)schema ?? DBNull.Value });
+    var function = schema is null ? "wh_estimate_table_bloat" : $"{PgIdentifier.Quote(schema)}.wh_estimate_table_bloat";
+    measure.CommandText = $"SELECT {function}(@t)";
     measure.Parameters.Add(new NpgsqlParameter("t", tableName));
     return await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is decimal d ? (double)d : null;
   }

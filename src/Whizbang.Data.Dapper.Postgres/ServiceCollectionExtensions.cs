@@ -560,6 +560,9 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
+    // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+      AuditBodyConversionStep.FromServices));
     // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
       SupersedingHistoryReconcileStep.FromServices));

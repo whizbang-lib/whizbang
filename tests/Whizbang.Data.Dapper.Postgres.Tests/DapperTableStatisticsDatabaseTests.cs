@@ -111,13 +111,15 @@ public class DapperTableStatisticsDatabaseTests {
     return provider;
   }
 
-  /// <summary>Reads every table-statistics gauge of the given hosts, with each reading's table and database.</summary>
+  /// <summary>Reads every table-statistics gauge of the given hosts, with each reading's table and database. Counters and
+  /// histograms are skipped: they report a zero baseline with no tags until a rewrite happens.</summary>
   private static List<(string Name, string? Table, string? Database)> _read(params ServiceProvider[] hosts) {
     var factories = hosts.Select(host => host.GetRequiredService<IMeterFactory>()).ToList();
     var readings = new List<(string Name, string? Table, string? Database)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
         if (instrument.Meter.Name == TableStatisticsMetrics.METER_NAME
+            && instrument is ObservableGauge<long> or ObservableGauge<double>
             && factories.Exists(factory => ReferenceEquals(instrument.Meter.Scope, factory))) {
           l.EnableMeasurementEvents(instrument);
         }

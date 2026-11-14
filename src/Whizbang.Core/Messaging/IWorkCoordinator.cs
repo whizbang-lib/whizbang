@@ -1890,6 +1890,33 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<TableRewriteCandidate>>([]);
 
   /// <summary>
+  /// The rewrite queue at a glance (#2319): how many tables are queued, the bloat threshold the scan compares with, and
+  /// how many tables the post-rewrite floor held back.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The status; by default an empty queue at the default threshold, since a backend without a queue has none.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync</tests>
+  Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(new TableRewriteQueueStatus(0, Whizbang.Core.Workers.TableRewriteSettings.DEFAULT_BLOAT_THRESHOLD, 0));
+
+  /// <summary>
+  /// A framework table's whole size on disk (<c>pg_total_relation_size</c>: heap, TOAST and indexes), which the rewrite
+  /// meters read before and after a rewrite for the bytes it returned (#2319).
+  /// </summary>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The bytes, or null when the table is not there or the backend does not measure it (the default).</returns>
+  /// <docs>operations/observability/metrics#table-rewrites</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsATablesTotalBytesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync</tests>
+  Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
   /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
   /// confirm it worked. Takes an ACCESS EXCLUSIVE lock for the duration.
   /// </summary>
@@ -5331,8 +5358,8 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
   /// <summary>
-  /// The table's heap size in bytes (<c>pg_relation_size</c>), what an online rewrite copies; 0 when the backend does not
-  /// measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
+  /// The table's size in bytes, its heap and its TOAST relation (<c>pg_table_size</c>, #2319), what an online rewrite
+  /// copies; 0 when the backend does not measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
   /// </summary>
   public long SizeBytes { get; init; }
 
@@ -5374,6 +5401,22 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public sealed record TableRewriteOutcome(
   string TableName, string Strategy, TableRewriteReason Reason, double BloatBefore, double BloatAfter);
+
+/// <summary>
+/// The rewrite queue at a glance (#2319): how many tables are queued, the bloat threshold, and how many tables reach the
+/// threshold but are held back by the floor their last rewrite set. The online rewrite step reports it when it has
+/// nothing to rewrite, so "nothing to do" reads differently from "never ran".
+/// </summary>
+/// <param name="Requested">The tables in the <c>pending_table_rewrites</c> queue.</param>
+/// <param name="Threshold">The bloat ratio at or above which a table is offered (<c>table_rewrite_bloat_threshold</c>).</param>
+/// <param name="HeldByFloor">
+/// The tables at or above <paramref name="Threshold"/> that are not offered because their last rewrite left them at a
+/// ratio whose regrowth floor (<c>bloat_after</c> times <c>table_rewrite_regrowth_factor</c>) they have not reached.
+/// </param>
+/// <docs>operations/infrastructure/storage-maintenance#post-rewrite-floor</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+public sealed record TableRewriteQueueStatus(int Requested, double Threshold, int HeldByFloor);
 
 /// <summary>Why a table is offered for rewrite (<see cref="TableRewriteCandidate.Reason"/>).</summary>
 /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>

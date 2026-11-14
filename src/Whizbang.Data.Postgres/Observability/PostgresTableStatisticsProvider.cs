@@ -96,7 +96,7 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
       GROUP BY table_oid, relname
     ),
     widths AS (
-      SELECT ps.tablename, sum(ps.avg_width) + 28 AS expected
+      SELECT ps.tablename, sum(ps.avg_width::numeric * (1 - ps.null_frac::numeric)) + 28 AS expected
       FROM pg_catalog.pg_stats ps
       WHERE ps.schemaname = COALESCE(@schema, current_schema())
         AND ps.tablename LIKE 'wh\_%'
@@ -106,8 +106,19 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
     bloat AS (
       SELECT t.oid AS table_oid,
              (pg_catalog.pg_relation_size(t.oid)::numeric / s.n_live_tup)
-             / GREATEST(COALESCE(w.expected, 28), 1) AS ratio
+             / GREATEST(COALESCE(w.expected, 28), 1) AS ratio,
+             GREATEST(pg_catalog.pg_relation_size(t.oid) - s.n_live_tup * COALESCE(w.expected, 28), 0) AS heap_reclaimable,
+             CASE WHEN tt.reltuples >= 0 THEN
+               pg_catalog.pg_relation_size(tt.oid)::numeric
+               / (GREATEST(tt.reltuples::numeric, @bloat_floor, 1) * (current_setting('block_size')::numeric / 4))
+             END AS toast_ratio,
+             CASE WHEN tt.reltuples >= 0 THEN
+               GREATEST(pg_catalog.pg_relation_size(tt.oid)
+                        - GREATEST(tt.reltuples::numeric, @bloat_floor) * (current_setting('block_size')::numeric / 4), 0)
+             END AS toast_reclaimable
       FROM tracked t
+      JOIN pg_catalog.pg_class tc ON tc.oid = t.oid
+      LEFT JOIN pg_catalog.pg_class tt ON tt.oid = tc.reltoastrelid
       JOIN pg_catalog.pg_stat_user_tables s ON s.relid = t.oid
       LEFT JOIN widths w ON w.tablename = t.relname
       WHERE t.relkind = 'r' AND s.n_live_tup > @bloat_floor
@@ -122,9 +133,12 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
            sum(r.toast_bytes)::bigint AS toast_bytes,
            sum(r.index_bytes)::bigint AS index_bytes,
            sum(r.live_rows)::bigint AS live_rows,
-           max(b.ratio)::float8 AS bloat_ratio
+           max(CASE WHEN r.size_rank <= @cap THEN b.ratio END)::float8 AS bloat_ratio,
+           max(CASE WHEN r.size_rank <= @cap THEN b.toast_ratio END)::float8 AS toast_bloat_ratio,
+           sum(b.heap_reclaimable)::bigint AS heap_reclaimable,
+           sum(b.toast_reclaimable)::bigint AS toast_reclaimable
     FROM ranked r
-    LEFT JOIN bloat b ON b.table_oid = r.table_oid AND r.size_rank <= @cap
+    LEFT JOIN bloat b ON b.table_oid = r.table_oid
     GROUP BY 1
     """;
 
@@ -275,11 +289,47 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
         ToastBytes: reader.GetInt64(2),
         IndexBytes: reader.GetInt64(3),
         LiveRows: reader.GetInt64(4),
-        BloatRatio: reader.IsDBNull(5) ? null : reader.GetDouble(5));
+        BloatRatio: reader.IsDBNull(5) ? null : reader.GetDouble(5)) {
+        ToastBloatRatio = reader.IsDBNull(6) ? null : reader.GetDouble(6),
+        ReclaimableHeapBytes = reader.IsDBNull(7) ? null : reader.GetInt64(7),
+        ReclaimableToastBytes = reader.IsDBNull(8) ? null : reader.GetInt64(8),
+      };
     }
 
     return results;
   }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// The newest row per table of <c>wh_table_rewrite_history</c>, which its own write bounds to 1,000 rows, in this
+  /// schema; a schema without the history table (one never migrated past it) reports none.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, double>> GetRewriteFloorsAsync(CancellationToken ct = default) {
+    var results = new Dictionary<string, double>(StringComparer.Ordinal);
+    var history = _schema is null ? HISTORY_TABLE : $"{PgIdentifier.Quote(_schema)}.{HISTORY_TABLE}";
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    await using (var exists = new NpgsqlCommand("SELECT to_regclass(@q) IS NOT NULL", connection)) {
+      exists.Parameters.AddWithValue("q", history);
+      if (!(bool)(await exists.ExecuteScalarAsync(ct).ConfigureAwait(false))!) {
+        return results;
+      }
+    }
+#pragma warning disable S2077 // the table is the framework's own, in the schema the provider was given, quoted
+    await using var cmd = new NpgsqlCommand($"""
+      SELECT DISTINCT ON (h.table_name) h.table_name, h.bloat_after::float8
+      FROM {history} h
+      WHERE h.bloat_after IS NOT NULL
+      ORDER BY h.table_name, h.id DESC
+      """, connection);
+#pragma warning restore S2077
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      results[reader.GetString(0)] = reader.GetDouble(1);
+    }
+    return results;
+  }
+
+  private const string HISTORY_TABLE = "wh_table_rewrite_history";
 
   /// <inheritdoc />
   /// <remarks>One catalog statement over the index statistics; nothing reads an index or a table.</remarks>

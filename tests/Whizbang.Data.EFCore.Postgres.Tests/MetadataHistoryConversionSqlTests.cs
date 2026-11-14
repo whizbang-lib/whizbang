@@ -8,6 +8,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Observability;
 using Whizbang.Data.Postgres;
 
@@ -386,6 +387,126 @@ public class MetadataHistoryConversionSqlTests : EFCoreTestBase {
     await Assert.That(() => new MetadataHistoryConversionStep(null!, 1, 1)).Throws<ArgumentNullException>();
     await Assert.That(async () => await MetadataHistoryConversionStep.FromServices(withLogging).ConvertAsync(null!, CancellationToken.None))
       .Throws<ArgumentNullException>();
+  }
+
+  // ===== What is left (#2322) =====
+
+  [Test]
+  public async Task Remaining_CountsTheRowsPastTheCursor_AndReachesZeroAsync() {
+    await using var conn = await _openAsync();
+    for (var i = 0; i < 3; i++) {
+      await _historicAsync(conn, ORDER_PLACED, [StoredMetadataCorpus.RichHop(StoredMetadataCorpus.Orders)]);
+    }
+
+    var before = await _remainingAsync(conn, 100);
+    await _convertAsync(conn, 2);
+    var partway = await _remainingAsync(conn, 100);
+    var pendingPartway = await _scalarAsync<long>(conn,
+      "SELECT pending FROM wh_pending_reclamation(100) WHERE task_name = 'convert_metadata_history'");
+    await _convertAsync(conn, 2);
+    var after = await _remainingAsync(conn, 100);
+
+    await Assert.That(before).IsEqualTo((3L, false));
+    await Assert.That(partway).IsEqualTo((1L, false)).Because("the cursor passed two rows");
+    await Assert.That(pendingPartway).IsEqualTo(1L).Because("the same count reaches whizbang.maintenance.pending_rows");
+    await Assert.That(after).IsEqualTo((0L, false)).Because("a short batch completed the conversion");
+  }
+
+  [Test]
+  public async Task Remaining_WhileSkipped_ReportsNothing_AndAPastTheCapCountSaysSoAsync() {
+    await using var conn = await _openAsync();
+    for (var i = 0; i < 3; i++) {
+      await _historicAsync(conn, ORDER_PLACED, [StoredMetadataCorpus.RichHop(StoredMetadataCorpus.Orders)]);
+    }
+
+    var capped = await _remainingAsync(conn, 2);
+    await _settingAsync(conn, "metadata_convert_history", "false");
+    var off = await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_metadata_history_remaining(100)");
+
+    await Assert.That(capped).IsEqualTo((2L, true)).Because("three rows are left and the count reads at most the cap");
+    await Assert.That(off).IsEqualTo(0L).Because("a conversion that is switched off has nothing to report");
+  }
+
+  [Test]
+  public async Task Step_LogsWhatIsLeft_AndHowManyCyclesItWillTakeAsync() {
+    await using var conn = await _openAsync();
+    for (var i = 0; i < 5; i++) {
+      await _historicAsync(conn, ORDER_PLACED, [StoredMetadataCorpus.RichHop(StoredMetadataCorpus.Orders)]);
+    }
+    var logger = new ListLogger();
+
+    var result = await new MetadataHistoryConversionStep(logger, batchSize: 2, maxBatches: 1).ConvertAsync(_services(), CancellationToken.None);
+
+    await Assert.That(result.RowsAffected).IsEqualTo(2L);
+    await Assert.That(result.RowsRemaining).IsEqualTo(3L);
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Information
+      && e.Message.Contains("3 row(s) left to read, about 2 more cycle(s)", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task Step_AHeldCycleWithRowsLeft_WarnsThatTheConversionIsNotMovingAsync() {
+    await using var conn = await _openAsync();
+    var ids = new List<Guid>();
+    for (var i = 0; i < 3; i++) {
+      ids.Add(await _historicAsync(conn, ORDER_PLACED, [StoredMetadataCorpus.RichHop(StoredMetadataCorpus.Orders)]));
+    }
+    await using var holder = await _openAsync();
+    await using var hold = await holder.BeginTransactionAsync();
+    await _executeAsync(holder, "SELECT 1 FROM wh_event_body WHERE event_id = @e FOR UPDATE", ("e", ids.Min()));
+    var logger = new ListLogger();
+
+    var result = await new MetadataHistoryConversionStep(logger, batchSize: 1, maxBatches: 10).ConvertAsync(_services(), CancellationToken.None);
+    await hold.RollbackAsync();
+
+    await Assert.That(result.RowsAffected).IsEqualTo(0L);
+    await Assert.That(result.RowsRemaining).IsEqualTo(3L);
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning
+      && e.Message.Contains("3 row(s) left to read", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task Step_StopsStartingBatches_OnceTheTimeBudgetHasPassedAsync() {
+    await using var conn = await _openAsync();
+    for (var i = 0; i < 10; i++) {
+      await _historicAsync(conn, ORDER_PLACED, [StoredMetadataCorpus.RichHop(StoredMetadataCorpus.Orders)]);
+    }
+    // Every reading of the clock moves it ten seconds on: the cycle starts at 0, reads 10 after its first batch and 20
+    // after its second, which is past the 15-second budget.
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider { AutoAdvanceAmount = TimeSpan.FromSeconds(10) };
+    var options = new MetadataHistoryConversionOptions { BatchSize = 2, MaxBatchesPerCycle = 100, TimeBudget = TimeSpan.FromSeconds(15) };
+
+    var result = await new MetadataHistoryConversionStep(NullLogger.Instance, options, clock).ConvertAsync(_services(), CancellationToken.None);
+
+    await Assert.That(result.Batches).IsEqualTo(2);
+    await Assert.That(result.RowsAffected).IsEqualTo(4L);
+    await Assert.That(() => new MetadataHistoryConversionStep(NullLogger.Instance, null!, clock)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MetadataHistoryConversionStep(NullLogger.Instance, options, null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task FromServices_TakesTheConfiguredBudget_AndTheHostsClockAsync() {
+    await using var conn = await _openAsync();
+    for (var i = 0; i < 5; i++) {
+      await _historicAsync(conn, ORDER_PLACED, [StoredMetadataCorpus.RichHop(StoredMetadataCorpus.Orders)]);
+    }
+    var services = new ServiceCollection()
+      .AddSingleton(Microsoft.Extensions.Options.Options.Create(new MetadataHistoryConversionOptions { BatchSize = 2, MaxBatchesPerCycle = 1 }))
+      .AddSingleton<TimeProvider>(new Microsoft.Extensions.Time.Testing.FakeTimeProvider())
+      .BuildServiceProvider();
+
+    var result = await MetadataHistoryConversionStep.FromServices(services).ConvertAsync(_services(), CancellationToken.None);
+
+    await Assert.That(result.Batches).IsEqualTo(1);
+    await Assert.That(result.RowsAffected).IsEqualTo(2L).Because("the configured budget is one batch of two");
+  }
+
+  private static async Task<(long Remaining, bool Capped)> _remainingAsync(NpgsqlConnection conn, int cap) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT remaining, capped FROM wh_metadata_history_remaining(@cap)";
+    cmd.Parameters.AddWithValue(nameof(cap), cap);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetInt64(0), reader.GetBoolean(1));
   }
 
   // ===== Helpers =====
