@@ -44,6 +44,14 @@ public sealed class EphemeralOptions {
   public EphemeralBlockerReportOptions BlockerReport { get; set; } = new();
 
   /// <summary>
+  /// The retention of the framework's own rewind and rebuild events, under <c>Whizbang:Ephemeral:SystemEvents</c>
+  /// (#2320). Default 30 days.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_BindsFromConfigurationAsync</tests>
+  public EphemeralSystemEventsOptions SystemEvents { get; set; } = new();
+
+  /// <summary>
   /// Durable event types released for an ephemeral type, under <c>Whizbang:Ephemeral:ReleaseBlockers:&lt;EphemeralType&gt;</c>:
   /// the key is the ephemeral type's name, with or without its assembly, and the value the list of blocking types, each
   /// as the report prints it (<c>Namespace.Type, Assembly</c>) or without its assembly. A released type no longer keeps
