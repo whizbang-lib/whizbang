@@ -75,7 +75,7 @@ public class DapperTableMaintenanceTests : PostgresTestBase {
     await Assert.That(queue[0].BloatRatio).IsEqualTo(999.5);
     await Assert.That(queue[0].Method).IsEqualTo(BloatMeasurementMethod.Approx);
     await Assert.That(queue[0].Requested).IsTrue();
-    await Assert.That(queue[0].SizeBytes).IsEqualTo(await _scalarAsync<long>("SELECT pg_relation_size('wh_settings')"));
+    await Assert.That(queue[0].SizeBytes).IsEqualTo(await _scalarAsync<long>("SELECT pg_table_size('wh_settings')"));
     await Assert.That(queue[0].RewriteThreshold).IsEqualTo(0.0);
 
     await coordinator.ClearTableRewriteRequestAsync("wh_outbox");
