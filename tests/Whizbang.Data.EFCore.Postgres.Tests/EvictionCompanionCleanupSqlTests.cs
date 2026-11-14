@@ -62,6 +62,50 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
     await _assertCleanedAsync(conn, evicted, survivor);
   }
 
+  /// <summary>
+  /// #2330: a cap per model property keeps the newest N rows of each value of the property; the rows beyond it go with
+  /// their cursors and all but their latest snapshot, and a row of another value is untouched however old it is.
+  /// </summary>
+  [Test]
+  public async Task CapPerProperty_KeepsTheNewestRowsOfEachKeyValue_AndCleansCompanionsAsync() {
+    await using var conn = await _openAsync();
+    await _arrangeAsync(conn, ttlSeconds: null, cap: 1);
+    await _executeAsync(conn, $"UPDATE wh_perspective_registry SET row_cap_scope_key = 'data:JobId' WHERE table_name = '{TABLE}'");
+    var (evicted, survivor) = await _seedTwoStreamsAsync(conn, evictedUpdatedDaysAgo: 50, survivorUpdatedDaysAgo: 1);
+    var otherJob = Guid.CreateVersion7();
+    await _seedRowAsync(conn, otherJob, updatedDaysAgo: 90, expiresInHours: null);
+    await _executeAsync(conn, $"UPDATE {TABLE} SET data = jsonb_build_object('JobId', 'job-a') WHERE id IN ('{evicted}', '{survivor}')");
+    await _executeAsync(conn, $"UPDATE {TABLE} SET data = jsonb_build_object('JobId', 'job-b') WHERE id = '{otherJob}'");
+
+    await using var collect = new NpgsqlCommand(
+      "SELECT o_row_id FROM collect_perspective_row_reap_targets(@m) WHERE o_reason = 'cap'", conn);
+    collect.Parameters.AddWithValue("m", new[] { MODEL });
+    var offered = new List<Guid>();
+    await using (var reader = await collect.ExecuteReaderAsync()) {
+      while (await reader.ReadAsync()) {
+        offered.Add(reader.GetGuid(0));
+      }
+    }
+    await _executeAsync(conn, "SELECT reap_perspective_row_caps()");
+
+    await Assert.That(offered).IsEquivalentTo([evicted]).Because("the hook is offered exactly what the sweep removes");
+    await _assertCleanedAsync(conn, evicted, survivor);
+    await Assert.That(await _rowExistsAsync(conn, otherJob)).IsTrue()
+      .Because("another job's only row is within its own allowance, however old it is");
+  }
+
+  /// <summary>#2330: the one mapping from a cap's registry key to the expression its ranking partitions by.</summary>
+  [Test]
+  public async Task Partition_MapsEachKeyForm_ToItsExpressionAsync() {
+    await using var conn = await _openAsync();
+    await using var cmd = new NpgsqlCommand(
+      "SELECT _wh_row_cap_partition(NULL) || '|' || _wh_row_cap_partition('') || '|' || _wh_row_cap_partition('u') || '|' || _wh_row_cap_partition('data:JobId')", conn);
+
+    var mapped = (string)(await cmd.ExecuteScalarAsync())!;
+
+    await Assert.That(mapped).IsEqualTo("1|1|scope ->> 'u'|data ->> 'JobId'");
+  }
+
   [Test]
   public async Task Cascade_RemovesTheEvictedRowsCursors_KeepsItsLatestSnapshot_LeavesTheRestAsync() {
     await using var conn = await _openAsync();
