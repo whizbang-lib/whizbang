@@ -1677,8 +1677,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <summary>
   /// How the post-ready <c>Rewrite</c> step reclaims the space of recorded tables
   /// (<c>Whizbang:Workers:Maintenance:TableRewriteStrategy</c>). Default <see cref="Workers.TableRewriteStrategy.Auto"/>:
-  /// <c>VACUUM FULL</c> at boot when <see cref="AllowTableRewrite"/> permits it, otherwise detect and report, and
-  /// never an online rewrite. <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> requires the pg_squeeze extension.
+  /// an online rewrite from the maintenance cycle when pg_squeeze, or pg_repack with its client in process, is Ready
+  /// (#2319); otherwise <c>VACUUM FULL</c> at boot when <see cref="AllowTableRewrite"/> permits it, and otherwise detect
+  /// and report. <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> requires the pg_squeeze extension.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
   public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
@@ -1714,6 +1715,50 @@ public sealed class MaintenanceWorkerOptions {
   /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
   public double ReindexBloatThreshold { get; set; } = QueueIndexReindexStep.DEFAULT_THRESHOLD;
+
+  /// <summary>
+  /// The bloat ratio at or above which a table is offered for rewrite
+  /// (<c>Whizbang:Workers:Maintenance:TableRewriteBloatThreshold</c>, written to <c>wh_settings.table_rewrite_bloat_threshold</c>).
+  /// Unset (the default), it is 2.0 when this start rewrites with an online tool (pg_squeeze, pg_repack,
+  /// <see cref="Workers.TableRewriteStrategy.Online"/>, or <see cref="Workers.TableRewriteStrategy.Auto"/> resolved to one)
+  /// and 3.0 for <c>VACUUM FULL</c> or detection only. When set it must be finite and greater than 1.
+  /// </summary>
+  /// <remarks>
+  /// Configuration is the source of truth: the boot-time <c>Rewrite</c> step writes the effective value to
+  /// <c>wh_settings</c> on every start, so a value edited there by hand is put back on the next start (#2319).
+  /// </remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  public double? TableRewriteBloatThreshold { get; set; }
+
+  /// <summary>
+  /// The fewest rows a table must hold to be measured for rewrite (<c>Whizbang:Workers:Maintenance:TableRewriteMinRows</c>,
+  /// written to <c>wh_settings.table_rewrite_min_rows</c>). Unset (the default), 1,000: with fewer rows the per-row
+  /// average is dominated by page overhead. A TOAST relation is measured against at least this many chunks. When set it
+  /// must be zero or greater. Written on every start, as <see cref="TableRewriteBloatThreshold"/> is.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  public long? TableRewriteMinRows { get; set; }
+
+  /// <summary>
+  /// How far past the ratio its last rewrite left it a table must regrow before it is offered again
+  /// (<c>Whizbang:Workers:Maintenance:TableRewriteRegrowthFactor</c>, written to
+  /// <c>wh_settings.table_rewrite_regrowth_factor</c>). Unset (the default), 1.5. When set it must be finite and
+  /// greater than 1. Written on every start, as <see cref="TableRewriteBloatThreshold"/> is.
+  /// </summary>
+  /// <remarks>
+  /// The estimate cannot see page headers, alignment or the fillfactor reserve, so a table rewritten a moment ago can read
+  /// 1.5x to 2x and stay there. With a threshold below that it would be rewritten every cycle for nothing. A table whose
+  /// last rewrite (<c>wh_table_rewrite_history.bloat_after</c>) left it at F is offered only once it reads
+  /// F times this factor, or the threshold if that is higher: the churn stops, and real regrowth is still caught. A
+  /// table with no recorded rewrite is offered at the threshold, and a lowered fillfactor is owed its rewrite whatever
+  /// the floor says (#2319).
+  /// </remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#post-rewrite-floor</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs</tests>
+  public double? TableRewriteRegrowthFactor { get; set; }
 
   /// <summary>
   /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how
