@@ -217,6 +217,16 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// </summary>
   /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
   public bool Recheck { get; init; }
+
+  /// <summary>
+  /// #2225: on a stream-level answer, the event types its ask named (after the origin added the types of the asker's
+  /// absorbed namespaces): the types of the whole walk. A follow-up page asks for these, so a type that has no streams on
+  /// one page stays in the walk for the pages after it. Null on a type-level answer, and from an origin that predates the
+  /// field; the follow-up then asks for the types on this page, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.WalkTypes.cs:ManifestReceptor_AFollowUpPage_AsksForEveryTypeTheWalkStartedWith_NotOnlyThoseOnThePageAsync</tests>
+  public IReadOnlyList<string>? RequestedEventTypes { get; init; }
 }
 
 /// <summary>

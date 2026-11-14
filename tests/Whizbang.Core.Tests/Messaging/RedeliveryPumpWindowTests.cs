@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// on the backfill's own session, instead of one bundle per stream.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/RedeliveryPump.cs</code-under-test>
-public class RedeliveryPumpWindowTests {
+public partial class RedeliveryPumpWindowTests {
 
   [Test]
   public async Task PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync() {

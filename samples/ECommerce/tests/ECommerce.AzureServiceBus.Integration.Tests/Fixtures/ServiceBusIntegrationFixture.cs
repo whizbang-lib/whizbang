@@ -932,66 +932,71 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
-    // Resume both hosts after draining
-    await inventoryRunControl.ResumeAsync(cancellationToken);
-    await bffRunControl.ResumeAsync(cancellationToken);
-    Console.WriteLine("[ServiceBusFixture] Both hosts resumed.");
+    // Truncate all Whizbang tables in the shared database while both hosts are still paused, then resume. Truncating
+    // after the resume raced the hosts' own workers for the tables: the TRUNCATE deadlocked against a claim and was
+    // retried, and the work tables and in-flight state were wiped under workers that had already resumed, which could
+    // leave the next test's first messages unprocessed until its wait timed out. Paused, no worker claims, so nothing
+    // races the truncation and the next test starts from empty tables and empty in-flight state.
+    // Both InventoryWorker and BFF share the same database, so we only need to truncate once.
+    // A deadlock is still retried, for a worker that is mid-statement when the pause lands.
+    try {
+      const int maxRetries = 3;
+      for (var attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          using var scope = _inventoryHost!.Services.CreateScope();
+          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-    // Truncate all Whizbang tables in the shared database
-    // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    // Retry on deadlock: with shared fixtures, workers may still hold row locks when cleanup runs.
-    // TRUNCATE requires ACCESS EXCLUSIVE locks, so deadlocks are transient — retry after a short delay.
-    const int maxRetries = 3;
-    for (var attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        using var scope = _inventoryHost!.Services.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+          // Each schema group gets its own DO block so that a missing table in one group
+          // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
+          // entire BEGIN...END block's savepoint).
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
 
-        // Each schema group gets its own DO block so that a missing table in one group
-        // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
-        // entire BEGIN...END block's savepoint).
-        Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
 
-        Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
 
-        Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] All tables truncated.");
 
-        Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
-        Console.WriteLine("[ServiceBusFixture] All tables truncated.");
-
-        // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
-        // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
-        _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
-        _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
-        break; // Success
-      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
-        // 40P01 = deadlock_detected — workers still hold locks, retry after delay
-        Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
-        await Task.Delay(500 * attempt, cancellationToken);
-      } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
-        Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
-        break;
+          // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
+          // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
+          _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+          _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+          break; // Success
+        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+          // 40P01 = deadlock_detected: workers still hold locks, retry after delay
+          Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
+          await Task.Delay(500 * attempt, cancellationToken);
+        } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
+          Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
+          break;
+        }
       }
+    } finally {
+      // Resume both hosts only once the tables and the in-flight state are clean, and whatever the cleanup threw.
+      await inventoryRunControl.ResumeAsync(cancellationToken);
+      await bffRunControl.ResumeAsync(cancellationToken);
+      Console.WriteLine("[ServiceBusFixture] Both hosts resumed.");
     }
   }
 

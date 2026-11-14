@@ -147,6 +147,14 @@ public sealed class RedeliveryComposite
   /// <summary>The answered window's inclusive ceiling; null = to the head (#2143).</summary>
   public long? AnsweredToCommitSequence { get; init; }
 
+  /// <summary>
+  /// The streams this bundle carries only part of the answer for (#2149): split across bundles, running across a page of
+  /// the origin's selection, or stopped at its cap. The receiver never marks their buckets from this bundle. Null when
+  /// every stream it carries is whole, and from an origin that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
+  public List<Guid>? AnsweredPartialStreamIds { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
 
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;
@@ -154,7 +162,9 @@ public sealed class RedeliveryComposite
   IReadOnlyList<long?>? IIdentityPreservingComposite.InnerCommitSequences => InnerCommitSequences;
 
   RedeliveryAnswerWindow? IIdentityPreservingComposite.AnsweredWindow =>
-    AnswersWindow ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) : null;
+    AnswersWindow
+      ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) { PartialStreamIds = AnsweredPartialStreamIds }
+      : null;
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 

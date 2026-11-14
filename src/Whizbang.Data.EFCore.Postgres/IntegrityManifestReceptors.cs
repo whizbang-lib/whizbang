@@ -269,6 +269,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
+          // #2225: the walk's types, so each follow-up page asks for all of them, not only those this page held.
+          RequestedEventTypes = message.Level == ManifestLevel.Streams ? eventTypes : null,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -358,7 +360,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(IntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
-    if (message.Digests.Count == 0 && !_isQuietWindow(message)) {
+    if (message.Digests.Count == 0 && !_isQuietWindow(message) && !_continuesAWalk(message)) {
       return;
     }
     // NON-QUEUEING by design. Waiting here looked free but was not: every queued manifest held
@@ -392,6 +394,14 @@ public sealed partial class IntegrityManifestReceptor(
   /// </summary>
   private static bool _isQuietWindow(IntegrityManifest message) =>
     message.Digests.Count == 0 && message.Level == ManifestLevel.Types && message.ComputedThrough is not null;
+
+  /// <summary>
+  /// #2225: a stream-level page that says the walk has more pages (a cursor) and which types the walk asks for (an origin
+  /// that echoes them). With no digest of its own to compare it is still followed, so the walk is not cut short by one
+  /// empty page.
+  /// </summary>
+  private static bool _continuesAWalk(IntegrityManifest message) =>
+    message.Level == ManifestLevel.Streams && message.ResumeAfterStreamId is not null && message.RequestedEventTypes is { Count: > 0 };
 
   /// <summary>Metrics for the gate path, which runs before any scope exists. Root-resolved and
   /// cached — StreamIntegrityMetrics is a singleton wherever it is registered at all.</summary>
@@ -428,7 +438,8 @@ public sealed partial class IntegrityManifestReceptor(
     // because its redelivery is discarded on receive.
     var keeps = ConsumedMessageTypes.Keeps(services);
     var kept = message.Digests.Where(d => keeps(d.EventType)).ToList();
-    if (kept.Count == 0 && !_isQuietWindow(message)) {
+    // #2225: a walk page left with nothing to compare still carries the walk's cursor; it is followed below.
+    if (kept.Count == 0 && !_isQuietWindow(message) && !_continuesAWalk(message)) {
       return;
     }
     if (kept.Count < message.Digests.Count) {
@@ -463,9 +474,18 @@ public sealed partial class IntegrityManifestReceptor(
       message = message with {
         Digests = [.. message.Digests.Where(d => !ownership.IsNotAuthoritative(d.EventType, message.OriginServiceId, ownDomains))],
       };
-      if (message.Digests.Count == 0) {
+      if (message.Digests.Count == 0 && !_continuesAWalk(message)) {
         return;
       }
+    }
+
+    // #2225: a stream-level page with nothing to compare (it held no digest, or every one was left out above) still says,
+    // by its cursor, that the walk has more pages. Only an origin that echoes the walk's types can be followed: such a
+    // page names no type of its own, and asking for none would ask for nothing.
+    if (message.Digests.Count == 0 && _continuesAWalk(message)) {
+      await _followResumeCursorAsync(services, options, message, [.. message.RequestedEventTypes!], cancellationToken)
+        .ConfigureAwait(false);
+      return;
     }
 
     var types = message.Digests.Select(d => d.EventType).Distinct(StringComparer.Ordinal).ToList();
@@ -779,8 +799,17 @@ public sealed partial class IntegrityManifestReceptor(
     // Without following, a lane wider than one page only ever audited its first
     // MaxDigestsPerManifest streams — the rest was never compared, never repaired, and the seal
     // never certified the window (the type-level seal rule requires a null cursor).
-    await _followResumeCursorAsync(services, options, message, types, cancellationToken).ConfigureAwait(false);
+    // #2225: a follow-up page asks for every type the walk started with; a type absent from this page may fill the next.
+    await _followResumeCursorAsync(services, options, message, _walkTypes(message, types), cancellationToken).ConfigureAwait(false);
   }
+
+  /// <summary>
+  /// #2225: the types a follow-up page of a stream-level walk asks for: every type the walk started with, as the origin
+  /// echoed them, so a type with no streams on one page stays in the walk; the page's own types from an origin that
+  /// echoes none.
+  /// </summary>
+  private static List<string> _walkTypes(IntegrityManifest message, List<string> pageTypes) =>
+    message.RequestedEventTypes is { Count: > 0 } walk ? [.. walk] : pageTypes;
 
   /// <summary>
   /// #2259: folds a re-check's divergent buckets again counting the events stored inside the settle window, and moves

@@ -175,18 +175,22 @@ public sealed partial class RedeliveryRequestReceptor(
     Guid? afterStream = null;
     long? afterVersion = null;
     while (tally.Selected < serve.MaxEvents) {
+      var want = Math.Min(serve.PageSize, serve.MaxEvents - tally.Selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(
-        _ordinaryRequest(message, serve, streams, eventIds, Math.Min(serve.PageSize, serve.MaxEvents - tally.Selected),
-          afterStream, afterVersion),
+        _ordinaryRequest(message, serve, streams, eventIds, want, afterStream, afterVersion),
         cancellationToken).ConfigureAwait(false);
       if (page.Count == 0) {
         break;
       }
       var owned = _owned(page, serve);
       if (owned.Count > 0) {
-        // #2143: every bundle says the window it answers, so the receiver marks only the buckets it covered.
+        // #2143: every bundle says the window it answers, so the receiver marks only the buckets it covered. #2149: and the
+        // streams this page carries only in part, which the receiver must not mark from it.
+        var window = new RedeliveryAnswerWindow(message.FromCommitSequence, message.ToCommitSequence) {
+          PartialStreamIds = _streamsRunningPastThePage(page, want, afterStream),
+        };
         tally.Composites += await serve.Pump
-          .PublishAnswerAsync(owned, new RedeliveryAnswerWindow(message.FromCommitSequence, message.ToCommitSequence),
+          .PublishAnswerAsync(owned, window,
             message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
           .ConfigureAwait(false);
       }
@@ -207,6 +211,23 @@ public sealed partial class RedeliveryRequestReceptor(
       }
     }
     return reached;
+  }
+
+  /// <summary>
+  /// #2149: the streams of one (stream, version)-ordered page whose answer continues past it: the first, when it is the
+  /// stream the previous page ended on, and the last, when the page is full (the next page, or the request's bound, may
+  /// hold more of it). A full page whose last stream happens to end there names it too; that only leaves its bucket
+  /// repairable for another try. Null when the page carries every stream whole.
+  /// </summary>
+  private static List<Guid>? _streamsRunningPastThePage(IReadOnlyList<RedeliveryEvent> page, int want, Guid? previousStream) {
+    var running = new List<Guid>(2);
+    if (page[0].StreamId == previousStream) {
+      running.Add(page[0].StreamId);
+    }
+    if (page.Count >= want) {
+      running.Add(page[page.Count - 1].StreamId);
+    }
+    return running.Count == 0 ? null : [.. running.Distinct()];
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",

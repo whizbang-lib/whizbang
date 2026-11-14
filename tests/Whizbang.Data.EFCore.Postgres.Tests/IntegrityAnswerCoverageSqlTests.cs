@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
 [Category("Integration")]
 [Category("Shard5")]
-public class IntegrityAnswerCoverageSqlTests : EFCoreTestBase {
+public partial class IntegrityAnswerCoverageSqlTests : EFCoreTestBase {
   private const string MESSAGE_TYPE = "Upstream.Contracts.OrderPlaced, Upstream.Contracts";
   private static readonly DateTimeOffset _t0 = new(2026, 11, 7, 12, 0, 0, TimeSpan.Zero);
   private static readonly TimeSpan _cooldown = TimeSpan.FromMinutes(60);
