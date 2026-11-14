@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.IO;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -15,6 +16,7 @@ using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 
@@ -30,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/EphemeralHistoryReclassifyStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/AuditBodyConversionStep.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class HistoryWalkTargetNamingTests : EFCoreTestBase {
@@ -37,6 +40,7 @@ public class HistoryWalkTargetNamingTests : EFCoreTestBase {
   private static readonly string[] _walkingSteps = [
     "src/Whizbang.Data.Postgres/EphemeralHistoryReclassifyStep.cs",
     "src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs",
+    "src/Whizbang.Data.Postgres/AuditBodyConversionStep.cs",
   ];
 
   [Test]
@@ -61,13 +65,24 @@ public class HistoryWalkTargetNamingTests : EFCoreTestBase {
     await _storeAsync(conn, stream, new EphemeralHistoryProbePinged { SessionId = stream });
     var other = (Guid)TrackedGuid.New();
     await _storeAsync(conn, other, new SupersedingHistoryProbeProfile { UserId = other, Revision = 1 });
+    var audited = (Guid)TrackedGuid.New();
+    await _storeAsync(conn, audited, new EventAudited {
+      Id = audited,
+      OriginalEventId = stream,
+      OriginalEventType = TypeNameFormatter.FormatClrTypeName(typeof(EphemeralHistoryProbePinged)),
+      OriginalStreamId = stream.ToString(),
+      OriginalStreamPosition = 1,
+      OriginalBody = JsonElement.Parse("""{"note": "a full copy of the audited event"}"""),
+      Timestamp = DateTimeOffset.UnixEpoch,
+    });
     var services = _services();
 
     await new EphemeralHistoryReclassifyStep(NullLogger.Instance, 10, 10).ReclassifyAsync(services, CancellationToken.None);
     await new SupersedingHistoryReconcileStep(NullLogger.Instance, 10, 10, () => [typeof(SupersedingHistoryProbeProfile)])
       .ReconcileAsync(services, CancellationToken.None);
+    await new AuditBodyConversionStep(NullLogger.Instance, 10, 10).ConvertAsync(services, CancellationToken.None);
 
-    foreach (var operation in new[] { "ephemeral", "superseding" }) {
+    foreach (var operation in new[] { "ephemeral", "superseding", "audit-body" }) {
       var walks = await _textsAsync(conn,
         "SELECT event_type FROM wh_type_history_walks WHERE operation = @o AND events_total > 0 AND events_matched > 0", ("o", operation));
       await Assert.That(walks).IsNotEmpty().Because($"the {operation} step walked a type and read its events");
