@@ -62,6 +62,23 @@ public class TableRewriteStartupStepTests {
       return Task.FromResult(ApproxAfter.GetValueOrDefault(tableName));
     }
 
+    /// <summary>Every set of settings the step published (#2319).</summary>
+    public List<IReadOnlyList<RetentionSetting>> Synced { get; } = [];
+
+    /// <summary>When set, publishing the settings throws this.</summary>
+    public Exception? SyncThrows { get; init; }
+
+    public Task SyncRetentionSettingsAsync(IReadOnlyList<RetentionSetting> settings, CancellationToken cancellationToken = default) {
+      Synced.Add(settings);
+      return SyncThrows is null ? Task.CompletedTask : Task.FromException(SyncThrows);
+    }
+
+    /// <summary>The whole size each read of a table answers, in order: before the rewrite, then after it.</summary>
+    public Dictionary<string, Queue<long?>> Sizes { get; init; } = new(StringComparer.Ordinal);
+
+    public Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
+      Task.FromResult(Sizes.TryGetValue(tableName, out var sizes) && sizes.Count > 0 ? sizes.Dequeue() : null);
+
     // Unused surface for this test.
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -127,6 +144,240 @@ public class TableRewriteStartupStepTests {
     await registry.RefreshAsync(CancellationToken.None);
     registry.Record([.. registry.Statuses.Select((status, i) => status with { State = perDatabase[i] })]);
     return registry;
+  }
+
+  // ---- #2319: Auto picks an online tool, the settings are published every start, and each rewrite is metered ----
+
+  /// <summary>A rewriter that throws, as a VACUUM FULL that loses its connection does.</summary>
+  private sealed class ThrowingRewriter(string strategy) : ITableRewriter {
+    public string Strategy { get; } = strategy;
+    public bool CanRun => true;
+    public string CannotRunReason => string.Empty;
+    public Task<double?> RewriteAsync(IWorkCoordinator coordinator, string tableName, CancellationToken cancellationToken) =>
+      throw new InvalidOperationException("the connection was lost");
+  }
+
+  /// <summary>A registry with pg_squeeze, the pg_repack extension and the pg_repack client, each in the given state.</summary>
+  private static async Task<CapabilityRegistry> _toolsAsync(CapabilityState squeeze, CapabilityState repack, CapabilityState client) {
+    var postgres = new FakeCapabilityProvider("postgres", ["db-0"],
+      FakeCapabilityProvider.Describe("postgres", "pg_squeeze"), FakeCapabilityProvider.Describe("postgres", "pg_repack"));
+    postgres.States["pg_squeeze"] = squeeze;
+    postgres.States["pg_repack"] = repack;
+    var program = new FakeCapabilityProvider("program", ["pg_repack"], FakeCapabilityProvider.Describe("program", "pg_repack", provisionable: false));
+    program.States["pg_repack"] = client;
+    var registry = new CapabilityRegistry([postgres, program], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    return registry;
+  }
+
+  private static TableRewriteStartupStep _stepFor(
+      RewriteCoordinator coordinator, MaintenanceWorkerOptions options, ICapabilityRegistry? capabilities,
+      Microsoft.Extensions.Logging.ILogger<TableRewriteStartupStep>? logger = null,
+      Whizbang.Core.Observability.TableStatisticsMetrics? metrics = null, TimeProvider? clock = null,
+      ITableRewriter[]? rewriters = null) {
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator);
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
+    if (clock is not null) {
+      services.AddSingleton(clock);
+    }
+    var provider = services.BuildServiceProvider();
+    return new TableRewriteStartupStep(provider.GetRequiredService<IServiceScopeFactory>(), rewriters ?? [], Options.Create(options),
+      capabilities, logger ?? NullLogger<TableRewriteStartupStep>.Instance);
+  }
+
+  [Test]
+  public async Task Auto_WithPgSqueezeReady_LeavesTheTablesToTheCycle_AndTakesNoneWithVacuumFullAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) } };
+    var squeeze = new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE);
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepFor(coordinator, new MaintenanceWorkerOptions { AllowTableRewrite = true },
+      await _toolsAsync(CapabilityState.Ready, CapabilityState.NotPermitted, CapabilityState.Missing),
+      rewriters: [squeeze, vacuum]).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).Contains("Auto: online rewrite through pg_squeeze");
+    await Assert.That(report.Reason).Contains("the maintenance cycle performs it");
+    await Assert.That(vacuum.Rewritten).IsEmpty().Because("a table Auto gives to an online tool is never also taken by VACUUM FULL");
+    await Assert.That(squeeze.Rewritten).IsEmpty().Because("the online rewrite is the maintenance cycle's, within its budget");
+  }
+
+  [Test]
+  public async Task Auto_WithOnlyPgRepackReadyInProcess_LeavesTheTablesToTheCycleAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) } };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepFor(coordinator, new MaintenanceWorkerOptions { AllowTableRewrite = true },
+      await _toolsAsync(CapabilityState.NotPermitted, CapabilityState.Ready, CapabilityState.Ready),
+      rewriters: [new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE), new RecordingRewriter(TableRewriteStrategies.PG_REPACK), vacuum])
+      .ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Reason).Contains("Auto: online rewrite through pg_repack in process");
+    await Assert.That(vacuum.Rewritten).IsEmpty();
+  }
+
+  [Test]
+  public async Task Auto_WithNoOnlineTool_KeepsVacuumFull_AndDoesNotThrowAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) } };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepFor(coordinator, new MaintenanceWorkerOptions { AllowTableRewrite = true },
+      await _toolsAsync(CapabilityState.NotPermitted, CapabilityState.NotPermitted, CapabilityState.Missing),
+      rewriters: [new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE), vacuum]).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
+    await Assert.That(vacuum.Rewritten).IsEquivalentTo(["wh_outbox"]);
+  }
+
+  [Test]
+  [Arguments(TableRewriteStrategy.Auto, true, "2")]
+  [Arguments(TableRewriteStrategy.Auto, false, "3")]
+  [Arguments(TableRewriteStrategy.VacuumFull, true, "3")]
+  [Arguments(TableRewriteStrategy.PgSqueeze, true, "2")]
+  public async Task EveryStart_PublishesTheEffectiveSettings_BeforeReadingTheCandidatesAsync(
+      TableRewriteStrategy strategy, bool squeezeReady, string threshold) {
+    var coordinator = new RewriteCoordinator();
+
+    await _stepFor(coordinator, new MaintenanceWorkerOptions { TableRewriteStrategy = strategy, AllowTableRewrite = true },
+      await _toolsAsync(squeezeReady ? CapabilityState.Ready : CapabilityState.NotPermitted, CapabilityState.NotPermitted, CapabilityState.Missing),
+      rewriters: [new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE), new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL)])
+      .ExecuteAsync(CancellationToken.None);
+
+    var published = coordinator.Synced.Single().ToDictionary(s => s.Key, s => s.Value, StringComparer.Ordinal);
+    await Assert.That(published["table_rewrite_bloat_threshold"]).IsEqualTo(threshold);
+    await Assert.That(published["table_rewrite_min_rows"]).IsEqualTo("1000");
+    await Assert.That(published["table_rewrite_regrowth_factor"]).IsEqualTo("1.5");
+  }
+
+  [Test]
+  public async Task AFailedPublish_IsLoggedWithTheSettings_AndTheStepGoesOnAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+      SyncThrows = new InvalidOperationException("read-only transaction"),
+    };
+    var logger = new FakeLogger<TableRewriteStartupStep>();
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepFor(coordinator, new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.VacuumFull, AllowTableRewrite = true },
+      null, logger, rewriters: [vacuum]).ExecuteAsync(CancellationToken.None);
+
+    var warning = logger.Collector.GetSnapshot().Single(r => r.Level == Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(warning.Message).Contains("table_rewrite_bloat_threshold=3");
+    await Assert.That(warning.Exception).IsTypeOf<InvalidOperationException>();
+    await Assert.That(vacuum.Rewritten).IsEquivalentTo(["wh_outbox"]).Because("the values already stored stand; the start goes on");
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
+  }
+
+  [Test]
+  public async Task EachVacuumFull_IsMetered_WithItsOutcome_Duration_AndReturnedBytesAsync() {
+    using var meters = new MeterReadings();
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+    var coordinator = new RewriteCoordinator {
+      Candidates = {
+        new TableRewriteCandidate("wh_outbox", 6.0, Requested: true),
+        new TableRewriteCandidate("wh_inbox", 4.0, Requested: true),
+      },
+      Sizes = { ["wh_outbox"] = new Queue<long?>([9_000L, 3_000L]) },
+    };
+    var rewriter = new TimedRewriter(TableRewriteStrategies.VACUUM_FULL, clock, new() { ["wh_outbox"] = 1.0, ["wh_inbox"] = 4.5 });
+
+    await _stepFor(coordinator, new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.VacuumFull, AllowTableRewrite = true },
+      null, null, meters.Metrics, clock, [rewriter]).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(meters.Of("whizbang.table.rewrites").Select(r => ((string)r.Tags["table_name"]!, (string)r.Tags["outcome"]!, (string)r.Tags["tool"]!)))
+      .IsEquivalentTo([("wh_outbox", "rewritten", "vacuum_full"), ("wh_inbox", "no_gain", "vacuum_full")]);
+    await Assert.That(meters.Of("whizbang.table.rewrite.duration").Select(r => r.Value)).IsEquivalentTo([3000d, 3000d]);
+    await Assert.That(meters.Of("whizbang.table.rewrite.reclaimed_bytes").Single().Value).IsEqualTo(6000d);
+  }
+
+  [Test]
+  public async Task ARewriteThatRewroteNothing_IsMeteredAsFailedAsync() {
+    using var meters = new MeterReadings();
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 6.0, Requested: true) } };
+
+    await _stepFor(coordinator, new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.VacuumFull, AllowTableRewrite = true },
+      null, null, meters.Metrics, null, [new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL, ratioAfter: null)]).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(meters.Of("whizbang.table.rewrites").Single().Tags["outcome"]).IsEqualTo("failed");
+  }
+
+  [Test]
+  public async Task ARewriteThatThrows_IsMeteredAsFailed_AndStillThrowsAsync() {
+    using var meters = new MeterReadings();
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 6.0, Requested: true) } };
+    var step = _stepFor(coordinator, new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.VacuumFull, AllowTableRewrite = true },
+      null, null, meters.Metrics, null, [new ThrowingRewriter(TableRewriteStrategies.VACUUM_FULL)]);
+
+    await Assert.That(async () => await step.ExecuteAsync(CancellationToken.None)).Throws<InvalidOperationException>();
+    await Assert.That(meters.Of("whizbang.table.rewrites").Single().Tags["outcome"]).IsEqualTo("failed");
+  }
+
+  [Test]
+  public async Task ARewriteThatThrows_WithoutTheMeterRegistered_StillThrowsAsync() {
+    var coordinator = new RewriteCoordinator { Candidates = { new TableRewriteCandidate("wh_outbox", 6.0, Requested: true) } };
+    var step = _stepFor(coordinator, new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.VacuumFull, AllowTableRewrite = true },
+      null, rewriters: [new ThrowingRewriter(TableRewriteStrategies.VACUUM_FULL)]);
+
+    await Assert.That(async () => await step.ExecuteAsync(CancellationToken.None)).Throws<InvalidOperationException>()
+      .Because("a host without the table statistics meter records nothing and the failure is the start's to report");
+  }
+
+  /// <summary>A rewriter whose rewrite takes three seconds on the given clock and answers the ratio set for the table.</summary>
+  private sealed class TimedRewriter(string strategy, Microsoft.Extensions.Time.Testing.FakeTimeProvider clock, Dictionary<string, double> after) : ITableRewriter {
+    public string Strategy { get; } = strategy;
+    public bool CanRun => true;
+    public string CannotRunReason => string.Empty;
+    public Task<double?> RewriteAsync(IWorkCoordinator coordinator, string tableName, CancellationToken cancellationToken) {
+      clock.Advance(TimeSpan.FromSeconds(3));
+      return Task.FromResult<double?>(after[tableName]);
+    }
+  }
+
+  /// <summary>Reads the table statistics meter's instruments for one test.</summary>
+  private sealed class MeterReadings : IDisposable {
+    private readonly Whizbang.Core.Tests.Observability.TestMeterFactory _factory = new();
+    private readonly System.Diagnostics.Metrics.MeterListener _listener = new();
+    private readonly List<(string Name, double Value, Dictionary<string, object?> Tags, bool Observable)> _readings = [];
+
+    public MeterReadings() {
+      Metrics = new Whizbang.Core.Observability.TableStatisticsMetrics(new Whizbang.Core.Observability.WhizbangMetrics(_factory));
+      var meter = _factory.CreatedMeters[0];
+      _listener.InstrumentPublished = (instrument, listener) => {
+        if (instrument.Meter == meter) {
+          listener.EnableMeasurementEvents(instrument);
+        }
+      };
+      _listener.SetMeasurementEventCallback<long>((i, v, tags, _) => _add(i, v, tags));
+      _listener.SetMeasurementEventCallback<double>((i, v, tags, _) => _add(i, v, tags));
+      _listener.Start();
+    }
+
+    public Whizbang.Core.Observability.TableStatisticsMetrics Metrics { get; }
+
+    private void _add(System.Diagnostics.Metrics.Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags) {
+      // A passive counter reports its untagged series at zero from construction; the tests read the tagged ones.
+      if (tags.IsEmpty) {
+        return;
+      }
+      var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+      foreach (var tag in tags) {
+        map[tag.Key] = tag.Value;
+      }
+      _readings.Add((instrument.Name, value, map, instrument.IsObservable));
+    }
+
+    public List<(string Name, double Value, Dictionary<string, object?> Tags, bool Observable)> Of(string name) {
+      _readings.RemoveAll(r => r.Observable);
+      _listener.RecordObservableInstruments();
+      return [.. _readings.Where(r => r.Name == name)];
+    }
+
+    public void Dispose() {
+      _listener.Dispose();
+      _factory.Dispose();
+    }
   }
 
   [Test]
@@ -314,7 +565,8 @@ public class TableRewriteStartupStepTests {
     var report = await _stepWith(coordinator, TableRewriteStrategy.Auto,
       await _squeezeAsync(CapabilityState.Ready, CapabilityState.Provisionable), squeeze, vacuum).ExecuteAsync(CancellationToken.None);
 
-    await Assert.That(squeeze.Rewritten).IsEmpty().Because("Auto never starts an online rewrite (decision 1, #1671)");
+    await Assert.That(squeeze.Rewritten).IsEmpty()
+      .Because("Auto runs an online tool only where it is Ready on every database (#2319); one still provisionable is not");
     await Assert.That(vacuum.Rewritten).IsEquivalentTo(["wh_outbox"]).Because("AllowTableRewrite is true");
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
   }

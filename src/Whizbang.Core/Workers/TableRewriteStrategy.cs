@@ -17,9 +17,13 @@ public enum TableRewriteStrategy {
   // Each value is explicit: the numbers are public API (a compiled caller embeds them, a numeric setting binds by
   // them), so a new member takes the next free number and is declared last (#1761).
   /// <summary>
-  /// The default. Rewrites with <c>VACUUM FULL</c> at boot when <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>
-  /// permits it, and otherwise only detects and reports. It never starts an online rewrite, even where pg_squeeze is
-  /// usable: an online rewrite is opted into with <see cref="PgSqueeze"/>.
+  /// The default. Rewrites online when the server allows it, decided each maintenance cycle (#2319): through pg_squeeze
+  /// when it is Ready, else through pg_repack run in process when the extension and its client are Ready and
+  /// <see cref="PgRepackOptions.Mode"/> is <see cref="PgRepackMode.InProcess"/>, from the maintenance cycle
+  /// (<see cref="OnlineTableRewriteStep"/>) within <see cref="MaintenanceWorkerOptions.OnlineRewriteMaxBytesPerCycle"/>.
+  /// With neither, it rewrites with <c>VACUUM FULL</c> at boot when <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>
+  /// permits it, and otherwise only detects and reports. It requires no extension, so it never stops start, and it never
+  /// starts a blue-green rebuild: that is opted into with <see cref="Online"/>.
   /// </summary>
   Auto = 0,
 
@@ -58,8 +62,8 @@ public enum TableRewriteStrategy {
   /// pg_repack run in process when the extension and its client are Ready, else a blue-green rebuild of a perspective
   /// table, at most <see cref="MaintenanceWorkerOptions.BlueGreenRewriteMaxPerCycle"/> per cycle (#2301). A framework
   /// table cannot be rebuilt from events, so without an extension it waits and the cycle says so. It requires no
-  /// extension, so it never stops start, and it is never replaced by <c>VACUUM FULL</c>. Chosen explicitly: <see cref="Auto"/>
-  /// still never starts an online rewrite of any kind.
+  /// extension, so it never stops start, and it is never replaced by <c>VACUUM FULL</c>. <see cref="Auto"/> makes the first
+  /// two choices and stops: it never starts a blue-green rebuild.
   /// </summary>
   Online = 5,
 }
@@ -81,7 +85,7 @@ public readonly record struct TableRewritePlan(string? Strategy, string Reason);
 /// <remarks>
 /// <list type="table">
 ///   <listheader><term>Strategy</term><description>Resolves to</description></listheader>
-///   <item><term>Auto</term><description><c>VACUUM FULL</c> when AllowTableRewrite, otherwise nothing; never pg_squeeze (decision 1, #1671). A usable pg_squeeze is named, with how to opt in.</description></item>
+///   <item><term>Auto</term><description>The online tool the host can run (pg_squeeze, else pg_repack in process; #2319), from the maintenance cycle; with neither, <c>VACUUM FULL</c> when AllowTableRewrite, otherwise nothing. Never a blue-green rebuild, and nothing is required.</description></item>
 ///   <item><term>PgSqueeze</term><description>pg_squeeze, whatever AllowTableRewrite says (choosing it is the opt-in). When pg_squeeze is not usable the capability verdict stops start; it is never replaced by <c>VACUUM FULL</c>.</description></item>
 ///   <item><term>PgRepack</term><description>pg_repack, whatever AllowTableRewrite says or pg_squeeze is (choosing it is the opt-in); in process or by an external job as <see cref="PgRepackOptions.Mode"/> says.</description></item>
 ///   <item><term>VacuumFull</term><description><c>VACUUM FULL</c> when AllowTableRewrite, otherwise nothing.</description></item>
@@ -104,7 +108,24 @@ public static class TableRewriteStrategyResolver {
   /// <returns>The rewriter strategy to run, or none, and why.</returns>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="strategy"/> is not a declared value.</exception>
   public static TableRewritePlan Resolve(TableRewriteStrategy strategy, bool allowTableRewrite, bool pgSqueezeUsable) =>
+    Resolve(strategy, allowTableRewrite, pgSqueezeUsable, autoOnlineTool: null);
+
+  /// <summary>The plan for one start, with the online tool <see cref="TableRewriteStrategy.Auto"/> resolved to (#2319).</summary>
+  /// <param name="strategy">The configured strategy.</param>
+  /// <param name="allowTableRewrite">Whether the operator permits a blocking rewrite at boot.</param>
+  /// <param name="pgSqueezeUsable">Whether pg_squeeze is usable on the databases probed.</param>
+  /// <param name="autoOnlineTool">
+  /// The rewriter strategy (<see cref="TableRewriteStrategies.PG_SQUEEZE"/> or <see cref="TableRewriteStrategies.PG_REPACK"/>)
+  /// of the online tool that can run on this host, or null when none can; read only for <see cref="TableRewriteStrategy.Auto"/>.
+  /// </param>
+  /// <returns>The rewriter strategy to run, or none, and why.</returns>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="strategy"/> is not a declared value.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteStrategyTests.cs:Auto_WithAnOnlineToolThatCanRun_ResolvesToItAsync</tests>
+  public static TableRewritePlan Resolve(
+      TableRewriteStrategy strategy, bool allowTableRewrite, bool pgSqueezeUsable, string? autoOnlineTool) =>
     strategy switch {
+      TableRewriteStrategy.Auto when autoOnlineTool is not null => new(autoOnlineTool,
+        $"Auto: online rewrite through {(autoOnlineTool == TableRewriteStrategies.PG_SQUEEZE ? "pg_squeeze" : "pg_repack in process")}, which is Ready here"),
       TableRewriteStrategy.Auto => _auto(allowTableRewrite, pgSqueezeUsable),
       TableRewriteStrategy.PgSqueeze => new(TableRewriteStrategies.PG_SQUEEZE, pgSqueezeUsable
         ? "PgSqueeze: online rewrite through pg_squeeze"
@@ -124,7 +145,7 @@ public static class TableRewriteStrategyResolver {
       ? new TableRewritePlan(TableRewriteStrategies.VACUUM_FULL, "Auto: " + AT_BOOT)
       : new TableRewritePlan(null, "Auto detects and reports only: " + NOT_PERMITTED);
     return pgSqueezeUsable
-      ? plan with { Reason = plan.Reason + "; pg_squeeze is usable, but Auto never starts an online rewrite: set " + STRATEGY_KEY + " = PgSqueeze to opt in" }
+      ? plan with { Reason = plan.Reason + "; pg_squeeze is usable, but Auto runs an online tool only once it is Ready on every database with its rewriter registered: provision it, or set " + STRATEGY_KEY + " = PgSqueeze" }
       : plan;
   }
 }

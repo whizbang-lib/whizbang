@@ -81,7 +81,9 @@ public class PendingReclamationSqlTests : EFCoreTestBase {
       await Assert.That(reading!.Tasks[task]).IsEqualTo(new PendingRows(2, Capped: false))
         .Because($"{task} counts the two rows its predicate would remove, and not the one it would keep");
     }
-    await Assert.That(reading!.Tasks.Count).IsEqualTo(5)
+    await Assert.That(reading!.Tasks["convert_metadata_history"]).IsEqualTo(new PendingRows(0, Capped: false))
+      .Because("#2322: the historical metadata conversion reports what it has left to read; this database holds no event");
+    await Assert.That(reading!.Tasks.Count).IsEqualTo(6)
       .Because("a task whose predicate no index serves reports nothing rather than a guess");
   }
 
@@ -114,6 +116,8 @@ public class PendingReclamationSqlTests : EFCoreTestBase {
     await Assert.That(reading!.Tasks.ContainsKey("purge_completed_perspective_events")).IsFalse()
       .Because("under debug_mode the cycle keeps completed rows for inspection, so nothing is left for it to remove");
     await Assert.That(reading.Tasks.ContainsKey("purge_idle_routes")).IsFalse();
+    await Assert.That(reading.Tasks.ContainsKey("convert_metadata_history")).IsFalse()
+      .Because("#2322: the conversion is skipped under debug_mode");
     await Assert.That(reading.Tasks.ContainsKey("purge_old_deduplication")).IsTrue()
       .Because("the tasks debug_mode does not skip still report");
   }

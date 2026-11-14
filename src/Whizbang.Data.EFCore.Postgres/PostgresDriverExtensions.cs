@@ -375,6 +375,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#history-conversion</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: the maintenance step that converts audit records written before the pointer default (#1588) to the
+        // pointer form (#2326), keeping the bodies of [AuditEvent(IncludeBody = true)] types, under the maintainer duty.
+        // <docs>fundamentals/events/system-events#audit-body</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+          AuditBodyConversionStep.FromServices));
         // TURNKEY: the maintenance step that brings the history a superseding type stored before its declaration under the
         // superseding rule (#2110), under the maintainer duty. Whizbang:Superseding:ReconcileHistory=false turns it off.
         // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>

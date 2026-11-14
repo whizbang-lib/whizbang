@@ -32,6 +32,9 @@ public class TableStatisticsMetricsDatabaseTests {
     "whizbang.table.unused_index_bytes",
     "whizbang.event_store.sampled_bytes_per_event",
     "whizbang.event_store.estimated_type_bytes",
+    "whizbang.table.rewrite.queue",
+    "whizbang.table.rewrite.floor",
+    "whizbang.table.reclaimable_bytes",
   ];
 
   [Test]
@@ -78,8 +81,13 @@ public class TableStatisticsMetricsDatabaseTests {
     metrics.UpdateQueueDepths(new Dictionary<string, long> { ["outbox"] = 3 });
     metrics.UpdateTableBloat(new Dictionary<string, double> { ["wh_outbox"] = 1.2 });
     metrics.UpdateTableStorage(new Dictionary<string, TableStorageStatistics> {
-      ["wh_outbox"] = new(HeapBytes: 4_096, ToastBytes: 0, IndexBytes: 4_096, LiveRows: 10, BloatRatio: 1.2),
+      ["wh_outbox"] = new(HeapBytes: 4_096, ToastBytes: 0, IndexBytes: 4_096, LiveRows: 10, BloatRatio: 1.2) {
+        ReclaimableHeapBytes = 1_024,
+        ReclaimableToastBytes = 0,
+      },
     });
+    metrics.UpdateRewriteQueue(requested: 2, candidates: 1, heldByFloor: 1, overBudget: 0);
+    metrics.UpdateRewriteFloors(new Dictionary<string, double> { ["wh_outbox"] = 1.1 });
     metrics.UpdateUnusedIndexes(new Dictionary<string, UnusedIndex> { ["idx_outbox_topic"] = new("wh_outbox", 16_384) });
     metrics.UpdateEventTypeBytes(new Dictionary<string, EventTypeBytes> {
       ["Orders.OrderPlaced, Orders"] = new(
@@ -87,7 +95,10 @@ public class TableStatisticsMetricsDatabaseTests {
     });
   }
 
-  /// <summary>Listens to every gauge on one metrics instance's own meter, so other tests' instances cannot leak in.</summary>
+  /// <summary>
+  /// Listens to every gauge on one metrics instance's own meter, so other tests' instances cannot leak in. Counters on
+  /// the meter (the rewrite counters report a zero baseline from the start) are not gauges and are left out.
+  /// </summary>
   private sealed class Gauges : IDisposable {
     private readonly TestMeterFactory _factory = new();
     private readonly MeterListener _listener = new();
@@ -97,7 +108,7 @@ public class TableStatisticsMetricsDatabaseTests {
       Metrics = new TableStatisticsMetrics(new WhizbangMetrics(_factory));
       var meter = _factory.CreatedMeters[0];
       _listener.InstrumentPublished = (instrument, listener) => {
-        if (instrument.Meter == meter) {
+        if (instrument.Meter == meter && instrument is ObservableGauge<long> or ObservableGauge<double>) {
           listener.EnableMeasurementEvents(instrument);
         }
       };
