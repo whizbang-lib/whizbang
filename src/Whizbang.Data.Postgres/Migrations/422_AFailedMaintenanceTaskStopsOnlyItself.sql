@@ -13,7 +13,7 @@
 --              such a row as a warning naming the task.
 --
 --              Cancellation (a client command timeout or statement_timeout, SQLSTATE 57014) is not caught: OTHERS does
---              not match it, so a cancelled call still ends as before, and the worker's own isolation (#2174) runs the
+--              not match it, so a canceled call still ends as before, and the worker's own isolation (#2174) runs the
 --              sweeps after it. 421's batches keep each task inside the budget in the first place.
 --
 --              The dead-letter retention is read in Task 11, which uses it, instead of Task 4, so a failure in the
