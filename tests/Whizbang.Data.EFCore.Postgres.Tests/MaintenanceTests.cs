@@ -896,4 +896,56 @@ public class MaintenanceTests : EFCoreTestBase {
     await Assert.That(value).IsEqualTo("50000")
       .Because("the knob is visible to an operator reading wh_settings, at the value the function falls back to");
   }
+
+  // ================================================================
+  // #2174: one failed task does not stop the tasks after it
+  //
+  // The maintenance tasks share one call. A task that raised rolled the whole call back, so the purges before it were
+  // undone and every task after it was skipped, cycle after cycle. Each task now runs in its own block: a failure is
+  // reported as that task's row, with status 'failed: <the error>', and the rest of the call runs and commits.
+  // ================================================================
+
+  [Test]
+  public async Task PerformMaintenance_ATaskThatFails_IsReportedByName_AndTheTasksBeforeAndAfterItStillCommitAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _addCompletedOutboxRowAsync(conn);
+    await _addAgedDeduplicationRowAsync(conn);
+    await conn.ExecuteAsync(
+      "INSERT INTO wh_instance_evictions (instance_id, evicted_at) VALUES (gen_random_uuid(), NOW() - INTERVAL '3 days')");
+    // A value the deduplication purge cannot read: its ::INTEGER cast raises, inside that task only.
+    await _setSettingAsync(conn, "dedup_retention_days", "not-a-number");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var failed = results.Single(r => r.TaskName == "purge_old_deduplication");
+    await Assert.That(failed.Status).StartsWith("failed: ").Because("the failed task is named, with the error it raised");
+    await Assert.That(failed.Status).Contains("not-a-number");
+    await Assert.That(failed.RowsAffected).IsEqualTo(0L);
+    await Assert.That(results.Where(r => r.TaskName != "purge_old_deduplication").All(r => !r.Status.StartsWith("failed", StringComparison.Ordinal)))
+      .IsTrue().Because("no other task depends on the deduplication purge");
+    await Assert.That(results.Single(r => r.TaskName == "purge_instance_evictions").RowsAffected).IsEqualTo(1L)
+      .Because("a task after the failed one still runs");
+    await Assert.That(results.Single(r => r.TaskName == "reap_superseded_events").Status).IsEqualTo("ok")
+      .Because("the last task still runs");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NOT NULL"))
+      .IsEqualTo(0L).Because("a task before the failed one commits with the call instead of rolling back");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_instance_evictions")).IsEqualTo(0L);
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_message_deduplication")).IsEqualTo(1L)
+      .Because("the failed task's own work is undone, and only its own");
+  }
+
+  [Test]
+  public async Task PerformMaintenance_TheDeduplicationTaskFailing_LeavesTheDeadLetterPurgeItsRetentionAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setSettingAsync(conn, "dedup_retention_days", "not-a-number");
+    await _setSettingAsync(conn, "dead_letter_retention_days", "1");
+    var settled = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, settled, recoveryStatus: 3, age: "2 days");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    await Assert.That(results.Single(r => r.TaskName == "purge_recovered_dead_letters").RowsAffected).IsEqualTo(1L)
+      .Because("the dead-letter purge reads its own retention, so a failure in the deduplication task cannot leave it unset");
+    await Assert.That(await _countDeadLetterAsync(conn, settled)).IsEqualTo(0L);
+  }
 }
