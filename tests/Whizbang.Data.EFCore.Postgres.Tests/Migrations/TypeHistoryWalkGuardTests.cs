@@ -40,6 +40,8 @@ public partial class TypeHistoryWalkGuardTests {
   private static readonly Dictionary<string, string> _storeWide = new(StringComparer.Ordinal) {
     ["wh_convert_event_metadata_history"] =
       "converts the stored metadata of every event, of every type, to the slim form (#1727): a walk of the store by design",
+    ["wh_metadata_history_remaining"] =
+      "counts what that store-wide conversion has left to read past its cursor (#2322), bounded by its cap",
   };
 
   [Test]

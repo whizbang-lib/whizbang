@@ -114,7 +114,7 @@ public sealed partial class MetadataHistoryConversionStep : IMaintenanceStep {
     ArgumentNullException.ThrowIfNull(services);
     return new MetadataHistoryConversionStep(
       services.GetService<ILogger<MetadataHistoryConversionStep>>() ?? NullLogger<MetadataHistoryConversionStep>.Instance,
-      new MetadataHistoryConversionOptions(),
+      services.GetService<IOptions<MetadataHistoryConversionOptions>>()?.Value ?? new MetadataHistoryConversionOptions(),
       services.GetService<TimeProvider>() ?? TimeProvider.System);
   }
 
@@ -134,14 +134,14 @@ public sealed partial class MetadataHistoryConversionStep : IMaintenanceStep {
     ArgumentNullException.ThrowIfNull(services);
     var database = services.GetRequiredService<PostgresArchiveConnection>();
     var prefix = database.Schema is null ? string.Empty : SqlText.Identifier(database.Schema) + ".";
-    _ = (_timeBudget, _time);
     var total = new MetadataHistoryConversionResult(0, 0, 0, 0, 0, 0, 0, OK);
+    var started = _time.GetUtcNow();
     while (total.Batches < _maxBatches) {
       var batch = await _convertOnceAsync(database, prefix, cancellationToken).ConfigureAwait(false);
       total = new MetadataHistoryConversionResult(total.Batches + 1, total.RowsScanned + batch.RowsScanned,
         total.RowsAffected + batch.RowsAffected, total.RowsKeptFull + batch.RowsKeptFull, total.RoutesAdded + batch.RoutesAdded,
         total.RoutesUpdated + batch.RoutesUpdated, total.TracesWritten + batch.TracesWritten, batch.Status);
-      if (batch.RowsScanned < _batchSize || batch.Status != OK) {
+      if (batch.RowsScanned < _batchSize || batch.Status != OK || _time.GetUtcNow() - started >= _timeBudget) {
         break;
       }
     }
@@ -165,9 +165,11 @@ public sealed partial class MetadataHistoryConversionStep : IMaintenanceStep {
     }
   }
 
-  private static Task<long> _remainingAsync(PostgresArchiveConnection database, string prefix, CancellationToken cancellationToken) {
-    _ = (database, prefix, cancellationToken);
-    return Task.FromResult(0L);
+  private static async Task<long> _remainingAsync(PostgresArchiveConnection database, string prefix, CancellationToken cancellationToken) {
+    await using var connection = await database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand($"SELECT remaining FROM {prefix}wh_metadata_history_remaining($1)", connection);
+    command.Parameters.AddWithValue(REMAINING_CAP);
+    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is long remaining ? remaining : 0;
   }
 
   private async Task<MetadataHistoryConversionResult> _convertOnceAsync(PostgresArchiveConnection database, string prefix, CancellationToken cancellationToken) {
