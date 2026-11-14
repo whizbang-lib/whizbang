@@ -87,11 +87,11 @@ public class ToastAwareBloatEstimateSqlTests : EFCoreTestBase {
 
     await Assert.That(await _heapOnlyRatioAsync(TOASTED, cancellationToken)).IsLessThan((decimal)THRESHOLD)
       .Because("the heap alone does not read bloated, which is why the heap-only estimate never offered this table");
-    var candidate = candidates.SingleOrDefault(c => c.TableName == TOASTED);
-    await Assert.That(candidate).IsNotNull()
+    var candidate = candidates.Where(c => c.TableName == TOASTED).Cast<Whizbang.Core.Messaging.TableRewriteCandidate?>().SingleOrDefault();
+    await Assert.That(candidate.HasValue).IsTrue()
       .Because("nine in ten of the TOAST relation's chunks are dead, and that is space only a rewrite returns");
-    await Assert.That(candidate!.BloatRatio).IsGreaterThanOrEqualTo(THRESHOLD);
-    await Assert.That(candidate.SizeBytes).IsEqualTo(await _scalarAsync<long>($"SELECT pg_table_size('{TOASTED}')", cancellationToken))
+    await Assert.That(candidate!.Value.BloatRatio).IsGreaterThanOrEqualTo(THRESHOLD);
+    await Assert.That(candidate!.Value.SizeBytes).IsEqualTo(await _scalarAsync<long>($"SELECT pg_table_size('{TOASTED}')", cancellationToken))
       .Because("an online rewrite copies the TOAST relation too, so the byte budget counts it");
   }
 
@@ -149,13 +149,13 @@ public class ToastAwareBloatEstimateSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
 
     var candidate = (await _coordinator(ctx).GetTablesNeedingRewriteAsync(cancellationToken))
-      .SingleOrDefault(c => c.TableName == "wh_sparse_probe");
+      .Where(c => c.TableName == "wh_sparse_probe").Cast<Whizbang.Core.Messaging.TableRewriteCandidate?>().SingleOrDefault();
 
     await Assert.That(await _heapOnlyRatioAsync("wh_sparse_probe", cancellationToken)).IsLessThan((decimal)THRESHOLD)
       .Because("the unweighted width hides three dead rows in four");
-    await Assert.That(candidate).IsNotNull()
+    await Assert.That(candidate.HasValue).IsTrue()
       .Because("weighing each column by how often it is present reads the heap as the quarter-full file it is");
-    await Assert.That(candidate!.BloatRatio).IsGreaterThanOrEqualTo(THRESHOLD);
+    await Assert.That(candidate!.Value.BloatRatio).IsGreaterThanOrEqualTo(THRESHOLD);
   }
 
   [Test]

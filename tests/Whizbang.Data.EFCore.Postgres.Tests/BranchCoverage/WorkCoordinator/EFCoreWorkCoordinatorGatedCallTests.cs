@@ -174,6 +174,8 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
 
     // ── Maintenance ────────────────────────────────────────────────────────
     register("GetTablesNeedingRewrite", "GetTablesNeedingRewriteAsync", (c, _) => c.GetTablesNeedingRewriteAsync());
+    register("GetTableRewriteQueueStatus", "GetTableRewriteQueueStatusAsync", (c, _) => c.GetTableRewriteQueueStatusAsync());
+    register("GetTableTotalBytes", "GetTableTotalBytesAsync", (c, _) => c.GetTableTotalBytesAsync("wh_settings"));
     register("RewriteTable", "RewriteTableAsync", (c, _) => c.RewriteTableAsync("wh_settings"));
     register("SqueezeTable", "SqueezeTableAsync", async (c, _) =>
       await Assert.That(await c.SqueezeTableAsync("wh_settings")).IsNull()

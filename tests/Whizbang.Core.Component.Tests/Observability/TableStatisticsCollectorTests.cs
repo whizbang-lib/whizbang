@@ -54,6 +54,8 @@ public class TableStatisticsCollectorTests {
     public Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyDictionary<string, double>>(
         new Dictionary<string, double> { ["wh_event_store"] = 4.2 });
+    public Task<IReadOnlyDictionary<string, double>> GetRewriteFloorsAsync(CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyDictionary<string, double>>(new Dictionary<string, double> { ["wh_outbox"] = 1.8 });
   }
 
   private sealed class SingleProviderScopeFactory(ITableStatisticsProvider provider)
@@ -100,7 +102,9 @@ public class TableStatisticsCollectorTests {
 
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     double? ratioWhenSignalled = null;
+    double? floorWhenSignalled = null;
     worker.CycleCompleted += () => {
+      floorWhenSignalled = metrics.GetRewriteFloorForTest("wh_outbox");
       // Sampled INSIDE the handler, so this also pins the ordering: a signal raised before the
       // write would read null here no matter how the continuations happen to be scheduled.
       ratioWhenSignalled = metrics.GetBloatRatioForTest("wh_event_store");
@@ -118,6 +122,8 @@ public class TableStatisticsCollectorTests {
     await Assert.That(metrics.GetBloatRatioForTest("wh_event_store")).IsEqualTo(4.2)
       .Because("the collector must feed the bloat gauge; an unfed gauge is silent, and silence "
                + "is indistinguishable from a lean table");
+    await Assert.That(floorWhenSignalled).IsEqualTo(1.8)
+      .Because("the post-rewrite floors are read in the same cycle, before it is signaled (#2319)");
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }

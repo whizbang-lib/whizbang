@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Startup;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -129,11 +134,11 @@ public class RewriteRegrowthFloorSqlTests : EFCoreTestBase {
     await _executeAsync($"SELECT wh_request_fillfactor_rewrite('{SETTINGS}', 100, 90)", cancellationToken);
     await using var ctx = CreateDbContext();
 
-    var candidate = (await _coordinator(ctx).GetTablesNeedingRewriteAsync(cancellationToken)).SingleOrDefault(c => c.TableName == SETTINGS);
+    var candidate = (await _coordinator(ctx).GetTablesNeedingRewriteAsync(cancellationToken)).Where(c => c.TableName == SETTINGS).Cast<Whizbang.Core.Messaging.TableRewriteCandidate?>().SingleOrDefault();
 
-    await Assert.That(candidate).IsNotNull()
+    await Assert.That(candidate.HasValue).IsTrue()
       .Because("a lowered fillfactor is owed one rewrite whatever the table's bloat");
-    await Assert.That(candidate!.Reason).IsEqualTo(TableRewriteReason.FillFactorDecrease);
+    await Assert.That(candidate!.Value.Reason).IsEqualTo(TableRewriteReason.FillFactorDecrease);
   }
 
   [Test]
@@ -148,6 +153,62 @@ public class RewriteRegrowthFloorSqlTests : EFCoreTestBase {
 
     await Assert.That(status).IsEqualTo($"{2 + await _alreadyQueuedAsync(cancellationToken)}/{_sql(estimate - 0.1m)}/1")
       .Because("the queue's length, the line, and the one table at or above it that its floor held back");
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TheCoordinator_ReadsTheQueueStatusAsync(CancellationToken cancellationToken) {
+    var estimate = await _bloatedUnderALowThresholdAsync(cancellationToken);
+    await _rewrittenToAsync(estimate * 1.8m / 2.1m, cancellationToken);
+    await _executeAsync("SELECT wh_request_table_rewrite('wh_settings')", cancellationToken);
+    await using var ctx = CreateDbContext();
+
+    var status = await _coordinator(ctx).GetTableRewriteQueueStatusAsync(cancellationToken);
+
+    await Assert.That(status).IsEqualTo(new TableRewriteQueueStatus(
+      1 + await _alreadyQueuedAsync(cancellationToken), (double)(estimate - 0.1m), 1));
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TheCoordinator_ReadsATablesTotalBytesAsync(CancellationToken cancellationToken) {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+
+    var total = await coordinator.GetTableTotalBytesAsync(SETTINGS, cancellationToken);
+    var missing = await coordinator.GetTableTotalBytesAsync("wh_no_such_table", cancellationToken);
+
+    await Assert.That(total).IsEqualTo(await _scalarAsync<long>($"SELECT pg_total_relation_size('{SETTINGS}')", cancellationToken))
+      .Because("the reclaimed-bytes meter counts the heap, the TOAST relation and the indexes");
+    await Assert.That(missing).IsNull();
+  }
+
+  /// <summary>
+  /// The settings' source of truth is configuration: the boot step writes the effective value of each on every start,
+  /// so a value edited by hand in <c>wh_settings</c> is put back, and the online default (2.0) reaches a database whose
+  /// row migration 089 seeded at 3.0.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task EveryStart_PutsBackAHandEditedSetting_WithTheEffectiveValueAsync(CancellationToken cancellationToken) {
+    await _executeAsync("""
+      UPDATE wh_settings SET setting_value = '9.9' WHERE setting_key = 'table_rewrite_bloat_threshold';
+      UPDATE wh_settings SET setting_value = '5' WHERE setting_key = 'table_rewrite_min_rows';
+      """, cancellationToken);
+    await using var ctx = CreateDbContext();
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(_coordinator(ctx)).BuildServiceProvider();
+    var step = new TableRewriteStartupStep(services.GetRequiredService<IServiceScopeFactory>(), [],
+      Options.Create(new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.PgSqueeze, TableRewriteMinRows = 2000 }),
+      null, NullLogger<TableRewriteStartupStep>.Instance);
+
+    await step.ExecuteAsync(cancellationToken);
+
+    var stored = await _scalarAsync<string>("""
+      SELECT string_agg(setting_key || '=' || setting_value, ',' ORDER BY setting_key) FROM wh_settings
+      WHERE setting_key IN ('table_rewrite_bloat_threshold', 'table_rewrite_min_rows', 'table_rewrite_regrowth_factor')
+      """, cancellationToken);
+    await Assert.That(stored).IsEqualTo("table_rewrite_bloat_threshold=2,table_rewrite_min_rows=2000,table_rewrite_regrowth_factor=1.5")
+      .Because("the hand edits are overwritten by the configured row floor and by the defaults for an online tool");
   }
 
   /// <summary>Requests a fresh database already carries (migrations queue some), apart from the two the test adds.</summary>
