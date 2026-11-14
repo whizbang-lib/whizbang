@@ -220,10 +220,14 @@ internal static class WorkCoordinatorFlushHelper {
       }
 
       if (!ctx.SkipLifecycle) {
+        // The write is done, so nothing here can refuse it: one message's failing receptor must not skip the stage for
+        // the rest of the flush, which can hold many callers' messages. The first failure is still thrown once every
+        // message has run, so the caller learns of it as it always has (#2310). The pre-store stage above keeps stopping
+        // at the first failure: it can still refuse the write, and nothing is stored when it does.
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
           LifecycleStage.PostDistributeDetached,
           LifecycleStage.PostDistributeInline,
-          distributeContext,
+          distributeContext with { InlineFailures = InlineStageFailureHandling.RunEveryReceptorThenThrowFirst },
           ct).ConfigureAwait(false);
       }
     } finally {

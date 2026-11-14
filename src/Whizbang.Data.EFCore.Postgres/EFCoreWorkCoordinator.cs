@@ -2577,6 +2577,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return result is T t ? t : default;
   }
 
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs:TheRewriteHistory_RecordsEachRewrite_AndStaysBoundedAsync</tests>
+  public async Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(outcome);
+    TableMaintenanceSql.RequireFrameworkTable(outcome.TableName);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await TableMaintenanceSql.CompleteRewriteAsync(cmd, PgIdentifier.QualifyPrefix(schema), outcome, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

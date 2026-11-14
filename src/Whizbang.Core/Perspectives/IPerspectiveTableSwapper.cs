@@ -58,6 +58,18 @@ public interface IPerspectiveTableSwapper {
 
   /// <summary>Drops <paramref name="table"/> when it exists: a shadow table a failed rebuild leaves.</summary>
   Task DropAsync(string table, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// The one perspective that writes <paramref name="table"/>, as the perspective registry records it, or null when the
+  /// table is not a perspective table, or more than one perspective writes it, so no single rebuild can rebuild it.
+  /// </summary>
+  /// <remarks>Default: null, so no table is rewritten by a rebuild on a driver that cannot say.</remarks>
+  /// <param name="table">The bare table name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>operations/infrastructure/storage-maintenance#blue-green-rewrite</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/PostgresPerspectiveTableSwapperTests.cs</tests>
+  Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) =>
+    Task.FromResult<string?>(null);
 }
 
 /// <summary>One blue-green swap: which table becomes live, and what happens to the one it replaces.</summary>

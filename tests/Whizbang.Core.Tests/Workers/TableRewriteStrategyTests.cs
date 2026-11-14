@@ -48,6 +48,11 @@ public class TableRewriteStrategyTests {
   [Arguments(TableRewriteStrategy.VacuumFull, true, false, null, NOT_PERMITTED)]
   [Arguments(TableRewriteStrategy.VacuumFull, false, true, TableRewriteStrategies.VACUUM_FULL, "VacuumFull: VACUUM FULL at boot")]
   [Arguments(TableRewriteStrategy.VacuumFull, false, false, null, NOT_PERMITTED)]
+  // Online (#2301): the maintenance cycle picks pg_squeeze, pg_repack or a blue-green rebuild, whatever else holds.
+  [Arguments(TableRewriteStrategy.Online, true, true, TableRewriteStrategies.ONLINE, "Online: ")]
+  [Arguments(TableRewriteStrategy.Online, true, false, TableRewriteStrategies.ONLINE, "Online: ")]
+  [Arguments(TableRewriteStrategy.Online, false, true, TableRewriteStrategies.ONLINE, "Online: ")]
+  [Arguments(TableRewriteStrategy.Online, false, false, TableRewriteStrategies.ONLINE, "Online: ")]
   // None: nothing is rewritten, whatever else holds.
   [Arguments(TableRewriteStrategy.None, true, true, null, "None: no table is rewritten")]
   [Arguments(TableRewriteStrategy.None, true, false, null, "None: no table is rewritten")]
@@ -215,5 +220,21 @@ public class TableRewriteStrategyTests {
     var report = CapabilityReport.FormatUnusable(registry.Statuses);
 
     await Assert.That(report).Contains("Fix: set wal_level = logical");
+  }
+
+  /// <summary>
+  /// #2301 (decision 1, #1671): <c>Auto</c> never starts an online rewrite of any kind, a blue-green rebuild included.
+  /// The rebuild is opted into with <c>Online</c>, as pg_squeeze is with <c>PgSqueeze</c>.
+  /// </summary>
+  [Test]
+  [Arguments(true, true)]
+  [Arguments(true, false)]
+  [Arguments(false, true)]
+  [Arguments(false, false)]
+  public async Task Auto_NeverResolvesToAnOnlineRewrite_ABlueGreenRebuildIncludedAsync(bool allowTableRewrite, bool pgSqueezeUsable) {
+    var plan = TableRewriteStrategyResolver.Resolve(TableRewriteStrategy.Auto, allowTableRewrite, pgSqueezeUsable);
+
+    await Assert.That(plan.Strategy is null or TableRewriteStrategies.VACUUM_FULL).IsTrue()
+      .Because("Auto is VACUUM FULL when permitted, or detect and report");
   }
 }

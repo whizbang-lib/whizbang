@@ -950,13 +950,13 @@ public sealed partial class MaintenanceWorker(
       if (ct.IsCancellationRequested) {
         return;
       }
+      if (c.Reason == Whizbang.Core.Messaging.TableRewriteReason.FillFactorDecrease) {
+        // Queued and compact: it waits for one online rewrite at its lowered fillfactor (#2300), so it is not
+        // reported as holding space it cannot use.
+        continue;
+      }
       if (c.Requested) {
-        // Already on the books. Reported either way: an operator who never looks at this still gets the bloat gauge,
-        // and a row queued with a measurement keeps reporting it while it waits.
-        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
-        if (c.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
-          measured[c.TableName] = new(c.BloatRatio, c.Method);
-        }
+        _reportQueuedRewrite(c, measured);
         continue;
       }
       try {
@@ -968,6 +968,19 @@ public sealed partial class MaintenanceWorker(
       }
     }
     sp.GetService<Whizbang.Core.Observability.TableStatisticsMetrics>()?.UpdateMeasuredTableBloat(measured);
+  }
+
+  /// <summary>
+  /// Reports a table already on the books. Reported either way: an operator who never looks at this still gets the bloat
+  /// gauge, and a row queued with a measurement keeps reporting it while it waits.
+  /// </summary>
+  private void _reportQueuedRewrite(
+      Whizbang.Core.Messaging.TableRewriteCandidate candidate,
+      Dictionary<string, Whizbang.Core.Observability.BloatMeasurement> measured) {
+    LogRewriteNeeded(_logger, candidate.TableName, candidate.BloatRatio);
+    if (candidate.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
+      measured[candidate.TableName] = new(candidate.BloatRatio, candidate.Method);
+    }
   }
 
   /// <summary>
@@ -1680,6 +1693,16 @@ public sealed class MaintenanceWorkerOptions {
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
   public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
+
+  /// <summary>
+  /// The most perspective tables one maintenance cycle rewrites by a blue-green rebuild when
+  /// <see cref="TableRewriteStrategy"/> is <see cref="Workers.TableRewriteStrategy.Online"/> and no online extension is
+  /// usable (<c>Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle</c>). Default 1: a rebuild replays every
+  /// stream of its perspective, so several large perspectives are not rebuilt at once. The heap bytes still count
+  /// against <see cref="OnlineRewriteMaxBytesPerCycle"/>. <c>0</c> rebuilds nothing.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#blue-green-rewrite</docs>
+  public int BlueGreenRewriteMaxPerCycle { get; set; } = 1;
 
   /// <summary>
   /// How many times its expected size an index on a queue table that churns to empty may grow before the maintenance

@@ -10,6 +10,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
@@ -82,7 +83,9 @@ public class PerspectiveRebuilderBlueGreenTests {
     await Assert.That(result.StreamsProcessed).IsEqualTo(3);
     await Assert.That(fixture.Runner.Runs.Select(r => r.Table).Distinct()).IsEquivalentTo([SHADOW])
       .Because("Every stream is replayed into the shadow table; the live table is never written by the rebuild.");
-    await Assert.That(swapper.Calls).IsEquivalentTo(["find", "create " + TABLE, "swap " + TABLE + "->" + SHADOW + " keep 00:00:10"]);
+    await Assert.That(swapper.Calls).IsEquivalentTo(
+      ["find", "create " + TABLE, "swap " + TABLE + "->" + SHADOW + " keep 00:00:10"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(fixture.Runner.Runs.Select(r => r.Phase).Distinct()).IsEquivalentTo([RebuildPhase.Replaying]);
     await Assert.That(fixture.Runner.Runs[^1].Status!.TotalStreams).IsEqualTo(3)
       .Because("Progress is reported while the rebuild runs.");
@@ -214,6 +217,217 @@ public class PerspectiveRebuilderBlueGreenTests {
     await Assert.That(result.Error).IsEqualTo("lock timeout");
   }
 
+  private const string DUTY = "perspective-rebuild:" + TABLE;
+
+  /// <summary>
+  /// #2301: two blue-green rebuilds of one table share its shadow, and creating the shadow drops one left behind, so a
+  /// second rebuild would destroy the first one's replay. Each rebuild holds the table's duty from before it creates the
+  /// shadow until the swap is done, success or failure; the duty is an elected role, so it holds across the fleet.
+  /// </summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task BlueGreen_HoldsTheTablesDuty_FromBeforeTheShadowUntilAfterTheSwapAsync(bool swapFails) {
+    var swapper = new FakeSwapper { SwapFailure = swapFails ? new InvalidOperationException("lock timeout") : null };
+    var fixture = new Fixture(swapper, elector: new FakeElector(swapper.Calls));
+    fixture.Add(_a, 1);
+
+    await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(swapper.Calls[1]).IsEqualTo("acquire " + DUTY);
+    await Assert.That(swapper.Calls[2]).IsEqualTo("create " + TABLE);
+    await Assert.That(swapper.Calls[^1]).IsEqualTo("release " + DUTY);
+  }
+
+  /// <summary>#2301: a rebuild whose table's duty another instance holds fails at once, says why, and touches nothing.</summary>
+  [Test]
+  public async Task BlueGreen_WhenAnotherInstanceHoldsTheTablesDuty_FailsWithoutTouchingTheShadowAsync() {
+    var swapper = new FakeSwapper();
+    var fixture = new Fixture(swapper, elector: new FakeElector(swapper.Calls) { Refuse = DutyRefusal.Contended });
+    fixture.Add(_a, 1);
+
+    var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).Contains("another blue-green rebuild of " + TABLE + " is in flight");
+    await Assert.That(swapper.Calls).IsEquivalentTo(["find", "acquire " + DUTY], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>
+  /// #2301: an elector that is registered but cannot answer (unavailable), refuses this instance (evicted), or will not
+  /// vote (paused, standing down or stopping) cannot confirm that no other instance is rebuilding the table, so the
+  /// rebuild fails closed, naming the refusal and its detail, and touches nothing.
+  /// </summary>
+  [Test]
+  [Arguments(DutyRefusal.Unavailable)]
+  [Arguments(DutyRefusal.Refused)]
+  [Arguments(DutyRefusal.Halted)]
+  public async Task BlueGreen_WhenTheDutyCannotBeVotedFor_FailsClosedAsync(DutyRefusal refusal) {
+    var swapper = new FakeSwapper();
+    var fixture = new Fixture(swapper, elector: new FakeElector(swapper.Calls) { Refuse = refusal });
+    fixture.Add(_a, 1);
+
+    var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).Contains("could not take the duty " + DUTY).And.Contains(refusal.ToString())
+      .And.Contains("detail of " + refusal);
+    await Assert.That(swapper.Calls).DoesNotContain("create " + TABLE);
+  }
+
+  /// <summary>
+  /// #2301: with no elector (none registered, or the framework's null default) there is no fleet to coordinate with, so
+  /// the rebuild runs, guarded on this instance alone, and the host is told so once, not on every rebuild.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task BlueGreen_WithNoElector_Rebuilds_AndSaysOnceThatOnlyThisInstanceIsGuardedAsync(bool nullDefaultRegistered) {
+    var swapper = new FakeSwapper();
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<PerspectiveRebuilder>();
+    var fixture = new Fixture(swapper, elector: nullDefaultRegistered ? NullDutyElector.Instance : null, logger: logger);
+    fixture.Add(_a, 1);
+
+    var first = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+    var second = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(first.Success).IsTrue().Because(first.Error ?? "");
+    await Assert.That(second.Success).IsTrue().Because(second.Error ?? "");
+    await Assert.That(logger.Collector.GetSnapshot().Count(r => r.Message.Contains("no duty elector", StringComparison.Ordinal)))
+      .IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// #2301: an elector grants a duty this instance already holds again (one tenure, several handles), so the duty alone
+  /// cannot keep two rebuilds of one table on the same instance apart. A second rebuild started here while the first
+  /// runs is refused before it votes, and the first completes.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_ASecondRebuildOfTheTableOnThisInstance_IsRefusedBeforeItVotesAsync() {
+    var swapper = new FakeSwapper();
+    var fixture = new Fixture(swapper, elector: new FakeElector(swapper.Calls));
+    fixture.Add(_a, 1);
+    RebuildResult? second = null;
+    // Once: unguarded, the second rebuild's own swap would start a third from the same hook.
+    swapper.BeforeSwapAsync = async () => {
+      swapper.BeforeSwapAsync = null;
+      second = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+    };
+
+    var first = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(first.Success).IsTrue().Because(first.Error ?? "");
+    await Assert.That(second!.Success).IsFalse();
+    await Assert.That(second.Error).Contains("another blue-green rebuild of " + TABLE + " is in flight");
+    await Assert.That(swapper.Calls.Count(c => c == "acquire " + DUTY)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// #2301: a rebuild runs for far longer than a duty's lease, so the duty is kept alive while it runs: the grant is
+  /// verified, which renews it, on its renew interval. Without it the lease would lapse mid-replay and another instance
+  /// could take the table's duty and start a second rebuild.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_KeepsTheTablesDutyAliveWhileItRunsAsync() {
+    var swapper = new FakeSwapper();
+    var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+    var elector = new FakeElector(swapper.Calls) { RenewInterval = TimeSpan.FromSeconds(2) };
+    var fixture = new Fixture(swapper, elector: elector, time: time);
+    fixture.Add(_a, 1);
+    var verifiedWhileRunning = false;
+    // FakeTimeProvider runs the keepalive's tick inside Advance, and a tick starts its verify before it yields, so the
+    // grant has been verified by the time Advance returns: nothing is waited on.
+    swapper.BeforeSwapAsync = () => {
+      time.Advance(TimeSpan.FromSeconds(2));
+      verifiedWhileRunning = elector.Verifications > 0;
+      return Task.CompletedTask;
+    };
+
+    var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    await Assert.That(verifiedWhileRunning).IsTrue().Because("the keepalive renewed the duty while the rebuild held it");
+  }
+
+  /// <summary>
+  /// #2301: an elector that throws fails the rebuild with its error and leaves the table free on this instance, so the
+  /// next rebuild of it is voted for rather than refused as already in flight.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_WhenTheElectorThrows_FailsAndLeavesTheTableFreeHereAsync() {
+    var swapper = new FakeSwapper();
+    var elector = new FakeElector(swapper.Calls) { Failure = new InvalidOperationException("the vote failed") };
+    var fixture = new Fixture(swapper, elector: elector);
+    fixture.Add(_a, 1);
+
+    var failed = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+    elector.Failure = null;
+    var rebuilt = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(failed.Error).IsEqualTo("the vote failed");
+    await Assert.That(rebuilt.Success).IsTrue().Because(rebuilt.Error ?? "");
+  }
+
+  /// <summary>#2301: the duty's name is the prefix and the bare table, and a table must be named.</summary>
+  [Test]
+  public async Task TheDutyName_IsThePrefixAndTheTableAsync() {
+    await Assert.That(PerspectiveRebuildDuty.For(TABLE)).IsEqualTo("perspective-rebuild:" + TABLE);
+    await Assert.That(() => PerspectiveRebuildDuty.For(" ")).ThrowsExactly<ArgumentException>();
+  }
+
+  /// <summary>#2301: a driver that cannot say which perspective writes a table says none, so no rebuild rewrites it.</summary>
+  [Test]
+  public async Task TheDefaultLookup_FindsNoPerspectiveAsync() {
+    IPerspectiveTableSwapper plain = new PlainSwapper();
+
+    await Assert.That(await plain.FindPerspectiveAsync(TABLE, CancellationToken.None)).IsNull();
+  }
+
+  private sealed class PlainSwapper : IPerspectiveTableSwapper {
+    public Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string> CreateShadowAsync(string liveTable, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DeleteRowsAsync(string table, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<string?> SwapAsync(PerspectiveTableSwap swap, Func<CancellationToken, Task> underWriteLock, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task DropAsync(string table, CancellationToken cancellationToken) => throw new NotSupportedException();
+  }
+
+  /// <summary>Records each vote and release in the swapper's call list; refuses as told, or grants.</summary>
+  private sealed class FakeElector(List<string> calls) : IDutyElector {
+    public DutyRefusal? Refuse { get; init; }
+    public TimeSpan? RenewInterval { get; init; }
+    private int _verifications;
+
+    /// <summary>How many times a grant was verified, which is how the keepalive renews it.</summary>
+    public int Verifications => Volatile.Read(ref _verifications);
+    public Exception? Failure { get; set; }
+
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      calls.Add("acquire " + duty);
+      if (Failure is not null) {
+        return Task.FromException<DutyAttempt>(Failure);
+      }
+      return Task.FromResult(Refuse is { } refusal
+        ? DutyAttempt.Lost(refusal, "detail of " + refusal)
+        : DutyAttempt.Granted(new Grant(calls, duty, this)));
+    }
+
+    private sealed class Grant(List<string> calls, string duty, FakeElector elector) : IDutyGrant {
+      public string Duty => duty;
+      public DateTimeOffset AcquiredAt => DateTimeOffset.UnixEpoch;
+      public TimeSpan? RenewInterval => elector.RenewInterval;
+
+      public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) {
+        Interlocked.Increment(ref elector._verifications);
+        return Task.FromResult(true);
+      }
+
+      public ValueTask DisposeAsync() {
+        calls.Add("release " + duty);
+        return ValueTask.CompletedTask;
+      }
+    }
+  }
+
   [Test]
   public async Task Rebuild_ThatFailsBeforeItStarts_ReportsNoStreamsAsync() {
     var provider = new ServiceCollection().BuildServiceProvider();
@@ -231,7 +445,10 @@ public class PerspectiveRebuilderBlueGreenTests {
   private sealed class Fixture {
     private readonly List<EventStoreRecord> _records = [];
 
-    public Fixture(FakeSwapper? swapper, BlueGreenRebuildOptions? options = null, FakeCollectives? collectives = null, bool withInfo = true) {
+    public Fixture(
+        FakeSwapper? swapper, BlueGreenRebuildOptions? options = null, FakeCollectives? collectives = null, bool withInfo = true,
+        IDutyElector? elector = null, TimeProvider? time = null,
+        Microsoft.Extensions.Logging.ILogger<PerspectiveRebuilder>? logger = null) {
       Runner = new RecordingRunner();
       var services = new ServiceCollection();
       services.AddSingleton<IPerspectiveRunnerRegistry>(new Registry(Runner, withInfo));
@@ -245,8 +462,15 @@ public class PerspectiveRebuilderBlueGreenTests {
       if (collectives is not null) {
         services.AddSingleton<ICollectiveReplayApplier>(collectives);
       }
+      if (elector is not null) {
+        services.AddSingleton(elector);
+      }
+      if (time is not null) {
+        services.AddSingleton(time);
+      }
       var provider = services.BuildServiceProvider();
-      Rebuilder = new PerspectiveRebuilder(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<PerspectiveRebuilder>.Instance);
+      Rebuilder = new PerspectiveRebuilder(provider.GetRequiredService<IServiceScopeFactory>(),
+        logger ?? NullLogger<PerspectiveRebuilder>.Instance);
       Runner.Rebuilder = Rebuilder;
     }
 
@@ -321,6 +545,9 @@ public class PerspectiveRebuilderBlueGreenTests {
     public Exception? SwapFailure { get; init; }
     public Exception? DropFailure { get; init; }
 
+    /// <summary>Runs inside the swap, before the write lock's catch-up, while the rebuild still holds its table (#2301).</summary>
+    public Func<Task>? BeforeSwapAsync { get; set; }
+
     /// <summary>The name the rebuilder asked for. Recorded because asking for the wrong one is #1308.</summary>
     public string? FoundFor { get; private set; }
 
@@ -346,6 +573,9 @@ public class PerspectiveRebuilderBlueGreenTests {
         throw SwapFailure;
       }
       BeforeLock?.Invoke();
+      if (BeforeSwapAsync is { } beforeSwap) {
+        await beforeSwap();
+      }
       await underWriteLock(cancellationToken);
       return swap.KeepPrevious ? swap.LiveTable + "_bg_old" : null;
     }

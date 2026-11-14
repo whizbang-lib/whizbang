@@ -36,7 +36,10 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// <para>
 /// Only tables in the <c>pending_table_rewrites</c> queue are rewritten; the cycle's bloat detection puts a table there
-/// before this step runs. They are taken largest bloat ratio first, ties by name. A table whose heap does not fit what is
+/// before this step runs, and the schema pass puts one there when it lowers the table's fillfactor. A table offered only
+/// for that (<see cref="TableRewriteReason.FillFactorDecrease"/>) is rewritten once, whatever its bloat, and its request
+/// is cleared once the rewrite ran, since a compact table rewritten at a lower fillfactor measures larger, not smaller
+/// (#2300). They are taken largest bloat ratio first, ties by name. A table whose heap does not fit what is
 /// left of the budget is deferred to a later cycle and the next smaller one that fits is taken, so one large table does
 /// not hold the rest back; a table larger than the whole budget is never rewritten, and the log names the setting to
 /// raise.
@@ -47,13 +50,17 @@ namespace Whizbang.Core.Workers;
 /// <param name="capabilities">The capability registry, which says whether the strategy's capabilities are Ready; null when the host registers none.</param>
 /// <param name="logger">The step's logger.</param>
 /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+/// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public sealed partial class OnlineTableRewriteStep(
     IEnumerable<ITableRewriter> rewriters,
     IOptions<MaintenanceWorkerOptions> options,
     ICapabilityRegistry? capabilities,
     ILogger<OnlineTableRewriteStep> logger) : IMaintenanceStep {
   private const string BUDGET_KEY = "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle";
+  private const string REBUILD_LIMIT_KEY = "Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle";
+  private const string BLUE_GREEN_TOOL = "a blue-green rebuild";
 
   /// <summary>A capability the online strategy needs Ready, with how a log names it and where it is probed.</summary>
   private sealed record Prerequisite(CapabilityId Id, string Label, string ProbedOn);
@@ -82,24 +89,60 @@ public sealed partial class OnlineTableRewriteStep(
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     var settings = _options.Value;
+    if (settings.TableRewriteStrategy == TableRewriteStrategy.Online) {
+      await _runOnlineAsync(services, settings, cancellationToken).ConfigureAwait(false);
+      return;
+    }
     if (_onlineStrategy(settings) is not { } online) {
       return;
     }
-    var rewriter = Array.Find(_rewriters, r => string.Equals(r.Strategy, online.RewriterStrategy, StringComparison.Ordinal));
+    var rewriter = _rewriterFor(online);
     if ((_notReadyReason(online) ?? _noRewriterReason(online, rewriter)) is { } reason) {
       LogSkipped(_logger, reason);
+      return;
+    }
+    await _runStrategyAsync(services, online, rewriter!, settings, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// <see cref="TableRewriteStrategy.Online"/> (#2301): pg_squeeze when it can run, else pg_repack in process when it
+  /// can, else a blue-green rebuild of each queued perspective table; a table no rebuild can recreate waits.
+  /// </summary>
+  private async Task _runOnlineAsync(IServiceProvider services, MaintenanceWorkerOptions settings, CancellationToken cancellationToken) {
+    var squeezer = _rewriterFor(_pgSqueeze);
+    var squeezeWhy = _notReadyReason(_pgSqueeze) ?? _noRewriterReason(_pgSqueeze, squeezer);
+    if (squeezeWhy is null) {
+      await _runStrategyAsync(services, _pgSqueeze, squeezer!, settings, cancellationToken).ConfigureAwait(false);
+      return;
+    }
+    var repacker = _rewriterFor(_pgRepack);
+    var repackWhy = settings.TableRewrite.PgRepack.Mode != PgRepackMode.InProcess
+      ? "its client runs as an external job, which Whizbang does not start"
+      : _notReadyReason(_pgRepack) ?? _noRewriterReason(_pgRepack, repacker);
+    if (repackWhy is null) {
+      await _runStrategyAsync(services, _pgRepack, repacker!, settings, cancellationToken).ConfigureAwait(false);
       return;
     }
     if (services.GetService<IWorkCoordinator>() is not { } coordinator) {
       return;
     }
+    var queued = await _queuedAsync(coordinator, cancellationToken).ConfigureAwait(false);
+    if (queued.Length == 0) {
+      return;
+    }
+    var rebuilder = Array.Find(_rewriters, r => r is BlueGreenTableRewriter) as BlueGreenTableRewriter;
+    await _rebuildQueuedAsync(rebuilder, coordinator, queued, settings, $"pg_squeeze: {squeezeWhy}; pg_repack: {repackWhy}", cancellationToken)
+      .ConfigureAwait(false);
+  }
 
-    var candidates = await coordinator.GetTablesNeedingRewriteAsync(cancellationToken).ConfigureAwait(false);
-    var queued = candidates
-      .Where(c => c.Requested)
-      .OrderByDescending(c => c.BloatRatio)
-      .ThenBy(c => c.TableName, StringComparer.Ordinal)
-      .ToArray();
+  /// <summary>One online strategy over the queued tables, within the byte budget.</summary>
+  private async Task _runStrategyAsync(
+      IServiceProvider services, OnlineStrategy online, ITableRewriter rewriter, MaintenanceWorkerOptions settings,
+      CancellationToken cancellationToken) {
+    if (services.GetService<IWorkCoordinator>() is not { } coordinator) {
+      return;
+    }
+    var queued = await _queuedAsync(coordinator, cancellationToken).ConfigureAwait(false);
     if (queued.Length == 0) {
       return;
     }
@@ -110,21 +153,90 @@ public sealed partial class OnlineTableRewriteStep(
     var rewritten = 0;
     foreach (var candidate in queued) {
       cancellationToken.ThrowIfCancellationRequested();
-      if (candidate.SizeBytes > budget) {
-        LogLargerThanBudget(_logger, candidate.TableName, candidate.SizeBytes, BUDGET_KEY, budget);
+      if (!_fits(candidate, budget, ref left)) {
         continue;
       }
-      if (candidate.SizeBytes > left) {
-        LogDeferred(_logger, candidate.TableName, candidate.SizeBytes, left, BUDGET_KEY, budget);
-        continue;
-      }
-      left -= candidate.SizeBytes;
-      if (await _rewriteAsync(rewriter!, online.Tool, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false)) {
+      if (await _rewriteAsync(rewriter, online.Tool, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false)) {
         rewritten++;
       }
     }
     LogCycle(_logger, rewritten, queued.Length, queued.Length - rewritten);
   }
+
+  /// <summary>
+  /// The blue-green rebuild over the queued tables (#2301): each one the registry says one perspective writes, largest
+  /// bloat first, within the byte budget and at most <see cref="MaintenanceWorkerOptions.BlueGreenRewriteMaxPerCycle"/>
+  /// per cycle; a table another rebuild holds is passed over without spending either. The rest wait, and the cycle
+  /// says which and why.
+  /// </summary>
+  private async Task _rebuildQueuedAsync(
+      BlueGreenTableRewriter? rebuilder, IWorkCoordinator coordinator, TableRewriteCandidate[] queued,
+      MaintenanceWorkerOptions settings, string extensions, CancellationToken cancellationToken) {
+    var approxReady = ApproxBloatMeasurement.IsReady(_capabilities);
+    var budget = settings.OnlineRewriteMaxBytesPerCycle;
+    var left = budget;
+    var limit = settings.BlueGreenRewriteMaxPerCycle;
+    var started = 0;
+    var heldBack = 0;
+    var rewritten = 0;
+    var waiting = new List<string>();
+    foreach (var candidate in queued) {
+      cancellationToken.ThrowIfCancellationRequested();
+      if (rebuilder is null
+          || await rebuilder.PerspectiveOfAsync(candidate.TableName, cancellationToken).ConfigureAwait(false) is not { } perspective) {
+        waiting.Add(candidate.TableName);
+        continue;
+      }
+      if (await rebuilder.BusyReasonAsync(candidate.TableName, perspective, cancellationToken).ConfigureAwait(false) is { } busy) {
+        LogRebuildInFlight(_logger, candidate.TableName, busy);
+        continue;
+      }
+      if (started >= limit) {
+        heldBack++;
+        continue;
+      }
+      if (!_fits(candidate, budget, ref left)) {
+        continue;
+      }
+      started++;
+      if (await _rewriteAsync(rebuilder, BLUE_GREEN_TOOL, coordinator, candidate, approxReady, cancellationToken).ConfigureAwait(false)) {
+        rewritten++;
+      }
+    }
+    if (waiting.Count > 0) {
+      LogWaitingForAnExtension(_logger, string.Join(", ", waiting), extensions);
+    }
+    if (heldBack > 0) {
+      LogRebuildLimit(_logger, heldBack, REBUILD_LIMIT_KEY, limit);
+    }
+    LogCycle(_logger, rewritten, queued.Length, queued.Length - rewritten);
+  }
+
+  /// <summary>The queued tables, largest bloat ratio first, ties by name.</summary>
+  private static async Task<TableRewriteCandidate[]> _queuedAsync(IWorkCoordinator coordinator, CancellationToken cancellationToken) {
+    var candidates = await coordinator.GetTablesNeedingRewriteAsync(cancellationToken).ConfigureAwait(false);
+    return [.. candidates
+      .Where(c => c.Requested)
+      .OrderByDescending(c => c.BloatRatio)
+      .ThenBy(c => c.TableName, StringComparer.Ordinal)];
+  }
+
+  /// <summary>Whether the table's heap fits what is left of the budget, spending it when it does; logs when it does not.</summary>
+  private bool _fits(TableRewriteCandidate candidate, long budget, ref long left) {
+    if (candidate.SizeBytes > budget) {
+      LogLargerThanBudget(_logger, candidate.TableName, candidate.SizeBytes, BUDGET_KEY, budget);
+      return false;
+    }
+    if (candidate.SizeBytes > left) {
+      LogDeferred(_logger, candidate.TableName, candidate.SizeBytes, left, BUDGET_KEY, budget);
+      return false;
+    }
+    left -= candidate.SizeBytes;
+    return true;
+  }
+
+  private ITableRewriter? _rewriterFor(OnlineStrategy online) =>
+    Array.Find(_rewriters, r => string.Equals(r.Strategy, online.RewriterStrategy, StringComparison.Ordinal));
 
   /// <summary>The online strategy the options select, or null when the cycle rewrites nothing online.</summary>
   private static OnlineStrategy? _onlineStrategy(MaintenanceWorkerOptions settings) {
@@ -154,6 +266,13 @@ public sealed partial class OnlineTableRewriteStep(
       LogNotRewritten(_logger, candidate.TableName);
       return false;
     }
+    if (candidate.Reason == TableRewriteReason.FillFactorDecrease) {
+      // A compact table rewritten at a lower fillfactor grows: the request asked for the free page space, and the
+      // rewrite gave it, so it is honored and cleared whatever the re-measure says, and not rewritten again (#2300).
+      await coordinator.CompleteTableRewriteAsync(_outcome(rewriter, candidate, measured.Ratio), cancellationToken).ConfigureAwait(false);
+      LogFillFactorApplied(_logger, candidate.TableName, tool, measured.Ratio);
+      return true;
+    }
     var before = candidate.Method.ToValue();
     var afterMethod = measured.Method.ToValue();
     if (measured.Ratio >= candidate.BloatRatio) {
@@ -162,10 +281,13 @@ public sealed partial class OnlineTableRewriteStep(
       LogNotImproved(_logger, candidate.TableName, candidate.BloatRatio, before, measured.Ratio, afterMethod);
       return false;
     }
-    await coordinator.ClearTableRewriteRequestAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
+    await coordinator.CompleteTableRewriteAsync(_outcome(rewriter, candidate, measured.Ratio), cancellationToken).ConfigureAwait(false);
     LogRewritten(_logger, candidate.TableName, tool, candidate.BloatRatio, before, measured.Ratio, afterMethod);
     return true;
   }
+
+  private static TableRewriteOutcome _outcome(ITableRewriter rewriter, TableRewriteCandidate candidate, double after) =>
+    new(candidate.TableName, rewriter.Strategy, candidate.Reason, candidate.BloatRatio, after);
 
   /// <summary>Why a capability the strategy needs is not Ready everywhere the registry probed it, or null when all are.</summary>
   private string? _notReadyReason(OnlineStrategy online) {
@@ -214,6 +336,22 @@ public sealed partial class OnlineTableRewriteStep(
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Online rewrite of {Table} through {Tool} failed; the request stays queued")]
   static partial void LogFailed(ILogger logger, string table, string tool, Exception ex);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "Online rewrite: {Tables} wait: no online rewrite extension is usable ({Extensions}), and each is not a perspective table one blue-green rebuild can recreate from its events; they stay queued until pg_squeeze or pg_repack can run")]
+  static partial void LogWaitingForAnExtension(ILogger logger, string tables, string extensions);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Information,
+    Message = "Online rewrite: {Table} is not rebuilt this cycle: {Reason}; the request stays queued")]
+  static partial void LogRebuildInFlight(ILogger logger, string table, string reason);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Information,
+    Message = "Online rewrite: {Count} more perspective table(s) wait for a later cycle: {Key} ({Limit}) rebuilds were started this cycle")]
+  static partial void LogRebuildLimit(ILogger logger, int count, string key, int limit);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Information,
+    Message = "Online rewrite: {Table} rewritten through {Tool} to apply its lowered fillfactor to the rows already stored (bloat now {After}x); the request is cleared")]
+  static partial void LogFillFactorApplied(ILogger logger, string table, string tool, double after);
 
   [LoggerMessage(EventId = 8, Level = LogLevel.Information,
     Message = "Online rewrite: {Rewritten} of {Queued} queued table(s) rewritten this cycle; {Left} left queued")]

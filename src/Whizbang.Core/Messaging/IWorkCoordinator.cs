@@ -1980,6 +1980,23 @@ public interface IWorkCoordinator {
       CancellationToken cancellationToken = default) =>
     RequestTableRewriteAsync(tableName, cancellationToken);
 
+  /// <summary>
+  /// Clears a table's recorded rewrite request, as <see cref="ClearTableRewriteRequestAsync"/> does, and records in the
+  /// rewrite history which strategy carried it out, why the table was owed it, and its ratio before and after (#2301).
+  /// Call only after verifying success.
+  /// </summary>
+  /// <param name="outcome">The rewrite that carried out the request.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the request is cleared and the rewrite recorded.</returns>
+  /// <remarks>Default: the request is cleared and nothing is recorded.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs</tests>
+  Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(outcome);
+    return ClearTableRewriteRequestAsync(outcome.TableName, cancellationToken);
+  }
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
@@ -5334,6 +5351,44 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
   public double RewriteThreshold { get; init; }
+
+  /// <summary>
+  /// Why the table is offered: <see cref="TableRewriteReason.Bloat"/> (the default) when it measures over the bloat
+  /// threshold, or <see cref="TableRewriteReason.FillFactorDecrease"/> when it is offered only because its fillfactor
+  /// was lowered while it held rows (#2300), which an online strategy honors once and a blocking rewrite never does.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
+  public TableRewriteReason Reason { get; init; }
+}
+
+/// <summary>
+/// A rewrite that carried out a table's request: which strategy did it, why the table was owed it, and its bloat ratio
+/// before and after (#2301). Recorded in the rewrite history as the request is cleared.
+/// </summary>
+/// <param name="TableName">The bare table name.</param>
+/// <param name="Strategy">The <see cref="Whizbang.Core.Workers.ITableRewriter.Strategy"/> that rewrote it.</param>
+/// <param name="Reason">Why it was owed the rewrite.</param>
+/// <param name="BloatBefore">The ratio it was offered with.</param>
+/// <param name="BloatAfter">The ratio measured after the rewrite.</param>
+/// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+public sealed record TableRewriteOutcome(
+  string TableName, string Strategy, TableRewriteReason Reason, double BloatBefore, double BloatAfter);
+
+/// <summary>Why a table is offered for rewrite (<see cref="TableRewriteCandidate.Reason"/>).</summary>
+/// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+public enum TableRewriteReason {
+  // Each value is explicit: the numbers are public API, so a new member takes the next free number and is declared last.
+  /// <summary>The table measures over the bloat threshold; rewritten under every strategy's usual rules.</summary>
+  Bloat = 0,
+
+  /// <summary>
+  /// The table is compact, but its fillfactor was lowered while it held rows, so its pages are packed fuller than the
+  /// new value. Rewritten once, and only by an online strategy (pg_squeeze or pg_repack); never by <c>VACUUM FULL</c>.
+  /// </summary>
+  FillFactorDecrease = 1,
 }
 
 /// <summary>What vacuuming one work table did (#1351).</summary>

@@ -333,6 +333,12 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   public event Action<WorkBatch>? OnBatchClaimed;
 
   /// <summary>
+  /// Raised as the loop starts a spacing nap, with its length in milliseconds, once the nap can be cut short by
+  /// <see cref="SignalNewWork"/>. The signal a test waits on to know the next claim is being spaced out.
+  /// </summary>
+  internal event Action<int>? SpacingNapStarted;
+
+  /// <summary>
   /// Wake for NEW work (a store-level doorbell or a strategy persisting fresh rows) — as opposed
   /// to <see cref="RequestImmediatePoll"/>, which the system's own completion-feedback traffic
   /// also pulls. The distinction matters to the repeat-claim spacing: completion feedback must
@@ -520,7 +526,13 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
         // discovery as a missed doorbell and let the idle spacing below nap through a genuinely
         // fresh row (SignalNewWork's cancel only reaches a nap that has already registered its
         // token). Put it back so the next cycle sees it — for the spacing skip and for liveness.
-        if (!hadWork && doorbellRang) {
+        // A REPEAT claim is the same case: it re-offered only what this instance already held, so it
+        // cannot have served new work either, and consuming the doorbell there made the new work wait
+        // out the whole repeat spacing (up to PollingMaxIntervalMilliseconds). Liveness is unchanged:
+        // it reads the doorbell only on a fresh claim after an empty one, so a doorbell put back here is
+        // credited to the next such claim, the one it caused. Completion-feedback wakes
+        // (RequestImmediatePoll) never set the flag, so they still cannot shorten the spacing (#635).
+        if ((!hadWork || _lastClaimWasRepeat) && doorbellRang) {
           Volatile.Write(ref _doorbellSinceLastClaim, 1);
         }
         if (_busLiveness is not null && _lastClaimWasEmpty && hadWork && !_lastClaimWasRepeat
@@ -623,6 +635,7 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
             // them would reintroduce the re-offer spin loop this spacing exists to damp.
             using var napCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             Volatile.Write(ref _napCts, napCts);
+            SpacingNapStarted?.Invoke(floorMs);
             try {
               await Task.Delay(floorMs, napCts.Token);
             } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {

@@ -463,6 +463,18 @@ public class WorkCoordinatorDefaultsTests {
     await task;
   }
 
+  /// <summary>#2301: without provider support, completing a rewrite clears its request and records nothing.</summary>
+  [Test]
+  public async Task CompleteTableRewriteAsync_WithoutProviderSupport_ClearsTheRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.CompleteTableRewriteAsync(new TableRewriteOutcome("x", "PgSqueeze", TableRewriteReason.Bloat, 4.0, 1.0));
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+    await Assert.That(() => coordinator.CompleteTableRewriteAsync(null!)).Throws<ArgumentNullException>();
+  }
+
   [Test]
   public async Task RequestTableRewriteAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();

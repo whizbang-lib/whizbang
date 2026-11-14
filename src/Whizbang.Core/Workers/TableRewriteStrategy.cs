@@ -51,6 +51,17 @@ public enum TableRewriteStrategy {
   /// </summary>
   [RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite (pg_repack)")]
   PgRepack = 4,
+
+  /// <summary>
+  /// Online rewrite with whatever the server allows, from the maintenance cycle (<see cref="OnlineTableRewriteStep"/>)
+  /// within <see cref="MaintenanceWorkerOptions.OnlineRewriteMaxBytesPerCycle"/>: pg_squeeze when it is Ready, else
+  /// pg_repack run in process when the extension and its client are Ready, else a blue-green rebuild of a perspective
+  /// table, at most <see cref="MaintenanceWorkerOptions.BlueGreenRewriteMaxPerCycle"/> per cycle (#2301). A framework
+  /// table cannot be rebuilt from events, so without an extension it waits and the cycle says so. It requires no
+  /// extension, so it never stops start, and it is never replaced by <c>VACUUM FULL</c>. Chosen explicitly: <see cref="Auto"/>
+  /// still never starts an online rewrite of any kind.
+  /// </summary>
+  Online = 5,
 }
 
 /// <summary>What the <c>Rewrite</c> step does on this start: the rewriter strategy to run, or none, and why.</summary>
@@ -74,6 +85,7 @@ public readonly record struct TableRewritePlan(string? Strategy, string Reason);
 ///   <item><term>PgSqueeze</term><description>pg_squeeze, whatever AllowTableRewrite says (choosing it is the opt-in). When pg_squeeze is not usable the capability verdict stops start; it is never replaced by <c>VACUUM FULL</c>.</description></item>
 ///   <item><term>PgRepack</term><description>pg_repack, whatever AllowTableRewrite says or pg_squeeze is (choosing it is the opt-in); in process or by an external job as <see cref="PgRepackOptions.Mode"/> says.</description></item>
 ///   <item><term>VacuumFull</term><description><c>VACUUM FULL</c> when AllowTableRewrite, otherwise nothing.</description></item>
+///   <item><term>Online</term><description>The maintenance cycle's choice each cycle: pg_squeeze, else pg_repack in process, else a blue-green rebuild of a perspective table (#2301); never <c>VACUUM FULL</c>, and nothing is required.</description></item>
 ///   <item><term>None</term><description>Nothing.</description></item>
 /// </list>
 /// </remarks>
@@ -98,6 +110,8 @@ public static class TableRewriteStrategyResolver {
         ? "PgSqueeze: online rewrite through pg_squeeze"
         : "PgSqueeze: pg_squeeze is not usable here, and the capability verdict stops start; VACUUM FULL is never used in its place"),
       TableRewriteStrategy.PgRepack => new(TableRewriteStrategies.PG_REPACK, "PgRepack: online rewrite through pg_repack"),
+      TableRewriteStrategy.Online => new(TableRewriteStrategies.ONLINE,
+        "Online: online rewrite through pg_squeeze, else pg_repack in process, else a blue-green rebuild of a perspective table"),
       TableRewriteStrategy.VacuumFull => allowTableRewrite
         ? new(TableRewriteStrategies.VACUUM_FULL, "VacuumFull: " + AT_BOOT)
         : new(null, "VacuumFull: " + NOT_PERMITTED),

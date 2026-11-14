@@ -268,6 +268,11 @@ public static class WorkerPipelineExtensions {
     // The online strategy: pg_squeeze, run from the maintenance cycle within a byte budget when TableRewriteStrategy is
     // PgSqueeze (the step does nothing, not even a scan, for any other strategy).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, PgSqueezeTableRewriter>());
+    // #2301: the last online choice under TableRewriteStrategy = Online, a blue-green rebuild of a perspective table.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, BlueGreenTableRewriter>(sp =>
+      new BlueGreenTableRewriter(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<BlueGreenTableRewriter>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, OnlineTableRewriteStep>(sp =>
       new OnlineTableRewriteStep(
         sp.GetServices<ITableRewriter>(),
@@ -1324,9 +1329,10 @@ public static class WorkerPipelineExtensions {
       // as WorkCoordinatorFlushHelper — so receptors registered at Distribute lifecycle
       // stages still fire for outbox messages routed through the batcher.
       //
-      // Lifecycle invocation is wrapped in try/catch so a misbehaving receptor (deserialize
-      // failure, handler throw) cannot block the storage path. The storage call MUST
-      // happen; without it the message is permanently lost.
+      // The batch coalesces messages from many streams (#2220), and nothing here can refuse the write: the storage call
+      // MUST happen, or the messages are permanently lost. So every receptor of every message runs at each inline stage,
+      // and a failure (a payload that cannot be read, a receptor that throws) is logged against its own receptor and
+      // message rather than skipping the stage for the rest of the batch (#2310). Only a cancellation stops the flush.
       var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(Whizbang.Core.Tracing.TraceComponents.Lifecycle) ?? false;
       var distributeContext = new DistributeLifecycleContext(
         OutboxMessages: messages,
@@ -1336,24 +1342,20 @@ public static class WorkerPipelineExtensions {
         Logger: lifecycleLogger,
         EnableLifecycleTracing: enableLifecycleTracing,
         Metrics: lifecycleMetrics,
-        DetachedWork: detachedWork);
+        DetachedWork: detachedWork) {
+        InlineFailures = InlineStageFailureHandling.RunEveryReceptorAndLog
+      };
 
-      try {
-        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-          LifecycleStage.PreDistributeDetached,
-          LifecycleStage.PreDistributeInline,
-          distributeContext,
-          ct).ConfigureAwait(false);
+      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+        LifecycleStage.PreDistributeDetached,
+        LifecycleStage.PreDistributeInline,
+        distributeContext,
+        ct).ConfigureAwait(false);
 
-        LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-          LifecycleStage.DistributeDetached,
-          distributeContext,
-          ct);
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-        lifecycleLogger?.LogError(ex, "Outbox batch flush: Pre/Distribute lifecycle invocation failed; proceeding to store {Count} message(s).", messages.Length);
-#pragma warning restore CA1848
-      }
+      LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+        LifecycleStage.DistributeDetached,
+        distributeContext,
+        ct);
 
       // Each stream's batch flushes on its own worker, so a burst over many streams would otherwise open as many
       // connections at once and overflow the pool; the store takes a slot of the process-wide gate (#1871).
@@ -1361,17 +1363,11 @@ public static class WorkerPipelineExtensions {
         await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
       }
 
-      try {
-        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-          LifecycleStage.PostDistributeDetached,
-          LifecycleStage.PostDistributeInline,
-          distributeContext,
-          ct).ConfigureAwait(false);
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-#pragma warning disable CA1848
-        lifecycleLogger?.LogError(ex, "Outbox batch flush: Post-Distribute lifecycle invocation failed after store for {Count} message(s).", messages.Length);
-#pragma warning restore CA1848
-      }
+      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+        LifecycleStage.PostDistributeDetached,
+        LifecycleStage.PostDistributeInline,
+        distributeContext,
+        ct).ConfigureAwait(false);
     };
   }
 

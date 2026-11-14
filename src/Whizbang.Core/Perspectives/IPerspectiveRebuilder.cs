@@ -248,7 +248,12 @@ public enum RebuildTrigger {
   /// <summary>A schema or stored-form migration needed the perspective rebuilt.</summary>
   Migration = 2,
   /// <summary>The startup scan found the perspective needed rebuilding.</summary>
-  StartupScan = 3
+  StartupScan = 3,
+  /// <summary>
+  /// The maintenance cycle rewrote the perspective's table by a blue-green rebuild, because no online rewrite extension
+  /// was usable (#2301).
+  /// </summary>
+  TableRewrite = 4
 }
 
 /// <summary>

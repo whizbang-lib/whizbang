@@ -16,7 +16,9 @@ namespace Whizbang.Data.Postgres.Perspectives;
 /// <remarks>
 /// <para>
 /// The shadow table is <c>CREATE TABLE … (LIKE live INCLUDING ALL)</c>: the same columns, defaults, constraints
-/// and indexes, which the replay's upsert needs. The swap runs in one transaction on a connection of its own. It
+/// and indexes, which the replay's upsert needs. <c>LIKE</c> copies no storage parameters, so the shadow is then given
+/// the live table's own (its fillfactor and autovacuum settings, and its TOAST relation's) before the replay writes a
+/// page: the rebuilt table is filled at the fillfactor the live one declares (#2299). The swap runs in one transaction on a connection of its own. It
 /// takes <c>EXCLUSIVE</c> on the live table, which stops writers and lets readers through, runs the final
 /// catch-up, then takes <c>ACCESS EXCLUSIVE</c> on both tables and renames: the live table to
 /// <see cref="PreviousName"/> (or drops it), the shadow table to the live name, and each index to the name the live
@@ -26,13 +28,16 @@ namespace Whizbang.Data.Postgres.Perspectives;
 /// </para>
 /// <para>
 /// Every lock wait in the swap is bounded by the swap's lock timeout; a swap that times out rolls back and the
-/// live table is left as it was.
+/// live table is left as it was. The installed table is then analyzed, outside the swap's transaction.
 /// </para>
 /// </remarks>
 /// <param name="openConnection">Opens a connection of the swapper's own; the swapper disposes it.</param>
 /// <param name="schema">The schema the perspective tables are in, or null for the connection's search path.</param>
 /// <docs>fundamentals/perspectives/rebuild#blue-green</docs>
+/// <docs>fundamentals/perspectives/rebuild#blue-green-storage-settings</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/PostgresPerspectiveTableSwapperTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs:ABlueGreenSwap_KeepsTheDeclaredStorageSettingsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs:ABlueGreenSwap_OfAManuallyManagedTable_KeepsItsLiveSettingsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.cs</tests>
 [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
   Justification = "Only quoted identifiers are interpolated: table and index names from the perspective registry and pg_catalog. Values are parameters.")]
@@ -82,11 +87,44 @@ public sealed class PostgresPerspectiveTableSwapper(
     ArgumentException.ThrowIfNullOrWhiteSpace(liveTable);
     var shadow = ShadowName(liveTable);
     await using var conn = await _openConnection(cancellationToken).ConfigureAwait(false);
-    await using var cmd = new NpgsqlCommand(
-      $"DROP TABLE IF EXISTS {_table(shadow)}; CREATE TABLE {_table(shadow)} (LIKE {_table(liveTable)} INCLUDING ALL);", conn);
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await using var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    await _executeAsync(conn, tx,
+      $"DROP TABLE IF EXISTS {_table(shadow)}; CREATE TABLE {_table(shadow)} (LIKE {_table(liveTable)} INCLUDING ALL);",
+      cancellationToken).ConfigureAwait(false);
+    // LIKE copies no storage parameters (#2299). The shadow takes the live table's own before the replay writes a page,
+    // so the rebuilt table is filled at the live fillfactor. What is live is copied, not what the model declares, so a
+    // table an operator manages by hand keeps the values it holds.
+    await using (var copy = new NpgsqlCommand(COPY_STORAGE_SETTINGS, conn, tx)) {
+      copy.Parameters.AddWithValue("live", _table(liveTable));
+      copy.Parameters.AddWithValue(nameof(shadow), _table(shadow));
+      if (await copy.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is string alter) {
+        await _executeAsync(conn, tx, alter, cancellationToken).ConfigureAwait(false);
+      }
+    }
+    await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     return shadow;
   }
+
+  /// <summary>
+  /// The <c>ALTER TABLE shadow SET (…)</c> that gives the shadow the live table's storage parameters and its TOAST
+  /// relation's (prefixed <c>toast.</c>), or null when the live table holds none. PostgreSQL builds it with
+  /// <c>format</c>: each option name is quoted as an identifier and each value as a literal, and the table names are
+  /// resolved through <c>regclass</c>, so nothing read from the catalog reaches the statement unquoted.
+  /// </summary>
+  private const string COPY_STORAGE_SETTINGS = """
+    SELECT 'ALTER TABLE ' || @shadow::regclass::text || ' SET (' || string_agg(
+             format('%s%I = %L', o.prefix, split_part(o.option, '=', 1), substr(o.option, strpos(o.option, '=') + 1)),
+             ', ' ORDER BY o.prefix, o.position) || ')'
+    FROM pg_class c
+    LEFT JOIN pg_class t ON t.oid = c.reltoastrelid
+    CROSS JOIN LATERAL (
+      SELECT '' AS prefix, u.option, u.position FROM unnest(c.reloptions) WITH ORDINALITY u(option, position)
+      UNION ALL
+      SELECT 'toast.', u.option, u.position FROM unnest(t.reloptions) WITH ORDINALITY u(option, position)
+    ) o
+    WHERE c.oid = @live::regclass
+    HAVING count(*) > 0
+    """;
 
   /// <inheritdoc />
   public async Task DeleteRowsAsync(string table, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) {
@@ -144,7 +182,26 @@ public sealed class PostgresPerspectiveTableSwapper(
     await _executeAsync(conn, tx, $"ALTER TABLE {_table(swap.ShadowTable)} RENAME TO {PgIdentifier.Quote(swap.LiveTable)}", cancellationToken).ConfigureAwait(false);
 
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+    // A table just created reads as never analyzed: the planner guesses its size, and a rewrite's re-measure divides by
+    // a row count it does not have (#2301). ANALYZE samples it, outside the swap's transaction and its locks.
+    await using (var analyze = new NpgsqlCommand($"ANALYZE {_table(swap.LiveTable)}", conn)) {
+      await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
     return previous;
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Every perspective the registry records as writing the table; one is the answer, none or several is null.</remarks>
+  public async Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(table);
+    await using var conn = await _openConnection(cancellationToken).ConfigureAwait(false);
+    await using var cmd = new NpgsqlCommand(
+      "SELECT CASE WHEN count(DISTINCT p.name) = 1 THEN min(p.name) END " +
+      $"FROM {PgIdentifier.Qualify(schema, "wh_perspective_registry")} r CROSS JOIN LATERAL unnest(r.perspective_names) p(name) " +
+      "WHERE r.table_name = @table", conn);
+    cmd.Parameters.AddWithValue(nameof(table), table);
+    return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
   }
 
   /// <summary>

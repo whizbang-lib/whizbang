@@ -71,14 +71,20 @@ internal static class TableMaintenanceSql {
   /// <summary>
   /// The rewrite candidates: every table the scan estimates bloated, and every queued one, with the heap size an online
   /// rewrite copies, a queued table's measurement and method when it was measured before it was queued (#1807), and the
-  /// threshold the scan compared with. Largest ratio first.
+  /// threshold the scan compared with; then every queued table owed a rewrite for a lowered fillfactor that the scan
+  /// did not offer, as <see cref="TableRewriteReason.FillFactorDecrease"/> (#2300). Largest ratio first.
   /// </summary>
   internal static async Task<IReadOnlyList<TableRewriteCandidate>> TablesNeedingRewriteAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
-    cmd.CommandText = "SELECT r.table_name, COALESCE(m.bloat_ratio, r.bloat_ratio), r.requested, "
+    cmd.CommandText = $"WITH b AS MATERIALIZED (SELECT * FROM {prefix}wh_tables_needing_rewrite()), "
+      + "r AS (SELECT b.table_name, b.bloat_ratio, b.requested, FALSE AS decrease FROM b "
+      + $"UNION ALL SELECT f.table_name, f.bloat_ratio, TRUE, TRUE FROM {prefix}wh_tables_owed_fillfactor_rewrite() f "
+      + "WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.table_name = f.table_name)) "
+      + "SELECT r.table_name, COALESCE(m.bloat_ratio, r.bloat_ratio), r.requested, "
       + "COALESCE(pg_relation_size(to_regclass(@prefix || quote_ident(r.table_name))), 0), m.method, "
-      + $"COALESCE((SELECT s.setting_value FROM {prefix}wh_settings s WHERE s.setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC "
-      + $"FROM {prefix}wh_tables_needing_rewrite() r LEFT JOIN {prefix}wh_table_rewrite_measurements m ON r.requested AND m.table_name = r.table_name "
+      + $"COALESCE((SELECT s.setting_value FROM {prefix}wh_settings s WHERE s.setting_key = 'table_rewrite_bloat_threshold'), '3.0')::NUMERIC, "
+      + "r.decrease "
+      + $"FROM r LEFT JOIN {prefix}wh_table_rewrite_measurements m ON r.requested AND m.table_name = r.table_name "
       + "ORDER BY 2 DESC, 1";
     cmd.Parameters.Add(new NpgsqlParameter(nameof(prefix), prefix));
     var results = new List<TableRewriteCandidate>();
@@ -88,6 +94,7 @@ internal static class TableMaintenanceSql {
         SizeBytes = reader.GetInt64(3),
         Method = BloatMeasurementMethods.Parse(reader.IsDBNull(4) ? null : reader.GetString(4)),
         RewriteThreshold = (double)reader.GetDecimal(5),
+        Reason = reader.GetBoolean(6) ? TableRewriteReason.FillFactorDecrease : TableRewriteReason.Bloat,
       });
     }
     return results;
@@ -96,6 +103,19 @@ internal static class TableMaintenanceSql {
   /// <summary>Queues a rewrite of the table (<c>wh_request_table_rewrite</c>); queuing it again is absorbed.</summary>
   internal static Task RequestRewriteAsync(DbCommand cmd, string prefix, string tableName, CancellationToken cancellationToken) =>
     _tableFunctionAsync(cmd, prefix + "wh_request_table_rewrite", tableName, cancellationToken);
+
+  /// <summary>
+  /// Records a completed rewrite in the history and clears its request (<c>wh_complete_table_rewrite</c>, #2301).
+  /// </summary>
+  internal static async Task CompleteRewriteAsync(DbCommand cmd, string prefix, TableRewriteOutcome outcome, CancellationToken cancellationToken) {
+    cmd.CommandText = $"SELECT {prefix}wh_complete_table_rewrite(@t, @strategy, @reason, @before::NUMERIC, @after::NUMERIC)";
+    cmd.Parameters.Add(new NpgsqlParameter("t", outcome.TableName));
+    cmd.Parameters.Add(new NpgsqlParameter("strategy", outcome.Strategy));
+    cmd.Parameters.Add(new NpgsqlParameter("reason", outcome.Reason.ToString()));
+    cmd.Parameters.Add(new NpgsqlParameter("before", outcome.BloatBefore));
+    cmd.Parameters.Add(new NpgsqlParameter("after", outcome.BloatAfter));
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
 
   /// <summary>Clears the table's rewrite request and its measurement (<c>wh_clear_table_rewrite</c>).</summary>
   internal static Task ClearRewriteRequestAsync(DbCommand cmd, string prefix, string tableName, CancellationToken cancellationToken) =>

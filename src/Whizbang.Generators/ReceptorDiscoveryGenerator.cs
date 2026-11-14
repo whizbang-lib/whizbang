@@ -48,6 +48,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_RESPONSE_TYPE = "__RESPONSE_TYPE__";
   private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
+  private const string PLACEHOLDER_RESOLVE_RECEPTOR = "__RESOLVE_RECEPTOR__";
+  private const string PLACEHOLDER_RECEPTOR_SERVICE = "__RECEPTOR_SERVICE__";
+  private const string VOID_RECEPTOR_SERVICE = PLACEHOLDER_RECEPTOR_INTERFACE + "<" + PLACEHOLDER_MESSAGE_TYPE + ">";
+  private const string RESPONSE_RECEPTOR_SERVICE = PLACEHOLDER_RECEPTOR_INTERFACE + "<" + PLACEHOLDER_MESSAGE_TYPE + ", " + PLACEHOLDER_RESPONSE_TYPE + ">";
   private const string INDENT_6 = "      ";
   private const string INDENT_6_CLOSE_BRACE = "      }";
   private const string BOOL_TRUE_LITERAL = "true";
@@ -1243,11 +1247,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate registration calls using appropriate snippet.
     //
-    // Receptors marked [SuppressReceptorRegistration] are skipped HERE and only here — they remain
-    // discovered and routed, because the attribute declares who owns construction, not that the type
-    // should be ignored. Their constructors take arguments DI cannot supply, so registering them
-    // would leave un-constructible descriptors; under container validation a single one of those
-    // aborts the entire service provider, taking down every service in the assembly.
+    // Receptors marked [SuppressReceptorRegistration] are skipped HERE: they remain discovered and
+    // routed, because the attribute declares who owns construction, not that the type should be ignored.
+    // Their routes resolve through SuppressedReceptorRoute, which skips when the owner registered none (#2309).
+    // Their constructors take arguments DI cannot supply, so registering them would leave
+    // un-constructible descriptors; under container validation a single one of those aborts the
+    // entire service provider, taking down every service in the assembly.
     var registrations = new StringBuilder();
     foreach (var receptor in receptors.Where(r => !r.SuppressesRegistration)) {
       var generatedCode = _generateRegistrationCode(
@@ -1744,13 +1749,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Holds the four snippet variants used for receptor registry code generation.
+  /// Holds the four routing snippet variants used for receptor registry code generation, and the three ways a route
+  /// resolves its receptor.
   /// </summary>
   private sealed record RegistrySnippets(
       string Response,
       string Void,
       string TracedResponse,
-      string TracedVoid);
+      string TracedVoid,
+      string Resolve,
+      string SuppressedResolve,
+      string SuppressedTracedResolve);
 
   /// <summary>
   /// Loads all required snippet templates for receptor registry routing.
@@ -1761,7 +1770,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         Response: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_ROUTING_SNIPPET"),
         Void: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"),
         TracedResponse: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_TRACED_ROUTING_SNIPPET"),
-        TracedVoid: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_TRACED_VOID_ROUTING_SNIPPET"));
+        TracedVoid: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_TRACED_VOID_ROUTING_SNIPPET"),
+        Resolve: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_RESOLVE_SNIPPET"),
+        SuppressedResolve: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_SUPPRESSED_RESOLVE_SNIPPET"),
+        SuppressedTracedResolve: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_SUPPRESSED_TRACED_RESOLVE_SNIPPET"));
   }
 
   /// <summary>
@@ -1962,9 +1974,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         var receptor = receptorsInGroup[i];
         var syncAttributesCode = _generateSyncAttributesCode(receptor.SyncAttributes);
 
-        var receptorEntry = _generateReceptorInfoEntry(
-            receptor, syncAttributesCode, handlerCount,
-            snippets.Response, snippets.Void, snippets.TracedResponse, snippets.TracedVoid);
+        var receptorEntry = _generateReceptorInfoEntry(receptor, syncAttributesCode, handlerCount, snippets);
 
         if (i < receptorsInGroup.Count - 1) {
           receptorEntry = receptorEntry.TrimEnd() + ",";
@@ -1988,19 +1998,37 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ReceptorInfo receptor,
       string syncAttributesCode,
       int handlerCount,
-      string responseSnippet,
-      string voidSnippet,
-      string tracedResponseSnippet,
-      string tracedVoidSnippet) {
+      RegistrySnippets snippets) {
 
-    var snippet = _selectSnippet(receptor, responseSnippet, voidSnippet, tracedResponseSnippet, tracedVoidSnippet);
+    var snippet = _selectSnippet(receptor, snippets.Response, snippets.Void, snippets.TracedResponse, snippets.TracedVoid);
 
     // Every shipped snippet carries the ReceptorInfo constructor, which ReceptorRegistrySnippetInvariantTests
     // pins for all four snippets _selectSnippet can return, so extraction always finds it. A manual
     // fallback used to stand here; it was a second copy of the entry shape that no snippet change
     // updated, so it would have emitted drifted entries had it ever run, and the test is the guard.
     var entryTemplate = _extractReceptorInfoFromSnippet(snippet)!;
+    entryTemplate = _withReceptorResolution(entryTemplate, receptor, snippets);
     return _applyReceptorReplacements(entryTemplate, receptor, syncAttributesCode, handlerCount);
+  }
+
+  /// <summary>
+  /// Fills the route's <c>__RESOLVE_RECEPTOR__</c> line. A receptor discovery registers in DI is resolved with
+  /// <c>GetRequiredService</c>, so a registration that is genuinely missing fails loudly. A receptor declared
+  /// <c>[SuppressReceptorRegistration]</c> is registered by its owner, by hand or only at runtime, so its route resolves
+  /// through <c>SuppressedReceptorRoute</c> and skips the receptor when nothing in DI is it (#2309); a traced route
+  /// records the skip as an early return.
+  /// </summary>
+  private static string _withReceptorResolution(string entryTemplate, ReceptorInfo receptor, RegistrySnippets snippets) {
+    var resolve = snippets.Resolve;
+    if (receptor.SuppressesRegistration) {
+      resolve = receptor.HasTraceAttribute ? snippets.SuppressedTracedResolve : snippets.SuppressedResolve;
+    }
+    var at = entryTemplate.IndexOf(PLACEHOLDER_RESOLVE_RECEPTOR, StringComparison.Ordinal);
+    var lineStart = entryTemplate.LastIndexOf('\n', at) + 1;
+    var indentation = entryTemplate[lineStart..at];
+    var indented = TemplateUtilities.IndentCode(resolve.TrimEnd(), indentation).TrimStart();
+    return entryTemplate.Replace(PLACEHOLDER_RESOLVE_RECEPTOR, indented)
+      .Replace(PLACEHOLDER_RECEPTOR_SERVICE, receptor.IsVoid ? VOID_RECEPTOR_SERVICE : RESPONSE_RECEPTOR_SERVICE);
   }
 
   /// <summary>
