@@ -52,8 +52,8 @@ public class LifecycleStageFailureIsolationTests {
     await Assert.That(failure.Message).Contains(MESSAGE_TYPE)
       .Because("the log entry must name the message type");
     await Assert.That(failure.Message).Contains(nameof(LifecycleStage.PostDistributeInline));
-    await Assert.That(failure.Exception).IsSameReferenceAs(invoker.Thrown)
-      .Because("the entry carries the exception the receptor threw, not a wrapper");
+    await Assert.That(failure.Exception).IsSameReferenceAs(invoker.ThrownAt(LifecycleStage.PostDistributeInline))
+      .Because("the entry carries the exception the receptor threw at this stage, not a wrapper");
   }
 
   [Test]
@@ -440,7 +440,12 @@ public class LifecycleStageFailureIsolationTests {
 
     public FailingForInvoker(params Guid[] failFor) : this(null, failFor) { }
 
+    private readonly ConcurrentDictionary<LifecycleStage, Exception> _thrownAt = new();
+
     public Exception? Thrown { get; private set; }
+
+    /// <summary>The first exception thrown at <paramref name="stage"/>; each stage fails with its own.</summary>
+    public Exception? ThrownAt(LifecycleStage stage) => _thrownAt.TryGetValue(stage, out var thrown) ? thrown : null;
 
     /// <summary>When set, the messages fail only at this stage.</summary>
     public LifecycleStage? FailOnlyAt { get; init; }
@@ -464,6 +469,7 @@ public class LifecycleStageFailureIsolationTests {
         }
         var thrown = toThrow ?? new InvalidOperationException($"receptor failed for {messageId}");
         Thrown ??= thrown;
+        _thrownAt.TryAdd(stage, thrown);
         if (stage == LifecycleStage.PostDistributeDetached) {
           _detachedThrew.TrySetResult();
         }
