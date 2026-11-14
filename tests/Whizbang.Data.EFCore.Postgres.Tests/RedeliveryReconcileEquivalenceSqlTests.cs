@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/420_RedeliveryReconcilesKeepNoWorkTable.sql</code-under-test>
-/// <docs>resilience/stream-integrity#redelivery-reconciles-keep-no-working-table</docs>
+/// <docs>resilience/stream-integrity#per-bundle-work-table</docs>
 [Category("Integration")]
 [Category("Shard5")]
 public class RedeliveryReconcileEquivalenceSqlTests : EFCoreTestBase {
