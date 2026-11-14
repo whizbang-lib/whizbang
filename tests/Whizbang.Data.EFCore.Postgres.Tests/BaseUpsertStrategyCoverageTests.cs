@@ -62,6 +62,26 @@ public class BaseUpsertStrategyCoverageTests {
   // takes the other's hooks away, so every test that swaps it holds this key.
   internal const string REGISTRY_KEY = "PerEventApplyHooks.Registry";
 
+  /// <summary>
+  /// The registry a test is about to replace, returned for its restore, once the running test is known to hold
+  /// <see cref="REGISTRY_KEY"/>. TUnit runs a test with the class's <c>[NotInParallel]</c> keys when the class has one,
+  /// whatever the method's own attribute says, so a key written on the method can be silently dropped; this reads the
+  /// keys the test really runs with, and refuses the swap rather than let it race another swapper's restore.
+  /// </summary>
+  internal static ApplyHookRegistry TakeTheRegistry() {
+    var context = TestContext.Current
+      ?? throw new InvalidOperationException("The apply-hook registry may only be swapped from a running test.");
+    var keys = context.Parallelism.Constraints.OfType<NotInParallelConstraint>()
+      .SelectMany(constraint => constraint.NotInParallelConstraintKeys);
+    if (!keys.Contains(REGISTRY_KEY, StringComparer.Ordinal)) {
+      throw new InvalidOperationException(
+        $"The test swaps the process-wide apply-hook registry without holding the '{REGISTRY_KEY}' key, "
+        + "so it can run beside a test that restores the registry under it. Put the key on the test's class when the "
+        + "class has its own [NotInParallel]: TUnit ignores the method's attribute then.");
+    }
+    return PerEventApplyHooks.Registry;
+  }
+
   private sealed class HookableModel {
     public string Status { get; set; } = string.Empty;
   }
@@ -101,7 +121,7 @@ public class BaseUpsertStrategyCoverageTests {
   [Test]
   [NotInParallel(REGISTRY_KEY)] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithRegisteredSetPropertyHook_MutatesTheModelBeforePersistingAsync() {
-    var previousRegistry = PerEventApplyHooks.Registry;
+    var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     try {
       PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
         .Register<HookableModel>(new RecordingSetPropertyHook((b, _) => b.SetProperty(m => m.Status, "HookApplied")));
@@ -137,7 +157,7 @@ public class BaseUpsertStrategyCoverageTests {
   [Test]
   [NotInParallel(REGISTRY_KEY)] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithAHookThatClearsUpdatedAt_StampsTheEventsBusinessTimeAsync() {
-    var previousRegistry = PerEventApplyHooks.Registry;
+    var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     try {
       PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
         .Register<HookableModel>(new RecordingSetPropertyHook((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, null)));
@@ -173,7 +193,7 @@ public class BaseUpsertStrategyCoverageTests {
   [Test]
   [NotInParallel(REGISTRY_KEY)] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithAHookThatSetsUpdatedAt_StampsTheHooksValueAsync() {
-    var previousRegistry = PerEventApplyHooks.Registry;
+    var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     var sentinel = new DateTimeOffset(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
     try {
       PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
@@ -437,7 +457,7 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   [Test]
   [NotInParallel([WIDGET_TTL_KEY, BaseUpsertStrategyCoverageTests.REGISTRY_KEY])] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithAHookThatSetsUpdatedAt_StampsTheHooksValueViaTheAtomicPathAsync() {
-    var previousRegistry = PerEventApplyHooks.Registry;
+    var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
       .Register<UpsertCoverageWidgetModel>(new StampUpdatedAtWidgetHook());
     try {
@@ -475,7 +495,7 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   [Test]
   [NotInParallel([WIDGET_TTL_KEY, BaseUpsertStrategyCoverageTests.REGISTRY_KEY])] // swaps the process-wide apply-hook registry
   public async Task Upsert_WithAHookThatClearsUpdatedAt_StampsTheEventsBusinessTimeViaTheAtomicPathAsync() {
-    var previousRegistry = PerEventApplyHooks.Registry;
+    var previousRegistry = BaseUpsertStrategyCoverageTests.TakeTheRegistry();
     PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
       .Register<UpsertCoverageWidgetModel>(new ClearUpdatedAtWidgetHook());
     try {
