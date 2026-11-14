@@ -917,10 +917,10 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var failed = results.Single(r => r.TaskName == "purge_old_deduplication");
-    await Assert.That(failed.Status).StartsWith("failed: ").Because("the failed task is named, with the error it raised");
-    await Assert.That(failed.Status).Contains("not-a-number");
-    await Assert.That(failed.RowsAffected).IsEqualTo(0L);
+    var (_, failedRows, _, failedStatus) = results.Single(r => r.TaskName == "purge_old_deduplication");
+    await Assert.That(failedStatus).StartsWith("failed: ").Because("the failed task is named, with the error it raised");
+    await Assert.That(failedStatus).Contains("not-a-number");
+    await Assert.That(failedRows).IsEqualTo(0L);
     await Assert.That(results.Where(r => r.TaskName != "purge_old_deduplication").All(r => !r.Status.StartsWith("failed", StringComparison.Ordinal)))
       .IsTrue().Because("no other task depends on the deduplication purge");
     await Assert.That(results.Single(r => r.TaskName == "purge_instance_evictions").RowsAffected).IsEqualTo(1L)
