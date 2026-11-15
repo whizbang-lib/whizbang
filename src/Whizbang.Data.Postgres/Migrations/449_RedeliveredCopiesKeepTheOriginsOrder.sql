@@ -26,7 +26,7 @@
 --
 --              Number 449: reserved for this change.
 --
--- Reversal: no down file; the three functions' previous definitions are their last words in 352, 380 and 448
+-- Reversal: reversible (the three functions go back to their last words in 352, 380 and 448; _wh_supersedes goes)
 -- Dependencies: 352 (_wh_queue_superseded_events, supersede_group), 380 (wh_superseding_history_apply),
 --               448 (wh_reap_superseded_events)
 -- Objects: _wh_supersedes, _wh_queue_superseded_events, wh_superseding_history_apply, wh_reap_superseded_events

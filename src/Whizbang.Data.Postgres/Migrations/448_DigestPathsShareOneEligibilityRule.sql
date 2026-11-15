@@ -32,8 +32,8 @@
 --
 --              Number 448: reserved for this change.
 --
--- Reversal: not reversible as data (removed buckets held no events); the functions' previous definitions are their last
---           words in 262, 299, 336, 346, 347, 352, 358, 391, 397, 411, 420 and 446
+-- Reversal: lossy (every function goes back to its last word before 448; the removed digest buckets held no counted
+--           event and are not restored)
 -- Dependencies: 216 (__DIGEST_EXEMPT_TYPES__), 336 (_wh_fold_stream_digests, _wh_digest_lane), and the last word of each
 --               function below
 -- Objects: wh_remove_eventless_stream_digests, _wh_epoch_buckets, compute_type_digests_epoch,
