@@ -32,7 +32,7 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
       StreamIntegrityMetrics? metrics = null, FakeTimeProvider? clock = null,
       IntegritySweepScheduleState? scheduleState = null) {
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock?.GetUtcNow() ?? _auditNow, "origin-a.requests");
     return _buildWorker(coordinator, new CaptureDispatcher(), transport, options, tracker,
       metrics: metrics, clock: clock, scheduleState: scheduleState);
   }

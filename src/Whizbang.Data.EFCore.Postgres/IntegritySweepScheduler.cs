@@ -66,7 +66,7 @@ public sealed partial class IntegritySweepScheduler(
     var instanceProvider = services.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>();
     if (manager is null || instanceProvider is null) {
       LogNoTemporalEngine(logger);
-      return;   // no engine — counter fallback; the cron flags stay false by design.
+      return;   // no engine: counter fallback; the cron flags stay false by design.
     }
 
     // #1334: the schedule function arrives with the migrations. The host starts this scheduler at Accept commands
