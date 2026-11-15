@@ -271,7 +271,8 @@ public class IntegritySweepSchedulingTests {
   }
 
   private static StreamIntegrityOptions _bothOn() => new() {
-    FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true },
+    FullHistoryCompare = { Enabled = true },
+    SealRecheck = { Enabled = true },
   };
 
   [Test]
@@ -298,7 +299,8 @@ public class IntegritySweepSchedulingTests {
   [Test]
   public async Task Start_ACheckThatIsOnWithNoSchedule_RegistersNothingForItAsync() {
     var (scheduler, state, manager) = _build(cron: null, options: new StreamIntegrityOptions {
-      FullHistoryCompare = { Enabled = true, Schedule = "" }, SealRecheck = { Enabled = true, Schedule = null },
+      FullHistoryCompare = { Enabled = true, Schedule = "" },
+      SealRecheck = { Enabled = true, Schedule = null },
     });
 
     await scheduler.StartAsync(CancellationToken.None);
