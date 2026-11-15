@@ -32,4 +32,14 @@ public readonly record struct RedeliveryAnswerWindow(long? FromCommitSequence, l
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryAnswerCoverageTests.PartialStreams.cs</tests>
   public IReadOnlyList<Guid>? PartialStreamIds { get; init; }
+
+  /// <summary>
+  /// More bundles of the same answer follow this one (#2311). A whole-type answer is judged as a whole: a bundle that
+  /// changed nothing and says the answer continues leaves the type lane awaiting the rest, so only the answer's last
+  /// bundle can mark it as one repair cannot change, and only when no bundle before it brought anything. False on the
+  /// answer's last bundle, and from an origin that predates the field, whose every bundle is judged on its own as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityTypeLaneAnswerSqlTests.WholeAnswer.cs</tests>
+  public bool Continues { get; init; }
 }

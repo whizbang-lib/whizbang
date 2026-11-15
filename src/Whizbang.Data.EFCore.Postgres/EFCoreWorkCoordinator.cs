@@ -1633,7 +1633,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   /// <remarks>An unchanged bucket the answered window did not cover is answered and not marked (357, #2143), and so is one
-  /// of a stream the bundle carried only in part (410, #2149).</remarks>
+  /// of a stream the bundle carried only in part (410, #2149). A type lane is marked only by the answer's last bundle (431,
+  /// #2311).</remarks>
   public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
       Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
       RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
@@ -1664,8 +1665,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_partial_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = answeredWindow?.PartialStreamIds is { } partial ? partial.ToArray() : DBNull.Value
       });
+      // #2311 (431): a bundle more of whose answer follows leaves the type lane waiting when it changed nothing.
+      cmd.Parameters.AddWithValue("p_answer_continues", answeredWindow is { Continues: true });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_partial_streams)";
+      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_partial_streams,@p_answer_continues)";
 #pragma warning restore S2077
       int present = 0, absent = 0, refused = 0, adoptable = 0;
       var markedRefused = new List<IntegrityRepairLedger.DivergenceKey>();

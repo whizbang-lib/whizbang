@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptor.cs</code-under-test>
 [NotInParallel("RedeliveryBuildGate")]   // the receptor's per-process build gate is shared state
 [Category("Shard2")]
-public class RedeliveryWindowAnswerTests {
+public partial class RedeliveryWindowAnswerTests {
   private static readonly Guid _s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
   private static readonly Guid _s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
   private static readonly Guid _s3 = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -174,7 +174,8 @@ public class RedeliveryWindowAnswerTests {
 
     await Assert.That(serializer.Composites).Count().IsEqualTo(3).Because("precondition: one bundle per stream");
     foreach (var bundle in serializer.Composites) {
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(from, to));
+      // #2311: whether more of the answer follows is asserted on its own; here only the window.
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(from, to));
     }
   }
 
@@ -243,7 +244,8 @@ public class RedeliveryWindowAnswerTests {
 
     await Assert.That(serializer.Composites).IsNotEmpty();
     foreach (var bundle in serializer.Composites) {
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
+      // #2311: whether more of the answer follows is asserted on its own; here only the window.
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
     }
   }
 
@@ -259,8 +261,9 @@ public class RedeliveryWindowAnswerTests {
 
     await _receptor(sp).HandleAsync(_window(TrackedGuid.New().Value, window: 1, from: null, max: 100));
 
-    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow))
-      .IsEquivalentTo(new RedeliveryAnswerWindow?[] { new(null, 2), new(2, 4), new(4, null) });
+    // #2311: whether more of the answer follows is asserted on its own; here only each page's window.
+    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false }))
+      .IsEquivalentTo(new RedeliveryAnswerWindow[] { new(null, 2), new(2, 4), new(4, null) });
   }
 
   [Test]

@@ -138,7 +138,10 @@ public sealed partial class RedeliveryRequestReceptor(
   /// </summary>
   private async Task<(int Shipped, int Composites)> _serveOrdinaryAsync(
       RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
-    var tally = new OrdinaryTally();
+    // #2311: every selection publishes into one answer, whose last bundle says the answer ends with it.
+    var tally = new OrdinaryTally {
+      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly),
+    };
     if (message.EventIds is { Count: > 0 } named) {
       // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
       // this store does not hold (the requester's id lanes named no event it wrote) is answered over the window instead.
@@ -151,11 +154,14 @@ public sealed partial class RedeliveryRequestReceptor(
     } else {
       _ = await _shipSelectionAsync(message, serve, message.StreamIds, null, tally, cancellationToken).ConfigureAwait(false);
     }
+    tally.Composites += await tally.Answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
     return (tally.Shipped, tally.Composites);
   }
 
   /// <summary>What an ordinary request has selected and shipped so far, across its selections.</summary>
   private sealed class OrdinaryTally {
+    /// <summary>The answer every selection publishes into (#2311).</summary>
+    public required RedeliveryAnswerPublication Answer { get; init; }
     public int Selected { get; set; }
     public int Shipped { get; set; }
     public int Composites { get; set; }
@@ -189,10 +195,7 @@ public sealed partial class RedeliveryRequestReceptor(
         var window = new RedeliveryAnswerWindow(message.FromCommitSequence, message.ToCommitSequence) {
           PartialStreamIds = _streamsRunningPastThePage(page, want, afterStream),
         };
-        tally.Composites += await serve.Pump
-          .PublishAnswerAsync(owned, window,
-            message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
-          .ConfigureAwait(false);
+        tally.Composites += await tally.Answer.PublishAsync(owned, window, cancellationToken).ConfigureAwait(false);
       }
       tally.Shipped += owned.Count;
       tally.Selected += page.Count;
@@ -265,6 +268,8 @@ public sealed partial class RedeliveryRequestReceptor(
     var shipped = 0;
     var composites = 0;
     var exhausted = false;
+    // #2311: the window's pages publish into one answer, whose last bundle says the answer ends with it.
+    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly);
     while (selected < serve.MaxEvents) {
       var want = Math.Min(serve.PageSize, serve.MaxEvents - selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
@@ -286,10 +291,7 @@ public sealed partial class RedeliveryRequestReceptor(
         // The receiver's fan-out takes each stream's events in version order.
         var owned = _owned(page, serve).OrderBy(e => e.StreamId).ThenBy(e => e.Version).ToList();
         if (owned.Count > 0) {
-          composites += await serve.Pump
-            .PublishAnswerAsync(owned, covered, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly,
-              cancellationToken)
-            .ConfigureAwait(false);
+          composites += await answer.PublishAsync(owned, covered, cancellationToken).ConfigureAwait(false);
         }
         shipped += owned.Count;
         selected += page.Count;
@@ -300,6 +302,7 @@ public sealed partial class RedeliveryRequestReceptor(
       }
     }
 
+    composites += await answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
     var head = await serve.Coordinator.GetRedeliveryHeadCommitSequenceAsync(eventTypes, cancellationToken).ConfigureAwait(false);
     await serve.Pump.PublishWindowAnswerAsync(new BackfillWindowAnswer {
       BackfillId = backfillId,
