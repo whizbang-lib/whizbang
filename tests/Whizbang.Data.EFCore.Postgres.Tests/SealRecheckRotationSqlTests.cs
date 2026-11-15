@@ -83,7 +83,7 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await _executeAsync(conn, "SELECT close_digest_epochs(NOW(), 3600, 100)");
   }
 
-  private static async Task<(int Checked, int Drifted)> _recheckAsync(NpgsqlConnection conn,
+  private static async Task<RecheckResult> _recheckAsync(NpgsqlConnection conn,
       int max, string now = "NOW()", long? lookbackSeconds = null, long everySeconds = 0, bool refold = true) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText =
@@ -94,8 +94,11 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue(nameof(refold), refold);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return (reader.GetInt32(0), reader.GetInt32(1));
+    return new RecheckResult(reader.GetInt32(0), reader.GetInt32(1));
   }
+
+  /// <summary>One re-check run: epochs it checked, and how many of them had drifted from their seal.</summary>
+  private sealed record RecheckResult(int Checked, int Drifted);
 
   private static async Task<List<long>> _recheckedEpochsAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
@@ -173,11 +176,11 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     await _sealFourEpochsAsync(conn);
 
-    var (checkedCount, _) = await _recheckAsync(conn, max: 2);
+    var run = await _recheckAsync(conn, max: 2);
     var afterFirst = await _recheckedEpochsAsync(conn);
     var second = await _recheckAsync(conn, max: 2, now: "NOW() + INTERVAL '1 second'");
 
-    await Assert.That(checkedCount).IsEqualTo(2);
+    await Assert.That(run.Checked).IsEqualTo(2);
     await Assert.That(afterFirst).IsEquivalentTo(new List<long> { 0, 1 });
     await Assert.That(second.Checked).IsEqualTo(2);
     await Assert.That(await _recheckedEpochsAsync(conn)).IsEquivalentTo(new List<long> { 0, 1, 2, 3 })
@@ -206,9 +209,9 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await _sealFourEpochsAsync(conn);
     await _executeAsync(conn, "UPDATE wh_digest_epoch_seals SET sealed_at = NOW() - INTERVAL '40 days' WHERE epoch_id IN (0, 1)");
 
-    var (checkedCount, _) = await _recheckAsync(conn, max: 100, lookbackSeconds: (long)TimeSpan.FromDays(30).TotalSeconds);
+    var run = await _recheckAsync(conn, max: 100, lookbackSeconds: (long)TimeSpan.FromDays(30).TotalSeconds);
 
-    await Assert.That(checkedCount).IsEqualTo(2);
+    await Assert.That(run.Checked).IsEqualTo(2);
     await Assert.That(await _recheckedEpochsAsync(conn)).IsEquivalentTo(new List<long> { 2, 3 })
       .Because("an epoch sealed before the lookback is trusted as sealed");
   }
@@ -219,11 +222,11 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await _sealFourEpochsAsync(conn);
     var week = (long)TimeSpan.FromDays(7).TotalSeconds;
 
-    var (checkedCount, _) = await _recheckAsync(conn, max: 100, everySeconds: week);
+    var run = await _recheckAsync(conn, max: 100, everySeconds: week);
     var sameDay = await _recheckAsync(conn, max: 100, now: "NOW() + INTERVAL '1 day'", everySeconds: week);
     var nextWeek = await _recheckAsync(conn, max: 100, now: "NOW() + INTERVAL '8 days'", everySeconds: week);
 
-    await Assert.That(checkedCount).IsEqualTo(4);
+    await Assert.That(run.Checked).IsEqualTo(4);
     await Assert.That(sameDay.Checked).IsEqualTo(0).Because("every epoch was re-checked within the interval");
     await Assert.That(nextWeek.Checked).IsEqualTo(4).Because("once the interval passes, each is due again");
   }
@@ -234,9 +237,9 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await _sealFourEpochsAsync(conn);
     await _corruptAsync(conn, 1);
 
-    var (_, driftedCount) = await _recheckAsync(conn, max: 100, refold: false);
+    var run = await _recheckAsync(conn, max: 100, refold: false);
 
-    await Assert.That(driftedCount).IsEqualTo(1);
+    await Assert.That(run.Drifted).IsEqualTo(1);
     await Assert.That(await _storedLoAsync(conn, 1)).IsEqualTo(666L).Because("report-only leaves the seal for an operator");
 
     var refolded = await _recheckAsync(conn, max: 100, now: "NOW() + INTERVAL '1 second'");
@@ -252,9 +255,9 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await _sealFourEpochsAsync(conn);
     await _seedAsync(conn, 42, settled: false);
 
-    var (checkedCount, _) = await _recheckAsync(conn, max: 1);
+    var run = await _recheckAsync(conn, max: 1);
 
-    await Assert.That(checkedCount).IsEqualTo(1);
+    await Assert.That(run.Checked).IsEqualTo(1);
     await Assert.That(await _recheckedEpochsAsync(conn)).IsEquivalentTo(new List<long> { 1 })
       .Because("epoch 0 holds an in-flight arrival, so it is skipped, not spent, and the cap goes to the next epoch");
   }
