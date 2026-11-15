@@ -189,4 +189,19 @@ public class IntegrityCheckOptionsTests {
     await Assert.That(result.Failed).IsTrue();
     await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:" + key);
   }
+
+  [Test]
+  public async Task SealRecheckRequest_From_CarriesTheConfiguredLimitsAsync() {
+    var options = new SealRecheckOptions {
+      MaxEpochsPerRun = 12, Lookback = TimeSpan.FromDays(3), RecheckEvery = TimeSpan.FromDays(1),
+      OnDrift = SealDriftAction.ReportOnly,
+    };
+
+    var request = SealRecheckRequest.From(options, TimeSpan.FromMinutes(60));
+
+    await Assert.That(request).IsEqualTo(new SealRecheckRequest(
+      TimeSpan.FromMinutes(60), 12, TimeSpan.FromDays(3), TimeSpan.FromDays(1), Refold: false));
+    await Assert.That(SealRecheckRequest.From(new SealRecheckOptions(), TimeSpan.Zero).Refold).IsTrue()
+      .Because("the default drift action refolds, as the backstop always did");
+  }
 }
