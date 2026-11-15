@@ -177,9 +177,6 @@ public class UnsequencedReceivedDigestSqlTests : EFCoreTestBase {
       cmd.Parameters.Add(new NpgsqlParameter("p_streams", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamIds });
     }
     cmd.Parameters.Add(new NpgsqlParameter("p_settle", "3600 seconds"));
-    cmd.Parameters.Add(new NpgsqlParameter("p_digest_exempt", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-      Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
-    });
   }
 
   /// <summary>

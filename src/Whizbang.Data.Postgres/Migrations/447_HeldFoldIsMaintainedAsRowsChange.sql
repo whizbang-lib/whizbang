@@ -15,8 +15,8 @@
 --              The fold is now maintained as the rows change:
 --
 --                - wh_unsequenced_digest_totals holds one row per (origin, tenant, type): the XOR of the digest lanes
---                  and the count of the eligible held rows (not ephemeral, not at-most-once, not exempt), the same
---                  contribution every digest fold computes;
+--                  and the count of the held rows the digest eligibility rule counts (#2352), the same contribution every
+--                  digest fold computes;
 --                - wh_unsequenced_digest_changes receives one row per change to that set. Row triggers on
 --                  wh_event_store write it, so every path that inserts, deletes, adopts a sequence, re-attributes an
 --                  origin, flags, reclassifies or rescopes an event keeps the fold right without knowing it exists.
@@ -38,7 +38,7 @@
 --              Number 447: reserved for this change.
 --
 -- Reversal: reversible (the trigger, functions, tables and index go; the coordinator's query reads the rows again)
--- Dependencies: 087 (origin columns), 214 (the at-most-once flag), 216 (__DIGEST_EXEMPT_TYPES__), 336 (_wh_digest_lane)
+-- Dependencies: 087 (origin columns), 336 (_wh_digest_lane); the digest eligibility constant (constants.txt, #2352)
 -- Objects: wh_unsequenced_digest_totals, wh_unsequenced_digest_changes, idx_unsequenced_digest_changes_origin,
 --          idx_event_store_unsequenced_received, _wh_track_unsequenced_digest, _wh_clear_unsequenced_digests,
 --          wh_rebuild_unsequenced_digests, _wh_fold_unsequenced_digest_changes, wh_unsequenced_received_type_digests,
@@ -94,15 +94,10 @@ CREATE INDEX IF NOT EXISTS idx_event_store_unsequenced_received
 -- <docs>resilience/stream-integrity#the-held-fold-is-maintained-as-rows-change</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedHeldFoldCostSqlTests.cs:EveryKindOfChange_LeavesTheAnswerEqualToAFoldOfTheRowsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_track_unsequenced_digest() RETURNS TRIGGER AS $$
-DECLARE
-  c_flag_ephemeral CONSTANT INTEGER := 8;
-  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
 BEGIN
   IF TG_OP <> 'INSERT'
      AND OLD.origin_service_id IS NOT NULL AND OLD.origin_commit_sequence IS NULL
-     AND COALESCE(OLD.flags, 0) & c_flag_ephemeral = 0
-     AND COALESCE(OLD.flags, 0) & c_flag_at_most_once = 0
-     AND split_part(OLD.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__) THEN
+     AND __DIGEST_ELIGIBLE__(OLD) THEN
     INSERT INTO __SCHEMA__.wh_unsequenced_digest_changes
       (origin_service_id, scope_tenant, event_type, digest_lo, digest_hi, event_count)
     VALUES (OLD.origin_service_id, COALESCE(OLD.scope ->> 't', ''), OLD.event_type,
@@ -110,9 +105,7 @@ BEGIN
   END IF;
   IF TG_OP <> 'DELETE'
      AND NEW.origin_service_id IS NOT NULL AND NEW.origin_commit_sequence IS NULL
-     AND COALESCE(NEW.flags, 0) & c_flag_ephemeral = 0
-     AND COALESCE(NEW.flags, 0) & c_flag_at_most_once = 0
-     AND split_part(NEW.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__) THEN
+     AND __DIGEST_ELIGIBLE__(NEW) THEN
     INSERT INTO __SCHEMA__.wh_unsequenced_digest_changes
       (origin_service_id, scope_tenant, event_type, digest_lo, digest_hi, event_count)
     VALUES (NEW.origin_service_id, COALESCE(NEW.scope ->> 't', ''), NEW.event_type,
@@ -143,8 +136,6 @@ COMMENT ON FUNCTION __SCHEMA__._wh_clear_unsequenced_digests() IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedHeldFoldCostSqlTests.cs:ARebuild_FoldsTheRowsTheTrackingNeverSaw_AndAnswersAsTheRowsDoAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_rebuild_unsequenced_digests() RETURNS BIGINT AS $$
 DECLARE
-  c_flag_ephemeral CONSTANT INTEGER := 8;
-  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
   v_rows BIGINT;
 BEGIN
   LOCK TABLE __SCHEMA__.wh_event_store IN SHARE MODE;
@@ -157,9 +148,7 @@ BEGIN
          COUNT(*)
   FROM __SCHEMA__.wh_event_store es
   WHERE es.origin_service_id IS NOT NULL AND es.origin_commit_sequence IS NULL
-    AND COALESCE(es.flags, 0) & c_flag_ephemeral = 0
-    AND COALESCE(es.flags, 0) & c_flag_at_most_once = 0
-    AND split_part(es.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__)
+    AND __DIGEST_ELIGIBLE__(es)
   GROUP BY 1, 2, 3;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN v_rows;
@@ -229,8 +218,6 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_unsequenced_received_type_digests(
 ) RETURNS TABLE(scope_tenant TEXT, event_type TEXT, digest_lo BIGINT, digest_hi BIGINT, event_count INTEGER) AS $$
 #variable_conflict use_column
 DECLARE
-  c_flag_ephemeral CONSTANT INTEGER := 8;
-  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
   c_fold_batch CONSTANT INTEGER := 10000;
 BEGIN
   PERFORM __SCHEMA__._wh_fold_unsequenced_digest_changes(p_origin_service_id, c_fold_batch);
@@ -253,9 +240,7 @@ BEGIN
       AND es.origin_commit_sequence IS NULL
       AND es.created_at >= NOW() - p_settle
       AND es.event_type = ANY(p_event_types)
-      AND COALESCE(es.flags, 0) & c_flag_ephemeral = 0
-      AND COALESCE(es.flags, 0) & c_flag_at_most_once = 0
-      AND split_part(es.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__)
+      AND __DIGEST_ELIGIBLE__(es)
   )
   SELECT p.te, p.ty, bit_xor(p.lo), bit_xor(p.hi), SUM(p.n)::int
   FROM parts p

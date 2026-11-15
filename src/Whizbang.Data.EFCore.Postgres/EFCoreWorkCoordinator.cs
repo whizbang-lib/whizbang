@@ -81,13 +81,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string SETTINGS_TABLE = "wh_settings";
   private const string NORMALIZE_EVENT_TYPE_FUNCTION = "normalize_event_type";
 
-  // The event-store flag bit every integrity query leaves out (#1484): an at-most-once event is owed to no
-  // one, so digests, checkpoint counts and re-delivery skip it. Written into the SQL as a literal.
+  // The event-store flag bit re-delivery leaves out (#1484): an at-most-once event is owed to no one. Written into the
+  // SQL as a literal.
   private const int AT_MOST_ONCE_FLAG = (int)EventFlags.AtMostOnce;
 
-  // The event types no digest folds (#1492): the audit system events, matched on the type-name part of the
-  // stored event_type. Bound as @p_digest_exempt; the SQL folds read the same list as __DIGEST_EXEMPT_TYPES__.
-  private const string P_DIGEST_EXEMPT = "p_digest_exempt";
 
   // The payload builders below write JSON by hand, so they need the lower-case spellings:
   // StringBuilder.Append(bool) would emit "True"/"False", which no JSON reader accepts.
@@ -2857,9 +2854,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           AND es.stream_id = ANY(@p_streams::uuid[])
           AND ((@p_since::bigint) IS NULL OR es.origin_commit_sequence >= @p_since)
           AND ((@p_until::bigint) IS NULL OR es.origin_commit_sequence < @p_until)
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND {DigestRuleSql.EligibleEs}
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
@@ -2875,7 +2870,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)untilSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      AddDigestExemptParam(cmd);
 
       return (IReadOnlyList<StreamDigest>?)await _readStreamDigestsAsync(
         cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken, hasIdLanes: true).ConfigureAwait(false);
@@ -2902,9 +2896,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
         });
       }
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      if (byStream) {
-        AddDigestExemptParam(cmd);
-      }
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: !byStream, cancellationToken, hasIdLanes: byStream)
         .ConfigureAwait(false);
     }, cancellationToken).ConfigureAwait(false);
@@ -2930,9 +2921,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           AND es.origin_service_id = @p_origin
           AND es.origin_commit_sequence IS NULL
           AND es.event_type = ANY(@p_types::text[])
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND {DigestRuleSql.EligibleEs}
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
@@ -3817,6 +3806,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         AND ((@p_streams::uuid[]) IS NULL OR es.stream_id = ANY(@p_streams::uuid[]))
         AND ((@p_event_ids::uuid[]) IS NULL OR es.event_id = ANY(@p_event_ids::uuid[]))
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
+        -- not the digest rule: an at-most-once event is never redelivered, whatever counts it
         AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
         AND (@p_authored_by::text IS NULL OR (
           es.origin_service_id IS NULL
@@ -4310,9 +4300,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         FROM {schema}.wh_event_store es
         WHERE es.commit_sequence > @p_from AND es.commit_sequence <= @p_to
           AND es.insert_order > @p_floor
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND {DigestRuleSql.CountedEs}
           AND es.event_type <> @p_checkpoint_type
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
         GROUP BY 1, 2
         ORDER BY 1, 2
         """;
@@ -4321,7 +4310,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
       count.Parameters.Add(new Npgsql.NpgsqlParameter(P_FLOOR, floor.Value));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
-      AddDigestExemptParam(count);
       await using var reader = await count.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         var tenant = reader.GetString(0);
@@ -4370,21 +4358,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     // Received events persist the ORIGIN identity (1:1 forward stamping) — the consumer's half of
-    // a checkpoint comparison counts by it, windowed on the ORIGIN's commit sequence. Audit records are
-    // left out, matching the origin's half (#1554).
+    // a checkpoint comparison counts by it, windowed on the ORIGIN's commit sequence. It counts by the origin's rule
+    // (__INTEGRITY_COUNTED__, #2352): audit records (#1554) and at-most-once events are left out on both halves.
     cmd.CommandText = $"""
       SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
       FROM {schema}.wh_event_store es
       WHERE es.origin_service_id = @p_origin
         AND es.origin_commit_sequence > @p_from AND es.origin_commit_sequence <= @p_to
-        AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+        AND {DigestRuleSql.CountedEs}
       GROUP BY 1, 2
       ORDER BY 1, 2
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_FROM, fromCommitSequence));
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TO, toCommitSequence));
-    AddDigestExemptParam(cmd);
 
     var results = new List<CheckpointBucket>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -4630,16 +4617,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
         WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
                OR es.origin_service_id = @p_origin)
           AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
+          AND {DigestRuleSql.EligibleEs}
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
         """;
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      AddDigestExemptParam(cmd);
 
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken, hasIdLanes: true)
         .ConfigureAwait(false);
@@ -4847,11 +4831,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
   }
 
-  // Binds the digest exemption every recompute folds against (#1492).
-  internal static void AddDigestExemptParam(System.Data.Common.DbCommand cmd) =>
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_DIGEST_EXEMPT, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-      Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
-    });
 #pragma warning restore RCS1158
 
   /// <inheritdoc />

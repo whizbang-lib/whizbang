@@ -47,7 +47,8 @@ __AUDIT_ORIGINAL_EVENT_ID_PATH__ = ARRAY['p','OriginalEventId']
 __AUDIT_ORIGINAL_STREAM_POSITION_PATH__ = ARRAY['p','OriginalStreamPosition']
 
 # The event types no integrity digest folds: the audit system events, as the type-name part of a stored type name
-# (216, #1492). The work coordinator's recomputes bind the same list (DigestExemptTypes.TypeNames).
+# (216, #1492). Written through __DIGEST_ELIGIBLE__ and __INTEGRITY_COUNTED__ below, never on its own (#2352);
+# DigestExemptTypes.TypeNames names the same types (DigestExemptConstantTests).
 __DIGEST_EXEMPT_TYPES__ = ARRAY['Whizbang.Core.SystemEvents.EventAudited','Whizbang.Core.SystemEvents.CommandAudited']
 
 # Why a repair child that inbox deduplication remembers and the event store lost was not restored: its stream's
@@ -60,3 +61,13 @@ __REPAIR_REFUSED_TRUNCATED__ = 'repair refused: stream prefix truncated'
 # that perspective's bodies without waiting for a snapshot (403, #2295). Core spells it
 # EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE, and MigrationConstantsTests holds the two equal.
 __ASSOCIATION_NO_REWIND_FLOOR__ = 'no_rewind_floor'
+
+# Which events an integrity digest counts (#2352): not ephemeral (8), not delivered at most once (32), not an exempt
+# type. Every digest fold, answer, heal, checkpoint and cleanup path writes __DIGEST_ELIGIBLE__(alias) for the row it
+# reads (es, c, OLD, NEW), and the work coordinator's C# SQL reads the same text through MigrationConstants.Apply, so
+# no path keeps its own copy (DigestEligibilityGuardTests fails on one).
+__DIGEST_ELIGIBLE__(e) = (COALESCE(e.flags, 0) & 8 = 0 AND COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__))
+
+# Which events a continuity checkpoint counts (#2352): the digest rule without the ephemeral test. A checkpoint counts
+# what was received, and an ephemeral event was received live whether or not its body has been reaped since.
+__INTEGRITY_COUNTED__(e) = (COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__))
