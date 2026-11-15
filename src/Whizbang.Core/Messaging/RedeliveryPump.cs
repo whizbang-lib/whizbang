@@ -218,15 +218,37 @@ public sealed class RedeliveryPump(
   /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs:PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
     Justification = "PublishAsync's parameters plus the window the answer covered.")]
-  public Task<int> PublishAnswerAsync(
+  public async Task<int> PublishAnswerAsync(
       IReadOnlyList<RedeliveryEvent> events,
       RedeliveryAnswerWindow answeredWindow,
       string topic,
       string? target,
       Guid originServiceId = default,
       bool stateOnly = false,
-      CancellationToken cancellationToken = default) =>
-    _publishAsync(events, topic, target, originServiceId, stateOnly, answeredWindow, cancellationToken);
+      CancellationToken cancellationToken = default) {
+    // #2311: the whole answer is this one publish, so its last bundle says the answer ends there.
+    var answer = BeginAnswer(topic, target, originServiceId, stateOnly);
+    var published = await answer.PublishAsync(events, answeredWindow, cancellationToken).ConfigureAwait(false);
+    return published + await answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Starts an answer to a redelivery request that is published over several selections, such as the pages of the
+  /// origin's selection (#2311). Every bundle of the answer says more of it follows, except the last, which
+  /// <see cref="RedeliveryAnswerPublication.CompleteAsync"/> publishes once the answer is known to end there, so the
+  /// receiver judges a whole-type answer as a whole rather than by its first bundle.
+  /// </summary>
+  /// <param name="topic">Wire topic.</param>
+  /// <param name="target">Directed-message target, or null to broadcast.</param>
+  /// <param name="originServiceId">This origin's service id.</param>
+  /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
+  /// <returns>The answer to publish into.</returns>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
+  public RedeliveryAnswerPublication BeginAnswer(string topic, string? target, Guid originServiceId = default, bool stateOnly = false) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+    return new RedeliveryAnswerPublication(this, topic, target, originServiceId, stateOnly);
+  }
 
   /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
@@ -239,31 +261,34 @@ public sealed class RedeliveryPump(
   /// children carry their ORIGINAL source identity (Phase B windowed accounting). Default empty =
   /// unknown (children inherit the bundle envelope's source identity).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  public Task<int> PublishAsync(
+  public async Task<int> PublishAsync(
       IReadOnlyList<RedeliveryEvent> events,
       string topic,
       string? target,
       Guid originServiceId = default,
       bool stateOnly = false,
-      CancellationToken cancellationToken = default) =>
-    _publishAsync(events, topic, target, originServiceId, stateOnly, answeredWindow: null, cancellationToken);
-
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
-    Justification = "The two public publishes' parameters, the window optional.")]
-  private async Task<int> _publishAsync(
-      IReadOnlyList<RedeliveryEvent> events,
-      string topic,
-      string? target,
-      Guid originServiceId,
-      bool stateOnly,
-      RedeliveryAnswerWindow? answeredWindow,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(events);
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
     if (events.Count == 0) {
       return 0;
     }
+    var published = 0;
+    foreach (var plan in PlanBundles(events, topic, target, originServiceId, answeredWindow: null)) {
+      await PublishBundleAsync(plan, (RedeliveryComposite)plan.Composite, topic, target, stateOnly, cancellationToken)
+        .ConfigureAwait(false);
+      published++;
+    }
+    return published;
+  }
 
+  /// <summary>
+  /// Plans one publish's bundles. With a window, each bundle answers it and says more of the answer follows (#2311);
+  /// <see cref="LastOfAnswer"/> rebuilds the one that turns out to be the answer's last.
+  /// </summary>
+  internal IReadOnlyList<CompositeEnvelopePlan<RedeliveryEvent>> PlanBundles(
+      IReadOnlyList<RedeliveryEvent> events, string topic, string? target, Guid originServiceId,
+      RedeliveryAnswerWindow? answeredWindow) {
     // Input contract: (stream, version)-ordered — the mint groups per stream (identical to
     // consecutive-run splitting for ordered input), chunked by count AND by raw body bytes: a
     // count-only bound lets large-bodied histories build composites that exhaust memory during
@@ -272,7 +297,7 @@ public sealed class RedeliveryPump(
     // rides as the broker session key, so redelivered bundles keep stream FIFO.
     // #2149: how many of each stream's events this publish carries, so a bundle holding fewer names the stream partial.
     var perStream = answeredWindow is null ? null : _countPerStream(events);
-    var plans = _compositeFactory.Create(new CompositeMintRequest<RedeliveryEvent> {
+    return _compositeFactory.Create(new CompositeMintRequest<RedeliveryEvent> {
       Constituents = events,
       // Grouped by stream AND scope. A composite carries ONE hop scope, so a bundle spanning two
       // scopes could only be stamped with one of them — repairing one tenant's event under another
@@ -288,18 +313,27 @@ public sealed class RedeliveryPump(
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
       BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested,
         _bundleStreamFor(batch.Constituents[0].Scope, originServiceId, topic, target),
-        answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds)),
+        answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds),
+        answerContinues: answeredWindow is not null),
     });
-
-    var published = 0;
-    foreach (var plan in plans) {
-      // Scope-uniform by construction (see GroupKey), so any constituent answers for the bundle.
-      var scope = _scopeDeltaFor(plan.Constituents[0].Scope);
-      await _publishPlanAsync((RedeliveryComposite)plan.Composite, topic, target, stateOnly, scope, cancellationToken).ConfigureAwait(false);
-      published++;
-    }
-    return published;
   }
+
+  /// <summary>
+  /// The answer's last bundle (#2311): <paramref name="plan"/>'s bundle built again, saying the answer ends with it.
+  /// </summary>
+  internal RedeliveryComposite LastOfAnswer(
+      CompositeEnvelopePlan<RedeliveryEvent> plan, Guid originServiceId, RedeliveryAnswerWindow answeredWindow) {
+    var planned = (RedeliveryComposite)plan.Composite;
+    return _buildComposite(plan.Constituents, originServiceId, OperatorRequested, planned.StreamId, answeredWindow,
+      planned.AnsweredPartialStreamIds, answerContinues: false);
+  }
+
+  /// <summary>Publishes one planned bundle, as <paramref name="composite"/> (the plan's own, or its last-of-answer form).</summary>
+  internal Task PublishBundleAsync(
+      CompositeEnvelopePlan<RedeliveryEvent> plan, RedeliveryComposite composite, string topic, string? target,
+      bool stateOnly, CancellationToken cancellationToken) =>
+    // Scope-uniform by construction (see GroupKey), so any constituent answers for the bundle.
+    _publishPlanAsync(composite, topic, target, stateOnly, _scopeDeltaFor(plan.Constituents[0].Scope), cancellationToken);
 
   private static Dictionary<Guid, int> _countPerStream(IReadOnlyList<RedeliveryEvent> events) =>
     events.GroupBy(e => e.StreamId).ToDictionary(g => g.Key, g => g.Count());
@@ -334,7 +368,7 @@ public sealed class RedeliveryPump(
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private static RedeliveryComposite _buildComposite(
       IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested, Guid? bundleStreamId,
-      RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams) {
+      RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams, bool answerContinues) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
     // payload bytes that were emitted are the payload bytes that repair.
@@ -362,6 +396,8 @@ public sealed class RedeliveryPump(
       AnsweredToCommitSequence = answeredWindow?.ToCommitSequence,
       // #2149: the streams this bundle carries only in part, whose buckets it must not mark.
       AnsweredPartialStreamIds = partialStreams,
+      // #2311: whether more bundles of this answer follow, so the receiver judges a whole-type answer as a whole.
+      AnswerContinues = answerContinues,
     };
   }
 

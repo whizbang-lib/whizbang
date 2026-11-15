@@ -171,7 +171,10 @@ public sealed class RedeliveryComposite
 
   RedeliveryAnswerWindow? IIdentityPreservingComposite.AnsweredWindow =>
     AnswersWindow
-      ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) { PartialStreamIds = AnsweredPartialStreamIds }
+      ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) {
+        PartialStreamIds = AnsweredPartialStreamIds,
+        Continues = AnswerContinues,
+      }
       : null;
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;

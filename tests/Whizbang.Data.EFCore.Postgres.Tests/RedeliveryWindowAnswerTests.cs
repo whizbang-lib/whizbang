@@ -261,8 +261,9 @@ public partial class RedeliveryWindowAnswerTests {
 
     await _receptor(sp).HandleAsync(_window(TrackedGuid.New().Value, window: 1, from: null, max: 100));
 
-    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow))
-      .IsEquivalentTo(new RedeliveryAnswerWindow?[] { new(null, 2), new(2, 4), new(4, null) });
+    // #2311: whether more of the answer follows is asserted on its own; here only each page's window.
+    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false }))
+      .IsEquivalentTo(new RedeliveryAnswerWindow[] { new(null, 2), new(2, 4), new(4, null) });
   }
 
   [Test]
