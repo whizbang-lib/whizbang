@@ -6,6 +6,9 @@
 
 SELECT __SCHEMA__.drop_all_overloads('_wh_heal_stream_digests');
 
+-- <docs>resilience/stream-integrity#one-digest-fold</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestFoldHelperSqlTests.cs:Heal_ADriftedBucket_IsRewrittenWithEveryLane_AndReportedWithBothValuesAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestFoldHelperSqlTests.cs:Heal_APhantomBucketIsRemoved_AndAMissingOneAdded_EachReportedAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_heal_stream_digests(
   p_streams UUID[],
   p_settle INTERVAL,
