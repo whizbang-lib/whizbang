@@ -131,6 +131,15 @@ public partial class DapperWorkCoordinator {
       CoordinatorRetentionSql.SweepHandledLedgerAsync(cmd, prefix, now, keep, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+      IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention, int batchSize,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(retention);
+    return _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorRetentionSql.SweepOperationalRetentionAsync(cmd, prefix, retention, batchSize, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
   public async Task<int> CleanupLifecycleCompletionsAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;

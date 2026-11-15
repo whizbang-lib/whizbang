@@ -2646,6 +2646,23 @@ public interface IWorkCoordinator {
     Task.FromResult(HandledLedgerAnswer.NoLedger);
 
   /// <summary>
+  /// #2354: one batch of the operational retention sweep. For every Rolling table the operational retention covers,
+  /// removes up to <paramref name="batchSize"/> rows that are closed and older than their category's resting period in
+  /// <paramref name="retention"/>, and reports what is left. A category missing from <paramref name="retention"/> removes
+  /// nothing and is still reported. Default: nothing swept, for engines without the tables.
+  /// </summary>
+  /// <param name="retention">Each category's resting period.</param>
+  /// <param name="batchSize">Rows removed per table at most.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>One result per swept table.</returns>
+  /// <docs>operations/infrastructure/operational-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OperationalRetentionSweepSqlTests.cs:Coordinator_SweepOperationalRetentionAsync_DrivesTheSqlFunctionAsync</tests>
+  Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+    IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention, int batchSize,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>>([]);
+
+  /// <summary>
   /// Keeps the handled ledger to <paramref name="keep"/> (#2273): first moves the ledger's coverage start up to
   /// <paramref name="now"/> minus <paramref name="keep"/>, then removes the records of events older than that from the
   /// rows a partition drop does not remove. Coverage moves before anything is removed, so no reader ever sees a window

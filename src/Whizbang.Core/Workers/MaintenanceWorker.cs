@@ -426,6 +426,8 @@ public sealed partial class MaintenanceWorker(
       // The maintenance call, then the E2 PostDestruction hooks (detached, after the reap committed).
       ("perform_maintenance", () => _performMaintenanceAsync(coordinator, sp, destruction, ct)),
       ("lifecycle_completion_cleanup", () => _cleanupLifecycleCompletionsAsync(coordinator, ct)),
+      // #2354: what cleanup and integrity record about their own work rests for its category's period, then goes.
+      ("operational_retention", () => _sweepOperationalRetentionAsync(coordinator, sp, ct)),
       // #2273: the handled ledger, kept to the repair receptor lookback. The completion records every handled event on
       // any driver, so this runs whether or not integrity is on. Before the steps, so the coverage start moves before the
       // partition step drops the partitions behind it.
@@ -532,6 +534,33 @@ public sealed partial class MaintenanceWorker(
     } catch (Exception ex) {
       LogEpochClosureFailed(_logger, ex);
     }
+  }
+
+  /// <summary>
+  /// #2354: the operational retention sweep. Each batch removes, per Rolling table, the closed rows past their
+  /// category's resting period; the cycle repeats while a table came back with a full batch, up to
+  /// <see cref="OperationalRetentionOptions.MaxBatchesPerCycle"/>, so a backlog drains over several cycles instead of
+  /// holding one. The last batch's reading is what the per-category gauges report. A host that registered no options
+  /// sweeps with the defaults, so bookkeeping rolls off without configuration.
+  /// </summary>
+  private static async Task _sweepOperationalRetentionAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var options = sp.GetService<IOptions<OperationalRetentionOptions>>()?.Value ?? new OperationalRetentionOptions();
+    if (!options.Enabled) {
+      return;
+    }
+    var metrics = sp.GetService<MaintenanceMetrics>();
+    var retention = options.RetentionByCategory();
+    IReadOnlyList<OperationalRetentionSweepResult> reading = [];
+    for (var batch = 0; batch < options.MaxBatchesPerCycle; batch++) {
+      reading = await coordinator.SweepOperationalRetentionAsync(retention, options.BatchSize, ct).ConfigureAwait(false);
+      foreach (var result in reading) {
+        metrics?.RecordOperationalRowsExpired(result.Category, result.Expired);
+      }
+      if (!reading.Any(r => r.Expired >= options.BatchSize)) {
+        break;
+      }
+    }
+    metrics?.UpdateOperationalRetention(reading);
   }
 
   /// <summary>

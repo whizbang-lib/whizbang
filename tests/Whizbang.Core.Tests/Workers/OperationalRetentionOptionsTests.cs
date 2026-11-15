@@ -83,6 +83,13 @@ public class OperationalRetentionOptionsTests {
   }
 
   [Test]
+  public async Task Validate_APositiveCategoryOverride_SucceedsAsync() {
+    var result = new OperationalRetentionOptionsValidator().Validate(null, new OperationalRetentionOptions { Queues = TimeSpan.FromHours(1) });
+
+    await Assert.That(result.Succeeded).IsTrue();
+  }
+
+  [Test]
   [Arguments("Default")]
   [Arguments("RewriteLog")]
   [Arguments("BatchSize")]

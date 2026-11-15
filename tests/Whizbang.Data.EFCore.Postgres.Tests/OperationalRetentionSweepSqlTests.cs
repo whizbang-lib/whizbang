@@ -188,6 +188,6 @@ public class OperationalRetentionSweepSqlTests : EFCoreTestBase {
     await Assert.That(log.Category).IsEqualTo(OperationalCategory.RewriteLog);
     await Assert.That(log.Expired).IsEqualTo(1);
     await Assert.That(log.Remaining).IsEqualTo(1L);
-    await Assert.That(log.OldestAge).IsNotNull();
+    await Assert.That(log.OldestAge.HasValue).IsTrue();
   }
 }

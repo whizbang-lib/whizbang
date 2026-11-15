@@ -959,6 +959,20 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    // #2354: the resting period of operational records, read by the maintenance cycle's retention sweep.
+    services.AddOptions<Whizbang.Core.Workers.OperationalRetentionOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<Whizbang.Core.Workers.OperationalRetentionOptions>, Whizbang.Core.Workers.OperationalRetentionOptionsValidator>());
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OperationalRetentionOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OperationalRetentionOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:OperationalRetention"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxDrainWorkerOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxDrainWorkerOptions>(options => {

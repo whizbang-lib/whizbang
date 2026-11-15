@@ -44,7 +44,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (migration 273). Rewinds still read through the archive. **Upgrade note:** a rebuild that relied on reading an
   archived prefix now needs `IncludeWhileLive`.
 
+#### Stream integrity
+- **Sealing, the seal re-check and the full-history compare each have their own configuration (#2353).** Three
+  sections under `Whizbang:StreamIntegrity`: `Sealing` (on by default: `Enabled`, `EpochWidth`, which is now the
+  configuration path of the store's epoch width, and `MaxClosuresPerCycle`), `SealRecheck` (off by default: `Enabled`,
+  `Schedule`, `Lookback` 30 days, `RecheckEvery` 7 days, `MaxEpochsPerRun`, `OnDrift` `Refold` or `ReportOnly`) and
+  `FullHistoryCompare` (off by default: `Enabled`, `Schedule`). Each enabled check registers its own schedule and each
+  occurrence names its check. The re-check no longer restarts at epoch 0: every sealed epoch records when it was sealed
+  and last re-checked (`wh_digest_epoch_seals`, migration 450), and a run takes the epochs sealed within the lookback,
+  least recently re-checked first. New metrics: `epochs_sealed`, `epochs_rechecked`, `check_drift_found` and
+  `check_duration`, tagged by `check` only. `EpochClosureEnabled`, `MaxEpochClosuresPerMaintenanceCycle`,
+  `MaxEpochVerificationsPerSweep` and `FullSweepCron` keep working as aliases for one release; a section key wins.
+  **Upgrade:** the seal re-check and the full-history compare (the whole-store heal and the full-history ask), which ran
+  nightly or on every seventh audit, are now **off by default**. Sealing and the routine windowed audit are unchanged.
+  Set `Whizbang:StreamIntegrity:SealRecheck:Enabled` and `Whizbang:StreamIntegrity:FullHistoryCompare:Enabled` to
+  `true` to keep them. `Sealing:EpochWidth` is written to `integrity_epoch_width` before each closure pass, so a value
+  set by hand in `wh_settings` is replaced by the configured one (lanes already closed keep their pinned width).
+
 #### Storage
+- **Operational records of cleanup and integrity roll off after a resting period (#2354).** Every framework table is
+  classified as State (kept) or Rolling (rests, then goes) in `OperationalTableRegistry`, and a guard test fails the
+  build on a table in neither. A new maintenance task (`operational_retention`) removes closed Rolling rows past their
+  category's resting period in bounded batches: the origin rewrite log by age as well as by row count (its start moves
+  with it, so it never vouches for a generation it no longer holds), and finished (`Restored`) archive restore requests
+  (migration 451). `Whizbang:OperationalRetention:Default` is 14 days, with per-category overrides. Metrics
+  `operational_rows`, `operational_oldest_age_seconds` and `operational_rows_expired`, tagged by `category` only.
+  **Upgrade:** rewrite-log generations older than 14 days are removed; a consumer that far behind resets its seal and
+  re-verifies once, as one behind the row cap always did.
 - **Superseding groups: several event types supersede each other in one stream (#2124).** `[Superseding(Group =
   "name")]` puts event types in one group, so the newest event of any of them supersedes the older events of every one
   of them, per stream, group and key: a stream with a full-state "created" event and later full-state "updated" events
