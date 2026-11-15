@@ -193,7 +193,9 @@ public class IntegrityCheckOptionsTests {
   [Test]
   public async Task SealRecheckRequest_From_CarriesTheConfiguredLimitsAsync() {
     var options = new SealRecheckOptions {
-      MaxEpochsPerRun = 12, Lookback = TimeSpan.FromDays(3), RecheckEvery = TimeSpan.FromDays(1),
+      MaxEpochsPerRun = 12,
+      Lookback = TimeSpan.FromDays(3),
+      RecheckEvery = TimeSpan.FromDays(1),
       OnDrift = SealDriftAction.ReportOnly,
     };
 

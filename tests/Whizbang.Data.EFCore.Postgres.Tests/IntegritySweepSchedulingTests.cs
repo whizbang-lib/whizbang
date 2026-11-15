@@ -37,7 +37,11 @@ public class IntegritySweepSchedulingTests {
   private sealed class CaptureScheduleManager : IScheduleManager {
     public ScheduleDefinition? Created;
     public List<ScheduleDefinition> All { get; } = [];
+    public bool Fail { get; set; }
     public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
+      if (Fail) {
+        return Task.FromException<ScheduleHandle>(new InvalidOperationException("schedule store unavailable"));
+      }
       Created = definition;
       All.Add(definition);
       return Task.FromResult(new ScheduleHandle(TrackedGuid.New().Value, DateTimeOffset.UtcNow, WasCreated: true));
@@ -102,7 +106,7 @@ public class IntegritySweepSchedulingTests {
 
   private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, CaptureScheduleManager Manager)
       _build(string? cron, bool withManager = true, string serviceName = "auditor-svc",
-        StreamIntegrityOptions? options = null) {
+        StreamIntegrityOptions? options = null, bool withState = true) {
     var services = new ServiceCollection();
     var manager = new CaptureScheduleManager();
     if (withManager) {
@@ -110,7 +114,9 @@ public class IntegritySweepSchedulingTests {
     }
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     var state = new IntegritySweepScheduleState();
-    services.AddSingleton(state);
+    if (withState) {
+      services.AddSingleton(state);
+    }
     var sp = services.BuildServiceProvider();
     var scheduler = new IntegritySweepScheduler(
       sp, Options.Create(options ?? new StreamIntegrityOptions { FullHistoryCompare = { Enabled = true, Schedule = cron } }),
@@ -264,6 +270,43 @@ public class IntegritySweepSchedulingTests {
     await Assert.That(state.SealRecheckCronActive).IsTrue();
   }
 
+  private static StreamIntegrityOptions _bothOn() => new() {
+    FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true },
+  };
+
+  [Test]
+  public async Task Start_WhenRegistrationFails_LeavesEachCheckOnTheCounterAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: _bothOn());
+    manager.Fail = true;
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(state.CronActive).IsFalse()
+      .Because("a check whose schedule did not register must stay on the every-Nth-audit counter, never be lost");
+    await Assert.That(state.SealRecheckCronActive).IsFalse();
+  }
+
+  [Test]
+  public async Task Start_WithNoScheduleStateRegistered_StillRegistersBothSchedulesAsync() {
+    var (scheduler, _, manager) = _build(cron: null, options: _bothOn(), withState: false);
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.All.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Start_ACheckThatIsOnWithNoSchedule_RegistersNothingForItAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: new StreamIntegrityOptions {
+      FullHistoryCompare = { Enabled = true, Schedule = "" }, SealRecheck = { Enabled = true, Schedule = null },
+    });
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.All).IsEmpty().Because("an empty schedule leaves the check on the counter fallback");
+    await Assert.That(state.CronActive || state.SealRecheckCronActive).IsFalse();
+  }
+
   [Test]
   [Arguments(IntegrityCheck.SealRecheck)]
   [Arguments(IntegrityCheck.FullHistoryCompare)]
@@ -277,7 +320,7 @@ public class IntegritySweepSchedulingTests {
 
     await receptor.HandleAsync(new ScheduledIntegritySweep { Check = check });
 
-    await Assert.That(runner.Checks).IsEquivalentTo(new List<IntegrityCheck> { check });
+    await Assert.That(runner.Checks).IsEquivalentTo([check]);
   }
 
   [Test]
@@ -292,7 +335,7 @@ public class IntegritySweepSchedulingTests {
 
     await receptor.HandleAsync(new ScheduledIntegritySweep());
 
-    await Assert.That(runner.Checks).IsEquivalentTo(new List<IntegrityCheck> { IntegrityCheck.FullHistoryCompare });
+    await Assert.That(runner.Checks).IsEquivalentTo([IntegrityCheck.FullHistoryCompare]);
   }
 
   [Test]

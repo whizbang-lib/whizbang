@@ -134,7 +134,6 @@ public class MaintenanceWorkerEpochClosureTests {
   }
 
   [Test]
-  public async Task EpochClosureDisabled_DoesNotCallTheCoordinatorAsync() {  [Test]
   public async Task EpochClosureDisabled_DoesNotCallTheCoordinatorAsync() {
     var coord = new ClosureCoordinator();
     var worker = _build(coord, new StreamIntegrityOptions { EpochClosureEnabled = false });

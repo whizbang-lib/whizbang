@@ -18,6 +18,9 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
+/// #2353: one schedule per enabled opt-in check, the full-history compare (key <c>wh-integrity-sweep</c>, cron
+/// <see cref="FullHistoryCompareOptions.Schedule"/>) and the sealed-history re-check (key <c>wh-seal-recheck</c>, cron
+/// <see cref="SealRecheckOptions.Schedule"/>); each occurrence names its check. A check that is off registers nothing.
 /// #80-D: puts the full integrity sweep on the temporal engine's clock. Registers an
 /// idempotent-by-key cron schedule whose occurrences are <see cref="ScheduledIntegritySweep"/>
 /// commands, so the heaviest verification runs at a configured IDLE hour instead of wherever the
@@ -41,59 +44,70 @@ public sealed partial class IntegritySweepScheduler(
     IOptions<StreamIntegrityOptions> options,
     ILogger<IntegritySweepScheduler> logger) : IHostedService {
 
-  /// <summary>The idempotent create-or-update key — one sweep schedule per service.</summary>
+  /// <summary>The idempotent create-or-update key of the full-history compare's schedule (the key the sweep always had).</summary>
   private const string SCHEDULE_KEY = "wh-integrity-sweep";
+
+  /// <summary>The idempotent create-or-update key of the sealed-history re-check's schedule (#2353).</summary>
+  private const string RECHECK_SCHEDULE_KEY = "wh-seal-recheck";
 
   /// <summary>Fixed control stream the sweep occurrences live in — a framework-owned stream,
   /// never a domain one.</summary>
   private static readonly Guid _sweepStreamId = Guid.Parse("0f80d000-5eeb-4a9e-8c01-000000000001");
 
   public async Task StartAsync(CancellationToken cancellationToken) {
-    var cron = options.Value.FullSweepCron;
-    if (string.IsNullOrWhiteSpace(cron)) {
-      return;   // cron disabled — the every-Nth-audit counter stays in charge.
+    var compare = options.Value.FullHistoryCompare;
+    var recheck = options.Value.SealRecheck;
+    var wantCompare = compare.Enabled && !string.IsNullOrWhiteSpace(compare.Schedule);
+    var wantRecheck = recheck.Enabled && !string.IsNullOrWhiteSpace(recheck.Schedule);
+    if (!wantCompare && !wantRecheck) {
+      return;   // nothing to schedule: a check that is on with no schedule stays on the every-Nth-audit counter.
     }
     var manager = services.GetService<IScheduleManager>();
     var instanceProvider = services.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>();
     if (manager is null || instanceProvider is null) {
       LogNoTemporalEngine(logger);
-      return;   // no engine — counter fallback; CronActive stays false by design.
+      return;   // no engine — counter fallback; the cron flags stay false by design.
     }
 
     // #1334: the schedule function arrives with the migrations. The host starts this scheduler at Accept commands
     // (#1636), so the schema is in place when it registers.
-    await _registerAsync(manager, instanceProvider, cron, cancellationToken).ConfigureAwait(false);
+    var state = services.GetService<IntegritySweepScheduleState>();
+    if (wantCompare && await _registerAsync(manager, instanceProvider, SCHEDULE_KEY, compare.Schedule!,
+        IntegrityCheck.FullHistoryCompare, cancellationToken).ConfigureAwait(false) && state is not null) {
+      state.CronActive = true;
+    }
+    if (wantRecheck && await _registerAsync(manager, instanceProvider, RECHECK_SCHEDULE_KEY, recheck.Schedule!,
+        IntegrityCheck.SealRecheck, cancellationToken).ConfigureAwait(false) && state is not null) {
+      state.SealRecheckCronActive = true;
+    }
   }
 
-  private async Task _registerAsync(
+  private async Task<bool> _registerAsync(
       IScheduleManager manager, Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
-      string cron, CancellationToken cancellationToken) {
+      string key, string cron, IntegrityCheck check, CancellationToken cancellationToken) {
     var serviceName = instanceProvider.ServiceName;
     var splayed = SplayCron(cron, serviceName);
     try {
       var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
       var handle = await manager.CreateAsync(new ScheduleDefinition {
-        Key = SCHEDULE_KEY,
+        Key = key,
         StreamId = _sweepStreamId,
         Kind = RecurrenceKind.Cron,
         Cron = splayed,
         EventType = TypeNameFormatter.Format(typeof(ScheduledIntegritySweep)),
         EventDataJson = JsonSerializer.Serialize(
-          new ScheduledIntegritySweep(), jsonOptions.GetTypeInfo(typeof(ScheduledIntegritySweep))),
+          new ScheduledIntegritySweep { Check = check }, jsonOptions.GetTypeInfo(typeof(ScheduledIntegritySweep))),
         // The service is its own authority for its own maintenance — there is no interactive
         // principal at 3 AM, and the sweep touches nothing outside this service's database.
         AuthorityPrincipalId = instanceProvider.InstanceId,
       }, cancellationToken).ConfigureAwait(false);
-
-      var state = services.GetService<IntegritySweepScheduleState>();
-      if (state is not null) {
-        state.CronActive = true;
-      }
-      LogSweepScheduled(logger, splayed, handle.NextFireAt);
+      LogSweepScheduled(logger, check, splayed, handle.NextFireAt);
+      return true;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Never let a scheduling failure lose the sweep: CronActive stays false, so the audit
-      // worker's counter keeps sweeping on the fallback cadence.
-      LogSweepScheduleFailed(logger, ex);
+      // Never let a scheduling failure lose the check: its cron flag stays false, so the audit
+      // worker's counter keeps running it on the fallback cadence.
+      LogSweepScheduleFailed(logger, check, ex);
+      return false;
     }
   }
 
@@ -120,16 +134,16 @@ public sealed partial class IntegritySweepScheduler(
   }
 
   [LoggerMessage(EventId = 95, Level = LogLevel.Information,
-    Message = "Integrity sweep scheduled on the temporal engine (cron '{Cron}', next fire {NextFireAt:O}) — the every-Nth-audit counter stands down")]
-  static partial void LogSweepScheduled(ILogger logger, string cron, DateTimeOffset nextFireAt);
+    Message = "Integrity check {Check} scheduled on the temporal engine (cron '{Cron}', next fire {NextFireAt:O}); the every-Nth-audit counter stands down for it")]
+  static partial void LogSweepScheduled(ILogger logger, IntegrityCheck check, string cron, DateTimeOffset nextFireAt);
 
   [LoggerMessage(EventId = 96, Level = LogLevel.Information,
     Message = "No temporal engine available — the integrity sweep stays on the every-Nth-audit counter fallback")]
   static partial void LogNoTemporalEngine(ILogger logger);
 
   [LoggerMessage(EventId = 97, Level = LogLevel.Warning,
-    Message = "Failed to register the integrity sweep schedule — the every-Nth-audit counter fallback keeps sweeping")]
-  static partial void LogSweepScheduleFailed(ILogger logger, Exception ex);
+    Message = "Failed to register the schedule of integrity check {Check}; the every-Nth-audit counter fallback keeps running it")]
+  static partial void LogSweepScheduleFailed(ILogger logger, IntegrityCheck check, Exception ex);
 }
 
 /// <summary>
@@ -146,18 +160,21 @@ public sealed partial class ScheduledIntegritySweepReceptor(
 
   /// <inheritdoc />
   public async ValueTask HandleAsync(ScheduledIntegritySweep message, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
     await using var scope = scopeFactory.CreateAsyncScope();
     var runner = scope.ServiceProvider.GetService<IIntegritySweepRunner>();
     if (runner is null) {
       return;
     }
-    LogSweepFiring(logger);
-    await runner.RunSweepOnceAsync(cancellationToken).ConfigureAwait(false);
+    // An occurrence scheduled before #2353 names no check: its schedule was the full sweep's.
+    var check = message.Check ?? IntegrityCheck.FullHistoryCompare;
+    LogSweepFiring(logger, check);
+    await runner.RunCheckOnceAsync(check, cancellationToken).ConfigureAwait(false);
   }
 
   [LoggerMessage(EventId = 98, Level = LogLevel.Information,
-    Message = "Scheduled integrity sweep firing — running the full trust-but-verify pass")]
-  static partial void LogSweepFiring(ILogger logger);
+    Message = "Scheduled integrity check {Check} firing")]
+  static partial void LogSweepFiring(ILogger logger, IntegrityCheck check);
 }
 
 /// <summary>

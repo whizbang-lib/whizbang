@@ -88,10 +88,10 @@ public class SealRecheckRotationSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText =
       $"SELECT epochs_checked, epochs_drifted FROM wh_recheck_digest_epochs({now}, 3600, @max, @lookback, @every, @refold)";
-    cmd.Parameters.AddWithValue("max", max);
+    cmd.Parameters.AddWithValue(nameof(max), max);
     cmd.Parameters.Add(new NpgsqlParameter("lookback", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)lookbackSeconds ?? DBNull.Value });
     cmd.Parameters.AddWithValue("every", everySeconds);
-    cmd.Parameters.AddWithValue("refold", refold);
+    cmd.Parameters.AddWithValue(nameof(refold), refold);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
     return (reader.GetInt32(0), reader.GetInt32(1));

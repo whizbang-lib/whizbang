@@ -755,6 +755,14 @@ public static class WorkerPipelineExtensions {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:StreamIntegrity"), options);
+          // #2353: the old flat keys are aliases of the three sections for one release, and a section key wins over its
+          // alias. The binder's property order would otherwise decide, so the sections are bound again, last.
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity:Sealing"), options.Sealing);
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity:SealRecheck"), options.SealRecheck);
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity:FullHistoryCompare"), options.FullHistoryCompare);
 #pragma warning restore IL2026
         }
       });

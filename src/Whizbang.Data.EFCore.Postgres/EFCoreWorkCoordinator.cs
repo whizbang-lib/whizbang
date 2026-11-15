@@ -2694,6 +2694,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, long epochWidth, CancellationToken cancellationToken = default) {
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Its own statement, before the closure: a write in the closure's own snapshot would not be seen by it.
+      cmd.CommandText =
+        $"INSERT INTO {BuildSchemaQualifiedName(schema, SETTINGS_TABLE)} (setting_key, setting_value, value_type, description) " +
+        "VALUES ('integrity_epoch_width', @p_width, 'integer', 'Sequence width of one digest epoch (Whizbang:StreamIntegrity:Sealing:EpochWidth). Pinned on a lane''s frontier at its first close.') " +
+        "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value " +
+        $"WHERE {BuildSchemaQualifiedName(schema, SETTINGS_TABLE)}.setting_value IS DISTINCT FROM EXCLUDED.setting_value";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_width", epochWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken).ConfigureAwait(false);
+    return await CloseDigestEpochsAsync(settleSeconds, maxEpochs, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public Task<long?> GetIntegritySettledMaxAsync(
     Guid? originServiceId, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
@@ -2784,6 +2800,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
       return new EpochVerificationResult(reader.GetInt32(0), reader.GetInt32(1));
     }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+    SealRecheckRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        "SELECT epochs_checked, epochs_drifted " +
+        $"FROM {BuildSchemaQualifiedName(schema, "wh_recheck_digest_epochs")}(NOW(), @p_settle, @p_max, @p_lookback, @p_every, @p_refold)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)request.SettleWindow.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxEpochs)));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)request.Lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)request.RecheckEvery.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_refold", request.Refold));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      return new EpochVerificationResult(reader.GetInt32(0), reader.GetInt32(1));
+    }, cancellationToken);
+  }
 
   /// <inheritdoc />
   public Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(

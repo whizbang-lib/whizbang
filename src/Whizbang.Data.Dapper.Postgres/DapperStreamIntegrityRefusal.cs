@@ -35,8 +35,12 @@ internal static class DapperUnsupportedIntegrity {
   internal const string REASON =
     "stream integrity runs on the EF Core driver only; on the Dapper driver its coordinator operations are not implemented, so the feature would do nothing";
 
-  /// <summary>A switch: its key under <see cref="SECTION"/>, the feature it turns on, and how it is read and set.</summary>
-  internal sealed record Switch(string Key, string Feature, Func<StreamIntegrityOptions, bool> IsOn, Action<StreamIntegrityOptions, bool> Set);
+  /// <summary>
+  /// A switch: its key under <see cref="SECTION"/>, the feature it turns on, how it is read and set, and the key it
+  /// replaced, which still turns it on for one release (#2353).
+  /// </summary>
+  internal sealed record Switch(string Key, string Feature, Func<StreamIntegrityOptions, bool> IsOn, Action<StreamIntegrityOptions, bool> Set,
+    string? Alias = null);
 
   /// <summary>Every boolean switch that turns on a stream-integrity feature.</summary>
   internal static readonly Switch[] SWITCHES = [
@@ -46,8 +50,12 @@ internal static class DapperUnsupportedIntegrity {
       o => o.GapDetectionEnabled, (o, v) => o.GapDetectionEnabled = v),
     new(nameof(StreamIntegrityOptions.AuditEnabled), "the stream integrity audit",
       o => o.AuditEnabled, (o, v) => o.AuditEnabled = v),
-    new(nameof(StreamIntegrityOptions.EpochClosureEnabled), "integrity digest epoch closure",
-      o => o.EpochClosureEnabled, (o, v) => o.EpochClosureEnabled = v),
+    new("Sealing:Enabled", "integrity digest epoch sealing",
+      o => o.Sealing.Enabled, (o, v) => o.Sealing.Enabled = v, Alias: nameof(StreamIntegrityOptions.EpochClosureEnabled)),
+    new("SealRecheck:Enabled", "the sealed-history re-check",
+      o => o.SealRecheck.Enabled, (o, v) => o.SealRecheck.Enabled = v),
+    new("FullHistoryCompare:Enabled", "the full-history compare",
+      o => o.FullHistoryCompare.Enabled, (o, v) => o.FullHistoryCompare.Enabled = v),
     new(nameof(StreamIntegrityOptions.RepairDrainEnabled), "the integrity repair drain",
       o => o.RepairDrainEnabled, (o, v) => o.RepairDrainEnabled = v),
     new(nameof(StreamIntegrityOptions.BackfillOnSubscriptionGrowth), "subscription-growth backfill (redelivery of a new type's history)",
@@ -72,7 +80,8 @@ internal sealed class DapperStreamIntegrityDefaults(IConfiguration configuration
   public void Configure(StreamIntegrityOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     foreach (var @switch in DapperUnsupportedIntegrity.SWITCHES) {
-      var configured = configuration[$"{DapperUnsupportedIntegrity.SECTION}:{@switch.Key}"];
+      var configured = configuration[$"{DapperUnsupportedIntegrity.SECTION}:{@switch.Key}"]
+        ?? (@switch.Alias is { } alias ? configuration[$"{DapperUnsupportedIntegrity.SECTION}:{alias}"] : null);
       @switch.Set(options, bool.TryParse(configured, out var on) && on);
     }
   }

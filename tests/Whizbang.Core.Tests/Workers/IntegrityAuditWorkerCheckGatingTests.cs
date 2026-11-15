@@ -63,7 +63,8 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
     var coordinator = new AuditCoordinator();
     var transport = new CaptureTransport();
     var worker = _workerAskingOneOrigin(coordinator, transport, new StreamIntegrityOptions {
-      FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true },
+      FullSweepEveryNthAudit = 1,
+      FullHistoryCompare = { Enabled = true },
     });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -81,7 +82,8 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
     var coordinator = new AuditCoordinator();
     var transport = new CaptureTransport();
     var options = new StreamIntegrityOptions {
-      FullSweepEveryNthAudit = 1, AuditSettleWindowMinutes = 30,
+      FullSweepEveryNthAudit = 1,
+      AuditSettleWindowMinutes = 30,
       SealRecheck = { Enabled = true, MaxEpochsPerRun = 77, OnDrift = SealDriftAction.ReportOnly },
     };
     var worker = _workerAskingOneOrigin(coordinator, transport, options);

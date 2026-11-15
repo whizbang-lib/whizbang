@@ -72,7 +72,7 @@ public sealed partial class IntegrityAuditWorker(
         break;
       }
       try {
-        askedNobody = await _runAuditCoreAsync(forceSweep: false, stoppingToken);
+        askedNobody = await _runAuditCoreAsync(forceFullCompare: false, forceRecheck: false, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -109,13 +109,74 @@ public sealed partial class IntegrityAuditWorker(
 
   /// <summary>One audit cycle: the local coverage half, then the cross-service manifest requests.</summary>
   public Task RunAuditOnceAsync(CancellationToken cancellationToken) =>
-    _runAuditCoreAsync(forceSweep: false, cancellationToken);
+    _runAuditCoreAsync(forceFullCompare: false, forceRecheck: false, cancellationToken);
 
   /// <inheritdoc />
   /// <remarks>#80-D: the scheduled idle-time entry point. The cycle claim still applies, so a
   /// just-swept service's next steady audit is naturally deduped too.</remarks>
-  public Task RunSweepOnceAsync(CancellationToken cancellationToken) =>
-    _runAuditCoreAsync(forceSweep: true, cancellationToken);
+  public async Task RunSweepOnceAsync(CancellationToken cancellationToken) {
+    if (_options.FullHistoryCompare.Enabled) {
+      // The audit cycle runs the re-check too, when it is on, so the two share one admission.
+      await _runAuditCoreAsync(forceFullCompare: true, forceRecheck: true, cancellationToken).ConfigureAwait(false);
+    } else if (_options.SealRecheck.Enabled) {
+      await _runSealRecheckAloneAsync(cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <inheritdoc />
+  public Task RunCheckOnceAsync(IntegrityCheck check, CancellationToken cancellationToken) =>
+    check switch {
+      IntegrityCheck.FullHistoryCompare when _options.FullHistoryCompare.Enabled =>
+        _runAuditCoreAsync(forceFullCompare: true, forceRecheck: false, cancellationToken),
+      IntegrityCheck.SealRecheck when _options.SealRecheck.Enabled => _runSealRecheckAloneAsync(cancellationToken),
+      _ => Task.CompletedTask,
+    };
+
+  /// <summary>
+  /// The sealed-history re-check outside an audit cycle: local, so it asks no origin and claims no cycle, but it runs
+  /// on the maintainer and only when the idle gate admits it, like the rest of the integrity work.
+  /// </summary>
+  private async Task _runSealRecheckAloneAsync(CancellationToken cancellationToken) {
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);
+    var services = scope.ServiceProvider;
+    var coordinator = services.GetService<IWorkCoordinator>();
+    if (coordinator is null || !MaintainerDuty.IsThisInstancesTurn(services)) {
+      return;
+    }
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
+      services, coordinator, nameof(IntegrityAuditWorker), _logger, cancellationToken).ConfigureAwait(false);
+    if (!admission.Granted) {
+      return;
+    }
+    await _recheckSealsAsync(services, coordinator, TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes),
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// One sealed-history re-check with the configured limits (#2353): counted, timed and logged by its check. A drift
+  /// refolded is also counted as healed (<c>epoch-refolded</c>); a report-only drift is not, because nothing moved.
+  /// </summary>
+  private async Task _recheckSealsAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, TimeSpan settle, CancellationToken cancellationToken) {
+    var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
+    var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+    var started = clock.GetTimestamp();
+    var result = await coordinator.RecheckDigestEpochsAsync(
+      SealRecheckRequest.From(_options.SealRecheck, settle), cancellationToken).ConfigureAwait(false);
+    var check = new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.CHECK_TAG, Observability.StreamIntegrityMetrics.CHECK_SEAL_RECHECK);
+    metrics?.CheckDuration.Record(clock.GetElapsedTime(started).TotalSeconds, check);
+    metrics?.EpochsRechecked.Add(result.EpochsChecked, check);
+    metrics?.CheckDriftFound.Add(result.EpochsDrifted, check);
+    if (result.EpochsDrifted > 0 && _options.SealRecheck.OnDrift == SealDriftAction.Refold) {
+      metrics?.DigestDriftHealed.Add(result.EpochsDrifted, new KeyValuePair<string, object?>("kind", "epoch-refolded"));
+      LogEpochDrift(_logger, result.EpochsDrifted, result.EpochsChecked);
+    } else if (result.EpochsDrifted > 0) {
+      LogEpochDriftReported(_logger, result.EpochsDrifted, result.EpochsChecked);
+    } else if (result.EpochsChecked > 0) {
+      LogEpochsVerified(_logger, result.EpochsChecked);
+    }
+  }
 
   /// <summary>
   /// One audit cycle. Returns <see langword="true"/> when the cross-service half had origins it
@@ -125,7 +186,7 @@ public sealed partial class IntegrityAuditWorker(
   /// not a cold start, and retrying sooner would never help.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One audit cycle runs the local half (verification, epoch drift, gap reports, optional rebuild) and the cross-service half (ask each reachable origin), and its return value distinguishes a cycle that asked nobody from a deployment with nobody to ask. Both halves feed that one answer.")]
-  private async Task<bool> _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
+  private async Task<bool> _runAuditCoreAsync(bool forceFullCompare, bool forceRecheck, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
     var services = scope.ServiceProvider;
@@ -159,21 +220,27 @@ public sealed partial class IntegrityAuditWorker(
       return false;
     }
 
-    // ── A1c: the full-sweep cadence ──────────────────────────────────────
-    // Steady-state cycles run on the incrementally-maintained digest table (O(buckets), with
-    // settle-skip on busy buckets). Every Nth cycle is the trust-but-verify sweep: heal our OWN
-    // table against a full recompute (non-zero drift = an unaccounted write path — alarm), and
-    // exchange recomputed digests end to end so busy buckets get their coverage too.
-    // #80-D: once the idle-time cron owns the sweep (the driver registered it on the temporal
-    // engine), the counter stands down — otherwise the heaviest work runs on both cadences, and
-    // the counter lands it at arbitrary load times. Hosts without the temporal engine never set
-    // the state, keeping the every-Nth-cycle counter as the fallback.
-    var cronOwnsTheSweep = services.GetService<IntegritySweepScheduleState>()?.CronActive == true;
+    // ── the opt-in checks (#2353) ────────────────────────────────────────
+    // Steady-state cycles run on the incrementally maintained digest table and ask windowed from each seal; neither
+    // grows with history. Two checks do, so each is off by default and has its own section and schedule:
+    //   - the full-history compare heals this service's own digest table against a full recompute (non-zero drift is
+    //     an unaccounted write path) and asks each origin for its full history, so buckets whose steady traffic
+    //     settle-skips them get their coverage too;
+    //   - the sealed-history re-check recomputes sealed epochs, which answers trust without re-verifying.
+    // Each runs when its schedule fires (forced), or on every Nth cycle when its schedule is not registered on the
+    // temporal engine (hosts without the engine). Otherwise the heaviest work would run on both cadences.
+    var schedule = services.GetService<IntegritySweepScheduleState>();
     var cycle = Interlocked.Increment(ref _cycleCount);
-    var sweep = forceSweep
-      || (!cronOwnsTheSweep && _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0);
+    var counterDue = _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0;
+    var sweep = _options.FullHistoryCompare.Enabled && (forceFullCompare || (counterDue && schedule?.CronActive != true));
+    var recheck = _options.SealRecheck.Enabled && (forceRecheck || (counterDue && schedule?.SealRecheckCronActive != true));
     if (sweep) {
+      var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+      var started = clock.GetTimestamp();
       var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
+      var check = new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.CHECK_TAG, Observability.StreamIntegrityMetrics.CHECK_FULL_HISTORY_COMPARE);
+      metrics?.CheckDuration.Record(clock.GetElapsedTime(started).TotalSeconds, check);
+      metrics?.CheckDriftFound.Add(verification.TotalDrift, check);
       metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);
       if (verification.TotalDrift > 0) {
         metrics?.DigestDriftHealed.Add(verification.DriftUpdated, new KeyValuePair<string, object?>("kind", "updated"));
@@ -184,19 +251,9 @@ public sealed partial class IntegrityAuditWorker(
       } else {
         LogDigestVerified(_logger, verification.BucketsChecked);
       }
-
-      // #80-D: the seal backstop. Manifest answers trust sealed epochs WITHOUT re-verifying (the
-      // whole point of the epochs), so this is the ONE place a bad seal gets caught. Bounded per
-      // sweep — a very large store finishes across several nightly sweeps.
-      var epochVerification = await coordinator.VerifyDigestEpochsAsync(
-        settle, _options.MaxEpochVerificationsPerSweep, cancellationToken).ConfigureAwait(false);
-      if (epochVerification.EpochsDrifted > 0) {
-        metrics?.DigestDriftHealed.Add(epochVerification.EpochsDrifted,
-          new KeyValuePair<string, object?>("kind", "epoch-refolded"));
-        LogEpochDrift(_logger, epochVerification.EpochsDrifted, epochVerification.EpochsChecked);
-      } else if (epochVerification.EpochsChecked > 0) {
-        LogEpochsVerified(_logger, epochVerification.EpochsChecked);
-      }
+    }
+    if (recheck) {
+      await _recheckSealsAsync(services, coordinator, settle, cancellationToken).ConfigureAwait(false);
     }
 
     // ── L: local perspective coverage ────────────────────────────────────
@@ -416,4 +473,9 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 91, Level = LogLevel.Information,
     Message = "SWEEP: {EpochsChecked} sealed epoch(s) verified clean against the store recompute")]
   static partial void LogEpochsVerified(ILogger logger, int epochsChecked);
+
+  [LoggerMessage(EventId = 92, Level = LogLevel.Warning,
+    Message = "SEAL RE-CHECK: {EpochsDrifted} of {EpochsChecked} sealed epoch(s) DRIFTED and were left as sealed " +
+              "(SealRecheck:OnDrift is ReportOnly); an unaccounted write path touched sealed history, and answers served from those seals disagree with the store")]
+  static partial void LogEpochDriftReported(ILogger logger, int epochsDrifted, int epochsChecked);
 }

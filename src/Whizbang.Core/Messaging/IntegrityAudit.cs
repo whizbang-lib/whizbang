@@ -239,7 +239,14 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>
 [PinnedId("a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85")]
-public sealed record ScheduledIntegritySweep : ICommand;
+public sealed record ScheduledIntegritySweep : ICommand {
+  /// <summary>
+  /// The check this occurrence runs (#2353): each enabled check has its own schedule. Null on an occurrence scheduled
+  /// before #2353, whose schedule was the full sweep's, so it runs the full-history compare.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public Whizbang.Core.Workers.IntegrityCheck? Check { get; init; }
+}
 
 /// <summary>
 /// #2262: what an origin vouches about its history since a generation: every rewrite of its own lane after
