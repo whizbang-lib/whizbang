@@ -39,16 +39,16 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task ByType_ALargeHistory_CostsWhatASmallOneDoes_ForTheSameNewWorkAsync() {
-    var small = await _measureSteadyStateAsync(SMALL_HISTORY);
-    var large = await _measureSteadyStateAsync(LARGE_HISTORY);
+    var (smallRows, smallBlocks) = await _measureSteadyStateAsync(SMALL_HISTORY);
+    var (largeRows, largeBlocks) = await _measureSteadyStateAsync(LARGE_HISTORY);
 
-    Console.WriteLine($"#2351 held fold, rows read: small {small.RowsRead}, large {large.RowsRead}; "
-      + $"shared blocks: small {small.Blocks}, large {large.Blocks}");
-    await Assert.That(large.RowsRead).IsLessThanOrEqualTo((small.RowsRead * 2) + 50)
+    Console.WriteLine($"#2351 held fold, rows read: small {smallRows}, large {largeRows}; "
+      + $"shared blocks: small {smallBlocks}, large {largeBlocks}");
+    await Assert.That(largeRows).IsLessThanOrEqualTo((smallRows * 2) + 50)
       .Because($"a {LARGE_HISTORY / SMALL_HISTORY}x larger sequence-less history with the same {NEW_ROWS} new rows must "
-        + $"cost the same: read {small.RowsRead} rows on the small store and {large.RowsRead} on the large one");
-    await Assert.That(large.Blocks).IsLessThanOrEqualTo((small.Blocks * 2) + 50)
-      .Because($"buffer reads must not grow with history: {small.Blocks} blocks small, {large.Blocks} large");
+        + $"cost the same: read {smallRows} rows on the small store and {largeRows} on the large one");
+    await Assert.That(largeBlocks).IsLessThanOrEqualTo((smallBlocks * 2) + 50)
+      .Because($"buffer reads must not grow with history: {smallBlocks} blocks small, {largeBlocks} large");
   }
 
   [Test]
