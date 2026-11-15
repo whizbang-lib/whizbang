@@ -57,7 +57,7 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
     await using var conn = await dataSource.OpenConnectionAsync();
     var origin = TrackedGuid.New().Value;
     await _seedHistoryAsync(conn, origin, LARGE_HISTORY, sequencedToo: true);
-    await _answerAsync(origin);   // the history folded in once
+    await _foldTheHistoryAsync(conn, origin);
     await _seedHistoryAsync(conn, origin, UNSETTLED_ROWS, sequencedToo: false, age: "1 minute");
     await _execAsync(conn, "ANALYZE wh_event_store");
 
@@ -120,6 +120,21 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ABacklogLargerThanOneFold_IsFoldedOverSeveralAnswers_AndEveryAnswerIsExactAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    await _seedHistoryAsync(conn, origin, 25_000, sequencedToo: false);
+
+    await _assertEqualsTheRowsAsync(conn, origin, "while most changes are still pending");
+    await Assert.That(await _pendingAsync(conn, origin)).IsGreaterThan(0)
+      .Because("one answer folds a bounded batch, so a 25,000-change backlog is not folded in two calls");
+
+    await _foldTheHistoryAsync(conn, origin);
+    await Assert.That(await _pendingAsync(conn, origin)).IsEqualTo(0);
+    await _assertEqualsTheRowsAsync(conn, origin, "once every change is folded");
+  }
+
+  [Test]
   public async Task ARebuild_FoldsTheRowsTheTrackingNeverSaw_AndAnswersAsTheRowsDoAsync() {
     await using var conn = await _openAsync();
     var origin = TrackedGuid.New().Value;
@@ -160,13 +175,37 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
     await using var conn = await dataSource.OpenConnectionAsync();
     var origin = TrackedGuid.New().Value;
     await _seedHistoryAsync(conn, origin, history, sequencedToo: false);
-    _ = await _answerAsync(origin);
+    await _foldTheHistoryAsync(conn, origin);
+    // The folded changes are deleted rows until vacuum reclaims them, which autovacuum does promptly on this table
+    // (447 sets its thresholds); the steady state is measured after it, as the next answer in production meets it.
+    await _execAsync(conn, "VACUUM wh_unsequenced_digest_changes");
     await _seedHistoryAsync(conn, origin, NEW_ROWS, sequencedToo: false);
     await _seedHistoryAsync(conn, origin, UNSETTLED_ROWS, sequencedToo: false, age: "1 minute");
     await _execAsync(conn, "ANALYZE");
     var nodes = await _plansOfAsync(conn, origin);
     var scans = nodes.Where(n => n.Relation is not null).ToList();
+    Console.WriteLine($"#2351 held fold, history {history}: " + string.Join("; ", scans.GroupBy(n => n.Relation)
+      .Select(g => $"{g.Key} {g.Sum(n => n.RowsRead)} rows {g.Sum(n => n.Blocks)} blocks")));
     return (scans.Sum(n => n.RowsRead), scans.Sum(n => n.Blocks));
+  }
+
+  /// <summary>Answers until no change of the origin is left to fold: each answer folds a bounded batch, so a history
+  /// written as changes takes more than one. What follows measures the steady state, not the catching up.</summary>
+  private async Task _foldTheHistoryAsync(NpgsqlConnection conn, Guid origin) {
+    for (var answers = 0; answers < 10; answers++) {
+      _ = await _answerAsync(origin);
+      if (await _pendingAsync(conn, origin) == 0) {
+        return;
+      }
+    }
+    throw new InvalidOperationException("the history's changes were never all folded in ten answers");
+  }
+
+  private static async Task<long> _pendingAsync(NpgsqlConnection conn, Guid origin) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT COUNT(*) FROM wh_unsequenced_digest_changes WHERE origin_service_id = @origin";
+    cmd.Parameters.AddWithValue(nameof(origin), origin);
+    return (long)(await cmd.ExecuteScalarAsync())!;
   }
 
   /// <summary>Sequence-less rows of the origin over two tenants and two types, and as many sequenced ones.</summary>
@@ -267,9 +306,6 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
         Value = new[] { TYPE, OTHER_TYPE }
       });
       cmd.Parameters.Add(new NpgsqlParameter("p_settle", "3600 seconds"));
-      cmd.Parameters.Add(new NpgsqlParameter("p_digest_exempt", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
-      });
       await using var reader = await cmd.ExecuteReaderAsync();
       while (await reader.ReadAsync()) {
         // drained: the plan is logged when the statement completes

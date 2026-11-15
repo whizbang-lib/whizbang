@@ -2902,7 +2902,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         });
       }
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
-      AddDigestExemptParam(cmd);
+      if (byStream) {
+        AddDigestExemptParam(cmd);
+      }
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: !byStream, cancellationToken, hasIdLanes: byStream)
         .ConfigureAwait(false);
     }, cancellationToken).ConfigureAwait(false);
@@ -2938,27 +2940,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// #2102: the fold of the events held from the origin without its commit sequence, one row per (tenant, type).
-  /// Bounded by the origin's sequence-less rows: the origin lane index (155) keys on (origin, origin sequence), so the
-  /// read is the NULL-sequence range of that origin, never the origin's sequenced lane.
+  /// #2351: maintained as the rows change (migration 447), so the answer costs the types it returns, the changes since
+  /// the last answer and the held rows younger than the settle window, never the size of the held history.
   /// </summary>
   /// <param name="schema">The validated schema name.</param>
   /// <returns>The query text.</returns>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedReceivedDigestSqlTests.cs:ByType_UnderAGenericPlan_ReadsTheOriginsSequencelessRows_NotItsSequencedLaneAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedHeldFoldCostSqlTests.cs:ByType_UnderAGenericPlan_ReadsOnlyTheUnsettledRowsOfTheEventStore_NeverItsHistoryAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedHeldFoldCostSqlTests.cs:ByType_ALargeHistory_CostsWhatASmallOneDoes_ForTheSameNewWorkAsync</tests>
   internal static string UnsequencedByTypeSql(string schema) => $"""
-        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
-               COUNT(*)::int
-        FROM {schema}.wh_event_store es
-        WHERE es.origin_service_id = @p_origin
-          AND es.origin_commit_sequence IS NULL
-          AND es.event_type = ANY(@p_types::text[])
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
-          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
-          AND es.created_at < NOW() - @p_settle::interval
-        GROUP BY 1, 2
-        ORDER BY 1, 2
+        SELECT d.scope_tenant AS tenant, d.event_type, d.digest_lo, d.digest_hi, d.event_count
+        FROM {schema}.wh_unsequenced_received_type_digests(@p_origin, @p_types::text[], @p_settle::interval) d
         """;
 #pragma warning restore S2077, RCS1158
 

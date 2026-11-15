@@ -15,7 +15,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// #2102: the fold of the events a store holds from an origin without the origin's commit sequence. A windowed
 /// comparison places them with <see cref="IntegrityDigestMath.PlaceHeld"/>; this is the read that finds them. It folds
 /// what every digest fold folds (not ephemeral, not at-most-once, not exempt, settled), only rows with the origin and no
-/// sequence, and costs the rows it returns: the named streams' rows, or the origin's sequence-less rows.
+/// sequence, and costs the rows it returns: the named streams' rows. The type-level answer's cost is held by
+/// UnsequencedHeldFoldCostSqlTests (#2351).
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
@@ -167,24 +168,6 @@ public class UnsequencedReceivedDigestSqlTests : EFCoreTestBase {
     await Assert.That(reads.Max(n => n.RowsRead)).IsLessThanOrEqualTo(3)
       .Because($"the named stream holds 3 rows; reading the origin's {SEQUENCED_EVENTS + SEQUENCELESS_ELSEWHERE} rows "
         + "to find them would grow with the store");
-  }
-
-  [Test]
-  public async Task ByType_UnderAGenericPlan_ReadsTheOriginsSequencelessRows_NotItsSequencedLaneAsync() {
-    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
-    await using var conn = await dataSource.OpenConnectionAsync();
-    var (origin, _) = await _seedWideOriginAsync(conn);
-
-    var nodes = await _plansOfAsync(conn, cmd => {
-      cmd.CommandText = EFCoreWorkCoordinator<WorkCoordinationDbContext>.UnsequencedByTypeSql("public");
-      _bind(cmd, origin, [TYPE], streamIds: null);
-    });
-
-    var reads = nodes.Where(n => n.Relation == "wh_event_store").ToList();
-    await Assert.That(reads).IsNotEmpty().Because("precondition: the read was planned");
-    await Assert.That(reads.Any(n => n.Type == "Seq Scan")).IsFalse();
-    await Assert.That(reads.Max(n => n.RowsRead)).IsLessThanOrEqualTo(SEQUENCELESS_ELSEWHERE + 2)
-      .Because($"only the origin's sequence-less rows are read, never its {SEQUENCED_EVENTS} sequenced ones");
   }
 
   private static void _bind(NpgsqlCommand cmd, Guid origin, string[] types, Guid[]? streamIds) {
