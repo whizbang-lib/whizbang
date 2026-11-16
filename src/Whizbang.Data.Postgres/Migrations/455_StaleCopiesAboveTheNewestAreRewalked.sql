@@ -91,6 +91,7 @@ SELECT __SCHEMA__.drop_all_overloads('complete_perspective_cursor_work');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_APendingRowBelowTheCursorByVersion_IsFlagged_UnlessAReplayReadItAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_AStreamWithNoCursor_GetsOneAtTheReportedEventAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_AnEventTheStoreDoesNotHold_CreatesNoCursorAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursor_AStreamWithNoCursor_GetsTheSameCursorOnTheImmediateAndTheBatchedPathAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:TwoServices_SupersededReap_Redelivery_AndRewind_TogetherConverge_WithNoLoopAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:AStuckCursorOnTheHighestIdAtTheLowestVersion_ConvergesAfterOneRewind_AndARequeuedCopyIsNotRewoundAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_cursor_work(

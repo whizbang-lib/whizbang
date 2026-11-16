@@ -61,6 +61,32 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
     await Assert.That(cursor.Trigger).IsNull();
   }
 
+  /// <summary>
+  /// The design choice, locked: both completion paths create a missing cursor, and create the same one. A stream whose
+  /// work is completed only on the immediate path (the instant completion strategy) must get the cursor the batched path
+  /// would have written; if either path stopped creating it, or created it elsewhere, the two streams below differ.
+  /// </summary>
+  [Test]
+  public async Task CompleteCursor_AStreamWithNoCursor_GetsTheSameCursorOnTheImmediateAndTheBatchedPathAsync() {
+    await using var conn = await _openAsync();
+    var (immediate, batched) = (TrackedGuid.New(), TrackedGuid.New());
+    var (i1, i2) = (_id(110), _id(120));
+    var (b1, b2) = (_id(210), _id(220));
+    await _appendAsync(conn, immediate, i1, i2);
+    await _appendAsync(conn, batched, b1, b2);
+
+    await _reportAsync(_completion(immediate, i2));
+    await _flushAsync(_completion(batched, b2));
+
+    var (onImmediate, onBatched) = (await _readAsync(conn, immediate), await _readAsync(conn, batched));
+    await Assert.That(onImmediate.LastEventId).IsEqualTo(i2)
+      .Because("the immediate path creates the cursor at the reported event, as the batched path does");
+    await Assert.That(onBatched.LastEventId).IsEqualTo(b2);
+    await Assert.That(onImmediate.Status).IsEqualTo(onBatched.Status)
+      .Because("the two paths write the same cursor for a stream that had none");
+    await Assert.That(onImmediate.Trigger).IsEqualTo(onBatched.Trigger);
+  }
+
   [Test]
   public async Task CompleteCursorWork_AnEventTheStoreDoesNotHold_CreatesNoCursorAsync() {
     await using var conn = await _openAsync();
