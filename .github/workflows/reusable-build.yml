@@ -88,7 +88,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           RUN_ANALYZERS: ${{ inputs.run-analyzers }}
         run: |
-          BUILD_ARGS=(--no-restore --configuration Release)
+          BUILD_ARGS=(--no-restore --configuration Release -mt:false)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
           # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
           if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi

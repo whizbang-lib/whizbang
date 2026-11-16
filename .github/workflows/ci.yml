@@ -933,7 +933,7 @@ jobs:
 
       # The whole solution, the same projects Compile builds; nothing is uploaded, only the verdict matters.
       - name: Build every project with the analyzers on
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build --no-restore --configuration Release -mt:false
 
   # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day every project targets net11.0
   # only, so a .NET 11-only API would otherwise surface first on a release branch, the day a release is cut.
@@ -973,7 +973,7 @@ jobs:
 
       # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0.
       - name: Build every project for net10.0
-        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false
+        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
