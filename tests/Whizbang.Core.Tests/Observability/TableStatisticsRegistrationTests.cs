@@ -201,12 +201,22 @@ public class TableStatisticsRegistrationTests {
       .Because("a documented key that binds to nothing is a setting that silently does nothing (#646)");
   }
 
+  /// <summary>#2349: sizes and bloat move over minutes, so the tables are read every five minutes, spread by a fifth.</summary>
+  /// <docs>operations/observability/metrics#table-statistics-refresh</docs>
   [Test]
-  public async Task WithoutConfiguration_TheTablesAreReadEveryThirtySecondsAsync() {
+  public async Task WithoutConfiguration_TheTablesAreReadEveryFiveMinutes_SpreadByAFifthAsync() {
     var options = _bound([]);
 
-    await Assert.That(options.CollectionInterval).IsEqualTo(TimeSpan.FromSeconds(30))
-      .Because("the default is the interval the collector always used, so nothing changes for a host that sets nothing");
+    await Assert.That(options.CollectionInterval).IsEqualTo(TimeSpan.FromMinutes(5))
+      .Because("a reading every 30 seconds on every instance was about 5% of statement time for figures that move over minutes");
+    await Assert.That(options.CollectionJitter).IsEqualTo(0.2);
+  }
+
+  [Test]
+  public async Task TheCollectionJitter_BindsFromTheTableStatisticsSectionAsync() {
+    var options = _bound(new Dictionary<string, string?> { ["Whizbang:TableStatistics:CollectionJitter"] = "0.5" });
+
+    await Assert.That(options.CollectionJitter).IsEqualTo(0.5);
   }
 
   private static TableStatisticsOptions _bound(Dictionary<string, string?> settings) {

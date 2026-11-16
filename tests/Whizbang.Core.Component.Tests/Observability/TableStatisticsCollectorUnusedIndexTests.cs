@@ -129,7 +129,7 @@ public class TableStatisticsCollectorUnusedIndexTests {
         _container.GetRequiredService<IServiceScopeFactory>(),
         new TableStatisticsMetrics(new WhizbangMetrics(_meters)),
         logger ?? _logger,
-        Options.Create(new TableStatisticsOptions { CollectionInterval = _interval }),
+        Options.Create(new TableStatisticsOptions { CollectionInterval = _interval, CollectionJitter = 0 }),
         _clock);
       _collector.CycleCompleted += () => Volatile.Read(ref _next).TrySetResult();
 

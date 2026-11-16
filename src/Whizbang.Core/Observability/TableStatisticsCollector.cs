@@ -30,7 +30,8 @@ public sealed partial class TableStatisticsCollector(
   TableStatisticsMetrics metrics,
   ILogger<TableStatisticsCollector> logger,
   Microsoft.Extensions.Options.IOptions<TableStatisticsOptions> options,
-  TimeProvider? timeProvider = null
+  TimeProvider? timeProvider = null,
+  Random? random = null
 ) : BackgroundService {
 
   private readonly ILogger<TableStatisticsCollector> _logger =
@@ -53,6 +54,7 @@ public sealed partial class TableStatisticsCollector(
   private string? _database;
 
   private readonly TimeSpan _interval = options.Value.CollectionInterval;
+
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <summary>
@@ -72,6 +74,7 @@ public sealed partial class TableStatisticsCollector(
 
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    GC.KeepAlive(random);
     // Wait for schema readiness (replaces IDatabaseReadinessCheck — same intent: don't query
     // statistics tables before migrations have created them).
 
