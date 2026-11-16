@@ -33,9 +33,7 @@ public class DbMechanismTests {
 
   [Test]
   public async Task OutsideAnyScope_NoMechanismIsCurrentAsync() {
-    var current = await Task.Run(() => DbMechanismScope.Current);
-
-    await Assert.That(current).IsNull();
+    await Assert.That(DbMechanismScope.Current).IsNull();
   }
 
   [Test]
@@ -56,15 +54,19 @@ public class DbMechanismTests {
   [Test]
   public async Task AScopeOpenedInAChildFlow_ChangesNothingForItsParentAsync() {
     using (DbMechanismScope.Begin(DbMechanism.Claim)) {
-      var inChild = await Task.Run(() => {
-        // Left open on purpose: a child flow's scope must not reach back into the parent.
-        _ = DbMechanismScope.Begin(DbMechanism.Lease);
-        return DbMechanismScope.Current;
-      });
+      var inChild = await _openLeftInAChildFlowAsync();
 
       await Assert.That(inChild).IsSameReferenceAs(DbMechanism.Lease);
       await Assert.That(DbMechanismScope.Current).IsSameReferenceAs(DbMechanism.Claim);
     }
+  }
+
+  // An async method runs on a copy of its caller's flow, so what it sets stays in that copy. Left open on purpose: a
+  // child flow's scope must not reach back into the parent.
+  private static async Task<DbMechanism?> _openLeftInAChildFlowAsync() {
+    await Task.Yield();
+    _ = DbMechanismScope.Begin(DbMechanism.Lease);
+    return DbMechanismScope.Current;
   }
 
   [Test]
