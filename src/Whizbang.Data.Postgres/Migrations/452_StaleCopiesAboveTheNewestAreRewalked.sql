@@ -32,7 +32,19 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_restart_superseding_history_walks() RET
 DECLARE
   v_restarted INTEGER;
 BEGIN
-  v_restarted := 0;
+  UPDATE __SCHEMA__.wh_type_history_walks h SET
+    last_commit_sequence = NULL,
+    events_total = (SELECT count(*) FROM __SCHEMA__.wh_event_store es WHERE es.event_type = h.event_type),
+    events_matched = 0,
+    events_changed = 0,
+    events_queued = 0,
+    events_blocked = 0,
+    started_at = NOW(),
+    completed_at = NULL,
+    updated_at = NOW()
+  WHERE h.operation = 'superseding'
+    AND h.completed_at IS NOT NULL;
+  GET DIAGNOSTICS v_restarted = ROW_COUNT;
   RETURN v_restarted;
 END;
 $$ LANGUAGE plpgsql;

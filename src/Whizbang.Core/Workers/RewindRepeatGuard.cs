@@ -41,9 +41,15 @@ internal sealed class RewindRepeatGuard(int capacity = RewindRepeatGuard.DEFAULT
   /// The last rewind of the stream when it ran on the same trigger and the same last version, with this request counted
   /// as one more repeat; otherwise null, and the rewind runs.
   /// </summary>
-  internal Outcome? Repeat(Guid streamId, string perspectiveName, Guid triggerEventId, long streamVersion) =>
-    _last.TryGetValue((streamId, perspectiveName), out var last) && last.StreamVersion < streamVersion && last.TriggerEventId == triggerEventId
-      ? last : null;
+  internal Outcome? Repeat(Guid streamId, string perspectiveName, Guid triggerEventId, long streamVersion) {
+    var key = (streamId, perspectiveName);
+    if (!_last.TryGetValue(key, out var last) || last.TriggerEventId != triggerEventId || last.StreamVersion != streamVersion) {
+      return null;
+    }
+    var repeated = last with { Repeats = last.Repeats + 1 };
+    _last[key] = repeated;
+    return repeated;
+  }
 
   /// <summary>Remembers a completed rewind, replacing whatever was remembered for the stream.</summary>
   internal void Remember(Guid streamId, string perspectiveName, Guid triggerEventId, long streamVersion,
