@@ -54,8 +54,18 @@ public sealed partial class TableStatisticsCollector(
   private string? _database;
 
   private readonly TimeSpan _interval = options.Value.CollectionInterval;
-
+  // #2349: each wait is lengthened by a random share of the interval, so a fleet started together spreads its readings.
+  private readonly double _jitter = Math.Clamp(options.Value.CollectionJitter, 0, 1);
+  private readonly Random _random = random ?? Random.Shared;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+
+  /// <summary>
+  /// The wait before the next reading (#2349): the interval, lengthened by up to <see cref="TableStatisticsOptions.CollectionJitter"/>
+  /// of it, drawn from the collector's random source.
+  /// </summary>
+  /// <remarks>Whole milliseconds: a timer is armed in milliseconds, so the wait asked for is the wait armed.</remarks>
+  internal TimeSpan NextWait() =>
+    _interval + TimeSpan.FromMilliseconds(Math.Floor(_interval.TotalMilliseconds * _jitter * _random.NextDouble()));
 
   /// <summary>
   /// Raised once every collection cycle, after every metric cache has been written.
@@ -74,7 +84,6 @@ public sealed partial class TableStatisticsCollector(
 
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    GC.KeepAlive(random);
     // Wait for schema readiness (replaces IDatabaseReadinessCheck — same intent: don't query
     // statistics tables before migrations have created them).
 
@@ -152,7 +161,7 @@ public sealed partial class TableStatisticsCollector(
       }
 
       try {
-        await Task.Delay(_interval, _time, stoppingToken);
+        await Task.Delay(NextWait(), _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

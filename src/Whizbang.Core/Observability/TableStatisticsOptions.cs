@@ -46,7 +46,7 @@ public sealed class TableStatisticsOptions {
   public static readonly TimeSpan DefaultPendingReclamationSampleInterval = TimeSpan.FromMinutes(5);
 
   /// <summary>The default for <see cref="CollectionInterval"/>: five minutes (#2349; thirty seconds before).</summary>
-  public static readonly TimeSpan DefaultCollectionInterval = TimeSpan.FromSeconds(30);
+  public static readonly TimeSpan DefaultCollectionInterval = TimeSpan.FromMinutes(5);
 
   /// <summary>The default for <see cref="EventTypeSampleInterval"/>: fifteen minutes.</summary>
   public static readonly TimeSpan DefaultEventTypeSampleInterval = TimeSpan.FromMinutes(15);
@@ -72,7 +72,7 @@ public sealed class TableStatisticsOptions {
   /// </summary>
   /// <docs>operations/observability/metrics#table-statistics-refresh</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs:TwoCollectors_WaitDifferentTimes_SoTheirReadsSpreadAsync</tests>
-  public double CollectionJitter { get; set; }
+  public double CollectionJitter { get; set; } = 0.2;
 
   /// <summary>
   /// The most tables reported by name. Past this, the smallest tables are summed under

@@ -55,7 +55,7 @@ public class TableStatisticsCollectorIntervalTests {
   [Test]
   public async Task WithoutSettings_TheWaitIsFiveMinutesPlusItsJitterAsync() {
     var clock = new ArmedTimerClock();
-    var expected = TimeSpan.FromMinutes(5) + (TimeSpan.FromMinutes(5) * 0.2 * new Random(7).NextDouble());
+    var expected = TimeSpan.FromMinutes(5) + TimeSpan.FromMilliseconds(Math.Floor(300_000 * 0.2 * new Random(7).NextDouble()));
     await using var host = new CollectorHost(Options.Create(new TableStatisticsOptions()), clock, new Random(7));
 
     var first = host.NextCycle();
@@ -77,7 +77,7 @@ public class TableStatisticsCollectorIntervalTests {
     var waits = new List<TimeSpan>();
     foreach (var seed in new[] { 1, 2 }) {
       var clock = new ArmedTimerClock();
-      var expected = interval + (interval * 0.5 * new Random(seed).NextDouble());
+      var expected = interval + TimeSpan.FromMilliseconds(Math.Floor(interval.TotalMilliseconds * 0.5 * new Random(seed).NextDouble()));
       await using var host = new CollectorHost(options, clock, new Random(seed));
       var first = host.NextCycle();
       await host.StartAsync();
