@@ -21,8 +21,9 @@ namespace Whizbang.Core.Workers;
 /// <see cref="StreamIntegrityOptions.CheckpointIntervalSeconds"/> it advances the checkpoint
 /// watermark through the coordinator (a multi-instance-safe compare-and-swap — one winner per
 /// window) and publishes one <see cref="IntegrityCheckpoint"/> through the normal dispatch
-/// pipeline. Checkpoints publish even when the window is EMPTY: a missing checkpoint is the
-/// consumer's liveness alarm, so silence must always be abnormal. ON by default; disable with
+/// pipeline. #2348: a window that did not move goes out only as a heartbeat, every
+/// <see cref="StreamIntegrityOptions.CheckpointHeartbeatMinutes"/>; a missing heartbeat is the consumer's liveness alarm,
+/// so silence past it is always abnormal. ON by default; disable with
 /// <see cref="StreamIntegrityOptions.CheckpointsEnabled"/>.
 /// <para>
 /// Runs on the instance holding the maintainer duty (#2001), like the rest of integrity work, but is deliberately NOT
@@ -43,6 +44,8 @@ public sealed partial class IntegrityCheckpointWorker(
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<IntegrityCheckpointWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+  // #2348: when this instance last sent a checkpoint; null until the first, which always goes.
+  private DateTimeOffset? _lastSentAt;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -70,7 +73,9 @@ public sealed partial class IntegrityCheckpointWorker(
     }
   }
 
-  /// <summary>One checkpoint cycle: advance the watermark, publish the window (empty included).</summary>
+  /// <summary>One checkpoint cycle: advance the watermark, publish the window when it moved or the heartbeat is due.</summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs:RunCheckpointOnce_AnUnmovedWindow_WaitsForTheHeartbeat_AndAMovedOneGoesAtOnceAsync</tests>
   public async Task RunCheckpointOnceAsync(CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
@@ -96,6 +101,15 @@ public sealed partial class IntegrityCheckpointWorker(
     var window = await coordinator.AdvanceIntegrityCheckpointAsync(cancellationToken).ConfigureAwait(false);
     if (window is null) {
       // Unsupported engine, or another instance won this window's advance — nothing to publish.
+      return;
+    }
+
+    // #2348: a window that did not move counts nothing, so it goes out only as the heartbeat: the first after a start,
+    // then once CheckpointHeartbeatMinutes passed since the last one sent. A moved window goes at once.
+    var now = _time.GetUtcNow();
+    var moved = window.ToCommitSequence > window.FromCommitSequence;
+    if (!moved && _lastSentAt is { } lastSent && now - lastSent < TimeSpan.FromMinutes(_options.CheckpointHeartbeatMinutes)) {
+      await _reportStaleOriginsAsync(scope.ServiceProvider, coordinator, now, cancellationToken).ConfigureAwait(false);
       return;
     }
 
@@ -144,23 +158,33 @@ public sealed partial class IntegrityCheckpointWorker(
     }
     LogPublished(_logger, window.FromCommitSequence, window.ToCommitSequence, window.Buckets.Count);
     scope.ServiceProvider.GetService<Observability.StreamIntegrityMetrics>()?.CheckpointsPublished.Add(1);
+    _lastSentAt = now;
 
-    // Consumer-side liveness (every service is both origin and consumer): an origin whose
-    // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.
-    var tracker = scope.ServiceProvider.GetService<IntegrityGapTracker>();
-    if (tracker is not null) {
-      // #2104: liveness keeps the last-seen times from before a restart.
-      await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
-      var now = _time.GetUtcNow();
-      var staleAfter = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 3L);
-      // #2001: received checkpoints wait in the integrity delivery queue while the idle gate defers the drain, so a
-      // live origin's checkpoint is late by as long as the deferral. Widen the bound by it rather than raise the alarm.
-      if (scope.ServiceProvider.GetService<IntegrityDeliveryWorker>()?.DeferredSince is { } deferredSince) {
-        staleAfter += now - deferredSince;
-      }
-      foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, now)) {
-        LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
-      }
+    await _reportStaleOriginsAsync(scope.ServiceProvider, coordinator, now, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Consumer-side liveness (every service is both origin and consumer): an origin whose checkpoints stopped arriving is
+  /// itself an integrity signal. #2348: an idle origin sends only its heartbeat, so an origin is stale once its heartbeat
+  /// plus two intervals passed without a checkpoint.
+  /// </summary>
+  private async Task _reportStaleOriginsAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, DateTimeOffset now, CancellationToken cancellationToken) {
+    var tracker = services.GetService<IntegrityGapTracker>();
+    if (tracker is null) {
+      return;
+    }
+    // #2104: liveness keeps the last-seen times from before a restart.
+    await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
+    var staleAfter = TimeSpan.FromMinutes(_options.CheckpointHeartbeatMinutes)
+      + TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 2L);
+    // #2001: received checkpoints wait in the integrity delivery queue while the idle gate defers the drain, so a
+    // live origin's checkpoint is late by as long as the deferral. Widen the bound by it rather than raise the alarm.
+    if (services.GetService<IntegrityDeliveryWorker>()?.DeferredSince is { } deferredSince) {
+      staleAfter += now - deferredSince;
+    }
+    foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, now)) {
+      LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
     }
   }
 

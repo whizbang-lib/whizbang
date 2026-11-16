@@ -78,8 +78,8 @@ public class IntegrityCheckpointWorkerTests {
 
     var checkpoint = (IntegrityCheckpoint)dispatcher.Published.Single();
     await Assert.That(checkpoint.Buckets).IsEmpty()
-      .Because("a quiet window still checkpoints — ABSENCE is the liveness alarm, so silence " +
-               "must always be abnormal.");
+      .Because("the first quiet window after a start still checkpoints (#2348: later ones wait for the heartbeat) — " +
+               "ABSENCE is the liveness alarm, so silence past the heartbeat must always be abnormal.");
   }
 
   [Test]
