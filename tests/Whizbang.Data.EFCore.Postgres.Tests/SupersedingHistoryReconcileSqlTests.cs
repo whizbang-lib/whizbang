@@ -242,6 +242,49 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
     await Assert.That(await _queuedAsync(conn)).IsEquivalentTo([ids[0]]);
   }
 
+  /// <summary>
+  /// #2366: a stream as a consumer held it before 449: the newest copy of a key received first (version 1), then three
+  /// older copies of the same key from the same origin stored after it (versions 2 to 4, later commit sequences). The
+  /// type's walk had completed under the version order, so nothing queued the copies, and a perspective on the stream
+  /// rewinds into the same order forever. The repair restarts the walk, and the walk under the origin's order queues
+  /// the three copies and keeps the newest.
+  /// </summary>
+  [Test]
+  public async Task Repair_AStreamHoldingOlderCopiesAboveItsNewest_QueuesTheCopies_OnceTheWalkRestartsAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    var origin = (Guid)TrackedGuid.New();
+    var newest = await _historicAsync(conn, stream, _embeddedJson(stream, "k"));
+    var copies = new List<Guid>();
+    for (var i = 0; i < 3; i++) {
+      copies.Add(await _historicAsync(conn, stream, _embeddedJson(stream, "k")));
+    }
+    await _executeAsync(conn, """
+      UPDATE wh_event_store
+      SET origin_service_id = @origin,
+          origin_commit_sequence = CASE WHEN event_id = @newest THEN 100 ELSE array_position(@copies, event_id) END
+      WHERE stream_id = @stream
+      """, ("origin", origin), ("newest", newest), ("copies", copies.ToArray()), ("stream", stream));
+    // The walk that ran before 449: complete, and nothing it queued is still waiting.
+    await _ensureAsync(conn);
+    await _executeAsync(conn, """
+      UPDATE wh_type_history_walks
+      SET completed_at = NOW(), last_commit_sequence = (SELECT max(commit_sequence) FROM wh_event_store)
+      WHERE operation = 'superseding' AND event_type = @t
+      """, ("t", _embedded));
+    var before = await _step().ReconcileAsync(_services(), CancellationToken.None);
+    await Assert.That(before.Status).IsEqualTo("complete");
+    await Assert.That(await _queuedAsync(conn)).IsEmpty().Because("the control: a completed walk queues nothing more");
+
+    var restarted = await _scalarAsync(conn, "SELECT wh_restart_superseding_history_walks()");
+    await _step().ReconcileAsync(_services(), CancellationToken.None);
+
+    await Assert.That(restarted).IsGreaterThanOrEqualTo(1L);
+    await Assert.That(await _queuedAsync(conn)).IsEquivalentTo([.. copies.Order()])
+      .Because("the three older copies are superseded in the origin's order, wherever they sit by version");
+    await Assert.That(await _keyAsync(conn, newest)).IsEqualTo("k").Because("the newest copy is kept, keyed");
+  }
+
   // ===== Batches, reruns, crashes and other instances =====
 
   [Test]

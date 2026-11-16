@@ -355,7 +355,8 @@ public partial class PerspectiveWorker {
     // meters read zero while these rewinds ran (#1362).
     var result = await _rewindAndCountAsync(
       pair.Runner,
-      new RewindRequest(streamId, perspectiveName, inversionAnchor, anchorCommitSequence, EventsBehind: null),
+      new RewindRequest(streamId, perspectiveName, inversionAnchor, anchorCommitSequence, EventsBehind: null,
+        pair.Scope.ServiceProvider.GetService<IEventStore>()),
       _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives),
       leaseCt).ConfigureAwait(false);
     // #1361: the rewind applied this batch's events. A later lap or batch that brings any of them back is

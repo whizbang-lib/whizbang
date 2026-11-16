@@ -124,6 +124,18 @@ public sealed class PerspectiveMetrics {
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public PassiveCounter<long> RewindsTriggered { get; }
 
+  /// <summary>
+  /// Rewinds asked for again with the same trigger on a stream that has not changed since the last one, and settled
+  /// without running (#2366). Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// The same input replays to the same state, so running it again could change nothing. A steady rate here names a
+  /// stream something keeps flagging; the worker logs it once, with the perspective and the stream, when it repeats
+  /// <see cref="Whizbang.Core.Perspectives.PerspectiveRewindOptions.RepeatWarningThreshold"/> times.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#a-repeated-rewind-is-settled</docs>
+  public PassiveCounter<long> RewindRepeats { get; }
+
   /// <summary>Rewinds that threw. Tags: perspective_name.</summary>
   /// <remarks>
   /// Distinct from the generic <see cref="Errors"/> counter, which mixes every processing failure
@@ -210,6 +222,8 @@ public sealed class PerspectiveMetrics {
     Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations that completed");
     RewindsTriggered = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_triggered", description: "Rewinds started");
     RewindsFailed = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_failed", description: "Rewinds that threw");
+    RewindRepeats = meter.CreatePassiveCounter<long>("whizbang.perspective.rewind_repeats",
+      description: "Rewinds asked for again with the same trigger on an unchanged stream, settled without running");
     StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
       description: "Late events an ephemeral perspective dropped instead of rewinding for them");
     SnapshotsDeferred = meter.CreatePassiveCounter<long>("whizbang.perspective.snapshots_deferred",
