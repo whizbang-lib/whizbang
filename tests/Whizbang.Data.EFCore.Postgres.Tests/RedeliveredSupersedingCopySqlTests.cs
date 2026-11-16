@@ -22,8 +22,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// redelivery restores that copy. The restored copy is stored at the end of the consumer's stream, above the newest copy
 /// by local version, so ordering the copies of a key by local version made the stale copy the newest: the reaper would
 /// remove the real newest copy and keep the stale one. Copies received from the same origin are ordered by the origin's
-/// commit sequence instead, the order the origin wrote them in, so a restored older copy is recognized as superseded on
-/// arrival and the newest copy is never queued or reaped.
+/// commit sequence instead, the order the origin wrote them in. A redelivered copy older than one already held is never
+/// stored: it is settled as satisfied, so no perspective applies it after the newest and the newest is never reaped.
 /// </summary>
 /// <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/449_RedeliveredCopiesKeepTheOriginsOrder.sql</code-under-test>
@@ -32,38 +32,69 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {
   private const string TYPE = "Probe.Contracts.ProfileReplaced, Probe.Contracts";
   private static readonly Guid _origin = Guid.Parse("0000000a-0000-0000-0000-000000000001");
+  private static readonly string[] _originNames = ["origin-svc"];
+  private static readonly int[] _oneBundle = [1];
+  private static readonly long[] _olderSequence = [10];
 
   [Test]
-  public async Task ARestoredOlderCopy_IsQueuedOnArrival_AndTheNewestCopyIsNeverQueuedOrReapedAsync() {
+  public async Task ARedeliveredOlderCopy_IsNeverStored_IsRecordedSatisfied_AndNoPerspectiveSeesItAsync() {
     await using var dbContext = CreateDbContext();
     var stream = TrackedGuid.New().Value;
     var first = TrackedGuid.New().Value;
     var older = TrackedGuid.New().Value;
     var newest = TrackedGuid.New().Value;
     // Live delivery: a key written once, then both copies of key k, in the origin's order. The superseded copy is not
-    // the stream's first event, so restoring it is not refused as history below a truncation.
-    var conn = await _receiveAsync(dbContext, _received(stream, first, "once", originSequence: 5),
+    // the stream's first event, so the restore is not refused as history below a truncation.
+    var conn = await _openAsync(dbContext);
+    await _executeAsync(conn, """
+      INSERT INTO wh_message_associations
+        (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (gen_random_uuid(), @t, 'perspective', 'ProfilePerspective', 'test-service', @t, NOW(), NOW())
+      ON CONFLICT DO NOTHING
+      """, ("t", TYPE));
+    _ = await _receiveAsync(dbContext, _received(stream, first, "once", originSequence: 5),
       _received(stream, older, "k", originSequence: 10), _received(stream, newest, "k", originSequence: 20));
-    // Handled: the inbox lets go of them, and deduplication remembers them.
+    await Assert.That(await _countAsync(conn, "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id", newest)).IsEqualTo(1L)
+      .Because("precondition: the perspective is offered the live copies, so an offer of the restored one would show");
+    // Handled: the perspective applied them, the inbox let go of them, and deduplication remembers them.
+    await _executeAsync(conn, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE stream_id = @s", ("s", stream));
     await _executeAsync(conn, "DELETE FROM wh_inbox_state WHERE message_id = ANY(@ids); DELETE FROM wh_inbox WHERE message_id = ANY(@ids)",
       ("ids", new[] { first, older, newest }));
     await _stampAsync(conn);
     await Assert.That(await _reapAsync(conn)).IsEqualTo(1L).Because("precondition: the consumer reaps the older copy first");
     await Assert.That(await _storedAsync(conn, stream)).IsEquivalentTo([first, newest]);
 
-    // The origin still holds the older copy, so the comparison reads a deficit and a redelivery restores it.
+    // The origin still holds the older copy, so the comparison reads a deficit and a redelivery carries it again.
     _ = await _receiveAsync(dbContext, _received(stream, older, "k", originSequence: 10, restore: true));
 
-    await Assert.That(await _storedAsync(conn, stream)).IsEquivalentTo([first, newest, older])
-      .Because("precondition: the restored copy is stored again, above the newest by local version");
-    await Assert.That(await _keyAsync(conn, older)).IsEqualTo("k");
-    await Assert.That(await _queuedAsync(conn)).IsEquivalentTo([older])
-      .Because("the restored copy is older in the origin's order, so it is the one superseded, never the newest");
-
-    await _stampAsync(conn);
-    await Assert.That(await _reapAsync(conn)).IsEqualTo(1L);
     await Assert.That(await _storedAsync(conn, stream)).IsEquivalentTo([first, newest])
-      .Because("the reaper's own check orders the copies the same way, so the newest copy survives");
+      .Because("a newer copy of its key is held, so the older copy is never stored again");
+    await Assert.That(await _errorAsync(conn, older)).IsEqualTo(_satisfied())
+      .Because("it is settled with the reason, never claimed, copied or applied");
+    await Assert.That(await _countAsync(conn, "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id", older)).IsEqualTo(0L)
+      .Because("no perspective is offered the older copy after the newer one");
+    var answer = await _reconcileAsync(conn, older);
+    await Assert.That(answer).IsEquivalentTo([$"{stream}|1|0|1"])
+      .Because("the reconcile reads the copy as satisfied (present) and counts it apart, never as a deficit");
+  }
+
+  [Test]
+  public async Task ARedeliveredCopyNewerThanTheHeldOne_IsRestoredAsBeforeAsync() {
+    await using var dbContext = CreateDbContext();
+    var stream = TrackedGuid.New().Value;
+    var first = TrackedGuid.New().Value;
+    var older = TrackedGuid.New().Value;
+    var lost = TrackedGuid.New().Value;
+    var conn = await _receiveAsync(dbContext, _received(stream, first, "once", originSequence: 5),
+      _received(stream, older, "k", originSequence: 10), _received(stream, lost, "k", originSequence: 20));
+    await _executeAsync(conn, "DELETE FROM wh_inbox_state WHERE message_id = ANY(@ids); DELETE FROM wh_inbox WHERE message_id = ANY(@ids)",
+      ("ids", new[] { first, older, lost }));
+    await _executeAsync(conn, "DELETE FROM wh_superseded_events; DELETE FROM wh_event_store WHERE event_id = @id", ("id", lost));
+
+    _ = await _receiveAsync(dbContext, _received(stream, lost, "k", originSequence: 20, restore: true));
+
+    await Assert.That(await _storedAsync(conn, stream)).Contains(lost)
+      .Because("the held copy is older, so the lost newest copy is restored");
   }
 
   [Test]
@@ -125,6 +156,50 @@ public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {
     return conn;
   }
 
+  private static string _satisfied() =>
+    Whizbang.Data.Postgres.MigrationConstants.Tokens["__REPAIR_SATISFIED_SUPERSEDED__"].Trim('\'');
+
+  private static async Task<string?> _errorAsync(NpgsqlConnection conn, Guid id) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT error FROM wh_inbox_state WHERE message_id = @id";
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    var value = await cmd.ExecuteScalarAsync();
+    return value is null or DBNull ? null : (string)value;
+  }
+
+  private static async Task<long> _countAsync(NpgsqlConnection conn, string sql, Guid id) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>The bundle reconcile for one child: stream | present | adopted | superseded-satisfied.</summary>
+  private static async Task<List<string>> _reconcileAsync(NpgsqlConnection conn, Guid id) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT stream_id, present_count, adopted_count, superseded_satisfied_count "
+      + "FROM wh_reconcile_redelivered_bundles(@origins, @names, @bundles, @ids, @seqs)";
+    cmd.Parameters.AddWithValue("origins", new[] { _origin });
+    cmd.Parameters.AddWithValue("names", _originNames);
+    cmd.Parameters.AddWithValue("bundles", _oneBundle);
+    cmd.Parameters.AddWithValue("ids", new[] { id });
+    cmd.Parameters.AddWithValue("seqs", _olderSequence);
+    var rows = new List<string>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      rows.Add($"{reader.GetGuid(0)}|{reader.GetInt32(1)}|{reader.GetInt32(2)}|{reader.GetInt32(3)}");
+    }
+    return rows;
+  }
+
+  private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+    return conn;
+  }
+
   private static Task _stampAsync(NpgsqlConnection conn) => _executeAsync(conn, "SELECT stamp_pending_commit_sequences(1000)");
 
   private static async Task<long> _reapAsync(NpgsqlConnection conn) {
@@ -133,13 +208,6 @@ public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
   }
 
-  private static async Task<string?> _keyAsync(NpgsqlConnection conn, Guid eventId) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT supersede_key FROM wh_event_store WHERE event_id = @id";
-    cmd.Parameters.AddWithValue("id", eventId);
-    var value = await cmd.ExecuteScalarAsync();
-    return value is DBNull ? null : (string?)value;
-  }
 
   private static Task<List<Guid>> _queuedAsync(NpgsqlConnection conn) =>
     _idsAsync(conn, "SELECT event_id FROM wh_superseded_events ORDER BY queued_at, event_id");

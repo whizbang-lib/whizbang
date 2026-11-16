@@ -233,6 +233,37 @@ public class RedeliveryReconcilerTests {
       .Because("neither bundle had an event whose first hop names another service");
   }
 
+  // ---- superseded copies (#2350) -----------------------------------------------------------------
+
+  [Test]
+  public async Task Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync() {
+    await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterServices.GetRequiredService<IMeterFactory>()));
+    var readings = new List<(string Name, long Value)>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument, metrics.RedeliveredCopiesSuperseded.Instrument)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (readings) { readings.Add((instrument.Name, value)); }
+    });
+    listener.Start();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var coordinator = new AdoptingCoordinator();
+    await using var services = _services(coordinator, new IntegrityRepairLedger(), metrics);
+    var bundle = _bundle(origin, stream, 1);
+    coordinator.Answer = [new(stream, null, EVENT_TYPE, 1, 0, SupersededSatisfied: 1)];
+
+    var result = await RedeliveryReconciler.ReconcileAsync(bundle, _children(bundle, origin), services, new CapturingLogger(), _now);
+    listener.RecordObservableInstruments();
+
+    await Assert.That(result.Present).IsEqualTo(1).Because("a copy a newer held copy supersedes is satisfied, never missing");
+    await Assert.That(readings).Contains(("whizbang.stream_integrity.redelivered_copies_superseded", 1L));
+  }
+
   // ---- refused restores (#1843) ------------------------------------------------------------------
 
   [Test]
