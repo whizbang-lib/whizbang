@@ -312,7 +312,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
   /// rewind, then further cycles of reap, audit and claim change nothing, request nothing and rewind nothing.
   /// </summary>
   [Test]
-  [NotInParallel("IntegrityManifestGates")]
+  [NotInParallel("IntegrityManifestGates")]   // the manifest receptors' per-process gates are shared state
   public async Task TwoServices_SupersededReap_Redelivery_AndRewind_TogetherConverge_WithNoLoopAsync() {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
