@@ -236,7 +236,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     // A redelivered copy, queued again, then the claim loop's later polls.
     var requeued = await _requeueAsync(conn, streamId, copies[1], ct);
     await pipeline.CompletionOf(requeued).WaitAsync(_signalDeadline, ct);
-    var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, streamId, ct);
+    var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
 
     var cursorVersion = await _scalarAsync<long>(conn, """
       SELECT e.version::bigint FROM wh_perspective_cursors c JOIN wh_event_store e ON e.event_id = c.last_event_id
@@ -252,12 +252,179 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     await Assert.That(flagged).IsFalse().Because("the completed rewind clears its flag");
   }
 
+  /// <summary>
+  /// Two services (#2366): the consumer's stream in the stuck shape an older build left (the terminal event received first
+  /// at version 1 with the highest id, three older events of the origin stored after it, the cursor on the terminal
+  /// event, flagged for the earliest copy whose row is retired). After the deploy's repair, one rewind settles it, and
+  /// several audit cycles against the origin find nothing to repair and never rewind it again.
+  /// </summary>
+  [Test]
+  [NotInParallel("IntegrityManifestGates")]   // the manifest receptors' per-process gates are shared state
+  public async Task TwoServices_AStuckConsumerStream_ConvergesAfterTheRepair_AndAuditCyclesNeverRewindItAgainAsync() {
+    var ct = CancellationToken.None;
+    var streamId = (Guid)TrackedGuid.New();
+    var rewinds = new RewindCountingLogger();
+    await using var pipeline = _composePipeline(rewinds, snapshots: true);
+    await using var conn = await _openAsync(ct);
+    await pipeline.RegisterAsync(conn, ct);
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, []);
+    var type = TypeNameFormatter.Format(typeof(SampleOrderCreatedEvent));
+
+    // The origin's order: three events, then the terminal one. The consumer received the terminal one first and the
+    // three after it, so its stream holds them above the terminal by version and below it by id.
+    var ids = await h.EmitAsync([.. Enumerable.Range(1, 4).Select(i => new TwoServiceEmit(streamId, type, 0, null, _orderPayload(streamId, i)))]);
+    var (copies, terminal) = (ids[..3], ids[3]);
+    await Assert.That((await h.DeliverAsync([terminal])).Count).IsEqualTo(1);
+    await Assert.That((await h.DeliverAsync(copies)).Count).IsEqualTo(3);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT version::bigint FROM wh_event_store WHERE event_id = @id", terminal, ct))
+      .IsEqualTo(1L).Because("the setup is the stuck shape: the terminal event, highest id, at version 1");
+    await _appliedAndFlaggedAsync(conn, streamId, terminal, copies[0], ct);
+    await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE event_id = @id", copies[0], ct);
+
+    await _repairOnDeployAsync(conn, ct);
+    var workIds = await _releasedWorkIdsAsync(conn, streamId, pipeline.InstanceProvider.InstanceId, ct);
+    await Assert.That(workIds.Count).IsGreaterThan(0).Because("the consumer's emit chain queued the stream's work");
+    await pipeline.StartAsync(ct);
+    await _completionOfAllAsync(pipeline, conn, streamId, workIds, ct);
+    await Assert.That(rewinds.Count).IsEqualTo(1).Because("the repaired stream is settled by exactly one rewind");
+    var held = await TwoServiceHarness.FingerprintAsync(h.Consumer, [streamId]);
+
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      await h.AuditAsync(TwoServiceAudit.TypesTable, type);
+      await h.AuditAsync(TwoServiceAudit.Streams, type);
+      await h.AuditAsync(TwoServiceAudit.TypesWindowed, type);
+      var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
+      var tally = h.Tally();
+      await Assert.That(tally).IsEqualTo(new TwoServiceTally(0, 0, 0, 0))
+        .Because($"cycle {cycle}: the consumer holds what the origin holds, so the audit asks for nothing");
+      await Assert.That(reclaims).IsEqualTo(0).Because($"cycle {cycle}: the settled stream is not claimed again");
+      await Assert.That(rewinds.Count).IsEqualTo(1).Because($"cycle {cycle}: no second rewind");
+      await Assert.That(await TwoServiceHarness.FingerprintAsync(h.Consumer, [streamId])).IsEqualTo(held);
+    }
+    await Assert.That(await _scalarAsync<bool>(conn,
+      "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct)).IsFalse();
+  }
+
+  /// <summary>
+  /// Two services, three mechanisms at once, on one stream: a superseding event whose older copy the reaper removes on
+  /// the consumer, an order event the consumer never received that the audit finds and the origin redelivers (stored
+  /// after the cursor: a late arrival), and the rewind that late arrival asks for. Together they converge: at most one
+  /// rewind, then further cycles of reap, audit and claim change nothing, request nothing and rewind nothing.
+  /// </summary>
+  [Test]
+  [NotInParallel("IntegrityManifestGates")]
+  public async Task TwoServices_SupersededReap_Redelivery_AndRewind_TogetherConverge_WithNoLoopAsync() {
+    var ct = CancellationToken.None;
+    var streamId = (Guid)TrackedGuid.New();
+    var rewinds = new RewindCountingLogger();
+    await using var pipeline = _composePipeline(rewinds, snapshots: true);
+    await using var conn = await _openAsync(ct);
+    await pipeline.RegisterAsync(conn, ct);
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions,
+      new Dictionary<string, EventFlags> { [typeof(SupersedingProbeEmbedded).FullName!] = EventFlags.Superseding });
+    var order = TypeNameFormatter.Format(typeof(SampleOrderCreatedEvent));
+    var probe = TypeNameFormatter.Format(typeof(SupersedingProbeEmbedded));
+    var probePayload = JsonSerializer.Serialize(new SupersedingProbeEmbedded { DocumentId = streamId, Model = "k1" },
+      JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(SupersedingProbeEmbedded)));
+    const int SUPERSEDING = TwoServiceHarness.FLAG_SUPERSEDING;
+
+    // p1 and p2 share a key, so p2 supersedes p1. o1 never reaches the consumer live.
+    var ids = await h.EmitAsync(
+      new TwoServiceEmit(streamId, probe, SUPERSEDING, "k1", probePayload),
+      new TwoServiceEmit(streamId, order, 0, null, _orderPayload(streamId, 1)),
+      new TwoServiceEmit(streamId, order, 0, null, _orderPayload(streamId, 2)),
+      new TwoServiceEmit(streamId, probe, SUPERSEDING, "k1", probePayload));
+    var (p1, o1, o2, p2) = (ids[0], ids[1], ids[2], ids[3]);
+    await h.DeliverAsync([p1, o2, p2]);
+    var live = await _releasedWorkIdsAsync(conn, streamId, pipeline.InstanceProvider.InstanceId, ct);
+    await pipeline.StartAsync(ct);
+    await _completionOfAllAsync(pipeline, conn, streamId, live, ct);
+    await Assert.That(await _cursorAsync(conn, streamId, ct)).IsNotEqualTo("no cursor")
+      .Because("the live pass applied o2, so the stream has a cursor");
+    await TwoServiceHarness.ExecuteAsync(h.Consumer, "SELECT * FROM wh_reap_superseded_events(5000)");
+    await Assert.That(await h.ConsumerHoldsAsync(p1)).IsFalse().Because("precondition: the reaper removed the superseded copy");
+
+    // Cycle 1: the audit finds o1 missing, the origin redelivers it, and the claim loop applies it.
+    await h.AuditAsync(TwoServiceAudit.TypesTable, order, probe);
+    await Assert.That(await h.ConsumerHoldsAsync(o1)).IsTrue().Because("positive control: the audit found and repaired the loss");
+    await _completionOfAllAsync(pipeline, conn, streamId,
+      await _releasedWorkIdsAsync(conn, streamId, pipeline.InstanceProvider.InstanceId, ct), ct);
+    _ = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
+    // Each service reaps its own copies: the origin's superseded copy goes too, closing the accepted window in which the
+    // two digests differ by it (superseding-events#across-services).
+    await TwoServiceHarness.ExecuteAsync(h.Origin, "SELECT * FROM wh_reap_superseded_events(5000)");
+    await Assert.That(await TwoServiceHarness.CountAsync(h.Origin, "SELECT COUNT(*) FROM wh_event_store WHERE event_id = @id",
+      ("id", p1))).IsEqualTo(0L).Because("positive control: the origin reaped its superseded copy");
+    var afterFirst = new CycleBaseline(rewinds.Count, h.Tally(), await TwoServiceHarness.FingerprintAsync(h.Consumer, [streamId]));
+    await Assert.That(afterFirst.Rewinds).IsLessThanOrEqualTo(1).Because("the late arrival is applied by at most one rewind");
+
+    for (var cycle = 2; cycle <= 4; cycle++) {
+      await TwoServiceHarness.ExecuteAsync(h.Origin, "SELECT * FROM wh_reap_superseded_events(5000)");
+      await TwoServiceHarness.ExecuteAsync(h.Consumer, "SELECT * FROM wh_reap_superseded_events(5000)");
+      await h.AuditAsync(TwoServiceAudit.TypesTable, order, probe);
+      await h.AuditAsync(TwoServiceAudit.Streams, order, probe);
+      var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
+      await Assert.That(h.Tally()).IsEqualTo(afterFirst.Tally).Because($"cycle {cycle}: nothing is requested, reported or redelivered again");
+      await Assert.That(rewinds.Count).IsEqualTo(afterFirst.Rewinds).Because($"cycle {cycle}: no further rewind");
+      await Assert.That(reclaims).IsEqualTo(0).Because($"cycle {cycle}: the stream is not claimed again");
+      await Assert.That(await TwoServiceHarness.FingerprintAsync(h.Consumer, [streamId])).IsEqualTo(afterFirst.Held)
+        .Because($"cycle {cycle}: the reaper and the redelivery do not undo each other");
+    }
+    await Assert.That(await _scalarAsync<bool>(conn,
+      "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct)).IsFalse();
+  }
+
   // ===== Helpers =====
+
+  /// <summary>What a two-service cycle left: the rewinds so far, the wire's tally and the consumer's held events.</summary>
+  private sealed record CycleBaseline(int Rewinds, TwoServiceTally Tally, string Held);
+
+  /// <summary>Waits for every work row's completion; on a timeout, prints what the stream's rows and cursor hold.</summary>
+  private static async Task _completionOfAllAsync(Pipeline pipeline, NpgsqlConnection conn, Guid streamId, List<Guid> workIds, CancellationToken ct) {
+    try {
+      foreach (var workId in workIds) {
+        await pipeline.CompletionOf(workId).WaitAsync(_signalDeadline, ct);
+      }
+    } catch (TimeoutException) {
+      await using var command = conn.CreateCommand();
+      command.CommandText = """
+        SELECT string_agg(format('row %s event %s v%s perspective %s status %s instance %s lease %s attempts %s error %s',
+          pe.event_work_id, pe.event_id, e.version, pe.perspective_name, pe.status, pe.instance_id, pe.lease_expiry,
+          pe.attempts, pe.error), E'\n')
+        FROM wh_perspective_events pe LEFT JOIN wh_event_store e ON e.event_id = pe.event_id WHERE pe.stream_id = @id
+        """;
+      command.Parameters.AddWithValue("id", streamId);
+      Console.WriteLine($"DIAG waiting on {string.Join(",", workIds)}\nDIAG {await command.ExecuteScalarAsync(ct)}\nDIAG {await _cursorAsync(conn, streamId, ct)}");
+      throw;
+    }
+  }
 
   private static async Task _repairOnDeployAsync(NpgsqlConnection conn, CancellationToken ct) {
     await using var repair = conn.CreateCommand();
     repair.CommandText = "SELECT wh_settle_id_ordered_rewind_flags()";
     _ = await repair.ExecuteScalarAsync(ct);
+  }
+
+  private static string _orderPayload(Guid streamId, decimal amount) =>
+    JsonSerializer.Serialize(new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = amount },
+      JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(SampleOrderCreatedEvent)));
+
+  /// <summary>
+  /// The pending work of the stream, released to this pipeline's claim loop: the harness stores on the consumer as an
+  /// instance that is not running, which leases the rows it queues to itself, as a service that stopped would.
+  /// </summary>
+  private static async Task<List<Guid>> _releasedWorkIdsAsync(NpgsqlConnection conn, Guid streamId, Guid me, CancellationToken ct) {
+    await using (var release = conn.CreateCommand()) {
+      release.CommandText = """
+        UPDATE wh_perspective_events SET instance_id = NULL, lease_expiry = NULL
+        WHERE stream_id = @id AND processed_at IS NULL AND instance_id IS DISTINCT FROM @me;
+        DELETE FROM wh_active_streams WHERE stream_id = @id AND assigned_instance_id IS DISTINCT FROM @me;
+        """;
+      release.Parameters.AddWithValue("id", streamId);
+      release.Parameters.AddWithValue(nameof(me), me);
+      await release.ExecuteNonQueryAsync(ct);
+    }
+    return await _workIdsAsync(conn, streamId, ct);
   }
 
   private static async Task<List<Guid>> _workIdsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
@@ -273,7 +440,17 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
   }
 
   /// <summary>Counts the claims of the stream over the next <see cref="QUIET_POLLS"/> claim polls.</summary>
-  private static async Task<int> _reclaimsOverQuietPollsAsync(Pipeline pipeline, Guid streamId, CancellationToken ct) {
+  /// <summary>
+  /// Counts the claim loop's next <see cref="QUIET_POLLS"/> polls and how many of them claimed the stream again.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="ClaimWorker.OnBatchClaimed"/> is raised only by a claim that returned work, so an idle loop raises
+  /// nothing: a wait for polls on a settled store would time out with none seen although the loop polls on its cadence.
+  /// The pipeline's poll beacon is an outbox row that nothing in this pipeline publishes, so every claim offers it again
+  /// and every poll is observed.
+  /// </remarks>
+  private static async Task<int> _reclaimsOverQuietPollsAsync(Pipeline pipeline, NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
+    await pipeline.EnsurePollBeaconAsync(conn, ct);
     var reclaims = 0;
     var seen = 0;
     var polls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -285,7 +462,12 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
         polls.TrySetResult();
       }
     };
-    await polls.Task.WaitAsync(_signalDeadline, ct);
+    try {
+      await polls.Task.WaitAsync(_signalDeadline, ct);
+    } catch (TimeoutException) {
+      Console.WriteLine($"DIAG quiet polls timed out after {Volatile.Read(ref seen)} polls, {Volatile.Read(ref reclaims)} reclaims");
+      throw;
+    }
     return Volatile.Read(ref reclaims);
   }
 
@@ -315,12 +497,13 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
   private static async Task<string> _cursorAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
     await using var command = conn.CreateCommand();
     command.CommandText = """
-      SELECT format('cursor v%s status %s trigger %s pending %s', e.version, c.status, c.rewind_trigger_event_id,
-        (SELECT count(*) FROM wh_perspective_events pe WHERE pe.stream_id = c.stream_id AND pe.processed_at IS NULL))
-      FROM wh_perspective_cursors c JOIN wh_event_store e ON e.event_id = c.last_event_id WHERE c.stream_id = @id
+      SELECT string_agg(format('cursor %s on %s v%s status %s trigger %s pending %s', c.perspective_name, c.last_event_id,
+        e.version, c.status, c.rewind_trigger_event_id,
+        (SELECT count(*) FROM wh_perspective_events pe WHERE pe.stream_id = c.stream_id AND pe.processed_at IS NULL)), '; ')
+      FROM wh_perspective_cursors c LEFT JOIN wh_event_store e ON e.event_id = c.last_event_id WHERE c.stream_id = @id
       """;
     command.Parameters.AddWithValue("id", streamId);
-    return (string?)await command.ExecuteScalarAsync(ct) ?? "no cursor";
+    return await command.ExecuteScalarAsync(ct) is string cursors ? cursors : "no cursor";
   }
 
   private static readonly Guid _origin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-000000002366");
@@ -490,6 +673,20 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     private bool _started;
 
     public Task CompletionOf(Guid workId) => Completion.WaitForAsync(workId);
+
+    private bool _beaconCommitted;
+
+    /// <summary>
+    /// Commits one event on a stream of its own, once: its outbox row is never published here, so every claim offers it
+    /// again, which makes each poll raise <see cref="ClaimWorker.OnBatchClaimed"/>.
+    /// </summary>
+    public async Task EnsurePollBeaconAsync(NpgsqlConnection conn, CancellationToken ct) {
+      if (_beaconCommitted) {
+        return;
+      }
+      _beaconCommitted = true;
+      await CommitAsync(conn, (Guid)TrackedGuid.New(), [((Guid)TrackedGuid.New(), 0m)], ct);
+    }
 
     /// <summary>Registers this instance and the perspective's association with the event type.</summary>
     public async Task RegisterAsync(NpgsqlConnection conn, CancellationToken ct) {

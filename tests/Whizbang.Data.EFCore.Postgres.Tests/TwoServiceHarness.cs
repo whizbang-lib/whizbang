@@ -90,12 +90,13 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   public static async Task<TwoServiceHarness> CreateAsync(
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
       Dictionary<string, EventFlags> markers) {
+    var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
+      _originDbName = originDbName,
     };
-    h._originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var cs = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = h._originDbName,
+      Database = originDbName,
       Timezone = "UTC",
       IncludeErrorDetail = true,
     }.ConnectionString;

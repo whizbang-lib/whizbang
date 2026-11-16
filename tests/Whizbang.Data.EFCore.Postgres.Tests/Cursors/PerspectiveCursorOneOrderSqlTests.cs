@@ -41,6 +41,40 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
       .Because("the cursor never moves back in the stream's order, whatever the reported id sorts as");
   }
 
+  /// <summary>
+  /// The immediate completion path creates the cursor of a stream it has none for, as the batched path does: without
+  /// it, a new stream's cursor was never written, so every apply read from the stream's start and no inversion or
+  /// late arrival could be judged against a position.
+  /// </summary>
+  [Test]
+  public async Task CompleteCursorWork_AStreamWithNoCursor_GetsOneAtTheReportedEventAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var (e1, e2) = (_id(10), _id(20));
+    await _appendAsync(conn, stream, e1, e2);
+
+    await _reportAsync(_completion(stream, e2));
+
+    var cursor = await _readAsync(conn, stream);
+    await Assert.That(cursor.LastEventId).IsEqualTo(e2).Because("the cursor is created at the event the completion reports");
+    await Assert.That(cursor.Status).IsEqualTo(COMPLETED);
+    await Assert.That(cursor.Trigger).IsNull();
+  }
+
+  [Test]
+  public async Task CompleteCursorWork_AnEventTheStoreDoesNotHold_CreatesNoCursorAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    await _appendAsync(conn, stream, _id(10));
+
+    await _reportAsync(_completion(stream, _id(99)));
+
+    await using var cmd = new NpgsqlCommand("SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @s", conn);
+    cmd.Parameters.AddWithValue("s", (Guid)stream);
+    await Assert.That(Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture)).IsEqualTo(0L)
+      .Because("a position the store cannot place is never written as a new cursor");
+  }
+
   [Test]
   public async Task CompleteCursorWork_AReplayAtTheLastVersion_MovesTheCursorStoresItsFrontierAndClearsTheFlagAsync() {
     await using var conn = await _openAsync();
