@@ -29,8 +29,10 @@ public class DapperRequestResponseExpiryTests : PostgresTestBase {
       VALUES (@expired, @expiredCorrelation, 'Request', '{}'::jsonb, 'Pending', NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'),
              (@live, @liveCorrelation, 'Request', '{}'::jsonb, 'Pending', NOW(), NOW() + INTERVAL '1 day')
       """, new {
-      expired = TrackedGuid.New().Value, expiredCorrelation = TrackedGuid.New().Value,
-      live = TrackedGuid.New().Value, liveCorrelation = TrackedGuid.New().Value,
+      expired = TrackedGuid.New().Value,
+      expiredCorrelation = TrackedGuid.New().Value,
+      live = TrackedGuid.New().Value,
+      liveCorrelation = TrackedGuid.New().Value,
     });
     var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
     await using var provider = services.BuildServiceProvider();
