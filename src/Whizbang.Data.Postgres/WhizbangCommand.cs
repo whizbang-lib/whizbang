@@ -41,7 +41,9 @@ public static class WhizbangCommand {
   /// <param name="connection">The connection the command runs on.</param>
   /// <returns>The command.</returns>
   public static DbCommand CreateWhizbangCommand(this DbConnection connection) =>
-    ((NpgsqlConnection)connection).CreateWhizbangCommand();
+    connection is AttributedDbConnection attributed
+      ? attributed.CreateCommand()
+      : ((NpgsqlConnection)connection).CreateWhizbangCommand();
 
   /// <summary>
   /// Creates an attributed command on <paramref name="connection"/> with the coordinator's command budget

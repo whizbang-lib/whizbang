@@ -43,6 +43,15 @@ namespace Whizbang.Data.Postgres;
 public readonly struct CoordinatorConnectionScope : IAsyncDisposable {
   /// <summary>The acquired connection. Always open when the scope is returned.</summary>
   public NpgsqlConnection Connection { get; }
+
+  /// <summary>
+  /// The connection as a library that creates its own commands (Dapper) should hold it: every command it creates is an
+  /// attributed one (<see cref="WhizbangCommand"/>). Disposing it leaves <see cref="Connection"/> to the scope.
+  /// </summary>
+  /// <docs>operations/observability/database-attribution</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperCommandAttributionTests.cs</tests>
+  public System.Data.Common.DbConnection Attributed => Connection;
+
   private readonly bool _ownsConnection;
   private readonly bool _closeOnDispose;
 

@@ -49,14 +49,14 @@ public partial class DapperWorkCoordinator {
     await PostgresDeadlockRetry.ExecuteAsync(async () => {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
       await using var __scope = await CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-      var connection = __scope.Connection;
+      var connection = __scope.Attributed;
       var prefix = await _prefixAsync(connection, cancellationToken);
       await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)) {
         await CoalesceSql.StoreCompositeAndCompleteSinglesAsync(
           transaction, prefix, json, DateTime.UtcNow, partitionCount, ids, cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
       }
-      await DoorbellRinger.RingAsync(connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
+      await DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
