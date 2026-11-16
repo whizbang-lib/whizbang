@@ -22,8 +22,8 @@ namespace Whizbang.Core.Workers;
 /// <list type="bullet">
 /// <item><b>Local (L)</b> — perspective coverage gaps (settled history a registered perspective
 /// never folded: no cursor, no pending work) → <see cref="PerspectiveCoverageGapDetected"/>
-/// reports; at <see cref="IntegrityRepairMode.AutoRepairCapped"/> a capped LOCAL
-/// <see cref="RebuildPerspectiveCommand"/> per gap.</item>
+/// reports; at <see cref="IntegrityRepairMode.AutoRepairCapped"/> a capped rebuild per gap, run in this service through
+/// <see cref="Perspectives.IPerspectiveRebuildRequestHandler"/> and never put on the transport (#2344).</item>
 /// <item><b>Cross-service (A)</b> — for every origin this consumer knows (the checkpoint
 /// tracker's origin set), a DIRECTED <see cref="RequestIntegrityManifest"/> asking for its
 /// identity digests of the event types this consumer consumes (#2058: its consumer registry, plus the
@@ -266,16 +266,26 @@ public sealed partial class IntegrityAuditWorker(
     if (gaps.Count >= maxGapReports) {
       LogCoverageGapsCapped(_logger, maxGapReports);
     }
-    var rebuildBudget = _options.MaxAutoRebuildsPerAudit;
+    // #2344: the repair runs in this service, through the same rebuild handling the rebuild command's receptor runs
+    // (routing to the streams' owners and the background queue included), and puts nothing on the transport. The gap is
+    // in this service's own perspective; a command sent through the dispatcher is a system command, broadcast to every
+    // service, and each one hosting a perspective of that name would rebuild a stream it never found missing. An
+    // operator's command stays broadcast: it names a perspective without knowing which service hosts it.
+    var rebuilds = services.GetService<Perspectives.IPerspectiveRebuildRequestHandler>();
+    var autoRepair = _options.RepairMode == IntegrityRepairMode.AutoRepairCapped;
+    if (autoRepair && rebuilds is null && gaps.Count > 0) {
+      LogNoRebuildHandling(_logger, gaps.Count);
+    }
+    var rebuildBudget = rebuilds is null ? 0 : _options.MaxAutoRebuildsPerAudit;
     foreach (var gap in gaps) {
-      var autoRebuild = _options.RepairMode == IntegrityRepairMode.AutoRepairCapped && rebuildBudget > 0;
+      var autoRebuild = autoRepair && rebuildBudget > 0;
       metrics?.CoverageGapsDetected.Add(1, new KeyValuePair<string, object?>("perspective", gap.PerspectiveName));
       if (autoRebuild) {
         rebuildBudget--;
         metrics?.RebuildsRequested.Add(1, new KeyValuePair<string, object?>("perspective", gap.PerspectiveName));
-        await dispatcher.SendAsync(new RebuildPerspectiveCommand(
+        await rebuilds!.HandleAsync(new RebuildPerspectiveCommand(
           PerspectiveNames: [gap.PerspectiveName],
-          IncludeStreamIds: [gap.StreamId])).ConfigureAwait(false);
+          IncludeStreamIds: [gap.StreamId]), cancellationToken).ConfigureAwait(false);
       }
       await dispatcher.PublishAsync(new PerspectiveCoverageGapDetected {
         ReportStreamId = TrackedGuid.New().Value,
@@ -429,6 +439,10 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 81, Level = LogLevel.Information,
     Message = "Integrity audit disabled by configuration")]
   static partial void LogDisabled(ILogger logger);
+
+  [LoggerMessage(EventId = 93, Level = LogLevel.Warning,
+    Message = "Integrity audit: {GapCount} coverage gap(s) found at AutoRepairCapped, but this host has no rebuild handling registered (a data layer registers it), so they are reported and not repaired. Nothing is sent to other services: each one audits its own perspectives.")]
+  private static partial void LogNoRebuildHandling(ILogger logger, int gapCount);
 
   [LoggerMessage(EventId = 82, Level = LogLevel.Warning,
     Message = "LOCAL coverage gap: perspective '{PerspectiveName}' never folded {EventCount} settled event(s) on stream {GapStreamId} (autoRebuild={AutoRebuildRequested})")]

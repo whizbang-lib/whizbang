@@ -445,7 +445,8 @@ public class IntegrityAuditWorkerTests {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker, metrics);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker, metrics,
+      rebuilds: new CaptureRebuildHandler());
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
     // Passive counters: one collection reports every series' cumulative value (the declared ones
@@ -475,14 +476,16 @@ public class IntegrityAuditWorkerTests {
       })]
     };
     var dispatcher = new CaptureDispatcher();
+    var rebuilds = new CaptureRebuildHandler();
     var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxCoverageGapReportsPerAudit = 100 });
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxCoverageGapReportsPerAudit = 100 },
+      rebuilds: rebuilds);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     await Assert.That(dispatcher.Published.OfType<PerspectiveCoverageGapDetected>().Count()).IsEqualTo(100)
       .Because("the report loop is hard-capped — a mass gap must never flood the dispatcher/outbox.");
-    await Assert.That(dispatcher.Sent.Count).IsEqualTo(5)
+    await Assert.That(rebuilds.Requests.Count).IsEqualTo(5)
       .Because("rebuilds keep their own cap (MaxAutoRebuildsPerAudit default 5) within the capped set.");
   }
 
