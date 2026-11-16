@@ -87,6 +87,22 @@ public class OperationalTableRegistryGuardTests : EFCoreTestBase {
     await Assert.That(OperationalTableRegistry.Tables.Where(t => t.SweptHere && t.Class != OperationalTableClass.Rolling)).IsEmpty();
   }
 
+  /// <summary>
+  /// #2360 (owner decisions): the operator purge audit is State, kept as evidence of deliberate destruction; signal
+  /// cursors are Rolling and swept here (a gone instance's cursor); finished subscription backfills are State, the
+  /// marker that a backfill is done.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#every-table-is-classified</docs>
+  [Test]
+  public async Task TheDecidedTables_AreClassifiedAsDecidedAsync() {
+    await Assert.That(OperationalTableRegistry.Find("wh_stream_purge_audit")!.Class).IsEqualTo(OperationalTableClass.State);
+    var cursors = OperationalTableRegistry.Find("wh_signal_cursors")!;
+    await Assert.That(cursors.Class).IsEqualTo(OperationalTableClass.Rolling);
+    await Assert.That(cursors.Category).IsEqualTo(Whizbang.Core.Workers.OperationalCategory.Deliveries);
+    await Assert.That(cursors.SweptHere).IsTrue();
+    await Assert.That(OperationalTableRegistry.Find("wh_subscription_backfills")!.Class).IsEqualTo(OperationalTableClass.State);
+  }
+
   [Test]
   public async Task APerspectiveTable_IsStateByItsPrefix_AndAnUnknownTableIsNotClassifiedAsync() {
     await Assert.That(OperationalTableRegistry.Find("wh_per_order_summary")!.Class).IsEqualTo(OperationalTableClass.State);

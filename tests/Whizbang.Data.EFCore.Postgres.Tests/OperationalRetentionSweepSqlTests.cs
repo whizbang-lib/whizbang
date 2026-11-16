@@ -11,6 +11,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -273,6 +274,67 @@ public class OperationalRetentionSweepSqlTests : EFCoreTestBase {
     await Assert.That(links.Remaining).IsEqualTo(3L);
     await Assert.That(frames.Expired).IsEqualTo(2).Because("the frame only s1 used, and the frame no link ever named");
     await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_stack_frames WHERE frame = 'shared'")).IsEqualTo(1L);
+  }
+
+  // ── #2360: signal cursors and finished backfills ───────────────────────────────────────────
+
+  /// <summary>
+  /// #2360: a signal cursor goes once its instance is no longer registered and the cursor has not moved for the
+  /// Deliveries retention. Every pod start adds a cursor and nothing removed one. A live pod's cursor is never removed,
+  /// however long it has been idle, because the signal log's retention is held at the lowest live cursor.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#what-the-sweep-removes</docs>
+  [Test]
+  public async Task ASignalCursor_OfAGoneInstance_GoesPastTheRetention_ALivePodsNeverAsync() {
+    await using var conn = await _openAsync();
+    var live = TrackedGuid.New().Value;
+    var gone = TrackedGuid.New().Value;
+    var goneRecently = TrackedGuid.New().Value;
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = """
+        INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@live, 'CursorSvc', 'host', 1, NOW(), NOW() - INTERVAL '60 days', '{}'::jsonb);
+        INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id, updated_at) VALUES
+          (@live, 1, NOW() - INTERVAL '30 days'),
+          (@gone, 1, NOW() - INTERVAL '30 days'),
+          (@recent, 1, NOW() - INTERVAL '2 days');
+        """;
+      cmd.Parameters.AddWithValue("live", live);
+      cmd.Parameters.AddWithValue("gone", gone);
+      cmd.Parameters.AddWithValue("recent", goneRecently);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var row = (await _sweepAsync(conn, $$"""{"Deliveries": {{14 * DAY}}}""")).Single(r => r.Table == "wh_signal_cursors");
+
+    await Assert.That(row.Category).IsEqualTo(nameof(OperationalCategory.Deliveries));
+    await Assert.That(row.Expired).IsEqualTo(1).Because("only the cursor of a gone instance, idle past the retention");
+    await Assert.That(await _scalarAsync(conn, $"SELECT COUNT(*) FROM wh_signal_cursors WHERE instance_id = '{live}'"))
+      .IsEqualTo(1L).Because("a live pod's cursor holds back the signal log's retention, so it is never removed");
+    await Assert.That(await _scalarAsync(conn, $"SELECT COUNT(*) FROM wh_signal_cursors WHERE instance_id = '{goneRecently}'"))
+      .IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// #2360: a finished subscription backfill is the "already done" marker (a backfill is inserted ON CONFLICT DO
+  /// NOTHING), so removing it would start the backfill again. The sweep never touches it, whatever the retention.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#every-table-is-classified</docs>
+  [Test]
+  public async Task AFinishedSubscriptionBackfill_IsNeverSwept_ItIsTheAlreadyDoneMarkerAsync() {
+    await using var conn = await _openAsync();
+    await _executeAsync(conn, $"""
+      INSERT INTO wh_subscription_backfills (backfill_id, owner_service_id, owner_service_name, event_type, started_at, completed_at, outcome)
+      VALUES ('{TrackedGuid.New().Value}', '{TrackedGuid.New().Value}', 'owner-svc', 'T.A', NOW() - INTERVAL '400 days', NOW() - INTERVAL '399 days', 1)
+      """);
+    var everyCategoryAtOneSecond = "{" + string.Join(", ",
+      Enum.GetNames<OperationalCategory>().Select(c => $"\"{c}\": 1")) + "}";
+
+    var rows = await _sweepAsync(conn, everyCategoryAtOneSecond);
+
+    await Assert.That(rows.Any(r => r.Table == "wh_subscription_backfills")).IsFalse();
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_subscription_backfills")).IsEqualTo(1L);
+    await Assert.That(OperationalTableRegistry.Find("wh_subscription_backfills")!.Class).IsEqualTo(OperationalTableClass.State);
   }
 
   // ── no retention: report only ───────────────────────────────────────────────────────────────
