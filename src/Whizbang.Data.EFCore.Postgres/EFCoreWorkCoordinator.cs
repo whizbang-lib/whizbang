@@ -2971,6 +2971,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }, cancellationToken);
 
+  /// <inheritdoc />
+  public Task IntegrityRecordCompareOutcomeAsync(Guid originServiceId, bool fullMatch, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_record_compare_outcome")}(@p_origin, @p_full_match)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_full_match", fullMatch));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IntegrityAskDecision> IntegrityDecideOriginAskAsync(
+      Guid originServiceId, DateTimeOffset now, TimeSpan maxSkip, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_decide_origin_ask")}(@p_origin, @p_now, @p_max_skip)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_max_skip", NpgsqlTypes.NpgsqlDbType.Interval) { Value = maxSkip });
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return (IntegrityAskDecision)Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    }, cancellationToken);
+
   /// <summary>Clamps a requested window against the lane's settled max. Null = cannot window
   /// (nothing settled / no lane); otherwise the exclusive end the answer will actually cover.</summary>
   private async Task<long?> _clampWindowEndAsync(

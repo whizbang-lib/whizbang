@@ -357,6 +357,9 @@ public sealed partial class IntegrityAuditWorker(
     // matches nothing and every origin answers with silence. Never null: null asks for every type.
     var eventNamespaces = absorbed.Count > 0 ? absorbed : null;
     var requested = 0;
+    var skipped = 0;
+    var auditClock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+    var maxSkip = TimeSpan.FromMinutes(Math.Max(0, _options.MaxAskSkipMinutes));
     // #2104: a restarted process asks the origins the store kept, not only those whose checkpoint arrived since.
     await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
@@ -366,6 +369,24 @@ public sealed partial class IntegrityAuditWorker(
         // service on the shared topic. The origin's next checkpoint teaches the address.
         LogManifestRequestSkippedNoTopic(_logger, originName, originId);
         continue;
+      }
+      // #2349: the window above the seal changes only when the origin emits (its checkpoint position moves), this service
+      // receives (the highest position held moves), history is rewritten (the generation or the seal moves) or a verified
+      // window advances the seal. While none of those moved since the last full match, the ask would fold the same window
+      // on both sides and match again, so it is skipped; the store still says ask once the last ask is MaxAskSkipMinutes
+      // old, so what no remembered value tracks (an origin event that settles after the match) is still found. The
+      // full-history compare re-verifies below the seal, which an unchanged open window says nothing about.
+      var reason = sweep ? "sweep" : "every_cycle";
+      if (!sweep && maxSkip > TimeSpan.Zero) {
+        var decision = await coordinator.IntegrityDecideOriginAskAsync(originId, auditClock.GetUtcNow(), maxSkip, cancellationToken)
+          .ConfigureAwait(false);
+        if (decision == IntegrityAskDecision.Skip) {
+          metrics?.ManifestAsksSkipped.Add(1, new KeyValuePair<string, object?>("origin", originName));
+          LogManifestAskSkipped(_logger, originName, originId, _options.MaxAskSkipMinutes);
+          skipped++;
+          continue;
+        }
+        reason = _askReason(decision);
       }
       // #80-B/C: steady-state cycles ask WINDOWED from the stored seal — verified history is
       // never re-shipped or re-verified. The sweep re-verifies below the seal: it is trust-but-verify for exactly the
@@ -410,20 +431,34 @@ public sealed partial class IntegrityAuditWorker(
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),
-        new KeyValuePair<string, object?>("sweep", sweep));
+        new KeyValuePair<string, object?>("sweep", sweep),
+        new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.ASK_REASON_TAG, reason));
       LogManifestRequested(_logger, originName, originId);
       requested++;
     }
 
     // Nobody to ask. On a cold fleet start the origin set is still empty — it fills only from
     // inbound checkpoints — so this cycle audited nothing across services. Saying so lets the
-    // caller retry on the startup window instead of sleeping out the full interval.
-    if (requested == 0) {
+    // caller retry on the startup window instead of sleeping out the full interval. An origin skipped as unchanged
+    // (#2349) was reached: its last full match still stands.
+    if (requested == 0 && skipped == 0) {
       LogNoOriginsToAsk(_logger);
       return true;
     }
     return false;
   }
+
+  /// <summary>The <c>reason</c> tag of an ask the store decided (#2349).</summary>
+  private static string _askReason(IntegrityAskDecision decision) => decision switch {
+    IntegrityAskDecision.Moved => "moved",
+    IntegrityAskDecision.BoundReached => "bound_reached",
+    _ => "nothing_remembered",
+  };
+
+  [LoggerMessage(EventId = 100, Level = LogLevel.Debug,
+    Message = "Integrity manifest ask to origin '{OriginServiceName}' ({OriginServiceId}) skipped: nothing moved since the "
+            + "last full match; it is asked again at the latest {MaxAskSkipMinutes} minute(s) after the last ask")]
+  static partial void LogManifestAskSkipped(ILogger logger, string originServiceName, Guid originServiceId, int maxAskSkipMinutes);
 
   [LoggerMessage(EventId = 97, Level = LogLevel.Information,
     Message = "Integrity audit forgot {RowCount} repair-ledger row(s) of event types this service does not consume: "
