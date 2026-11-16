@@ -186,7 +186,108 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>
+  /// The stuck shape as an older build left it, then the upgrade (#2366): the cursor on the stream's highest id at its
+  /// lowest version, status RewindRequired | Completed, the flag naming a copy whose row is retired; the two later copies
+  /// pending, or retired too. The deploy's repair places the cursor and keeps the flag, so the fixed code resolves the
+  /// stream with exactly one rewind (a flag it cleared could have been a rewind still owed), and nothing rewinds it
+  /// again: not the copies, not a copy queued again, not the claim loop's later polls.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task AStuckCursorRepairedOnDeploy_IsResolvedByExactlyOneRewind_AndNeverASecondAsync(bool copiesPending) {
+    var ct = CancellationToken.None;
+    var streamId = (Guid)TrackedGuid.New();
+    var rewinds = new RewindCountingLogger();
+    await using var pipeline = _composePipeline(rewinds, snapshots: true);
+    await using var conn = await _openAsync(ct);
+    await pipeline.RegisterAsync(conn, ct);
+
+    var minted = DateTimeOffset.UtcNow.AddHours(-2);
+    var copies = new[] {
+      Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)),
+    };
+    var terminal = Guid.CreateVersion7(minted.AddHours(1));
+    await pipeline.CommitAsync(conn, streamId, [(terminal, 100m)], ct);
+    await pipeline.CommitAsync(conn, streamId, [.. copies.Select((id, i) => (id, (decimal)(i + 1)))], ct);
+    await _receivedFromOneOriginAsync(conn, streamId, terminal, copies, ct);
+    await _appliedAndFlaggedAsync(conn, streamId, terminal, copies[0], ct);
+    await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE event_id = @id", copies[0], ct);
+    if (!copiesPending) {
+      await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE stream_id = @id", streamId, ct);
+    }
+
+    // The deploy: migration 452's repair, as it runs once on upgrade.
+    await _repairOnDeployAsync(conn, ct);
+    var pendingAfterRepair = await _scalarAsync<long>(conn,
+      "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id AND processed_at IS NULL", streamId, ct);
+    await Assert.That(pendingAfterRepair).IsGreaterThan(0L)
+      .Because("a flagged pair with no pending work has its trigger queued by the repair, so its rewind runs");
+    var workIds = await _workIdsAsync(conn, streamId, ct);
+
+    await pipeline.StartAsync(ct);
+    foreach (var workId in workIds) {
+      await pipeline.CompletionOf(workId).WaitAsync(_signalDeadline, ct);
+    }
+    var rewindsWhenSettled = rewinds.Count;
+    Console.WriteLine($"copiesPending={copiesPending} settled: rewinds={rewindsWhenSettled} {await _cursorAsync(conn, streamId, ct)}");
+
+    // A redelivered copy, queued again, then the claim loop's later polls.
+    var requeued = await _requeueAsync(conn, streamId, copies[1], ct);
+    await pipeline.CompletionOf(requeued).WaitAsync(_signalDeadline, ct);
+    var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, streamId, ct);
+
+    var cursorVersion = await _scalarAsync<long>(conn, """
+      SELECT e.version::bigint FROM wh_perspective_cursors c JOIN wh_event_store e ON e.event_id = c.last_event_id
+      WHERE c.stream_id = @id
+      """, streamId, ct);
+    var flagged = await _scalarAsync<bool>(conn,
+      "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct);
+
+    await Assert.That(rewindsWhenSettled).IsEqualTo(1).Because("the flag the repair kept is resolved by exactly one rewind");
+    await Assert.That(rewinds.Count).IsEqualTo(1).Because("a copy queued again is completed without a second rewind");
+    await Assert.That(reclaims).IsEqualTo(0).Because("a settled stream is not claimed again");
+    await Assert.That(cursorVersion).IsEqualTo(4L).Because("the cursor ends on the stream's last version");
+    await Assert.That(flagged).IsFalse().Because("the completed rewind clears its flag");
+  }
+
   // ===== Helpers =====
+
+  private static async Task _repairOnDeployAsync(NpgsqlConnection conn, CancellationToken ct) {
+    await using var repair = conn.CreateCommand();
+    repair.CommandText = "SELECT wh_settle_id_ordered_rewind_flags()";
+    _ = await repair.ExecuteScalarAsync(ct);
+  }
+
+  private static async Task<List<Guid>> _workIdsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
+    await using var command = conn.CreateCommand();
+    command.CommandText = "SELECT event_work_id FROM wh_perspective_events WHERE stream_id = @id AND processed_at IS NULL";
+    command.Parameters.AddWithValue("id", streamId);
+    var ids = new List<Guid>();
+    await using var reader = await command.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      ids.Add(reader.GetGuid(0));
+    }
+    return ids;
+  }
+
+  /// <summary>Counts the claims of the stream over the next <see cref="QUIET_POLLS"/> claim polls.</summary>
+  private static async Task<int> _reclaimsOverQuietPollsAsync(Pipeline pipeline, Guid streamId, CancellationToken ct) {
+    var reclaims = 0;
+    var seen = 0;
+    var polls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    pipeline.ClaimWorker.OnBatchClaimed += batch => {
+      if (batch.PerspectiveStreamIds.Contains(streamId) || batch.PerspectiveWork.Any(w => w.StreamId == streamId)) {
+        Interlocked.Increment(ref reclaims);
+      }
+      if (Interlocked.Increment(ref seen) >= QUIET_POLLS) {
+        polls.TrySetResult();
+      }
+    };
+    await polls.Task.WaitAsync(_signalDeadline, ct);
+    return Volatile.Read(ref reclaims);
+  }
 
   private static async Task _executeAsync(NpgsqlConnection conn, string sql, Guid id, CancellationToken ct) {
     await using var command = conn.CreateCommand();

@@ -125,7 +125,7 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
   [Test]
   [Arguments(true)]
   [Arguments(false)]
-  public async Task Repair_ACursorInTheStuckShape_MovesToTheLastVersionBeforePendingWork_AndItsFlagIsClearedAsync(bool copiesPending) {
+  public async Task Repair_ACursorInTheStuckShape_MovesToTheLastVersionBeforePendingWork_AndKeepsItsFlagAsync(bool copiesPending) {
     await using var conn = await _openAsync();
     var stream = TrackedGuid.New();
     var (terminal, c0, c1, c2) = (_id(100), _id(1), _id(2), _id(3));
@@ -137,15 +137,41 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
       await _pendingAsync(conn, stream, c2);
     }
 
-    var settled = await _settleAsync(conn);
+    var repaired = await _settleAsync(conn);
 
     var cursor = await _readAsync(conn, stream);
-    await Assert.That(settled).IsEqualTo(1);
+    await Assert.That(repaired).IsEqualTo(1);
     await Assert.That(cursor.LastEventId).IsEqualTo(copiesPending ? c0 : c2)
       .Because("the cursor moves to the last version before the first pending event, never past pending work");
-    await Assert.That(cursor.Status).IsEqualTo(COMPLETED);
-    await Assert.That(cursor.Trigger).IsNull();
-    await Assert.That(await _settleAsync(conn)).IsEqualTo(0).Because("the repair is idempotent: a settled cursor is not in the shape");
+    await Assert.That(cursor.Status).IsEqualTo(COMPLETED | REWIND_REQUIRED)
+      .Because("the repair only places the cursor: the rewind the flag asks for is the fixed code's to run, once");
+    await Assert.That(cursor.Trigger).IsEqualTo(c0);
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(copiesPending ? 2 : 1)
+      .Because("a flagged pair with no pending work gets its trigger queued, so the rewind runs instead of waiting for the next event");
+    await Assert.That(await _settleAsync(conn)).IsEqualTo(0).Because("the repair is idempotent: a repaired cursor is not in the shape");
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(copiesPending ? 2 : 1).Because("nothing is queued twice");
+  }
+
+  /// <summary>
+  /// A genuine late arrival has the stuck shape too: the receive chain flagged the cursor for an event stored after it
+  /// (a higher version) whose id sorts below it. When an older build retired its row by a live apply the idempotency
+  /// filter dropped, the rewind it asks for is still owed, and the repair must not clear it.
+  /// </summary>
+  [Test]
+  public async Task Repair_AGenuineLateArrivalWhoseRowIsRetired_KeepsItsFlag_AndQueuesItsRewindAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var (applied, late) = (_id(100), _id(1));
+    await _appendAsync(conn, stream, applied, late);
+    await _cursorAsync(conn, stream, applied, COMPLETED | REWIND_REQUIRED, trigger: late);
+
+    _ = await _settleAsync(conn);
+
+    var cursor = await _readAsync(conn, stream);
+    await Assert.That(cursor.Status & REWIND_REQUIRED).IsEqualTo(REWIND_REQUIRED)
+      .Because("a flag the repair cannot tell from an owed rewind is left for the rewind");
+    await Assert.That(cursor.Trigger).IsEqualTo(late);
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(1).Because("the trigger is queued, so its rewind runs");
   }
 
   [Test]
@@ -250,6 +276,14 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
   private static async Task<int> _settleAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand("SELECT wh_settle_id_ordered_rewind_flags()", conn);
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  private static async Task<long> _pendingCountAsync(NpgsqlConnection conn, Guid stream) {
+    await using var cmd = new NpgsqlCommand(
+      "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @s AND perspective_name = @p AND processed_at IS NULL", conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", PERSPECTIVE);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
   private sealed record CursorRow(Guid LastEventId, int Status, Guid? Trigger, long? ReplayedThrough);
