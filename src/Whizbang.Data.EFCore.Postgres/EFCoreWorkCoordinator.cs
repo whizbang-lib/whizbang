@@ -2677,7 +2677,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = __scope.Connection.CreateCoordinatorCommand();
     return await CoordinatorRetentionSql.SweepOperationalRetentionAsync(
       cmd, PgIdentifier.QualifyPrefix(schema), retention, batchSize, cancellationToken).ConfigureAwait(false);
   }
