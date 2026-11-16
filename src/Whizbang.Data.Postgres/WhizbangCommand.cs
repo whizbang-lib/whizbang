@@ -84,7 +84,7 @@ public static class WhizbangCommand {
         _recordIfExecuted();
         var mechanism = DbMechanismScope.Current;
         _mechanism = mechanism ?? DbMechanism.Untagged;
-        base.CommandText = value;
+        base.CommandText = mechanism is null || value is null ? value : Annotate(value, mechanism);
         _startedAt = TimeProvider.System.GetTimestamp();
         _pending = true;
       }

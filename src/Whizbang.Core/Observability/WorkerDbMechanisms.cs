@@ -215,3 +215,10 @@ namespace Whizbang.Core.MultiStream {
     public DbMechanism DbMechanism => DbMechanism.MultiStream;
   }
 }
+
+namespace Whizbang.Core.Configuration {
+  internal partial class StartupSettingsReportService : IDbMechanismOwner {
+    /// <inheritdoc />
+    public DbMechanism DbMechanism => DbMechanism.Startup;
+  }
+}

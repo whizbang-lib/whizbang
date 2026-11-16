@@ -36,6 +36,7 @@ public static class DbMechanismScope {
   public static Scope Begin(DbMechanism mechanism) {
     ArgumentNullException.ThrowIfNull(mechanism);
     var previous = _current.Value;
+    _current.Value = mechanism;
     return new Scope(previous);
   }
 

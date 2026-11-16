@@ -58,6 +58,7 @@ public class WorkerDbMechanismsTests {
     [typeof(Whizbang.Core.Signals.SignalBusHostedService)] = DbMechanism.Signals,
     [typeof(Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService)] = DbMechanism.TypeRegistry,
     [typeof(Whizbang.Core.MultiStream.MultiStreamCommandWorker)] = DbMechanism.MultiStream,
+    [typeof(Whizbang.Core.Configuration.StartupSettingsReportService)] = DbMechanism.Startup,
   };
 
   [Test]

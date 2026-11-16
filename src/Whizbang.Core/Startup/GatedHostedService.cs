@@ -59,7 +59,7 @@ public abstract class GatedHostedService : BackgroundService {
     await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
     // A worker that names its mechanism is started inside it, so its loop, and every task the loop starts, carries
     // the name to each statement it runs. The scope closes here; the loop keeps the copy it captured.
-    using (DbMechanismScope.Current is { } unchanged ? DbMechanismScope.Begin(unchanged) : null) {
+    using (Service is IDbMechanismOwner owner ? DbMechanismScope.Begin(owner.DbMechanism) : null) {
       await Service.StartAsync(stoppingToken).ConfigureAwait(false);
     }
     _started.TrySetResult();

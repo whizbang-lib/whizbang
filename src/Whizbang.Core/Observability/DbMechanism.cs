@@ -120,11 +120,14 @@ public sealed class DbMechanism {
   /// <summary>The signal bus and its durable signals.</summary>
   public static readonly DbMechanism Signals = new("signals");
 
+  /// <summary>Startup work run by a hosted service: reports and checks read once as the instance starts.</summary>
+  public static readonly DbMechanism Startup = new("startup");
+
   /// <summary>Every mechanism, <see cref="Untagged"/> included: the complete set of tag values.</summary>
   public static IReadOnlyList<DbMechanism> All { get; } = [
     Untagged, Claim, Heartbeat, Perspective, CompletionFlush, Lease, Inbox, Outbox, Maintenance, Coalesce,
     IntegrityCheckpoint, IntegrityAudit, IntegrityRepair, IntegrityRecheck, IntegrityDelivery, OriginReattribution,
     Subscription, TableStatistics, Schedule, Standby, TypeRegistry, NotifyStatistics, Role, Lifecycle, DeadLetter,
-    MultiStream, CommitOrder, Signals,
+    MultiStream, CommitOrder, Signals, Startup,
   ];
 }
