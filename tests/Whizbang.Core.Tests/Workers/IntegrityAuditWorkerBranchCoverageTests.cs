@@ -554,8 +554,8 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
       TimeSpan settleWindow, int maxGaps, CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([.. Gaps.Take(maxGaps)]);
 
-    public Task<DigestVerificationResult> VerifyDigestTableAsync(
-      TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+    public Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+      FullHistoryCompareRequest request, CancellationToken cancellationToken = default) {
       VerifyCalls++;
       DuringHeal?.Invoke();
       return Task.FromResult(DigestResult);

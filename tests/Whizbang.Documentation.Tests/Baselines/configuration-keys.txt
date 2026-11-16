@@ -327,6 +327,8 @@ Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes
 Whizbang:StreamIntegrity:DivergenceReportCooldownMinutes
 Whizbang:StreamIntegrity:EpochClosureEnabled
 Whizbang:StreamIntegrity:FullHistoryCompare:Enabled
+Whizbang:StreamIntegrity:FullHistoryCompare:Lookback
+Whizbang:StreamIntegrity:FullHistoryCompare:MaxPerRun
 Whizbang:StreamIntegrity:FullHistoryCompare:Schedule
 Whizbang:StreamIntegrity:FullSweepCron
 Whizbang:StreamIntegrity:FullSweepEveryNthAudit

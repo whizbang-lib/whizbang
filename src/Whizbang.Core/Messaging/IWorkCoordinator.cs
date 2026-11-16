@@ -1876,6 +1876,47 @@ public interface IWorkCoordinator {
       DriftRemoved = 0,
       DriftAdded = 0,
     });
+
+  /// <summary>
+  /// #2361: one slice of the full-history compare's heal. Takes the next <see cref="FullHistoryCompareRequest.MaxPerRun"/>
+  /// streams in key order after the cursor the last slice stored (the streams the lifecycle ledger records and the
+  /// streams the digest table holds, so a phantom bucket is in a slice too), heals those last written within
+  /// <see cref="FullHistoryCompareRequest.Lookback"/> (and those the ledger cannot date) as
+  /// <see cref="VerifyDigestTableAsync"/> heals the whole store, and stores where it stopped. A slice that reaches the end
+  /// completes the pass, and the next slice starts again from the first stream. Default: zeros, a pass with nothing in it.
+  /// </summary>
+  /// <param name="request">The settle window, the lookback and the streams per slice.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Checked/healed bucket counts, the streams taken, and whether the pass completed.</returns>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs</tests>
+  Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+    FullHistoryCompareRequest request,
+    CancellationToken cancellationToken = default) => Task.FromResult(new DigestVerificationResult {
+      BucketsChecked = 0,
+      DriftUpdated = 0,
+      DriftRemoved = 0,
+      DriftAdded = 0,
+      PassCompleted = true,
+    });
+
+  /// <summary>
+  /// #2361: where the full-history compare's ask to <paramref name="originServiceId"/> starts: the first sequence of the
+  /// oldest epoch of that origin's lane sealed within <paramref name="lookback"/>, never above
+  /// <paramref name="seal"/> (so the answer can still advance the seal). With no epoch sealed within the lookback it is
+  /// the seal itself. Default: zero, the whole history.
+  /// </summary>
+  /// <param name="originServiceId">The origin asked.</param>
+  /// <param name="lookback">How far back, by seal time, the ask reaches.</param>
+  /// <param name="epochWidth">Sequence positions per epoch.</param>
+  /// <param name="seal">The origin's current seal.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The sequence the ask starts from.</returns>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs:TheAsksStart_IsTheOldestEpochSealedWithinTheLookback_NeverAboveTheSealAsync</tests>
+  Task<long> GetFullHistoryCompareStartAsync(
+    Guid originServiceId, TimeSpan lookback, long epochWidth, long seal,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
   /// <summary>
   /// Tables whose heap is disproportionate to their live rows, re-measured at call time.
   /// </summary>

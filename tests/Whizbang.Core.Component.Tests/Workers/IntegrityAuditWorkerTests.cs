@@ -330,8 +330,8 @@ public class IntegrityAuditWorkerTests {
       .Because("the scheduled sweep IS the trust-but-verify pass — it must verify even with the counter disabled");
     var request = _deserializeRequest(transport.Published.Single().Envelope);
     await Assert.That(request.UseRecompute).IsTrue();
-    await Assert.That(request.Windowed).IsFalse()
-      .Because("a sweep that trusted the seals could never catch a bad seal");
+    await Assert.That(request.Windowed).IsTrue()
+      .Because("the compare asks from the oldest epoch sealed within its lookback, below the seal (#2361)");
   }
 
   // ── #80-B/C: steady cycles ask WINDOWED, from the stored seal ───────────
@@ -392,23 +392,79 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(_deserializeRequest(transport.Published.Single().Envelope).KnownOriginGeneration).IsNull();
   }
 
+  /// <summary>
+  /// #2361: the compare is bounded. Its ask starts at the oldest epoch sealed within the lookback, windowed, and its heal
+  /// takes one slice of the configured size; the whole-store heal is never called. If either limit were ignored, the
+  /// ask would go back to the start of history or the heal would cover the whole store again.
+  /// </summary>
   [Test]
-  public async Task SweepCycle_AsksFullHistory_NotWindowedAsync() {
-    // The sweep is trust-but-verify: it exists to catch exactly the state the seals assume is
-    // fine. A windowed sweep would only re-verify what the seals already cover — circular trust.
-    var coordinator = new AuditCoordinator { SealedThrough = 123 };
+  public async Task SweepCycle_AsksFromTheLookback_AndHealsOneSliceAsync() {
+    var coordinator = new AuditCoordinator { SealedThrough = 9_000, CompareStart = 400 };
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
-    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker);
+    var options = new StreamIntegrityOptions {
+      FullSweepEveryNthAudit = 1,
+      FullHistoryCompare = { Enabled = true, Lookback = TimeSpan.FromDays(12), MaxPerRun = 33 },
+      SealRecheck = { Enabled = true },
+      Sealing = { EpochWidth = 250 },
+    };
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, options, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
     var request = _deserializeRequest(transport.Published.Single().Envelope);
-    await Assert.That(request.Windowed).IsFalse()
-      .Because("a sweep that trusted the seals could never catch a bad seal");
+    await Assert.That(request.Windowed).IsTrue()
+      .Because("the compare asks from the lookback, not from the start of history (#2361)");
+    await Assert.That(request.SinceSequence).IsEqualTo(400L);
     await Assert.That(request.UseRecompute).IsTrue();
+    await Assert.That(coordinator.CompareStartAsked).IsEqualTo((TimeSpan.FromDays(12), 250L, 9_000L));
+    await Assert.That(coordinator.LastSlice).IsEqualTo(
+      new FullHistoryCompareRequest(TimeSpan.FromMinutes(options.AuditSettleWindowMinutes), TimeSpan.FromDays(12), 33));
+    await Assert.That(coordinator.WholeStoreHeals).IsEqualTo(0)
+      .Because("the heal works in slices; one statement over the whole store is what the slices replace");
+  }
+
+  [Test]
+  public async Task SweepCycle_RecordsTheSlice_AndThePassItCompletesAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var coordinator = new AuditCoordinator {
+      DigestResult = new DigestVerificationResult {
+        BucketsChecked = 5,
+        DriftUpdated = 0,
+        DriftRemoved = 0,
+        DriftAdded = 0,
+        StreamsChecked = 17,
+        PassCompleted = true,
+        PassRuns = 4,
+      },
+    };
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      new StreamIntegrityOptions { FullHistoryCompare = { Enabled = true } }, metrics: metrics);
+    var seen = new Dictionary<string, long>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Meter == metrics.CompareSlices.Meter
+          && instrument.Name.StartsWith("whizbang.stream_integrity.compare_", StringComparison.Ordinal)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (seen) {
+        seen[instrument.Name] = seen.GetValueOrDefault(instrument.Name) + value;
+      }
+    });
+    listener.Start();
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+    listener.RecordObservableInstruments();
+
+    await Assert.That(seen["whizbang.stream_integrity.compare_streams_covered"]).IsEqualTo(17L)
+      .Because("history covered: the streams the slice took");
+    await Assert.That(seen["whizbang.stream_integrity.compare_slices"]).IsEqualTo(1L);
+    await Assert.That(seen["whizbang.stream_integrity.compare_passes_completed"]).IsEqualTo(1L);
+    await Assert.That(seen["whizbang.stream_integrity.compare_pass_runs"]).IsEqualTo(4L)
+      .Because("the runs the completed pass took");
   }
 
   private static RequestIntegrityManifest _deserializeRequest(IMessageEnvelope envelope) {
@@ -810,8 +866,30 @@ public class IntegrityAuditWorkerTests {
 
     public Task<DigestVerificationResult> VerifyDigestTableAsync(
       TimeSpan settleWindow, CancellationToken cancellationToken = default) {
-      VerifyCalls++;
+      WholeStoreHeals++;
       return Task.FromResult(DigestResult);
+    }
+
+    /// <summary>Heals the whole store in one statement: the compare must never call it (#2361).</summary>
+    public int WholeStoreHeals { get; private set; }
+
+    public FullHistoryCompareRequest? LastSlice { get; private set; }
+
+    public Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+      FullHistoryCompareRequest request, CancellationToken cancellationToken = default) {
+      VerifyCalls++;
+      LastSlice = request;
+      return Task.FromResult(DigestResult);
+    }
+
+    /// <summary>Where the compare's ask starts; the arguments it was asked with.</summary>
+    public long CompareStart { get; init; }
+    public (TimeSpan Lookback, long EpochWidth, long Seal)? CompareStartAsked { get; private set; }
+
+    public Task<long> GetFullHistoryCompareStartAsync(
+      Guid originServiceId, TimeSpan lookback, long epochWidth, long seal, CancellationToken cancellationToken = default) {
+      CompareStartAsked = (lookback, epochWidth, seal);
+      return Task.FromResult(CompareStart);
     }
   }
 

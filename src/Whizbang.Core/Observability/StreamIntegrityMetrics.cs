@@ -317,6 +317,22 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
   public PassiveCounter<long> CheckDriftFound { get; }
 
+  /// <summary>Streams the full-history compare's slices took: the history it covered (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> CompareStreamsCovered { get; }
+
+  /// <summary>Slices of the full-history compare run (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> CompareSlices { get; }
+
+  /// <summary>Passes of the full-history compare completed: a slice reached the last stream (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> ComparePassesCompleted { get; }
+
+  /// <summary>The runs one completed pass of the full-history compare took (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public Histogram<long> ComparePassRuns { get; }
+
   /// <summary>How long one run of an opt-in check took, in seconds; tagged by check (#2353).</summary>
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
   public Histogram<double> CheckDuration { get; }
@@ -343,6 +359,18 @@ public sealed class StreamIntegrityMetrics {
     CheckDuration = meter.CreateHistogram<double>(
       "whizbang.stream_integrity.check_duration", unit: "s",
       description: "One run of an opt-in integrity check, end to end; tagged by check");
+    CompareStreamsCovered = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.compare_streams_covered",
+      description: "Streams the full-history compare's slices took: the history it covered");
+    CompareSlices = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.compare_slices",
+      description: "Slices of the full-history compare run; each heals at most MaxPerRun streams");
+    ComparePassesCompleted = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.compare_passes_completed",
+      description: "Passes of the full-history compare completed over the streams written within its lookback");
+    ComparePassRuns = meter.CreateHistogram<long>(
+      "whizbang.stream_integrity.compare_pass_runs",
+      description: "The runs one completed pass of the full-history compare took");
 
     CheckpointsPublished = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.checkpoints_published",

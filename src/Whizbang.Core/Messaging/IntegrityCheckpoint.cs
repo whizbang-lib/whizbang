@@ -250,6 +250,15 @@ public sealed record DigestVerificationResult {
 
   /// <summary>Total drifted buckets — zero means the incremental maintenance is provably clean.</summary>
   public int TotalDrift => DriftUpdated + DriftRemoved + DriftAdded;
+
+  /// <summary>Streams a slice of the full-history compare took (#2361); zero for the whole-store heal.</summary>
+  public int StreamsChecked { get; init; }
+
+  /// <summary>Whether this slice reached the last stream, completing a pass over the store (#2361).</summary>
+  public bool PassCompleted { get; init; }
+
+  /// <summary>The runs the pass took, when <see cref="PassCompleted"/>; otherwise the runs so far (#2361).</summary>
+  public int PassRuns { get; init; }
 }
 
 /// <summary>
