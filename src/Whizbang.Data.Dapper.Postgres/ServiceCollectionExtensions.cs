@@ -196,6 +196,9 @@ public static class ServiceCollectionExtensions {
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
+      global::Whizbang.Core.Workers.RequestResponseExpiryStep>());
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
     // Register perspective snapshot and rewind options
@@ -365,6 +368,9 @@ public static class ServiceCollectionExtensions {
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
+      global::Whizbang.Core.Workers.RequestResponseExpiryStep>());
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
     // Register perspective snapshot and rewind options
