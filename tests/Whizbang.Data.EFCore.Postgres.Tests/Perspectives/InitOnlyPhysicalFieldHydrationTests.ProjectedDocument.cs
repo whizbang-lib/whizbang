@@ -142,15 +142,41 @@ public partial class InitOnlyPhysicalFieldHydrationTests {
   }
 
   [Test]
-  public async Task SplitRecord_AnOperatorAfterTheProjectionThatIsNotPaging_KeepsTodaysBehaviorAsync() {
+  public async Task SplitRecord_AFilterAfterTheProjection_MovesBeneathIt_AndCarriesThePromotedFieldsAsync() {
     var streamId = await _writeSplitRecordAsync();
     await using var context = _queryContext();
 
     var models = await context.Set<PerspectiveRow<InitOnlySplitModel>>()
       .Where(r => r.Id == streamId).Select(r => r.Data).Where(m => m.Note == "document").ToListAsync();
 
+    await Assert.That(models.Single().Note).IsEqualTo("document");
+    await Assert.That(models.Single().Status).IsEqualTo("active")
+      .Because("the filter moves beneath the projection (#2302), which leaves the projection the query's result (#2304)");
+  }
+
+  [Test]
+  public async Task SplitRecord_TheShapeAGraphQLListFieldWrites_CarriesThePromotedFieldsAsync() {
+    var streamId = await _writeSplitRecordAsync();
+    await using var context = _queryContext();
+
+    // A repository projects, then the GraphQL layer sorts, filters on the stream id and pages over the model.
+    var models = await context.Set<PerspectiveRow<InitOnlySplitModel>>()
+      .Select(r => r.Data).OrderBy(m => m.Priority).Where(m => m.Id == streamId).Skip(0).Take(5).ToListAsync();
+
+    await Assert.That(models.Single().Status).IsEqualTo("active");
+    await Assert.That(models.Single().Priority).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task SplitRecord_AFilterAfterPagingTheProjection_KeepsTodaysBehaviorAsync() {
+    var streamId = await _writeSplitRecordAsync();
+    await using var context = _queryContext();
+
+    var models = await context.Set<PerspectiveRow<InitOnlySplitModel>>()
+      .Where(r => r.Id == streamId).Select(r => r.Data).Skip(0).Where(m => m.Note == "document").ToListAsync();
+
     await Assert.That(models.Single().Note).IsEqualTo("document")
-      .Because("a filter over the model after the projection cannot follow a client-evaluated copy, so the query is left "
-        + "for the database to translate as before; moving such a filter beneath the projection is #2302's");
+      .Because("a filter does not commute with paging, so it stays above the projection, and a filter over the model "
+        + "after the projection cannot follow a client-evaluated copy, so the query is left as it was");
   }
 }
