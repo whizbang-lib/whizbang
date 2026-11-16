@@ -13,8 +13,12 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Columns">The key, parenthesized, as <c>CREATE INDEX</c> takes it.</param>
 /// <param name="Predicate">The partial-index predicate, or null.</param>
 /// <param name="Comment">The index comment, or null.</param>
+/// <param name="Replaces">An index this one supersedes (#2345), dropped concurrently once this one is valid; null for none.
+/// A migration cannot rebuild an index on a large table, and a valid index under an existing name is never rebuilt, so a
+/// changed index is built under a new name and the old one goes only after it can serve.</param>
 /// <docs>operations/infrastructure/migrations#indexes-built-after-the-migrations</docs>
-public sealed record ConcurrentIndexDefinition(string Table, string Name, string Columns, string? Predicate, string? Comment = null);
+public sealed record ConcurrentIndexDefinition(
+  string Table, string Name, string Columns, string? Predicate, string? Comment = null, string? Replaces = null);
 
 /// <summary>What one <see cref="ConcurrentIndexBuild.EnsureAsync"/> did.</summary>
 /// <docs>operations/infrastructure/migrations#indexes-built-after-the-migrations</docs>
