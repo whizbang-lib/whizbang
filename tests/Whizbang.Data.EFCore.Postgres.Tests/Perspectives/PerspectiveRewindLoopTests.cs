@@ -108,7 +108,109 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     await Assert.That(flagged).IsFalse().Because("the cursor holds no rewind request once the rewind settled");
   }
 
+  /// <summary>
+  /// The stuck shape exactly (#2366): the cursor on the stream's highest event id, which sits at its lowest version;
+  /// the earliest copy (the flag's trigger) already retired; the two later copies, lower ids at higher versions,
+  /// pending; status RewindRequired | Completed. At most one rewind settles it; then a copy queued again (a redelivery
+  /// under a new work row) is already applied, so it is completed with no second rewind,
+  /// whether the same worker or a restarted one takes it. The cursor ends on the stream's last version, in the order
+  /// the replay folds, and the flag is clear.
+  /// </summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task AStuckCursorOnTheHighestIdAtTheLowestVersion_ConvergesAfterOneRewind_AndARequeuedCopyIsNotRewoundAsync(bool restart) {
+    var ct = CancellationToken.None;
+    var streamId = (Guid)TrackedGuid.New();
+    var rewinds = new RewindCountingLogger();
+    var pipeline = _composePipeline(rewinds, snapshots: true);
+    try {
+      await using var conn = await _openAsync(ct);
+      await pipeline.RegisterAsync(conn, ct);
+
+      var minted = DateTimeOffset.UtcNow.AddHours(-2);
+      var copies = new[] {
+        Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)),
+      };
+      var terminal = Guid.CreateVersion7(minted.AddHours(1));
+      await pipeline.CommitAsync(conn, streamId, [(terminal, 100m)], ct);
+      await pipeline.CommitAsync(conn, streamId, [.. copies.Select((id, i) => (id, (decimal)(i + 1)))], ct);
+      await _receivedFromOneOriginAsync(conn, streamId, terminal, copies, ct);
+      await _appliedAndFlaggedAsync(conn, streamId, terminal, copies[0], ct);
+      // The trigger's own row was retired by an earlier pass; only the two later copies are pending.
+      await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE event_id = @id", copies[0], ct);
+
+      await pipeline.StartAsync(ct);
+      foreach (var copy in copies[1..]) {
+        await pipeline.CompletionOf(await _workIdAsync(conn, copy, ct)).WaitAsync(_signalDeadline, ct);
+      }
+      var rewindsWhenSettled = rewinds.Count;
+      Console.WriteLine($"restart={restart} settled: rewinds={rewindsWhenSettled} {await _cursorAsync(conn, streamId, ct)}");
+
+      if (restart) {
+        await pipeline.DisposeAsync();
+        pipeline = _composePipeline(rewinds, snapshots: true);
+        await pipeline.StartAsync(ct);
+      }
+
+      // A redelivered copy of the middle event, queued again under a new work row.
+      var requeued = await _requeueAsync(conn, streamId, copies[1], ct);
+      await pipeline.CompletionOf(requeued).WaitAsync(_signalDeadline, ct);
+      Console.WriteLine($"restart={restart} requeued: rewinds={rewinds.Count} {await _cursorAsync(conn, streamId, ct)}");
+
+      var cursorVersion = await _scalarAsync<long>(conn, """
+        SELECT e.version::bigint FROM wh_perspective_cursors c JOIN wh_event_store e ON e.event_id = c.last_event_id
+        WHERE c.stream_id = @id
+        """, streamId, ct);
+      var flagged = await _scalarAsync<bool>(conn,
+        "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct);
+
+      await Assert.That(rewindsWhenSettled).IsLessThanOrEqualTo(1).Because("the stuck cursor is settled by at most one rewind");
+      await Assert.That(rewinds.Count).IsEqualTo(rewindsWhenSettled)
+        .Because("a copy already applied, queued again, is completed without a second rewind");
+      await Assert.That(cursorVersion).IsEqualTo(4L)
+        .Because("the cursor ends on the last event in the order the replay folds the stream, not on the highest id");
+      await Assert.That(flagged).IsFalse().Because("the completed rewind clears its flag");
+    } finally {
+      await pipeline.DisposeAsync();
+    }
+  }
+
   // ===== Helpers =====
+
+  private static async Task _executeAsync(NpgsqlConnection conn, string sql, Guid id, CancellationToken ct) {
+    await using var command = conn.CreateCommand();
+    command.CommandText = sql;
+    command.Parameters.AddWithValue(nameof(id), id);
+    await command.ExecuteNonQueryAsync(ct);
+  }
+
+  /// <summary>Queues a stored event again for the perspective under a new work row, as a redelivery does.</summary>
+  private static async Task<Guid> _requeueAsync(NpgsqlConnection conn, Guid streamId, Guid eventId, CancellationToken ct) {
+    var workId = (Guid)TrackedGuid.New();
+    await using var command = conn.CreateCommand();
+    command.CommandText = """
+      INSERT INTO wh_perspective_events (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at)
+      VALUES (@work, @event, @stream, @perspective, 0, 0, NOW())
+      """;
+    command.Parameters.AddWithValue("work", workId);
+    command.Parameters.AddWithValue("event", eventId);
+    command.Parameters.AddWithValue("stream", streamId);
+    command.Parameters.AddWithValue("perspective", TypeNameFormatter.GetPerspectiveName(typeof(OrderPerspective)));
+    await command.ExecuteNonQueryAsync(ct);
+    return workId;
+  }
+
+  private static async Task<string> _cursorAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
+    await using var command = conn.CreateCommand();
+    command.CommandText = """
+      SELECT format('cursor v%s status %s trigger %s pending %s', e.version, c.status, c.rewind_trigger_event_id,
+        (SELECT count(*) FROM wh_perspective_events pe WHERE pe.stream_id = c.stream_id AND pe.processed_at IS NULL))
+      FROM wh_perspective_cursors c JOIN wh_event_store e ON e.event_id = c.last_event_id WHERE c.stream_id = @id
+      """;
+    command.Parameters.AddWithValue("id", streamId);
+    return (string?)await command.ExecuteScalarAsync(ct) ?? "no cursor";
+  }
 
   private static readonly Guid _origin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-000000002366");
 
