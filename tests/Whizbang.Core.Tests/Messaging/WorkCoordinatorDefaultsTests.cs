@@ -908,6 +908,17 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task RecheckDigestEpochsAsync_WithoutProviderSupport_ChecksNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecheckDigestEpochsAsync(new SealRecheckRequest(
+      TimeSpan.Zero, 1, TimeSpan.FromDays(30), TimeSpan.FromDays(7), Refold: true));
+
+    await Assert.That(result).IsEqualTo(new EpochVerificationResult(0, 0))
+      .Because("#2353: an engine without the epoch substrate re-checks nothing and finds no drift");
+  }
+
+  [Test]
   public async Task GetIntegrityOriginGenerationAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

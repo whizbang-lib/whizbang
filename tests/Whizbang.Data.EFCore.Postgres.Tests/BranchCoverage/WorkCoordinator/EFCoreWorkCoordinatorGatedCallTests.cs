@@ -197,6 +197,12 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       await Assert.That((await c.ReindexQueueIndexAsync("wh_active_streams_pkey")).HasValue).IsTrue());
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());
     register("CloseDigestEpochs", "CloseDigestEpochsAsync", (c, _) => c.CloseDigestEpochsAsync(60, 10));
+    // #2354: the operational retention sweep takes the gate before its connection.
+    register("SweepOperationalRetention", "SweepOperationalRetentionAsync", async (c, _) =>
+      await Assert.That(await c.SweepOperationalRetentionAsync(
+        new Dictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> {
+          [Whizbang.Core.Workers.OperationalCategory.RewriteLog] = TimeSpan.FromDays(14),
+        }, batchSize: 10)).IsNotEmpty());
     register("FindStuckOutboxRows", "_findStuckRowsAsync", async (c, _) =>
       await Assert.That(await c.FindStuckOutboxRowsAsync(5, 10)).IsEmpty());
     register("CleanupCompletedStreams", "CleanupCompletedStreamsAsync", (c, _) => c.CleanupCompletedStreamsAsync([_newId()]));

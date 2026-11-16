@@ -173,6 +173,19 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
+  public async Task RunCheckOnce_ACheckThisBuildDoesNotKnow_RunsNothingAtAllAsync() {
+    var coordinator = new AuditCoordinator();
+    var transport = new CaptureTransport();
+    var worker = _workerAskingOneOrigin(coordinator, transport, _bothChecksOn());
+
+    await worker.RunCheckOnceAsync((IntegrityCheck)99, CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls + coordinator.EpochVerifyCalls).IsEqualTo(0)
+      .Because("an occurrence naming a check this build does not know (one written by a newer release) runs nothing");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
   public async Task RunSweepOnce_WithBothChecksOff_RunsNothingAtAllAsync() {
     var coordinator = new AuditCoordinator();
     var transport = new CaptureTransport();
