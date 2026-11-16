@@ -1,9 +1,13 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -19,8 +23,55 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 [NotInParallel("IntegrityManifestGates")]   // the manifest receptors' per-process gates are shared state
 public class TwoServiceIntegrityConvergenceTests : EFCoreTestBase {
+  /// <summary>A superseding type the catalog registers, so a redelivered child's key is read from its payload.</summary>
+  private static readonly string _superseding = TypeNameFormatter.Format(typeof(SupersedingProbeEmbedded));
   private const string DURABLE = "TwoService.Contracts.OrderPlaced, TwoService.Contracts";
   private const string PAYLOAD = """{"k":"v"}""";
+
+  /// <summary>
+  /// #2350: the consumer holds the newest event of a key; a redelivery carries an older copy of the key. The copy is never
+  /// stored and never queued for a perspective, and audit cycles after it find the pair equal: no further resend.
+  /// </summary>
+  [Test]
+  public async Task AnOlderRedeliveredCopy_IsNeverStoredOrApplied_AndThePairConvergesWithNoFurtherResendAsync() {
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions,
+      new Dictionary<string, EventFlags> { [typeof(SupersedingProbeEmbedded).FullName!] = EventFlags.Superseding });
+    await TwoServiceHarness.ExecuteAsync(h.Consumer, """
+      INSERT INTO wh_message_associations
+        (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (gen_random_uuid(), @t, 'perspective', 'TwoService.ProfilePerspective', 'consumer-svc', @t, NOW(), NOW())
+      ON CONFLICT DO NOTHING
+      """, ("t", _superseding));
+    var stream = (Guid)TrackedGuid.New();
+    var payload = JsonSerializer.Serialize(new SupersedingProbeEmbedded { DocumentId = stream, Model = "k1" },
+      JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(SupersedingProbeEmbedded)));
+    var ids = await h.EmitAsync(
+      new TwoServiceEmit(stream, _superseding, TwoServiceHarness.FLAG_SUPERSEDING, "k1", payload),
+      new TwoServiceEmit(stream, _superseding, TwoServiceHarness.FLAG_SUPERSEDING, "k1", payload));
+    var (older, newest) = (ids[0], ids[1]);
+    await h.DeliverAsync([newest]);
+
+    await h.OperatorRedeliverAsync([stream], [_superseding]);
+
+    Console.WriteLine($"DIAG older {older} newest {newest} redelivered {string.Join(",", h.Redelivered)}");
+    Console.WriteLine("DIAG " + await TwoServiceHarness.DescribeAsync(h.Consumer, stream));
+    await Assert.That(h.Redelivered).Contains(older).Because("positive control: the redelivery carried the older copy");
+    await Assert.That(await h.ConsumerHoldsAsync(older)).IsFalse().Because("an older copy than the one held is never stored");
+    await Assert.That(await TwoServiceHarness.CountAsync(h.Consumer,
+      "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id", ("id", older))).IsEqualTo(0L)
+      .Because("a copy never stored is never queued for a perspective");
+    var settled = h.Tally();
+    var held = await TwoServiceHarness.FingerprintAsync(h.Consumer, [stream]);
+
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      await h.AuditAsync(TwoServiceAudit.TypesTable, _superseding);
+      await h.AuditAsync(TwoServiceAudit.Streams, _superseding);
+      await h.AuditAsync(TwoServiceAudit.TypesWindowed, _superseding);
+      await Assert.That(h.Tally()).IsEqualTo(settled)
+        .Because($"cycle {cycle}: the pair is equal, so nothing is requested, reported or resent");
+      await Assert.That(await TwoServiceHarness.FingerprintAsync(h.Consumer, [stream])).IsEqualTo(held);
+    }
+  }
 
   /// <summary>
   /// #2351: the consumer holds events of the origin without the origin's commit sequence (held without a sequence).
