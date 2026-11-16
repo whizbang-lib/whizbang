@@ -2,13 +2,17 @@
 -- SPDX-License-Identifier: MIT
 
 -- The reverse of 452_StaleCopiesAboveTheNewestAreRewalked.sql (#2366): complete_perspective_cursor_work returns to 005's
--- definition and update_perspective_cursors to 016's, both copied whole; the repair function and the
+-- definition and update_perspective_cursors to 016's, both copied whole; the repair functions and the
 -- replayed_through_commit_sequence column go. A walk 452 restarted completes again and changes nothing more.
 
 SELECT __SCHEMA__.drop_all_overloads('wh_restart_superseding_history_walks');
+SELECT __SCHEMA__.drop_all_overloads('wh_settle_id_ordered_rewind_flags');
 
 SELECT __SCHEMA__.drop_all_overloads('complete_perspective_cursor_work');
 
+-- 005's definition, restored.
+-- <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorBroadTests.cs:ReportPerspectiveCompletionAsync_AdvancesTheCursorAndClearsTheErrorAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_cursor_work(
   p_stream_id UUID,
   p_perspective_name TEXT,
@@ -122,7 +126,7 @@ BEGIN
   PERFORM 1
   FROM __SCHEMA__.wh_perspective_cursors pc
   JOIN (
-    SELECT DISTINCT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
+    SELECT DISTINCT (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
     FROM jsonb_array_elements(p_completed_events) AS elem
   ) p ON p.stream_id = pc.stream_id AND p.perspective_name = pc.perspective_name
   ORDER BY pc.stream_id, pc.perspective_name
@@ -135,11 +139,11 @@ BEGIN
   -- does not hold cannot be a cursor (fk_perspective_cursors_event) and is not a candidate. Every reported pair's
   -- status becomes 2 when nothing is left unprocessed, whether or not its position moved.
   WITH pairs AS (
-    SELECT DISTINCT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
+    SELECT DISTINCT (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
     FROM jsonb_array_elements(p_completed_events) AS elem
   ),
   reported AS (
-    SELECT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
+    SELECT (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
       (elem->>'LastEventId')::UUID AS last_event_id
     FROM jsonb_array_elements(p_completed_events) AS elem
     WHERE elem->>'LastEventId' IS NOT NULL
@@ -211,4 +215,7 @@ COMMENT ON FUNCTION __SCHEMA__.update_perspective_cursors(JSONB, BOOLEAN) IS
 'present, never past the first unprocessed event and never moved back: created when missing, advanced otherwise. '
 'Status is 2 for every reported pair with no unprocessed work left.';
 
+-- RECLAIM: not required: the column is a nullable BIGINT that only a replay's completion sets, so a cursor row keeps at
+--          most eight dropped bytes, and every later update of a cursor (one per completion) writes the row anew with the
+--          dropped attribute null, so the bytes leave as cursors move.
 ALTER TABLE __SCHEMA__.wh_perspective_cursors DROP COLUMN IF EXISTS replayed_through_commit_sequence;

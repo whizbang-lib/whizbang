@@ -122,6 +122,56 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
       .Because("what a replay read stays read; a lower frontier or a live apply never lowers it");
   }
 
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Repair_ACursorInTheStuckShape_MovesToTheLastVersionBeforePendingWork_AndItsFlagIsClearedAsync(bool copiesPending) {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var (terminal, c0, c1, c2) = (_id(100), _id(1), _id(2), _id(3));
+    await _appendAsync(conn, stream, terminal, c0, c1, c2);
+    // The trigger's own row is retired; the two later copies are pending or retired too.
+    await _cursorAsync(conn, stream, terminal, COMPLETED | REWIND_REQUIRED, trigger: c0);
+    if (copiesPending) {
+      await _pendingAsync(conn, stream, c1);
+      await _pendingAsync(conn, stream, c2);
+    }
+
+    var settled = await _settleAsync(conn);
+
+    var cursor = await _readAsync(conn, stream);
+    await Assert.That(settled).IsEqualTo(1);
+    await Assert.That(cursor.LastEventId).IsEqualTo(copiesPending ? c0 : c2)
+      .Because("the cursor moves to the last version before the first pending event, never past pending work");
+    await Assert.That(cursor.Status).IsEqualTo(COMPLETED);
+    await Assert.That(cursor.Trigger).IsNull();
+    await Assert.That(await _settleAsync(conn)).IsEqualTo(0).Because("the repair is idempotent: a settled cursor is not in the shape");
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Repair_AFlagWhoseTriggerIsStillPending_OrIsBelowTheCursorByVersion_IsLeftAsync(bool triggerPending) {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    if (triggerPending) {
+      // A late arrival the receive chain flagged and no rewind has replayed yet: its row is still pending.
+      var (applied, late) = (_id(100), _id(1));
+      await _appendAsync(conn, stream, applied, late);
+      await _cursorAsync(conn, stream, applied, COMPLETED | REWIND_REQUIRED, trigger: late);
+      await _pendingAsync(conn, stream, late);
+    } else {
+      // A straggler below the cursor by version: the flag is the rewind's to settle, not the repair's.
+      var (straggler, cursorAt) = (_id(1), _id(100));
+      await _appendAsync(conn, stream, straggler, cursorAt);
+      await _cursorAsync(conn, stream, cursorAt, COMPLETED | REWIND_REQUIRED, trigger: straggler);
+    }
+
+    _ = await _settleAsync(conn);
+
+    await Assert.That((await _readAsync(conn, stream)).Status & REWIND_REQUIRED).IsEqualTo(REWIND_REQUIRED);
+  }
+
   // ===== Helpers =====
 
   /// <summary>An id minted <paramref name="seconds"/> after a fixed instant: a larger number sorts later.</summary>
@@ -195,6 +245,11 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
     await using var cmd = new NpgsqlCommand("SELECT commit_sequence FROM wh_event_store WHERE event_id = @e", conn);
     cmd.Parameters.AddWithValue("e", eventId);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  private static async Task<int> _settleAsync(NpgsqlConnection conn) {
+    await using var cmd = new NpgsqlCommand("SELECT wh_settle_id_ordered_rewind_flags()", conn);
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
   private sealed record CursorRow(Guid LastEventId, int Status, Guid? Trigger, long? ReplayedThrough);

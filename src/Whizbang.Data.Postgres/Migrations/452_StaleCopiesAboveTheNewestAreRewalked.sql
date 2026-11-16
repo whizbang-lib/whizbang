@@ -27,6 +27,7 @@
 --                straggler by version, never naming a covered event.
 --              - update_perspective_cursors: the batched path already moves by version and never back; it now stores
 --                the frontier too.
+--              - wh_settle_id_ordered_rewind_flags(): settles the cursors already in the stuck shape, called once here.
 --
 --              Number 452: reserved for this change.
 --
@@ -35,7 +36,7 @@
 -- Dependencies: 005 (complete_perspective_cursor_work), 016 (update_perspective_cursors), 380 (wh_type_history_walks),
 --               449 (_wh_supersedes in the superseding walk)
 -- Objects: wh_restart_superseding_history_walks, wh_perspective_cursors, complete_perspective_cursor_work,
---          update_perspective_cursors
+--          update_perspective_cursors, wh_settle_id_ordered_rewind_flags
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- Restarts every completed superseding history walk from its first event. Returns the walks restarted.
@@ -242,7 +243,7 @@ BEGIN
   PERFORM 1
   FROM __SCHEMA__.wh_perspective_cursors pc
   JOIN (
-    SELECT DISTINCT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
+    SELECT DISTINCT (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
     FROM jsonb_array_elements(p_completed_events) AS elem
   ) p ON p.stream_id = pc.stream_id AND p.perspective_name = pc.perspective_name
   ORDER BY pc.stream_id, pc.perspective_name
@@ -256,13 +257,13 @@ BEGIN
   -- status becomes 2 when nothing is left unprocessed, whether or not its position moved. The highest replay frontier
   -- reported for the pair is stored (#2366).
   WITH pairs AS (
-    SELECT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
+    SELECT (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
       max((elem->>'ReplayedThroughCommitSequence')::BIGINT) AS replayed_through
     FROM jsonb_array_elements(p_completed_events) AS elem
     GROUP BY 1, 2
   ),
   reported AS (
-    SELECT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
+    SELECT (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
       (elem->>'LastEventId')::UUID AS last_event_id
     FROM jsonb_array_elements(p_completed_events) AS elem
     WHERE elem->>'LastEventId' IS NOT NULL
@@ -334,3 +335,63 @@ COMMENT ON FUNCTION __SCHEMA__.update_perspective_cursors(JSONB, BOOLEAN) IS
 '#1363: persists each stream perspective cursor at the latest of the reported event and any processed rows still '
 'present, never past the first unprocessed event and never moved back: created when missing, advanced otherwise. '
 'Status is 2 for every reported pair with no unprocessed work left. #2366: stores the highest replay frontier reported.';
+
+-- Settles every cursor left in the stuck shape of #2366: flagged RewindRequired for a trigger stored after the cursor's
+-- event (a higher version) whose id sorts below it, so it was flagged by id order only, and whose own work row is
+-- retired (the rule 374 settles a flag by: its work is done). Each moves to the last event of its stream by version that
+-- sits before the first event still pending for the pair (never back, never past pending work), and its flag is
+-- cleared. Returns the cursors settled.
+-- <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_ACursorInTheStuckShape_MovesToTheLastVersionBeforePendingWork_AndItsFlagIsClearedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_AFlagWhoseTriggerIsStillPending_OrIsBelowTheCursorByVersion_IsLeftAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_settle_id_ordered_rewind_flags() RETURNS INTEGER AS $$
+DECLARE
+  v_settled INTEGER;
+BEGIN
+  WITH stuck AS (
+    SELECT c.stream_id, c.perspective_name, ce.version AS cursor_version
+    FROM __SCHEMA__.wh_perspective_cursors c
+    JOIN __SCHEMA__.wh_event_store ce ON ce.event_id = c.last_event_id
+    JOIN __SCHEMA__.wh_event_store te ON te.event_id = c.rewind_trigger_event_id AND te.stream_id = c.stream_id
+    WHERE (c.status & 32) = 32
+      AND te.version > ce.version
+      AND te.event_id < c.last_event_id
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.stream_id = c.stream_id AND pe.perspective_name = c.perspective_name
+          AND pe.event_id = te.event_id AND pe.processed_at IS NULL)
+  ),
+  positioned AS (
+    SELECT s.stream_id, s.perspective_name,
+      (SELECT e.event_id
+         FROM __SCHEMA__.wh_event_store e
+        WHERE e.stream_id = s.stream_id
+          AND e.version > s.cursor_version
+          AND e.version < COALESCE(
+            (SELECT min(pv.version)
+               FROM __SCHEMA__.wh_perspective_events pe
+               JOIN __SCHEMA__.wh_event_store pv ON pv.event_id = pe.event_id
+              WHERE pe.stream_id = s.stream_id AND pe.perspective_name = s.perspective_name
+                AND pe.processed_at IS NULL),
+            9223372036854775807)
+        ORDER BY e.version DESC
+        LIMIT 1) AS position_event_id
+    FROM stuck s
+  )
+  UPDATE __SCHEMA__.wh_perspective_cursors c
+  SET last_event_id = COALESCE(p.position_event_id, c.last_event_id),
+      status = c.status & ~32,
+      rewind_trigger_event_id = NULL,
+      rewind_flagged_at = NULL,
+      rewind_first_flagged_at = NULL
+  FROM positioned p
+  WHERE c.stream_id = p.stream_id AND c.perspective_name = p.perspective_name;
+  GET DIAGNOSTICS v_settled = ROW_COUNT;
+  RETURN v_settled;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_settle_id_ordered_rewind_flags() IS
+'#2366: settles cursors flagged RewindRequired for a trigger stored after the cursor (higher version, lower id) whose work is retired: each moves to its stream''s last version before pending work, never back, and its flag is cleared. Returns the cursors settled.';
+
+SELECT __SCHEMA__.wh_settle_id_ordered_rewind_flags();
