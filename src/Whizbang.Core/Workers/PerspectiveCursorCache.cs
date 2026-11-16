@@ -42,12 +42,12 @@ public sealed class PerspectiveCursorCache {
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), HashSet<Guid>> _replayed = new();
 
   /// <summary>
-  /// #2366 — the commit-sequence frontier the last completed replay of each (stream, perspective) read through. Unlike
+  /// #2366: the commit-sequence frontier the last completed replay of each (stream, perspective) read through. Unlike
   /// <see cref="_replayed"/> it is also stored on the cursor, so a cold cache (restart, eviction) reads it back.
   /// </summary>
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), long> _replayedThrough = new();
 
-  /// <summary>#2366 — the rewind the stored cursor asks for (its RewindRequired trigger), as the cursor was last read.</summary>
+  /// <summary>#2366: the rewind the stored cursor asks for (its RewindRequired trigger), as the cursor was last read.</summary>
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), Guid> _rewindRequests = new();
 
   /// <summary>The most events remembered per (stream, perspective); past it the set starts over.</summary>
@@ -160,7 +160,7 @@ public sealed class PerspectiveCursorCache {
   }
 
   /// <summary>
-  /// #2366 — records the commit-sequence frontier a completed replay of (stream, perspective) read through. Never lowered:
+  /// #2366: records the commit-sequence frontier a completed replay of (stream, perspective) read through. Never lowered:
   /// an event stamped at or below it stays applied.
   /// </summary>
   /// <param name="streamId">The stream.</param>
@@ -174,7 +174,7 @@ public sealed class PerspectiveCursorCache {
   }
 
   /// <summary>
-  /// #2366 — whether a completed replay of (stream, perspective) read the event stamped at <paramref name="commitSequence"/>.
+  /// #2366: whether a completed replay of (stream, perspective) read the event stamped at <paramref name="commitSequence"/>.
   /// False for an unstamped event: no frontier can say it was read.
   /// </summary>
   /// <param name="streamId">The stream.</param>
@@ -189,7 +189,7 @@ public sealed class PerspectiveCursorCache {
       && seq <= through;
 
   /// <summary>
-  /// #2366 — records the rewind the stored cursor asks for: its RewindRequired trigger, or none.
+  /// #2366: records the rewind the stored cursor asks for: its RewindRequired trigger, or none.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
@@ -206,7 +206,7 @@ public sealed class PerspectiveCursorCache {
   }
 
   /// <summary>
-  /// #2366 — the trigger of the rewind the stored cursor asked for when it was last read, if it asked for one.
+  /// #2366: the trigger of the rewind the stored cursor asked for when it was last read, if it asked for one.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>

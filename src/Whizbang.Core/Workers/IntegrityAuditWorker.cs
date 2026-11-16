@@ -392,7 +392,7 @@ public sealed partial class IntegrityAuditWorker(
       // never re-shipped or re-verified. The sweep re-verifies below the seal: it is trust-but-verify for exactly the
       // state the seals assume is fine. #2361: it reaches back to the oldest epoch sealed within its lookback, not to the
       // start of history, and never above the seal, so a clean answer still advances it. An origin that predates the
-      // protocol ignores the extra fields and answers unwindowed — the comparator then compares legacy and the seal
+      // protocol ignores the extra fields and answers unwindowed; the comparator then compares legacy and the seal
       // simply stays put.
       var seal = await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
       var since = sweep

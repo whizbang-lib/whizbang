@@ -48,6 +48,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 [Category("Shard5")]
 public class PerspectiveRewindLoopTests : EFCoreTestBase {
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
+  // A fixed instant the event ids are minted from: only their order matters, never their distance from now.
+  private static readonly DateTimeOffset _minted = new(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
 
   /// <summary>Claim polls watched after the stream settles: a loop re-claims it on the next one or two.</summary>
   private const int QUIET_POLLS = 30;
@@ -64,7 +66,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     await pipeline.RegisterAsync(conn, ct);
 
     // The copies belong before the terminal event: their ids are older. They land after it.
-    var minted = DateTimeOffset.UtcNow.AddHours(-2);
+    var minted = _minted;
     var copies = new[] {
       Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)),
     };
@@ -133,7 +135,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
       await using var conn = await _openAsync(ct);
       await pipeline.RegisterAsync(conn, ct);
 
-      var minted = DateTimeOffset.UtcNow.AddHours(-2);
+      var minted = _minted;
       var copies = new[] {
         Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)),
       };
@@ -204,7 +206,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
 
-    var minted = DateTimeOffset.UtcNow.AddHours(-2);
+    var minted = _minted;
     var copies = new[] {
       Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)),
     };

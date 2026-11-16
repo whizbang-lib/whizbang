@@ -73,7 +73,7 @@ public class PerspectiveCursorCacheReplayedThroughTests {
 
   [Test]
   public async Task AnIdleStream_IsEvicted_WithItsReplayedEventsAsync() {
-    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var options = new PerspectiveStreamAffinityOptions { IdleEvictionWindow = TimeSpan.FromMinutes(15) };
     var cache = new PerspectiveCursorCache(options, clock);
     var stream = Guid.CreateVersion7();
@@ -130,7 +130,7 @@ public class PerspectiveCursorCacheReplayedThroughTests {
 
   [Test]
   public async Task InvalidateStreamClearAndEviction_ForgetTheFrontierAndTheRequestAsync() {
-    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var cache = new PerspectiveCursorCache(new PerspectiveStreamAffinityOptions { IdleEvictionWindow = TimeSpan.FromMinutes(15) }, clock);
     var (a, b, c) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
     foreach (var stream in new[] { a, b, c }) {

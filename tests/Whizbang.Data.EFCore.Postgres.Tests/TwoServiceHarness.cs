@@ -76,6 +76,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   private int _processedOrigin;
   private int _processedConsumer;
   private DateTimeOffset _clock = _t0;
+  private TimeProvider? _consumerClock;
 
   private TwoServiceHarness(Dictionary<string, EventFlags> markers) => _markers = markers;
 
@@ -97,6 +98,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
       _originDbName = originDbName,
+      _consumerClock = consumerClock,
     };
     var cs = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = originDbName,
@@ -305,7 +307,10 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     await _pumpUntilQuietAsync();
   }
 
-  /// <summary>The origin's checkpoint reaches the consumer: its highest stamped position, as the checkpoint announces it.</summary>
+  /// <summary>
+  /// The origin's checkpoint reaches the consumer: its highest stamped position, as the checkpoint announces it, received
+  /// at the consumer's clock (the harness clock when the consumer runs on none).
+  /// </summary>
   public async Task CheckpointAsync() {
     long head;
     await using (var conn = await _openAsync(Origin)) {
@@ -313,7 +318,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     }
     await using var ctx = new WorkCoordinationDbContext(Consumer.Options);
     await new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, _json)
-      .IntegrityRecordOriginCheckpointAsync(OriginId, ORIGIN_NAME, ORIGIN_REQUEST_TOPIC, DateTimeOffset.UtcNow, head);
+      .IntegrityRecordOriginCheckpointAsync(OriginId, ORIGIN_NAME, ORIGIN_REQUEST_TOPIC, _consumerClock?.GetUtcNow() ?? _clock, head);
   }
 
   /// <summary>The manifest asks the consumer has sent so far.</summary>

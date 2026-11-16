@@ -123,7 +123,7 @@ public sealed partial class RepairDrainWorker(
     var replyTopic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
     if (coordinator is null || transport is null || serializer is null || tracker is null
         || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(replyTopic)) {
-      return false;   // no dispatch infrastructure — the ledger keeps the backlog durable.
+      return false;   // no dispatch infrastructure; the ledger keeps the backlog durable.
     }
 
     // Directed or not at all — the same rule as every other integrity send: only origins whose

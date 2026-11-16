@@ -2332,7 +2332,7 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// #2366 — what the stored cursor says about rewinds: the frontier a completed replay read through, and the rewind it
+  /// #2366: what the stored cursor says about rewinds: the frontier a completed replay read through, and the rewind it
   /// asks for (RewindRequired with a trigger), so the drain path honors the flag and covers what a replay already read.
   /// </summary>
   internal static void _hydrateReplayState(PerspectiveCursorCache cache, PerspectiveCursorInfo cursor) {

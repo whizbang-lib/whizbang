@@ -61,6 +61,8 @@ public sealed class RewindCheckPerspective :
 /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
 public class PerspectiveRewindWriteCheckTests {
   private const string PERSPECTIVE_NAME = nameof(RewindCheckPerspective);
+  // A fixed instant the event ids are minted from: only their order matters, never their distance from now.
+  private static readonly DateTimeOffset _minted = new(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
 
   [Test]
   public async Task ARewind_WritesAgainstTheRowVersionItReadAsync() {
@@ -87,7 +89,7 @@ public class PerspectiveRewindWriteCheckTests {
   public async Task ARewind_ReportsTheReplayedEventLastByVersion_NotTheHighestIdAsync() {
     var harness = new Harness();
     var streamId = TrackedGuid.New().Value;
-    var minted = DateTimeOffset.UtcNow.AddHours(-2);
+    var minted = _minted;
     var copies = new[] { Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)) };
     var terminal = Guid.CreateVersion7(minted.AddHours(1));
     await harness.AppendAsync(streamId, new RewindCheckCompleted { StreamId = streamId }, terminal);

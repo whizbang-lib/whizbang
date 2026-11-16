@@ -251,7 +251,7 @@ public sealed partial class PerspectiveRebuildRequestHandler(
 
   private static string[] _resolvePerspectiveNames(
       string[]? requested, string[] registeredNames) {
-    // System commands broadcast to every service via SharedTopicInboxStrategy — each service
+    // System commands broadcast to every service via SharedTopicInboxStrategy: each service
     // receives this command and independently decides which perspectives IT owns. The
     // receptor always intersects the requested set with the local registry so a service only
     // rebuilds what it actually hosts. No central ownership / dispatch is required.
