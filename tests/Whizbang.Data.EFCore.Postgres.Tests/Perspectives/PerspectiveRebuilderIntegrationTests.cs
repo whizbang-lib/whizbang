@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [Category("Shard4")]
-public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
+public partial class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   // What the rebuilder published during a test. One per test instance, so tests do not see each other's events.
   private readonly PublishedEventLog _publishedEvents = new();

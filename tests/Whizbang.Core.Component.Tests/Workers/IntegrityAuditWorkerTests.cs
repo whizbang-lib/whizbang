@@ -35,7 +35,7 @@ public class IntegrityAuditWorkerTests {
   private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
   [Test]
-  public async Task LocalGaps_ReportAndDispatchCappedRebuildsAsync() {
+  public async Task LocalGaps_ReportAndRepairCappedInThisServiceAsync() {
     var coordinator = new AuditCoordinator {
       Gaps = [
         new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 },
@@ -43,8 +43,10 @@ public class IntegrityAuditWorkerTests {
       ]
     };
     var dispatcher = new CaptureDispatcher();
+    var rebuilds = new CaptureRebuildHandler();
     var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 });
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 },
+      rebuilds: rebuilds);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -52,10 +54,34 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(reports.Count).IsEqualTo(2);
     await Assert.That(reports.Count(r => r.AutoRebuildRequested)).IsEqualTo(1)
       .Because("the rebuild cap is a hard per-cycle budget — the second gap reports without rebuilding.");
-    var rebuild = (RebuildPerspectiveCommand)dispatcher.Sent.Single();
+    var rebuild = rebuilds.Requests.Single();
     await Assert.That(rebuild.PerspectiveNames).IsEquivalentTo(["OrdersPerspective"]);
     await Assert.That(rebuild.IncludeStreamIds).IsEquivalentTo([coordinator.Gaps[0].StreamId])
       .Because("the rebuild is scoped to exactly the uncovered stream — local repair, minimal blast radius.");
+    await Assert.That(dispatcher.Sent).IsEmpty()
+      .Because("the gap is in this service's own perspective: the repair runs here, and a command sent through the " +
+               "dispatcher is broadcast to every service (#2344).");
+  }
+
+  [Test]
+  public async Task AutoRepair_WithNoRebuildHandling_ReportsTheGapAsNotRepairedAndSendsNothingAsync() {
+    var coordinator = new AuditCoordinator {
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
+    };
+    var dispatcher = new CaptureDispatcher();
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 },
+      logger: logger);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var report = (PerspectiveCoverageGapDetected)dispatcher.Published.Single();
+    await Assert.That(report.AutoRebuildRequested).IsFalse()
+      .Because("a host with no rebuild handling repairs nothing, so the report must not claim a rebuild was asked for");
+    await Assert.That(dispatcher.Sent).IsEmpty()
+      .Because("the repair is never handed to the transport for another service to run (#2344)");
+    await Assert.That(logger.Saw("no rebuild handling")).IsTrue();
   }
 
   [Test]
@@ -643,6 +669,15 @@ public class IntegrityAuditWorkerTests {
   }
 
   /// <summary>Records rendered log messages so the branch actually taken can be asserted.</summary>
+  /// <summary>The rebuild handling this service would run a repair through: records each request.</summary>
+  private sealed class CaptureRebuildHandler : Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler {
+    public List<RebuildPerspectiveCommand> Requests { get; } = [];
+    public ValueTask HandleAsync(RebuildPerspectiveCommand message, CancellationToken cancellationToken = default) {
+      Requests.Add(message);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   private sealed class MessageLogger : ILogger<IntegrityAuditWorker> {
     private readonly List<string> _messages = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -662,8 +697,12 @@ public class IntegrityAuditWorkerTests {
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegritySweepScheduleState? sweepState = null,
       ILogger<IntegrityAuditWorker>? logger = null,
-      TimeProvider? clock = null) {
+      TimeProvider? clock = null,
+      Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler? rebuilds = null) {
     var services = new ServiceCollection();
+    if (rebuilds is not null) {
+      services.AddSingleton(rebuilds);
+    }
     if (clock is not null) {
       services.AddSingleton(clock);
     }

@@ -22,11 +22,25 @@ internal sealed class PublishedEventLog {
 }
 
 /// <summary>
+/// The transport between this service and another: everything this service's dispatcher sends or publishes arrives in
+/// the other service's inbox, the way a system command is broadcast to every service.
+/// </summary>
+internal sealed class ServiceWire {
+  private readonly List<object> _inbox = [];
+  private readonly System.Threading.Lock _gate = new();
+
+  public void Carry(object message) { lock (_gate) { _inbox.Add(message); } }
+
+  /// <summary>What the other service's inbox received.</summary>
+  public IReadOnlyList<object> Inbox { get { lock (_gate) { return [.. _inbox]; } } }
+}
+
+/// <summary>
 /// IDispatcher double that keeps what was published, modeled on the Sagas tests' RecordingDispatcher. Only the
 /// PublishAsync overloads and PublishOnceAsync do anything; every other member throws, so a rebuild that starts
 /// routing through a different surface fails loudly instead of passing quietly.
 /// </summary>
-internal sealed class RecordingRebuildDispatcher(PublishedEventLog log) : IDispatcher {
+internal sealed class RecordingRebuildDispatcher(PublishedEventLog log, ServiceWire? wire = null) : IDispatcher {
   public int SimpleCallCount { get; private set; }
   public int OptionsCallCount { get; private set; }
   public int PublishOnceCallCount { get; private set; }
@@ -41,6 +55,7 @@ internal sealed class RecordingRebuildDispatcher(PublishedEventLog log) : IDispa
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
     SimpleCallCount++;
     log.Add(eventData!);
+    wire?.Carry(eventData!);
     return Task.FromResult<IDeliveryReceipt>(_noopReceipt());
   }
 
@@ -60,7 +75,14 @@ internal sealed class RecordingRebuildDispatcher(PublishedEventLog log) : IDispa
   }
 
   // Everything else — throws if exercised.
-  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull => _ns();
+  /// <summary>A send reaches the other services only through the wire; without one this double refuses it.</summary>
+  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
+    if (wire is null) {
+      return _ns();
+    }
+    wire.Carry(message);
+    return Task.FromResult<IDeliveryReceipt>(_noopReceipt());
+  }
   public Task<IDeliveryReceipt> SendAsync(object message) => _ns();
   public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) => _ns();
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull => _ns();

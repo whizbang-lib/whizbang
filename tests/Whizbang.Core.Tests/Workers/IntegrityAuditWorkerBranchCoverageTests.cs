@@ -92,13 +92,14 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var rebuilds = new CaptureRebuildHandler();
     var worker = _buildWorker(coordinator, dispatcher, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 },
-      tracker);
+      tracker, rebuilds: rebuilds);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
-    var rebuild = (RebuildPerspectiveCommand)dispatcher.Sent.Single();
+    var rebuild = rebuilds.Requests.Single();
     await Assert.That(rebuild.IncludeStreamIds?.Contains(gapStream) == true).IsTrue()
       .Because("the capped auto-rebuild is dispatched even when no counter records it");
     var reported = (PerspectiveCoverageGapDetected)dispatcher.Published.Single();
@@ -400,8 +401,12 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
       string[]? absorbedNamespaces = null,
       string[]? ownedDomains = null,
       FakeTimeProvider? clock = null,
-      IntegritySweepScheduleState? scheduleState = null) {
+      IntegritySweepScheduleState? scheduleState = null,
+      Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler? rebuilds = null) {
     var services = new ServiceCollection();
+    if (rebuilds is not null) {
+      services.AddSingleton(rebuilds);
+    }
     services.AddSingleton<TimeProvider>(clock ?? new FakeTimeProvider(_auditNow));
     if (scheduleState is not null) {
       services.AddSingleton(scheduleState);
@@ -585,5 +590,14 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
     }
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
+  /// <summary>The rebuild handling this service would run a repair through: records each request.</summary>
+  private sealed class CaptureRebuildHandler : Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler {
+    public List<RebuildPerspectiveCommand> Requests { get; } = [];
+    public ValueTask HandleAsync(RebuildPerspectiveCommand message, CancellationToken cancellationToken = default) {
+      Requests.Add(message);
+      return ValueTask.CompletedTask;
+    }
   }
 }
