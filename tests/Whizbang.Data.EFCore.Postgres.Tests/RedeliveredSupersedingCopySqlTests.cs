@@ -179,7 +179,7 @@ public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {
   private static async Task<List<string>> _reconcileAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT stream_id, present_count, adopted_count, superseded_satisfied_count "
-      + "FROM wh_reconcile_redelivered_bundles(@origins, @names, @bundles, @ids, @seqs)";
+      + "FROM wh_reconcile_redelivered_bundles_counting_satisfied(@origins, @names, @bundles, @ids, @seqs)";
     cmd.Parameters.AddWithValue("origins", new[] { _origin });
     cmd.Parameters.AddWithValue("names", _originNames);
     cmd.Parameters.AddWithValue("bundles", _oneBundle);

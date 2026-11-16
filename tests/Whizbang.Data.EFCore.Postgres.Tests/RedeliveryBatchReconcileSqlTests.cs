@@ -11,7 +11,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Redelivery bundles reconciled as a batch (#2099), against the real <c>wh_reconcile_redelivered_bundles</c>
+/// Redelivery bundles reconciled as a batch (#2099), against the real <c>wh_reconcile_redelivered_bundles_counting_satisfied</c>
 /// (migration 335). Each bundle gets what the single-bundle reconcile gives it (253, 321), the fills are one update,
 /// and each sealed epoch that holds a moved event is refolded once per batch instead of once per bundle. A backlog of
 /// one-event bundles that each fill one origin sequence (history re-attributed to its owner, 325, carries the origin
@@ -310,7 +310,7 @@ public class RedeliveryBatchReconcileSqlTests : EFCoreTestBase {
   public async Task Batch_MismatchedArrays_AreRefusedAsync(int names, int bundlePositions, int sequences) {
     await using var conn = await _openAsync();
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundles($1, $2, $3, $4, $5)";
+    cmd.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundles_counting_satisfied($1, $2, $3, $4, $5)";
     cmd.Parameters.AddWithValue(new[] { TrackedGuid.New().Value, TrackedGuid.New().Value });
     cmd.Parameters.AddWithValue(Enumerable.Repeat(ORIGIN_NAME, names).ToArray());
     cmd.Parameters.AddWithValue(Enumerable.Repeat(1, bundlePositions).ToArray());
@@ -461,7 +461,7 @@ public class RedeliveryBatchReconcileSqlTests : EFCoreTestBase {
     cmd.CommandText = """
       SELECT bundle, stream_id, tenant_scope, event_type, present_count, adopted_count, origins_filled_count,
              refused_truncated_count, refused_foreign_origin_count
-      FROM wh_reconcile_redelivered_bundles($1, $2, $3, $4, $5)
+      FROM wh_reconcile_redelivered_bundles_counting_satisfied($1, $2, $3, $4, $5)
       """;
     cmd.Parameters.AddWithValue(bundles.Select(b => b.Origin).ToArray());
     cmd.Parameters.Add(new NpgsqlParameter {
@@ -502,7 +502,7 @@ public class RedeliveryBatchReconcileSqlTests : EFCoreTestBase {
     await _execAsync(conn, "BEGIN; SET LOCAL track_functions = 'all'");
     for (var i = 0; i < events.Count; i++) {
       await using var cmd = conn.CreateCommand();
-      cmd.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundle_by_first_hop($1, $2, $3, $4)";
+      cmd.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundle_counting_satisfied($1, $2, $3, $4)";
       cmd.Parameters.AddWithValue(origin);
       cmd.Parameters.AddWithValue(ORIGIN_NAME);
       cmd.Parameters.AddWithValue(new[] { events[i] });

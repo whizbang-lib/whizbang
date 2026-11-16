@@ -1711,8 +1711,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     // 253 (#1843, #1844): per bucket, the events present, those that adopted the origin, the children the store
-    // refused to restore past deduplication, and the present events the first-hop check refused.
-    var qualified = BuildSchemaQualifiedName(schema, "wh_reconcile_redelivered_bundle_by_first_hop");
+    // refused to restore past deduplication, and the present events the first-hop check refused. 449 (#2350): and the
+    // children settled as satisfied by a newer held copy of their key, from the counting form (a new name, so the
+    // result of 253's function never changes).
+    var qualified = BuildSchemaQualifiedName(schema, "wh_reconcile_redelivered_bundle_counting_satisfied");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCoordinatorCommand();
@@ -1759,8 +1761,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return results;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    // 335 (#2099): every bundle at once, each sealed epoch the batch touches refolded once.
-    var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_reconcile_redelivered_bundles");
+    // 335 (#2099): every bundle at once, each sealed epoch the batch touches refolded once. 449 (#2350): the counting
+    // form, which also reports the children settled as satisfied.
+    var qualified = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_reconcile_redelivered_bundles_counting_satisfied");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCoordinatorCommand();

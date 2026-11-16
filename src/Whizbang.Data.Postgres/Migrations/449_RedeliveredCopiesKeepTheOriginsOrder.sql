@@ -26,13 +26,23 @@
 --              is offered it after the newest, and the bundle reconciles count it present and apart
 --              (superseded_satisfied_count), so it is never read as a deficit.
 --
+--              The count is a new result column, and PostgreSQL refuses to change a function's result under CREATE OR
+--              REPLACE (42P13). The earlier definers of the two reconciles (253 through 448) create them without a
+--              drop, so a replay of any of them over a changed result would fail. The counting reconciles are new
+--              functions, wh_reconcile_redelivered_bundle_counting_satisfied and
+--              wh_reconcile_redelivered_bundles_counting_satisfied; the two reconciles keep their result and their
+--              behavior (448), so a service on the previous release keeps calling them during a rolling deploy.
+--              MigrationResultTypeReRunGuardTests fails on a definer that changes a result without dropping first.
+--
 --              Number 449: reserved for this change.
 --
--- Reversal: reversible (the three functions go back to their last words in 352, 380 and 448; _wh_supersedes goes)
+-- Reversal: reversible (the four functions go back to their last words in 352, 380, 448 and 368; _wh_supersedes and the
+--           two counting reconciles go)
 -- Dependencies: 252 and 368 (store_inbox_messages), 352 (_wh_queue_superseded_events, supersede_group), 380 (wh_superseding_history_apply),
 --               448 (wh_reap_superseded_events)
 -- Objects: _wh_supersedes, _wh_queue_superseded_events, wh_superseding_history_apply, wh_reap_superseded_events,
---          store_inbox_messages, wh_reconcile_redelivered_bundle_by_first_hop, wh_reconcile_redelivered_bundles
+--          store_inbox_messages, wh_reconcile_redelivered_bundle_counting_satisfied,
+--          wh_reconcile_redelivered_bundles_counting_satisfied (new; they read 448's reconciles, unchanged)
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -792,10 +802,10 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated.';
 
--- Its result gains superseded_satisfied_count, so its overloads are cleared first.
-SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundle_by_first_hop');
+-- New in 449: wh_reconcile_redelivered_bundle_by_first_hop (448) copied whole, its result gaining
+-- superseded_satisfied_count. A new name, so no earlier definer of the old one ever meets this result.
+SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundle_counting_satisfied');
 
--- ── wh_reconcile_redelivered_bundle_by_first_hop: last word 448, copied whole ──
 -- ── wh_reconcile_redelivered_bundle_by_first_hop: last word 420, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#pre-stamp-history-first-hop</docs>
@@ -817,9 +827,9 @@ SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundle_by_first_h
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
 -- <docs>resilience/stream-integrity#per-bundle-work-table</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryBundleCatalogChurnSqlTests.cs:ReconcileBundle_AfterTheSessionIsReset_WritesNothingToTheSystemCatalogAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryReconcileEquivalenceSqlTests.cs:ReconcileBundleByFirstHop_GivesWhatTheWorkTableVersionGaveAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryReconcileEquivalenceSqlTests.cs:ReconcileBundleCountingSatisfied_GivesWhatTheWorkTableVersionGave_WithNothingSatisfiedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerCallFunctionsCreateNoTemporaryTableTests.cs:NoFunctionCreatesATemporaryTable_OutsideTheExemptOnesAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundle_by_first_hop(
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundle_counting_satisfied(
   p_origin_service_id UUID,
   p_origin_service_name TEXT,
   p_event_ids UUID[],
@@ -853,7 +863,7 @@ DECLARE
   v_w_digested BOOLEAN[];
 BEGIN
   IF cardinality(p_event_ids) IS DISTINCT FROM cardinality(p_commit_sequences) THEN
-    RAISE EXCEPTION 'wh_reconcile_redelivered_bundle_by_first_hop: % event ids but % commit sequences',
+    RAISE EXCEPTION 'wh_reconcile_redelivered_bundle_counting_satisfied: % event ids but % commit sequences',
       cardinality(p_event_ids), cardinality(p_commit_sequences);
   END IF;
 
@@ -1033,13 +1043,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundle_by_first_hop(UUID, TEXT, UUID[], BIGINT[]) IS
-'420 (#2181): its working rows are gathered into arrays; 321''s per-connection temporary table is gone. 301 (#2000): the local-lane digest update and delete are driven by the moved streams through idx_stream_digests_stream. 253 (#1843, #1844): reconciles a redelivery bundle with the store; the one entry point per bundle. wh_adopt_redelivered_origin (249) with a first-hop check, plus the children store_inbox_messages (252) refused to restore past deduplication because the stream had earlier history truncated here (refused_truncated_count). An empty origin takes the bundle''s origin only when the stored event''s first hop names the bundle''s origin service (p_origin_service_name, compared without case) or carries no service identity; a first hop naming another service refuses it (the event keeps its empty origin and its local digest) and is counted in refused_foreign_origin_count. Everything else is 249''s: an empty origin commit sequence takes the event''s sequence, nothing is overwritten or re-attributed, the local service adopts nothing, digests move lanes and sealed epochs are refolded. Returns per (stream, tenant, type) bucket the events present, adopted, refused as truncated and refused by the first-hop check.';
+COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundle_counting_satisfied(UUID, TEXT, UUID[], BIGINT[]) IS
+'449 (#2350): wh_reconcile_redelivered_bundle_by_first_hop with superseded_satisfied_count: a child settled as satisfied because a newer held copy of its key supersedes it is present and counted apart. 420 (#2181): its working rows are gathered into arrays; 321''s per-connection temporary table is gone. 301 (#2000): the local-lane digest update and delete are driven by the moved streams through idx_stream_digests_stream. 253 (#1843, #1844): reconciles a redelivery bundle with the store; the one entry point per bundle. wh_adopt_redelivered_origin (249) with a first-hop check, plus the children store_inbox_messages (252) refused to restore past deduplication because the stream had earlier history truncated here (refused_truncated_count). An empty origin takes the bundle''s origin only when the stored event''s first hop names the bundle''s origin service (p_origin_service_name, compared without case) or carries no service identity; a first hop naming another service refuses it (the event keeps its empty origin and its local digest) and is counted in refused_foreign_origin_count. Everything else is 249''s: an empty origin commit sequence takes the event''s sequence, nothing is overwritten or re-attributed, the local service adopts nothing, digests move lanes and sealed epochs are refolded. Returns per (stream, tenant, type) bucket the events present, adopted, refused as truncated and refused by the first-hop check.';
 
--- Its result gains superseded_satisfied_count, so its overloads are cleared first.
-SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundles');
+-- New in 449: wh_reconcile_redelivered_bundles (448) copied whole, its result gaining superseded_satisfied_count.
+-- A new name, so no earlier definer of the old one ever meets this result.
+SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundles_counting_satisfied');
 
--- ── wh_reconcile_redelivered_bundles: last word 448, copied whole ──
 -- ── wh_reconcile_redelivered_bundles: last word 420, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
@@ -1056,9 +1066,9 @@ SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundles');
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
 -- <docs>resilience/stream-integrity#per-bundle-work-table</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryBundleCatalogChurnSqlTests.cs:ReconcileBatch_AfterTheSessionIsReset_WritesNothingToTheSystemCatalogAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryReconcileEquivalenceSqlTests.cs:ReconcileBundles_GivesWhatTheWorkTableVersionGaveAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryReconcileEquivalenceSqlTests.cs:ReconcileBundlesCountingSatisfied_GivesWhatTheWorkTableVersionGave_WithNothingSatisfiedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerCallFunctionsCreateNoTemporaryTableTests.cs:NoFunctionCreatesATemporaryTable_OutsideTheExemptOnesAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundles(
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundles_counting_satisfied(
   p_bundle_origins   UUID[],     -- per bundle, by position (1-based): the origin it was published by
   p_bundle_names     TEXT[],     -- per bundle: the origin's service name from its first hop, or NULL
   p_event_bundles    INTEGER[],  -- per event: the position of its bundle in p_bundle_origins
@@ -1097,12 +1107,12 @@ DECLARE
   v_w_digested BOOLEAN[];
 BEGIN
   IF cardinality(p_bundle_origins) IS DISTINCT FROM cardinality(p_bundle_names) THEN
-    RAISE EXCEPTION 'wh_reconcile_redelivered_bundles: % bundle origins but % bundle names',
+    RAISE EXCEPTION 'wh_reconcile_redelivered_bundles_counting_satisfied: % bundle origins but % bundle names',
       cardinality(p_bundle_origins), cardinality(p_bundle_names);
   END IF;
   IF cardinality(p_event_ids) IS DISTINCT FROM cardinality(p_event_bundles)
      OR cardinality(p_event_ids) IS DISTINCT FROM cardinality(p_commit_sequences) THEN
-    RAISE EXCEPTION 'wh_reconcile_redelivered_bundles: % event ids, % bundle positions and % commit sequences',
+    RAISE EXCEPTION 'wh_reconcile_redelivered_bundles_counting_satisfied: % event ids, % bundle positions and % commit sequences',
       cardinality(p_event_ids), cardinality(p_event_bundles), cardinality(p_commit_sequences);
   END IF;
 
@@ -1332,6 +1342,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundles(UUID[], TEXT[], INTEGER[], UUID[], BIGINT[]) IS
-'420 (#2181): its working rows are gathered into arrays, not a temporary table. 335 (#2099): reconciles many redelivery bundles at once, with the per-bundle semantics of wh_reconcile_redelivered_bundle_by_first_hop (253, 321): an empty origin takes its bundle''s origin unless the stored first hop names another service, an empty origin sequence of an event that carries the bundle''s origin takes the bundle''s sequence, nothing is overwritten, the local service adopts nothing, digests move lanes. Each event adopts at most once per batch, for the first bundle that can fill it. Every bundle''s streams are locked once in order, the fills are one update, and each sealed epoch holding a moved event is refolded once per batch rather than every epoch of each bundle''s range. Returns per (bundle, stream, tenant, type) the events present, adopted, whose origin was filled (origins_filled_count; the rest of adopted took only the sequence), refused as truncated and refused by the first-hop check.';
+COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundles_counting_satisfied(UUID[], TEXT[], INTEGER[], UUID[], BIGINT[]) IS
+'449 (#2350): wh_reconcile_redelivered_bundles with superseded_satisfied_count, as wh_reconcile_redelivered_bundle_counting_satisfied. 420 (#2181): its working rows are gathered into arrays, not a temporary table. 335 (#2099): reconciles many redelivery bundles at once, with the per-bundle semantics of wh_reconcile_redelivered_bundle_counting_satisfied (253, 321): an empty origin takes its bundle''s origin unless the stored first hop names another service, an empty origin sequence of an event that carries the bundle''s origin takes the bundle''s sequence, nothing is overwritten, the local service adopts nothing, digests move lanes. Each event adopts at most once per batch, for the first bundle that can fill it. Every bundle''s streams are locked once in order, the fills are one update, and each sealed epoch holding a moved event is refolded once per batch rather than every epoch of each bundle''s range. Returns per (bundle, stream, tenant, type) the events present, adopted, whose origin was filled (origins_filled_count; the rest of adopted took only the sequence), refused as truncated and refused by the first-hop check.';
 
