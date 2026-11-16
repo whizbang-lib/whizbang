@@ -180,6 +180,18 @@ public class SplitModeProductionTests : IAsyncDisposable {
       if (embeddings is not null) { row.Data.Embeddings = embeddings.ToArray(); }
       entry.State = EntityState.Detached;
     });
+
+    // Register the projected-document copy (#2304), as the generator does for a Split model
+    SplitDocumentProjectionRegistry.Register<SplitProductionModel>(
+      ["tenant_id", "category", "price", "parent_id", "embeddings"],
+      static (data, columns) => {
+        data.TenantId = (Guid)columns[0]!;
+        if (columns[1] is string category) { data.Category = category; }
+        data.Price = (decimal)columns[2]!;
+        data.ParentId = (Guid?)columns[3] ?? data.ParentId;
+        if (columns[4] is Vector embeddings) { data.Embeddings = embeddings.ToArray(); }
+        return data;
+      });
   }
 
   [After(Test)]
@@ -817,6 +829,88 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // Tests through EFCorePostgresLensQuery which includes scoped access,
   // conditional tracking, and ChangeTracker hydration.
   // ========================================================================
+
+  // ========================================================================
+  // Projected document (#2304): Select(r => r.Data) returns the promoted fields
+  // ========================================================================
+
+  private static readonly float[] _projectedEmbeddings = [0.1f, 0.2f, 0.3f];
+
+  /// <summary>A query whose result is the projected document returns the promoted fields from their columns.</summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ProjectedDocument_HasThePromotedFieldsAsync(CancellationToken ct) {
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "electronics", 12.50m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var models = await _createLensQuery().Query.Select(r => r.Data).ToListAsync(ct);
+
+    await Assert.That(models).Count().IsEqualTo(1);
+    await Assert.That(models[0].TenantId).IsEqualTo(tenantId);
+    await Assert.That(models[0].Category).IsEqualTo("electronics");
+    await Assert.That(models[0].Price).IsEqualTo(12.50m);
+    await Assert.That(models[0].Embeddings).IsEquivalentTo(_projectedEmbeddings);
+    await Assert.That(models[0].Name).IsEqualTo("Item")
+      .Because("the document's own fields still come from data");
+  }
+
+  /// <summary>Filtering, sorting and paging composed before the projection keep it hydrated.</summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ProjectedDocument_WithFilterSortAndPaging_HasThePromotedFieldsAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 5.00m, "A", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 15.00m, "B", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "c", 25.00m, "C", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var models = await _createLensQuery().Query
+      .Where(r => r.Data.Price > 10m)
+      .OrderByDescending(r => r.Data.Price)
+      .Select(r => r.Data)
+      .Skip(0)
+      .Take(1)
+      .ToListAsync(ct);
+
+    await Assert.That(models).Count().IsEqualTo(1);
+    await Assert.That(models[0].Category).IsEqualTo("c");
+    await Assert.That(models[0].Price).IsEqualTo(25.00m);
+  }
+
+  /// <summary>A single projected document is hydrated too.</summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ProjectedDocument_FirstOrDefault_HasThePromotedFieldsAsync(CancellationToken ct) {
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "single", 3.00m, "S", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var model = await _createLensQuery().Query.Select(r => r.Data).FirstOrDefaultAsync(ct);
+
+    await Assert.That(model).IsNotNull();
+    await Assert.That(model!.Category).IsEqualTo("single");
+    await Assert.That(model.TenantId).IsEqualTo(tenantId);
+  }
+
+  /// <summary>A count over the projection is not a projection result, so it translates as before.</summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ProjectedDocument_Count_IsUnaffectedAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "x", 1.00m, "X", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "y", 2.00m, "Y", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var count = await _createLensQuery().Query.Select(r => r.Data).CountAsync(ct);
+
+    await Assert.That(count).IsEqualTo(2);
+  }
+
+  /// <summary>The rewritten projection still reads the columns in SQL, beside the document.</summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ProjectedDocument_Sql_ReadsThePromotedColumnsAsync(CancellationToken ct) {
+    await Task.CompletedTask;
+    var sql = _createLensQuery().Query.Select(r => r.Data).ToQueryString();
+
+    await Assert.That(sql).Contains("category");
+    await Assert.That(sql).Contains("tenant_id");
+  }
 
   private EFCorePostgresLensQuery<SplitProductionModel> _createLensQuery() =>
       new(_context!, "wh_per_split_production_test");

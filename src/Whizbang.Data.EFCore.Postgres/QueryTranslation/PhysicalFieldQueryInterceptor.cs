@@ -67,6 +67,10 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
     // equivalent. Order matters twice over: a promoted property is already an EF.Property call by
     // now, so the containment pass cannot claim it, and an ordinal Equals is already an equality, so
     // the containment pass needs no knowledge of StringComparison.
-    return new JsonbContainmentRewriter(model).Visit(rewritten);
+    rewritten = new JsonbContainmentRewriter(model).Visit(rewritten);
+
+    // Last, a query whose result is a Split model's projected document reads the promoted columns beside it,
+    // since the document no longer holds them and a projection is never tracked for the hydrators (#2304).
+    return SplitDocumentProjectionRewriter.Rewrite(rewritten, model);
   }
 }

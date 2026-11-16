@@ -1273,6 +1273,49 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generates the SplitDocumentProjectionRegistry.Register call for a model with Split fields (#2304): the promoted
+  /// columns in order, and a copy that puts their values into the document. A query whose result is the projected
+  /// document (<c>Select(r =&gt; r.Data)</c>) never becomes a tracked row for the hydrators above, so the query rewrite
+  /// reads these columns beside the document and calls the copy.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/SplitDocumentProjectionGenerationTests.cs</tests>
+  private static void _generateSplitDocumentProjectionRegistration(StringBuilder sb, PerspectiveModelInfo model) {
+    if (!model.PhysicalFields.Any(f => f.IsSplit)) {
+      return;
+    }
+
+    var copied = _copiedFields(model);
+    if (copied.Count == 0) {
+      return;
+    }
+
+    var columns = string.Join(", ", copied.Select(f => $"\"{f.ColumnName}\""));
+    sb.AppendLine($"        // Register the projected-document copy for {model.ModelTypeName} (#2304)");
+    sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.SplitDocumentProjectionRegistry.Register<{model.ModelTypeName}>(");
+    sb.AppendLine($"          new string[] {{ {columns} }},");
+    sb.AppendLine("          static (data, columns) => {");
+    _appendColumnCopy(sb, model, field => {
+      var index = copied.IndexOf(field);
+      if (field.IsVector) {
+        return $"(global::Pgvector.Vector?)columns[{index}]";
+      }
+      var suppress = _isNullableTypeName(field.TypeName) ? "" : "!";
+      return $"({field.TypeName})columns[{index}]{suppress}";
+    }, "data");
+    sb.AppendLine("            return data;");
+    sb.AppendLine("          });");
+    sb.AppendLine();
+  }
+
+  /// <summary>The promoted fields a copy puts into the model: settable ones, and init-only ones a record or a copyable class can set.</summary>
+  private static List<PhysicalFieldInfo> _copiedFields(PerspectiveModelInfo model) {
+    var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
+    return model.PhysicalFields
+        .Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))
+        .ToList();
+  }
+
+  /// <summary>
   /// Emits the body both hydrators share: one local per promoted column, read with
   /// <paramref name="read"/>, then the copy of those locals into <c>row.Data</c>.
   /// </summary>
@@ -1293,42 +1336,41 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _appendColumnCopy(
       StringBuilder sb,
       PerspectiveModelInfo model,
-      Func<PhysicalFieldInfo, string> read) {
+      Func<PhysicalFieldInfo, string> read,
+      string target = "row.Data") {
     var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
-    var copied = model.PhysicalFields
-        .Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))
-        .ToList();
+    var copied = _copiedFields(model);
 
     foreach (var field in copied) {
       sb.AppendLine($"          var _{field.ColumnName} = {read(field)};");
     }
 
     if (model.IsModelRecord) {
-      var members = string.Join(", ", copied.Select(f => $"{f.PropertyName} = {_copiedValue(f)}"));
-      sb.AppendLine($"          row.Data = row.Data with {{ {members} }};");
+      var members = string.Join(", ", copied.Select(f => $"{f.PropertyName} = {_copiedValue(f, target)}"));
+      sb.AppendLine($"          {target} = {target} with {{ {members} }};");
       return;
     }
 
     if (copy is not null) {
       // A Split class with an init-only promoted field: a class sets one only while an instance is created, so the
       // row gets a copy of its model with the columns in it (issue #1002).
-      var values = copied.ToDictionary(f => f.PropertyName, _copiedValue, StringComparer.Ordinal);
-      sb.AppendLine($"          row.Data = {ModelCopy.Render(model.ModelTypeName, copy, "row.Data", values)};");
+      var values = copied.ToDictionary(f => f.PropertyName, f => _copiedValue(f, target), StringComparer.Ordinal);
+      sb.AppendLine($"          {target} = {ModelCopy.Render(model.ModelTypeName, copy, target, values)};");
       return;
     }
 
     foreach (var field in copied) {
-      sb.AppendLine($"          row.Data.{field.PropertyName} = {_copiedValue(field)};");
+      sb.AppendLine($"          {target}.{field.PropertyName} = {_copiedValue(field, target)};");
     }
   }
 
   /// <summary>The value a hydrator copies into one property from the local holding its column.</summary>
-  private static string _copiedValue(PhysicalFieldInfo field) {
+  private static string _copiedValue(PhysicalFieldInfo field, string target) {
     var local = $"_{field.ColumnName}";
     if (field.IsVector) {
-      return $"{local} is not null ? {local}.ToArray() : row.Data.{field.PropertyName}";
+      return $"{local} is not null ? {local}.ToArray() : {target}.{field.PropertyName}";
     }
-    return _isNullableTypeName(field.TypeName) ? $"{local} ?? row.Data.{field.PropertyName}" : local;
+    return _isNullableTypeName(field.TypeName) ? $"{local} ?? {target}.{field.PropertyName}" : local;
   }
 
   private static bool _isNullableTypeName(string typeName) => typeName.EndsWith("?", StringComparison.Ordinal);
@@ -2003,6 +2045,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _generatePhysicalFieldHydratorRegistration(sb, model);
     _generateChangeTrackerHydratorRegistration(sb, model);
+    _generateSplitDocumentProjectionRegistration(sb, model);
   }
 
   /// <summary>
