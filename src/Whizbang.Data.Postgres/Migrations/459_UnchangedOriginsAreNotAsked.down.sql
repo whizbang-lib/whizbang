@@ -8,8 +8,12 @@ SELECT __SCHEMA__.drop_all_overloads('wh_integrity_decide_origin_ask');
 SELECT __SCHEMA__.drop_all_overloads('wh_integrity_record_compare_outcome');
 SELECT __SCHEMA__.drop_all_overloads('_wh_integrity_received_max');
 
+-- RECLAIM: not required: wh_integrity_known_origins holds one row per origin (a handful), so the eight dropped bytes
+--          per row are negligible and no rewrite is worth running.
 ALTER TABLE __SCHEMA__.wh_integrity_known_origins DROP COLUMN IF EXISTS last_asked_at;
 
+-- RECLAIM: not required: wh_integrity_seals holds one row per origin (a handful), so the few dropped bytes per row
+--          are negligible, and every later seal upsert writes the row anew without them.
 ALTER TABLE __SCHEMA__.wh_integrity_seals
   DROP COLUMN IF EXISTS match_sealed_through,
   DROP COLUMN IF EXISTS match_origin_generation,
