@@ -755,6 +755,14 @@ public static class WorkerPipelineExtensions {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:StreamIntegrity"), options);
+          // #2353: the old flat keys are aliases of the three sections for one release, and a section key wins over its
+          // alias. The binder's property order would otherwise decide, so the sections are bound again, last.
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity:Sealing"), options.Sealing);
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity:SealRecheck"), options.SealRecheck);
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity:FullHistoryCompare"), options.FullHistoryCompare);
 #pragma warning restore IL2026
         }
       });
@@ -947,6 +955,20 @@ public static class WorkerPipelineExtensions {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:Workers:Maintenance"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    // #2354: the resting period of operational records, read by the maintenance cycle's retention sweep.
+    services.AddOptions<Whizbang.Core.Workers.OperationalRetentionOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<Whizbang.Core.Workers.OperationalRetentionOptions>, Whizbang.Core.Workers.OperationalRetentionOptionsValidator>());
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OperationalRetentionOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OperationalRetentionOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:OperationalRetention"), options);
 #pragma warning restore IL2026
         }
       });

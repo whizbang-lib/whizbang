@@ -43,6 +43,13 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
     public int AuditClaims { get; private set; }
     public int DrainClaims { get; private set; }
     public int CheckpointAdvances { get; private set; }
+    public int Rechecks { get; private set; }
+
+    public Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+        SealRecheckRequest request, CancellationToken cancellationToken = default) {
+      Rechecks++;
+      return Task.FromResult(new EpochVerificationResult(0, 0));
+    }
     public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
 
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) =>
@@ -167,6 +174,53 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
       }),
       NullLogger<RepairDrainWorker>.Instance);
     return (host, drain);
+  }
+
+  // ── the sealed-history re-check, run on its own schedule (#2353) ────────
+
+  private static IntegrityAuditWorker _recheck(Host host) => new(
+    host.Services.GetRequiredService<IServiceScopeFactory>(),
+    Options.Create(new StreamIntegrityOptions { SealRecheck = { Enabled = true } }), NullLogger<IntegrityAuditWorker>.Instance);
+
+  [Test]
+  public async Task TheSealRecheck_OnAnInstanceThatDoesNotHoldTheMaintainerDuty_DoesNothingAsync() {
+    await using var host = await _hostAsync(maintainer: false);
+
+    await _recheck(host).RunCheckOnceAsync(IntegrityCheck.SealRecheck, CancellationToken.None);
+
+    await Assert.That(host.Coordinator.Rechecks).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task TheSealRecheck_OnTheMaintainerOfAQuietService_RunsAndReleasesTheSlotAsync() {
+    await using var host = await _hostAsync(maintainer: true);
+
+    await _recheck(host).RunCheckOnceAsync(IntegrityCheck.SealRecheck, CancellationToken.None);
+
+    await Assert.That(host.Coordinator.Rechecks).IsEqualTo(1);
+    await Assert.That(host.Housekeeping.TryBegin(HousekeepingCoordinator.Activity.Integrity, new ServiceBacklog()).Granted)
+      .IsTrue().Because("the re-check releases the integrity slot when it ends");
+  }
+
+  [Test]
+  public async Task TheSealRecheck_OnABusyService_IsDeferredAsync() {
+    await using var host = await _hostAsync(maintainer: true);
+    host.Coordinator.Backlog = _busy;
+
+    await _recheck(host).RunCheckOnceAsync(IntegrityCheck.SealRecheck, CancellationToken.None);
+
+    await Assert.That(host.Coordinator.Rechecks).IsEqualTo(0)
+      .Because("the re-check recomputes sealed history, so it waits for the idle gate like the rest of the integrity work");
+  }
+
+  [Test]
+  public async Task TheSealRecheck_WithNoCoordinatorRegistered_DoesNothingAsync() {
+    await using var services = new ServiceCollection().BuildServiceProvider();
+    var worker = new IntegrityAuditWorker(services.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new StreamIntegrityOptions { SealRecheck = { Enabled = true } }), NullLogger<IntegrityAuditWorker>.Instance);
+
+    await Assert.That(async () => await worker.RunCheckOnceAsync(IntegrityCheck.SealRecheck, CancellationToken.None))
+      .ThrowsNothing().Because("a host without a work coordinator has no seals to re-check");
   }
 
   [Test]

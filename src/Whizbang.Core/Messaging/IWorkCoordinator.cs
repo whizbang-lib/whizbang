@@ -2646,6 +2646,23 @@ public interface IWorkCoordinator {
     Task.FromResult(HandledLedgerAnswer.NoLedger);
 
   /// <summary>
+  /// #2354: one batch of the operational retention sweep. For every Rolling table the operational retention covers,
+  /// removes up to <paramref name="batchSize"/> rows that are closed and older than their category's resting period in
+  /// <paramref name="retention"/>, and reports what is left. A category missing from <paramref name="retention"/> removes
+  /// nothing and is still reported. Default: nothing swept, for engines without the tables.
+  /// </summary>
+  /// <param name="retention">Each category's resting period.</param>
+  /// <param name="batchSize">Rows removed per table at most.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>One result per swept table.</returns>
+  /// <docs>operations/infrastructure/operational-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OperationalRetentionSweepSqlTests.cs:Coordinator_SweepOperationalRetentionAsync_DrivesTheSqlFunctionAsync</tests>
+  Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+    IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention, int batchSize,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>>([]);
+
+  /// <summary>
   /// Keeps the handled ledger to <paramref name="keep"/> (#2273): first moves the ledger's coverage start up to
   /// <paramref name="now"/> minus <paramref name="keep"/>, then removes the records of events older than that from the
   /// rows a partition drop does not remove. Coverage moves before anything is removed, so no reader ever sees a window
@@ -2892,6 +2909,23 @@ public interface IWorkCoordinator {
     Task.FromResult(-1);
 
   /// <summary>
+  /// #2353: <see cref="CloseDigestEpochsAsync(int, int, CancellationToken)"/> with the configured epoch width
+  /// (<see cref="SealingOptions.EpochWidth"/>): the width is written to the store's <c>integrity_epoch_width</c> setting
+  /// first, so a lane met for the first time pins it. A lane already pinned keeps its own width. Default: the call
+  /// without a width, for engines that keep the width elsewhere.
+  /// </summary>
+  /// <param name="settleSeconds">The settle window, which must equal the audit's.</param>
+  /// <param name="maxEpochs">Cap on epochs closed this call.</param>
+  /// <param name="epochWidth">The width a lane met for the first time is pinned at.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Epochs closed, or <c>-1</c> for engines without the substrate.</returns>
+  /// <docs>resilience/stream-integrity#sealing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DigestEpochSqlTests.cs:Coordinator_CloseDigestEpochsAsync_WithAWidth_SetsItForLanesClosedFromNowOnAsync</tests>
+  Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, long epochWidth, CancellationToken cancellationToken = default) =>
+    CloseDigestEpochsAsync(settleSeconds, maxEpochs, cancellationToken);
+
+  /// <summary>
   /// The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
   /// (#80-B). An answer must never claim coverage of an unsettled sequence, or the asker could
   /// seal over an in-flight delivery. Null = unsupported (engines without sequence lanes) or
@@ -3032,6 +3066,22 @@ public interface IWorkCoordinator {
   /// <docs>resilience/stream-integrity</docs>
   Task<EpochVerificationResult> VerifyDigestEpochsAsync(
     TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EpochVerificationResult(0, 0));
+
+  /// <summary>
+  /// #2353: the sealed-history re-check. Recomputes the sealed digest epochs sealed within
+  /// <see cref="SealRecheckRequest.Lookback"/> that were not re-checked within <see cref="SealRecheckRequest.RecheckEvery"/>,
+  /// least recently re-checked first, up to <see cref="SealRecheckRequest.MaxEpochs"/>, and refolds a drifted one when
+  /// <see cref="SealRecheckRequest.Refold"/>. Each epoch records when it was re-checked, so a call resumes past what the
+  /// last one reached. Epochs holding an unsettled arrival are skipped whole. Default: nothing checked, for engines
+  /// without the epoch substrate.
+  /// </summary>
+  /// <param name="request">The re-check's limits.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#seal-re-check</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SealRecheckRotationSqlTests.cs:Coordinator_RecheckDigestEpochsAsync_DrivesTheSqlFunctionAsync</tests>
+  Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+    SealRecheckRequest request, CancellationToken cancellationToken = default) =>
     Task.FromResult(new EpochVerificationResult(0, 0));
 
   /// <summary>

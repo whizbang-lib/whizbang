@@ -603,37 +603,37 @@ public sealed class StreamIntegrityOptions {
   public int MaxGapReportsPerCheckpoint { get; set; } = 100;
 
   /// <summary>
-  /// A1c: every Nth audit cycle is a FULL SWEEP (default 7 — weekly at the daily default): the
-  /// worker verifies + heals its own digest table against a full recompute
-  /// (<see cref="IWorkCoordinator.VerifyDigestTableAsync"/>) and the manifest exchange runs on
-  /// recomputed digests end to end — covering buckets whose steady traffic settle-skips them on
-  /// table-driven cycles. 0 or negative disables sweeps (table-driven cycles only).
-  /// #80-D: this counter is the FALLBACK cadence — once <see cref="FullSweepCron"/> is registered
-  /// on the temporal engine, the counter stands down and the cron owns the sweep.
+  /// The fallback cadence of the opt-in checks (default 7, weekly at the daily audit default): on every Nth audit cycle
+  /// the worker runs each enabled check, <see cref="FullHistoryCompare"/> and <see cref="SealRecheck"/>, whose schedule is
+  /// not registered on the temporal engine. Once a check's schedule is registered, the counter stands down for that check.
+  /// 0 or negative disables the fallback. With both checks off (the default since #2353) the counter runs nothing.
   /// </summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
   public int FullSweepEveryNthAudit { get; set; } = 7;
 
   /// <summary>
-  /// #80-D: cron for the full sweep on the temporal engine (default <c>"0 3 * * *"</c> — daily at
-  /// 03:00 UTC), so the heaviest verification runs at a configured IDLE hour instead of wherever
-  /// the every-Nth-cycle counter happens to land it. When the cron's minute field is <c>0</c>
-  /// (the default), each service replaces it with a stable per-service splay minute so a fleet
-  /// sharing one database server does not sweep in unison; an explicit non-zero minute is honored
-  /// verbatim. Null or empty disables cron scheduling —
-  /// <see cref="FullSweepEveryNthAudit"/> then remains the cadence, as it does on hosts without
-  /// the temporal engine.
+  /// Alias for one release (#2353): the old cron of the full sweep, which ran both the full-history compare and the seal
+  /// re-check. Setting it sets <see cref="FullHistoryCompareOptions.Schedule"/> and <see cref="SealRecheckOptions.Schedule"/>;
+  /// reading it reads the former. A key under <c>FullHistoryCompare</c> or <c>SealRecheck</c> wins over it.
   /// </summary>
-  /// <docs>resilience/stream-integrity</docs>
-  public string? FullSweepCron { get; set; } = "0 3 * * *";
+  /// <docs>resilience/stream-integrity#configuration-aliases</docs>
+  public string? FullSweepCron {
+    get => FullHistoryCompare.Schedule;
+    set {
+      FullHistoryCompare.Schedule = value;
+      SealRecheck.Schedule = value;
+    }
+  }
 
   /// <summary>
-  /// #80-D: cap on closed epochs the sweep's seal backstop recomputes per sweep (default 10000).
-  /// Manifest answers trust sealed epochs without re-verifying, so the sweep is the one place a
-  /// bad seal gets caught — but the recompute is O(events-in-epoch) each, and a very large store
-  /// finishes verification across several nightly sweeps rather than stalling one.
+  /// Alias for one release (#2353) of <see cref="SealRecheckOptions.MaxEpochsPerRun"/>; a key under <c>SealRecheck</c>
+  /// wins over it.
   /// </summary>
-  /// <docs>resilience/stream-integrity</docs>
-  public int MaxEpochVerificationsPerSweep { get; set; } = 10_000;
+  /// <docs>resilience/stream-integrity#configuration-aliases</docs>
+  public int MaxEpochVerificationsPerSweep {
+    get => SealRecheck.MaxEpochsPerRun;
+    set => SealRecheck.MaxEpochsPerRun = value;
+  }
 
   /// <summary>
   /// A1c: storm cap on the DRILL-DOWN — how many mismatched types one type-level manifest may
@@ -795,25 +795,38 @@ public sealed class StreamIntegrityOptions {
   public int IntegrityDeliveryRetryBackoffSeconds { get; set; } = 30;
 
   /// <summary>
-  /// Advance the digest-epoch closure frontier on the maintenance cadence (default true).
-  /// Epochs (migration 092) are what let manifest answers read immutable folds instead of
-  /// re-aggregating live history; without closure the frontier never moves and every audit
-  /// keeps paying the full-scan cost the epochs exist to end. Disable only on engines that
-  /// serve no integrity manifests.
+  /// Alias for one release (#2353) of <see cref="SealingOptions.Enabled"/>; a key under <c>Sealing</c> wins over it.
   /// </summary>
-  /// <docs>resilience/stream-integrity</docs>
-  public bool EpochClosureEnabled { get; set; } = true;
+  /// <docs>resilience/stream-integrity#configuration-aliases</docs>
+  public bool EpochClosureEnabled {
+    get => Sealing.Enabled;
+    set => Sealing.Enabled = value;
+  }
 
   /// <summary>
-  /// Max epochs closed per maintenance cycle across all lanes (default 64). Each closure is an
-  /// O(events-in-epoch) recompute, so this bounds a cycle's closure work by the operator's cap
-  /// rather than by backlog size — a long-unclosed store catches up over several cycles instead
-  /// of stalling one. The settle window closure uses is <see cref="AuditSettleWindowMinutes"/>:
-  /// closure and the audit MUST agree on what "settled" means, or a seal could disagree with a
-  /// manifest folded over the same range.
+  /// Alias for one release (#2353) of <see cref="SealingOptions.MaxClosuresPerCycle"/>; a key under <c>Sealing</c> wins
+  /// over it.
   /// </summary>
-  /// <docs>resilience/stream-integrity</docs>
-  public int MaxEpochClosuresPerMaintenanceCycle { get; set; } = 64;
+  /// <docs>resilience/stream-integrity#configuration-aliases</docs>
+  public int MaxEpochClosuresPerMaintenanceCycle {
+    get => Sealing.MaxClosuresPerCycle;
+    set => Sealing.MaxClosuresPerCycle = value;
+  }
+
+  /// <summary>Sealing settled digest epochs (<c>Whizbang:StreamIntegrity:Sealing</c>, #2353). On by default.</summary>
+  /// <docs>resilience/stream-integrity#sealing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:Sealing_IsOnByDefault_WithTheEpochWidthAndCapItHadAsync</tests>
+  public SealingOptions Sealing { get; set; } = new();
+
+  /// <summary>The sealed-history re-check (<c>Whizbang:StreamIntegrity:SealRecheck</c>, #2353). Off by default.</summary>
+  /// <docs>resilience/stream-integrity#seal-re-check</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:SealRecheck_IsOffByDefault_WithTheDocumentedLimitsAsync</tests>
+  public SealRecheckOptions SealRecheck { get; set; } = new();
+
+  /// <summary>The full-history compare (<c>Whizbang:StreamIntegrity:FullHistoryCompare</c>, #2353). Off by default.</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompare_IsOffByDefault_OnTheNightlyScheduleAsync</tests>
+  public FullHistoryCompareOptions FullHistoryCompare { get; set; } = new();
 
   /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as

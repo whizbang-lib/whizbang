@@ -289,8 +289,34 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
   public PassiveCounter<long> LedgerBucketsClosed { get; }
 
+  /// <summary>The attribute naming which opt-in check an instrument measured (#2353): one of two values, never a stream or tenant.</summary>
+  public const string CHECK_TAG = "check";
+
+  /// <summary>The <see cref="CHECK_TAG"/> value of the sealed-history re-check.</summary>
+  public const string CHECK_SEAL_RECHECK = "seal_recheck";
+
+  /// <summary>The <see cref="CHECK_TAG"/> value of the full-history compare.</summary>
+  public const string CHECK_FULL_HISTORY_COMPARE = "full_history_compare";
+
+  /// <summary>Digest epochs sealed by the maintenance closure pass (#2353).</summary>
+  /// <docs>resilience/stream-integrity#sealing</docs>
+  public PassiveCounter<long> EpochsSealed { get; }
+
+  /// <summary>Sealed epochs the re-check recomputed; tagged by check (#2353).</summary>
+  /// <docs>resilience/stream-integrity#seal-re-check</docs>
+  public PassiveCounter<long> EpochsRechecked { get; }
+
+  /// <summary>Drift an opt-in check found: epochs for the re-check, buckets for the full-history compare; tagged by check (#2353).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> CheckDriftFound { get; }
+
+  /// <summary>How long one run of an opt-in check took, in seconds; tagged by check (#2353).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public Histogram<double> CheckDuration { get; }
+
   private static readonly string[] _deferralReasons = ["per_audit_cap", "backlog_cap"];
   private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
+  private static readonly string[] _checks = [CHECK_SEAL_RECHECK, CHECK_FULL_HISTORY_COMPARE];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
   private static readonly string[] _discardRoles = ["origin_request", "consumer_bundle", "maintenance_sweep"];
 
@@ -298,6 +324,18 @@ public sealed class StreamIntegrityMetrics {
   public StreamIntegrityMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
+    EpochsSealed = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.epochs_sealed",
+      description: "Digest epochs the maintenance closure pass sealed");
+    EpochsRechecked = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.epochs_rechecked",
+      description: "Sealed epochs the sealed-history re-check recomputed; tagged by check");
+    CheckDriftFound = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.check_drift_found",
+      description: "Drift an opt-in check found (epochs for seal_recheck, buckets for full_history_compare); tagged by check. Non-zero means an unaccounted write path");
+    CheckDuration = meter.CreateHistogram<double>(
+      "whizbang.stream_integrity.check_duration", unit: "s",
+      description: "One run of an opt-in integrity check, end to end; tagged by check");
 
     CheckpointsPublished = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.checkpoints_published",
@@ -560,6 +598,8 @@ public sealed class StreamIntegrityMetrics {
     RepairsRequested.Touch("source", _repairSources);
     ManifestChunksSent.Touch("level", Enum.GetNames<Whizbang.Core.Messaging.ManifestLevel>());
     DigestDriftHealed.Touch("kind", _driftKinds);
+    CheckDriftFound.Touch(CHECK_TAG, _checks);
+    EpochsRechecked.Touch(CHECK_TAG, [CHECK_SEAL_RECHECK]);
     RepairTrafficDiscarded.Touch("role", _discardRoles);
     RepairsDeferred.Touch("reason", _deferralReasons);
     BackfillsEnded.Touch("outcome", _backfillOutcomes);

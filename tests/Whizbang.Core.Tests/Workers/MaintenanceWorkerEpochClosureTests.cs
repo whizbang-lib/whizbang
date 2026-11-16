@@ -39,6 +39,14 @@ public class MaintenanceWorkerEpochClosureTests {
     public int SettleSecondsSeen { get; private set; } = -1;
     public int MaxEpochsSeen { get; private set; } = -1;
     public int Calls { get; private set; }
+    public long WidthSeen { get; private set; } = -1;
+    public int Closed { get; init; } = 1;
+
+    public Task<int> CloseDigestEpochsAsync(
+        int settleSeconds, int maxEpochs, long epochWidth, CancellationToken cancellationToken = default) {
+      WidthSeen = epochWidth;
+      return CloseDigestEpochsAsync(settleSeconds, maxEpochs, cancellationToken);
+    }
 
     public Task<int> CloseDigestEpochsAsync(
         int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) {
@@ -50,7 +58,7 @@ public class MaintenanceWorkerEpochClosureTests {
       }
       return Throw
         ? Task.FromException<int>(new InvalidOperationException("closure unavailable"))
-        : Task.FromResult(1);
+        : Task.FromResult(Closed);
     }
 
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
@@ -65,8 +73,12 @@ public class MaintenanceWorkerEpochClosureTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private static MaintenanceWorker _build(ClosureCoordinator coord, StreamIntegrityOptions? integrity) {
+  private static MaintenanceWorker _build(ClosureCoordinator coord, StreamIntegrityOptions? integrity,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     services.AddSingleton<IWorkCoordinator>(coord);
     if (integrity is not null) {
       services.AddSingleton(Options.Create(integrity));
@@ -94,6 +106,31 @@ public class MaintenanceWorkerEpochClosureTests {
       .Because("closure and the audit must settle on the SAME window, or a seal can disagree with a manifest");
     await Assert.That(coord.MaxEpochsSeen).IsEqualTo(12)
       .Because("closure work per cycle is bounded by the operator's cap, not by backlog size");
+  }
+
+  [Test]
+  public async Task MaintenanceCycle_ClosesWithTheSealingSection_WidthIncludedAsync() {
+    var coord = new ClosureCoordinator();
+    var worker = _build(coord, new StreamIntegrityOptions { Sealing = { MaxClosuresPerCycle = 5, EpochWidth = 2500 } });
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.MaxEpochsSeen).IsEqualTo(5);
+    await Assert.That(coord.WidthSeen).IsEqualTo(2500L)
+      .Because("#2353: the configured width reaches the closure pass, which pins it on lanes met from now on");
+  }
+
+  [Test]
+  [NotInParallel("Metrics")]
+  public async Task MaintenanceCycle_CountsTheEpochsItSealedAsync() {
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(factory));
+    using var helper = new Whizbang.Core.Tests.Observability.MetricAssertionHelper(factory.CreatedMeters[0]);
+    var worker = _build(new ClosureCoordinator { Closed = 3 }, new StreamIntegrityOptions(), metrics);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(helper.GetByName("whizbang.stream_integrity.epochs_sealed").Sum(m => m.Value)).IsEqualTo(3d);
   }
 
   [Test]

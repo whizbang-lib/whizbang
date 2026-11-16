@@ -2669,6 +2669,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+    IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention, int batchSize,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(retention);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await CoordinatorRetentionSql.SweepOperationalRetentionAsync(
+      cmd, PgIdentifier.QualifyPrefix(schema), retention, batchSize, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<int> CloseDigestEpochsAsync(
     int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
@@ -2691,6 +2705,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(pMax);
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return ScalarResult.IntOrZero(result);
+  }
+
+  /// <inheritdoc />
+  public async Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, long epochWidth, CancellationToken cancellationToken = default) {
+    await _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // Its own statement, before the closure: a write in the closure's own snapshot would not be seen by it.
+      cmd.CommandText =
+        $"INSERT INTO {BuildSchemaQualifiedName(schema, SETTINGS_TABLE)} (setting_key, setting_value, value_type, description) " +
+        "VALUES ('integrity_epoch_width', @p_width, 'integer', 'Sequence width of one digest epoch (Whizbang:StreamIntegrity:Sealing:EpochWidth). Pinned on a lane''s frontier at its first close.') " +
+        "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value " +
+        $"WHERE {BuildSchemaQualifiedName(schema, SETTINGS_TABLE)}.setting_value IS DISTINCT FROM EXCLUDED.setting_value";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_width", epochWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken).ConfigureAwait(false);
+    return await CloseDigestEpochsAsync(settleSeconds, maxEpochs, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -2784,6 +2814,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
       return new EpochVerificationResult(reader.GetInt32(0), reader.GetInt32(1));
     }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+    SealRecheckRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        "SELECT epochs_checked, epochs_drifted " +
+        $"FROM {BuildSchemaQualifiedName(schema, "wh_recheck_digest_epochs")}(NOW(), @p_settle, @p_max, @p_lookback, @p_every, @p_refold)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)request.SettleWindow.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxEpochs)));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)request.Lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)request.RecheckEvery.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_refold", request.Refold));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      return new EpochVerificationResult(reader.GetInt32(0), reader.GetInt32(1));
+    }, cancellationToken);
+  }
 
   /// <inheritdoc />
   public Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(

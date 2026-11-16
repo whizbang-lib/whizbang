@@ -50,6 +50,16 @@ public sealed class MaintenanceMetrics {
   /// </summary>
   public PassiveCounter<long> RetentionAdopted { get; }
 
+  /// <summary>
+  /// Operational records the retention sweep removed (#2354). Tagged by <c>category</c> only. Exported to Prometheus as
+  /// <c>whizbang_maintenance_operational_rows_expired_total</c>.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#metrics</docs>
+  public PassiveCounter<long> OperationalRowsExpired { get; }
+
+  // The latest operational retention reading (#2354), replaced whole by each one.
+  private IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult> _operational = [];
+
   // The latest pending-reclamation reading (#2289), replaced whole by each one.
   private PendingReclamation _pending = PendingReclamation.None;
 
@@ -68,6 +78,19 @@ public sealed class MaintenanceMetrics {
     RetentionAdopted = meter.CreatePassiveCounter<long>(
       "whizbang.maintenance.retention_adopted",
       description: "Rows past the window when the maintenance cycle adopted a perspective's declared retention; tagged by perspective");
+    OperationalRowsExpired = meter.CreatePassiveCounter<long>(
+      "whizbang.maintenance.operational_rows_expired",
+      description: "Operational records the retention sweep removed past their resting period; tagged by category");
+    OperationalRowsExpired.Touch(CATEGORY_TAG, Enum.GetNames<Whizbang.Core.Workers.OperationalCategory>());
+    meter.CreateObservableGauge(
+      "whizbang.maintenance.operational_rows",
+      _observeOperationalRows,
+      description: "Operational records left after the last retention sweep (open rows, which are state, excluded); tagged by category");
+    meter.CreateObservableGauge(
+      "whizbang.maintenance.operational_oldest_age_seconds",
+      _observeOperationalOldestAge,
+      unit: "s",
+      description: "Age of the oldest operational record left after the last retention sweep; tagged by category. Above twice the category's retention, the sweep is not keeping up");
     // #2289: what cleanup has left to do, read by PendingReclamationSampler on its own window.
     meter.CreateObservableGauge(
       "whizbang.maintenance.pending_rows",
@@ -100,6 +123,41 @@ public sealed class MaintenanceMetrics {
     ArgumentNullException.ThrowIfNull(reading);
     Volatile.Write(ref _pending, reading);
   }
+
+  private const string CATEGORY_TAG = "category";
+
+  /// <summary>Records the rows one retention batch removed from a category's table (#2354).</summary>
+  /// <param name="category">The table's category.</param>
+  /// <param name="expired">Rows removed.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
+  public void RecordOperationalRowsExpired(Whizbang.Core.Workers.OperationalCategory category, long expired) {
+    if (expired > 0) {
+      OperationalRowsExpired.Add(expired, new KeyValuePair<string, object?>(CATEGORY_TAG, category.ToString()));
+    }
+  }
+
+  /// <summary>
+  /// Replaces the operational retention reading the per-category gauges report (#2354): a category's rows are the sum
+  /// over its tables, and its oldest age the oldest table's.
+  /// </summary>
+  /// <param name="reading">The last batch's results.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
+  public void UpdateOperationalRetention(IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult> reading) {
+    ArgumentNullException.ThrowIfNull(reading);
+    Volatile.Write(ref _operational, reading);
+  }
+
+  private IEnumerable<Measurement<long>> _observeOperationalRows() =>
+    Volatile.Read(ref _operational)
+      .GroupBy(r => r.Category)
+      .Select(g => new Measurement<long>(g.Sum(r => r.Remaining), new KeyValuePair<string, object?>(CATEGORY_TAG, g.Key.ToString())));
+
+  private IEnumerable<Measurement<double>> _observeOperationalOldestAge() =>
+    Volatile.Read(ref _operational)
+      .Where(r => r.OldestAge.HasValue)
+      .GroupBy(r => r.Category)
+      .Select(g => new Measurement<double>(
+        g.Max(r => r.OldestAge!.Value.TotalSeconds), new KeyValuePair<string, object?>(CATEGORY_TAG, g.Key.ToString())));
 
   private IEnumerable<Measurement<long>> _observePendingRows() {
     foreach (var (task, rows) in Volatile.Read(ref _pending).Tasks) {

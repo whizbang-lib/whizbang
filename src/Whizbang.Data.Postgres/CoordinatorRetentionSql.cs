@@ -152,6 +152,49 @@ internal static class CoordinatorRetentionSql {
     return new HandledLedgerAnswer(reader.GetFieldValue<DateTimeOffset>(0), reader.GetFieldValue<Guid[]>(1).ToHashSet());
   }
 
+  /// <summary>
+  /// One batch of the operational retention sweep (<c>wh_sweep_operational_retention</c>, #2354), on the database clock:
+  /// each category's resting period goes as seconds in one JSON object, and each swept table comes back with what the
+  /// batch removed and what is left.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OperationalRetentionSweepSqlTests.cs:Coordinator_SweepOperationalRetentionAsync_DrivesTheSqlFunctionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperOperationalRetentionTests.cs</tests>
+  internal static async Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+      DbCommand cmd, string prefix, IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention,
+      int batchSize, CancellationToken cancellationToken) {
+    cmd.CommandText =
+      "SELECT category, table_name, rows_expired, rows_remaining, oldest_age_seconds " +
+      $"FROM {prefix}wh_sweep_operational_retention(NOW(), @p_retention, @p_batch)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_retention", NpgsqlDbType.Jsonb) { Value = RetentionJson(retention) });
+    cmd.Parameters.Add(new NpgsqlParameter("p_batch", NpgsqlDbType.Integer) { Value = Math.Max(1, batchSize) });
+    var results = new List<Whizbang.Core.Workers.OperationalRetentionSweepResult>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      // The SQL names categories by OperationalCategory's names; a name this build does not know fails loudly.
+      var category = Enum.Parse<Whizbang.Core.Workers.OperationalCategory>(reader.GetString(0));
+      TimeSpan? oldest = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
+        ? null
+        : TimeSpan.FromSeconds(reader.GetDouble(4));
+      results.Add(new(category, reader.GetString(1), reader.GetInt32(2), reader.GetInt64(3), oldest));
+    }
+    return results;
+  }
+
+  /// <summary>The resting periods as the sweep reads them: a JSON object of category name to whole seconds.</summary>
+  /// <param name="retention">Each category's resting period.</param>
+  /// <returns>The JSON text.</returns>
+  internal static string RetentionJson(IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention) {
+    var json = new System.Text.StringBuilder("{");
+    foreach (var (category, keep) in retention) {
+      if (json.Length > 1) {
+        json.Append(',');
+      }
+      json.Append('"').Append(category.ToString()).Append("\":")
+        .Append(((long)keep.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+    return json.Append('}').ToString();
+  }
+
   /// <summary>Keeps the handled ledger to <paramref name="keep"/> (<c>wh_receptor_handled_sweep</c>, #2273): the records removed.</summary>
   internal static async Task<long> SweepHandledLedgerAsync(
       DbCommand cmd, string prefix, DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken) {

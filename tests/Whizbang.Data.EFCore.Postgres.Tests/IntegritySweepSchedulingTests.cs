@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,8 +36,14 @@ public class IntegritySweepSchedulingTests {
 
   private sealed class CaptureScheduleManager : IScheduleManager {
     public ScheduleDefinition? Created;
+    public List<ScheduleDefinition> All { get; } = [];
+    public bool Fail { get; set; }
     public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
+      if (Fail) {
+        return Task.FromException<ScheduleHandle>(new InvalidOperationException("schedule store unavailable"));
+      }
       Created = definition;
+      All.Add(definition);
       return Task.FromResult(new ScheduleHandle(TrackedGuid.New().Value, DateTimeOffset.UtcNow, WasCreated: true));
     }
     public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -60,8 +67,14 @@ public class IntegritySweepSchedulingTests {
 
   private sealed class Runner : IIntegritySweepRunner {
     public int Runs;
+    public List<IntegrityCheck> Checks { get; } = [];
     public Task RunSweepOnceAsync(CancellationToken cancellationToken) {
       Runs++;
+      return Task.CompletedTask;
+    }
+    public Task RunCheckOnceAsync(IntegrityCheck check, CancellationToken cancellationToken) {
+      Runs++;
+      Checks.Add(check);
       return Task.CompletedTask;
     }
   }
@@ -92,7 +105,8 @@ public class IntegritySweepSchedulingTests {
   }
 
   private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, CaptureScheduleManager Manager)
-      _build(string? cron, bool withManager = true, string serviceName = "auditor-svc") {
+      _build(string? cron, bool withManager = true, string serviceName = "auditor-svc",
+        StreamIntegrityOptions? options = null, bool withState = true) {
     var services = new ServiceCollection();
     var manager = new CaptureScheduleManager();
     if (withManager) {
@@ -100,10 +114,12 @@ public class IntegritySweepSchedulingTests {
     }
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     var state = new IntegritySweepScheduleState();
-    services.AddSingleton(state);
+    if (withState) {
+      services.AddSingleton(state);
+    }
     var sp = services.BuildServiceProvider();
     var scheduler = new IntegritySweepScheduler(
-      sp, Options.Create(new StreamIntegrityOptions { FullSweepCron = cron }),
+      sp, Options.Create(options ?? new StreamIntegrityOptions { FullHistoryCompare = { Enabled = true, Schedule = cron } }),
       NullLogger<IntegritySweepScheduler>.Instance);
     return (scheduler, state, manager);
   }
@@ -200,6 +216,128 @@ public class IntegritySweepSchedulingTests {
 
     await Assert.That(runner.Runs).IsEqualTo(1)
       .Because("the occurrence at the idle hour IS the sweep trigger — an inert receptor would quietly end all sweeping");
+  }
+
+  // ── #2353: one schedule per enabled check ─────────────────────────────────────────────────
+
+  private static ScheduledIntegritySweep _occurrence(ScheduleDefinition definition) {
+    var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    return (ScheduledIntegritySweep)System.Text.Json.JsonSerializer.Deserialize(
+      definition.EventDataJson!, options.GetTypeInfo(typeof(ScheduledIntegritySweep)))!;
+  }
+
+  [Test]
+  public async Task Start_WithBothChecksOn_RegistersOneScheduleEach_OnItsOwnCronAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: new StreamIntegrityOptions {
+      FullHistoryCompare = { Enabled = true, Schedule = "17 2 * * *" },
+      SealRecheck = { Enabled = true, Schedule = "33 4 * * 0" },
+    });
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    var compare = manager.All.Single(d => d.Key == "wh-integrity-sweep");
+    var recheck = manager.All.Single(d => d.Key == "wh-seal-recheck");
+    await Assert.That(compare.Cron).IsEqualTo("17 2 * * *");
+    await Assert.That(recheck.Cron).IsEqualTo("33 4 * * 0")
+      .Because("each check is sized and timed on its own; one shared cron would tie the cheap check to the expensive one");
+    await Assert.That(_occurrence(compare).Check).IsEqualTo(IntegrityCheck.FullHistoryCompare);
+    await Assert.That(_occurrence(recheck).Check).IsEqualTo(IntegrityCheck.SealRecheck);
+    await Assert.That(state.CronActive).IsTrue();
+    await Assert.That(state.SealRecheckCronActive).IsTrue();
+  }
+
+  [Test]
+  public async Task Start_WithTheDefaults_RegistersNothing_SoNeitherCheckRunsAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: new StreamIntegrityOptions());
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.All).IsEmpty().Because("both checks are off by default");
+    await Assert.That(state.CronActive).IsFalse();
+    await Assert.That(state.SealRecheckCronActive).IsFalse();
+  }
+
+  [Test]
+  public async Task Start_WithOnlyTheSealRecheckOn_RegistersOnlyItsScheduleAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: new StreamIntegrityOptions {
+      SealRecheck = { Enabled = true },
+    });
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.All.Single().Key).IsEqualTo("wh-seal-recheck");
+    await Assert.That(state.CronActive).IsFalse();
+    await Assert.That(state.SealRecheckCronActive).IsTrue();
+  }
+
+  private static StreamIntegrityOptions _bothOn() => new() {
+    FullHistoryCompare = { Enabled = true },
+    SealRecheck = { Enabled = true },
+  };
+
+  [Test]
+  public async Task Start_WhenRegistrationFails_LeavesEachCheckOnTheCounterAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: _bothOn());
+    manager.Fail = true;
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(state.CronActive).IsFalse()
+      .Because("a check whose schedule did not register must stay on the every-Nth-audit counter, never be lost");
+    await Assert.That(state.SealRecheckCronActive).IsFalse();
+  }
+
+  [Test]
+  public async Task Start_WithNoScheduleStateRegistered_StillRegistersBothSchedulesAsync() {
+    var (scheduler, _, manager) = _build(cron: null, options: _bothOn(), withState: false);
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.All.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Start_ACheckThatIsOnWithNoSchedule_RegistersNothingForItAsync() {
+    var (scheduler, state, manager) = _build(cron: null, options: new StreamIntegrityOptions {
+      FullHistoryCompare = { Enabled = true, Schedule = "" },
+      SealRecheck = { Enabled = true, Schedule = null },
+    });
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.All).IsEmpty().Because("an empty schedule leaves the check on the counter fallback");
+    await Assert.That(state.CronActive || state.SealRecheckCronActive).IsFalse();
+  }
+
+  [Test]
+  [Arguments(IntegrityCheck.SealRecheck)]
+  [Arguments(IntegrityCheck.FullHistoryCompare)]
+  public async Task SweepReceptor_RunsTheCheckTheOccurrenceNamesAsync(IntegrityCheck check) {
+    var runner = new Runner();
+    var services = new ServiceCollection();
+    services.AddSingleton<IIntegritySweepRunner>(runner);
+    var sp = services.BuildServiceProvider();
+    var receptor = new ScheduledIntegritySweepReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await receptor.HandleAsync(new ScheduledIntegritySweep { Check = check });
+
+    await Assert.That(runner.Checks).IsEquivalentTo([check]);
+  }
+
+  [Test]
+  public async Task SweepReceptor_AnOccurrenceNamingNoCheck_RunsTheFullHistoryCompareAsync() {
+    // An occurrence scheduled before #2353 carries no check; the schedule it came from was the full sweep's.
+    var runner = new Runner();
+    var services = new ServiceCollection();
+    services.AddSingleton<IIntegritySweepRunner>(runner);
+    var sp = services.BuildServiceProvider();
+    var receptor = new ScheduledIntegritySweepReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await receptor.HandleAsync(new ScheduledIntegritySweep());
+
+    await Assert.That(runner.Checks).IsEquivalentTo([IntegrityCheck.FullHistoryCompare]);
   }
 
   [Test]

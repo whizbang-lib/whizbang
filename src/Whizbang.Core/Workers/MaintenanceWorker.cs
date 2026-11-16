@@ -420,11 +420,14 @@ public sealed partial class MaintenanceWorker(
       // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Inert without a
       // registered hook.
       ("ephemeral_destruction_hooks", async () => destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct)),
-      ("digest_epoch_closure", () => _closeDigestEpochsAsync(coordinator, integrity, ct)),
+      ("digest_epoch_closure", () => _closeDigestEpochsAsync(
+        coordinator, integrity, sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>(), ct)),
       ("integrity_traffic_sweep", () => _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct)),
       // The maintenance call, then the E2 PostDestruction hooks (detached, after the reap committed).
       ("perform_maintenance", () => _performMaintenanceAsync(coordinator, sp, destruction, ct)),
       ("lifecycle_completion_cleanup", () => _cleanupLifecycleCompletionsAsync(coordinator, ct)),
+      // #2354: what cleanup and integrity record about their own work rests for its category's period, then goes.
+      ("operational_retention", () => _sweepOperationalRetentionAsync(coordinator, sp, ct)),
       // #2273: the handled ledger, kept to the repair receptor lookback. The completion records every handled event on
       // any driver, so this runs whether or not integrity is on. Before the steps, so the coverage start moves before the
       // partition step drops the partitions behind it.
@@ -514,14 +517,16 @@ public sealed partial class MaintenanceWorker(
   /// manifest folded over the same range. Best-effort: the frontier just advances on a later cycle.
   /// </summary>
   private async Task _closeDigestEpochsAsync(
-      IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
-    if (integrity is not { EpochClosureEnabled: true }) {
+      IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, CancellationToken ct) {
+    if (integrity is not { Sealing.Enabled: true }) {
       return;
     }
     try {
       var closed = await coordinator.CloseDigestEpochsAsync(
-        integrity.AuditSettleWindowMinutes * 60, integrity.MaxEpochClosuresPerMaintenanceCycle, ct);
+        integrity.AuditSettleWindowMinutes * 60, integrity.Sealing.MaxClosuresPerCycle, integrity.Sealing.EpochWidth, ct);
       if (closed > 0) {
+        metrics?.EpochsSealed.Add(closed);
         LogEpochsClosed(_logger, closed);
       }
     } catch (OperationCanceledException) {
@@ -529,6 +534,33 @@ public sealed partial class MaintenanceWorker(
     } catch (Exception ex) {
       LogEpochClosureFailed(_logger, ex);
     }
+  }
+
+  /// <summary>
+  /// #2354: the operational retention sweep. Each batch removes, per Rolling table, the closed rows past their
+  /// category's resting period; the cycle repeats while a table came back with a full batch, up to
+  /// <see cref="OperationalRetentionOptions.MaxBatchesPerCycle"/>, so a backlog drains over several cycles instead of
+  /// holding one. The last batch's reading is what the per-category gauges report. A host that registered no options
+  /// sweeps with the defaults, so bookkeeping rolls off without configuration.
+  /// </summary>
+  private static async Task _sweepOperationalRetentionAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var options = sp.GetService<IOptions<OperationalRetentionOptions>>()?.Value ?? new OperationalRetentionOptions();
+    if (!options.Enabled) {
+      return;
+    }
+    var metrics = sp.GetService<MaintenanceMetrics>();
+    var retention = options.RetentionByCategory();
+    IReadOnlyList<OperationalRetentionSweepResult> reading = [];
+    for (var batch = 0; batch < options.MaxBatchesPerCycle; batch++) {
+      reading = await coordinator.SweepOperationalRetentionAsync(retention, options.BatchSize, ct).ConfigureAwait(false);
+      foreach (var result in reading) {
+        metrics?.RecordOperationalRowsExpired(result.Category, result.Expired);
+      }
+      if (!reading.Any(r => r.Expired >= options.BatchSize)) {
+        break;
+      }
+    }
+    metrics?.UpdateOperationalRetention(reading);
   }
 
   /// <summary>
