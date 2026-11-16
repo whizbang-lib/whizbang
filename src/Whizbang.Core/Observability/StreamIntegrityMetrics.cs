@@ -184,6 +184,13 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   public PassiveCounter<long> OriginsAdopted { get; }
 
+  /// <summary>Redelivered copies of a superseding key the store did not store again because it already holds a newer
+  /// copy of that key (#2350): each is satisfied, so it is neither stored above the newest nor read as missing. Growth
+  /// means consumers reap superseded copies before their origins do.</summary>
+  /// <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
+  public PassiveCounter<long> RedeliveredCopiesSuperseded { get; }
+
   /// <summary>Stored events without an origin that a redelivery named an origin for but did not adopt, because the
   /// event's first hop names another service: an event this service authored, or one received from a third service,
   /// that the origin's store had filed as its own. Growth means an origin is redelivering events it did not author;
@@ -419,6 +426,9 @@ public sealed class StreamIntegrityMetrics {
     OriginsAdopted = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_adopted",
       description: "Stored events whose empty origin columns a redelivery filled (history received before origins were recorded)");
+    RedeliveredCopiesSuperseded = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivered_copies_superseded",
+      description: "Redelivered copies of a superseding key not stored again because a newer copy of the key is held");
     OriginsRefused = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_refused",
       description: "Stored events without an origin that a redelivery did not adopt because their first hop names another service");

@@ -71,3 +71,7 @@ __DIGEST_ELIGIBLE__(e) = (COALESCE(e.flags, 0) & 8 = 0 AND COALESCE(e.flags, 0) 
 # Which events a continuity checkpoint counts (#2352): the digest rule without the ephemeral test. A checkpoint counts
 # what was received, and an ephemeral event was received live whether or not its body has been reaped since.
 __INTEGRITY_COUNTED__(e) = (COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__))
+
+# Why a repair child was settled instead of stored: a newer copy of its superseding key is already held here (449,
+# #2350). store_inbox_messages writes it to wh_inbox_state.error and the bundle reconciles read it back as present.
+__REPAIR_SATISFIED_SUPERSEDED__ = 'repair satisfied: a newer copy of its superseding key is held'

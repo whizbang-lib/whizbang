@@ -32,10 +32,13 @@ namespace Whizbang.Core.Messaging;
 /// <param name="OriginsFilled">Of <paramref name="Adopted"/>, the events whose origin was empty and is now the bundle's;
 /// the rest already carried the origin and took only its sequence (#2099). Null when the store did not say, in which
 /// case every adopted event is taken to have had its origin filled.</param>
+/// <param name="SupersededSatisfied">Of <paramref name="Present"/>, the bundle's copies of a superseding key the store did
+/// not store again because it already holds a newer copy of that key (#2350): satisfied, never a deficit.</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
 public readonly record struct RedeliveredBucketPresence(
   Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
-  int RefusedForeignOrigin = 0, int? OriginsFilled = null);
+  int RefusedForeignOrigin = 0, int? OriginsFilled = null, int SupersededSatisfied = 0);
 
 /// <summary>
 /// One redelivery bundle as a batch reconcile takes it (#2099): the origin that published it, the origin's service name
@@ -435,6 +438,8 @@ public static partial class RedeliveryReconciler {
     var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
     var refusedForeignOrigin = buckets.Sum(b => b.RefusedForeignOrigin);
     var metrics = services.GetService<StreamIntegrityMetrics>();
+    // #2350: copies a newer held copy of their key supersedes were settled, not stored; they count as present.
+    metrics?.RedeliveredCopiesSuperseded.Add(buckets.Sum(b => b.SupersededSatisfied));
     _reportForeignOrigins(logger, metrics, refusedForeignOrigin, childCount, originServiceName, origin);
     _reportAdopted(logger, metrics, buckets, adopted, childCount, origin);
     // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,

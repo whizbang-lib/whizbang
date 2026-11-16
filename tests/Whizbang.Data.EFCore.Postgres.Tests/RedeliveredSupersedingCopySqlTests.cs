@@ -71,8 +71,9 @@ public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {
       .Because("a newer copy of its key is held, so the older copy is never stored again");
     await Assert.That(await _errorAsync(conn, older)).IsEqualTo(_satisfied())
       .Because("it is settled with the reason, never claimed, copied or applied");
-    await Assert.That(await _countAsync(conn, "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id", older)).IsEqualTo(0L)
-      .Because("no perspective is offered the older copy after the newer one");
+    await Assert.That(await _countAsync(conn,
+        "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id AND processed_at IS NULL", older)).IsEqualTo(0L)
+      .Because("no perspective is offered the older copy after the newer one (its live offer was processed before the reap)");
     var answer = await _reconcileAsync(conn, older);
     await Assert.That(answer).IsEquivalentTo([$"{stream}|1|0|1"])
       .Because("the reconcile reads the copy as satisfied (present) and counts it apart, never as a deficit");

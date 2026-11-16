@@ -1727,7 +1727,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = commitSequences.ToArray()
     });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count, refused_truncated_count, refused_foreign_origin_count FROM {qualified}(@p_origin_service_id,@p_origin_service_name,@p_event_ids,@p_commit_sequences)";
+    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count, refused_truncated_count, refused_foreign_origin_count, superseded_satisfied_count FROM {qualified}(@p_origin_service_id,@p_origin_service_name,@p_event_ids,@p_commit_sequences)";
 #pragma warning restore S2077
     var buckets = new List<RedeliveredBucketPresence>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1735,7 +1735,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var tenant = reader.GetString(1);
       buckets.Add(new RedeliveredBucketPresence(
         reader.GetGuid(0), tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4),
-        reader.GetInt32(5), reader.GetInt32(6)));
+        reader.GetInt32(5), reader.GetInt32(6), SupersededSatisfied: reader.GetInt32(7)));
     }
     return buckets;
   }
@@ -1780,14 +1780,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = bundles.SelectMany(b => b.CommitSequences).ToArray()
     });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-    cmd.CommandText = $"SELECT bundle, stream_id, tenant_scope, event_type, present_count, adopted_count, origins_filled_count, refused_truncated_count, refused_foreign_origin_count FROM {qualified}(@p_bundle_origins,@p_bundle_names,@p_event_bundles,@p_event_ids,@p_commit_sequences)";
+    cmd.CommandText = $"SELECT bundle, stream_id, tenant_scope, event_type, present_count, adopted_count, origins_filled_count, refused_truncated_count, refused_foreign_origin_count, superseded_satisfied_count FROM {qualified}(@p_bundle_origins,@p_bundle_names,@p_event_bundles,@p_event_ids,@p_commit_sequences)";
 #pragma warning restore S2077
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var tenant = reader.GetString(2);
       results[reader.GetInt32(0) - 1].Add(new RedeliveredBucketPresence(
         reader.GetGuid(1), tenant.Length == 0 ? null : tenant, reader.GetString(3), reader.GetInt32(4), reader.GetInt32(5),
-        reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(6)));
+        reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(6), reader.GetInt32(9)));
     }
     return results;
   }
