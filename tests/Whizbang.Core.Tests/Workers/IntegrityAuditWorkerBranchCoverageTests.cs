@@ -531,6 +531,16 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
     public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
 
+    /// <summary>#2349: what the store decides for every origin, and each decision asked for.</summary>
+    public IntegrityAskDecision AskDecision { get; init; } = IntegrityAskDecision.NothingRemembered;
+    public List<(Guid Origin, DateTimeOffset Now, TimeSpan MaxSkip)> AskDecisions { get; } = [];
+
+    public Task<IntegrityAskDecision> IntegrityDecideOriginAskAsync(
+        Guid originServiceId, DateTimeOffset now, TimeSpan maxSkip, CancellationToken cancellationToken = default) {
+      AskDecisions.Add((originServiceId, now, maxSkip));
+      return Task.FromResult(AskDecision);
+    }
+
     public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
       Task.FromResult(0L);
 

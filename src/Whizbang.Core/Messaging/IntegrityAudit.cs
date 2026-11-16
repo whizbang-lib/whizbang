@@ -227,6 +227,36 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// <docs>resilience/stream-integrity#windowed-manifests</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.WalkTypes.cs:ManifestReceptor_AFollowUpPage_AsksForEveryTypeTheWalkStartedWith_NotOnlyThoseOnThePageAsync</tests>
   public IReadOnlyList<string>? RequestedEventTypes { get; init; }
+
+  /// <summary>
+  /// #2349: true when the origin had nothing settled at or above the ask's window start, so it computed nothing and
+  /// answers only to say so (no digests, <see cref="ComputedThrough"/> equal to the start). The asker reads it as a
+  /// full match of an empty window. Only a type-level answer carries it; an origin that predates the field stays silent
+  /// instead, and an asker that predates it compares the empty window as a quiet one.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  public bool NothingSettledAbove { get; init; }
+}
+
+/// <summary>
+/// #2349: whether the audit asks an origin this cycle, and why. The audit remembers, per origin, the state at the last
+/// full match (the seal, the origin's generation, the origin's last checkpoint position and the highest position held
+/// from it); <see cref="Skip"/> means all four are unchanged and the last ask is younger than
+/// <see cref="StreamIntegrityOptions.MaxAskSkipMinutes"/>. Every other value asks. The values are the store's codes.
+/// </summary>
+/// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+public enum IntegrityAskDecision {
+  /// <summary>Ask: no full match is remembered for the origin (first contact, a mismatch since, or a store without the memo).</summary>
+  NothingRemembered = 0,
+
+  /// <summary>Ask: at least one of the four remembered values moved since the last full match.</summary>
+  Moved = 1,
+
+  /// <summary>Ask: nothing moved, but the last ask is at least the maximum skip old.</summary>
+  BoundReached = 2,
+
+  /// <summary>Skip: nothing moved and the last ask is younger than the maximum skip.</summary>
+  Skip = 3,
 }
 
 /// <summary>

@@ -402,6 +402,17 @@ public sealed class StreamIntegrityOptions {
   public int AuditIntervalMinutes { get; set; } = 1440;
 
   /// <summary>
+  /// The longest an audit goes without asking an origin whose state has not moved, in minutes (default 60, #2349). After
+  /// a window above the seal matched in full, the audit remembers, per origin, the seal, the origin's generation, the
+  /// origin's last checkpoint position and the highest position this service holds from it; while all four are unchanged
+  /// the window above the seal cannot have changed, so the audit skips the ask. It still asks at least once per this
+  /// many minutes, so a loss on this side with nothing else moving is found. 0 or less asks every cycle, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerAskSkipTests.cs:Options_MaxAskSkipMinutes_DefaultsToOneHourAsync</tests>
+  public int MaxAskSkipMinutes { get; set; } = 60;
+
+  /// <summary>
   /// Run the FIRST deep audit shortly after startup (default true) instead of waiting a full
   /// interval — historical divergence (a consumer that drifted before this boot) heals minutes
   /// after a deploy, not a day later. The startup audit fires after a 30-second floor plus a

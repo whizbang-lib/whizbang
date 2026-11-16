@@ -208,6 +208,7 @@ Whizbang:StreamIntegrity:LedgerRecheckAfterMinutes=120
 Whizbang:StreamIntegrity:LedgerRecheckEnabled=true
 Whizbang:StreamIntegrity:LedgerRecheckIntervalSeconds=60
 Whizbang:StreamIntegrity:LedgerRecheckRowsPerTick=500
+Whizbang:StreamIntegrity:MaxAskSkipMinutes=60
 Whizbang:StreamIntegrity:MaxAuditWindowSequences=500000
 Whizbang:StreamIntegrity:MaxAuditWindowsPerAudit=5
 Whizbang:StreamIntegrity:MaxAutoRebuildsPerAudit=5

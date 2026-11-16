@@ -342,6 +342,7 @@ Whizbang:StreamIntegrity:LedgerRecheckAfterMinutes
 Whizbang:StreamIntegrity:LedgerRecheckEnabled
 Whizbang:StreamIntegrity:LedgerRecheckIntervalSeconds
 Whizbang:StreamIntegrity:LedgerRecheckRowsPerTick
+Whizbang:StreamIntegrity:MaxAskSkipMinutes
 Whizbang:StreamIntegrity:MaxAuditWindowSequences
 Whizbang:StreamIntegrity:MaxAuditWindowsPerAudit
 Whizbang:StreamIntegrity:MaxAutoRebuildsPerAudit

@@ -30,11 +30,11 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
   private static IntegrityAuditWorker _workerAskingOneOrigin(
       AuditCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions options,
       StreamIntegrityMetrics? metrics = null, FakeTimeProvider? clock = null,
-      IntegritySweepScheduleState? scheduleState = null) {
+      IntegritySweepScheduleState? scheduleState = null, Microsoft.Extensions.Logging.ILogger<IntegrityAuditWorker>? logger = null) {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock?.GetUtcNow() ?? _auditNow, "origin-a.requests");
     return _buildWorker(coordinator, new CaptureDispatcher(), transport, options, tracker,
-      metrics: metrics, clock: clock, scheduleState: scheduleState);
+      metrics: metrics, logger: logger, clock: clock, scheduleState: scheduleState);
   }
 
   private static RequestIntegrityManifest _onlyRequest(CaptureTransport transport) =>

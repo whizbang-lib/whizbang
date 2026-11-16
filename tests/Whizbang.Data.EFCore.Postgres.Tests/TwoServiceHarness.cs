@@ -87,9 +87,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   /// <param name="consumerConnectionString">The consumer's store: the test's own.</param>
   /// <param name="consumerOptions">Its context options.</param>
   /// <param name="markers">The flags the consumer's catalog declares, by CLR type name (the part before the comma).</param>
+  /// <param name="consumedEventTypes">What the consumer's audit says it consumes (#2349); null keeps the permissive
+  /// registry's list.</param>
+  /// <param name="consumerClock">The clock the consumer's audit worker runs on; null leaves the system clock.</param>
   public static async Task<TwoServiceHarness> CreateAsync(
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
-      Dictionary<string, EventFlags> markers) {
+      Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null) {
     var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
@@ -118,7 +121,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null);
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(h.OriginId, ORIGIN_NAME, DateTimeOffset.UnixEpoch, ORIGIN_REQUEST_TOPIC);
-    h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker);
+    h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
+      consumedEventTypes, consumerClock);
     h._originRequestReceptor = new IntegrityManifestRequestReceptor(
       h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
     h._originRedeliveryReceptor = new RedeliveryRequestReceptor(
@@ -289,6 +293,33 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     return v is null or DBNull ? 0 : Convert.ToInt64(v, CultureInfo.InvariantCulture);
   }
 
+  /// <summary>
+  /// One cycle of the consumer's real audit worker (#2349) with <paramref name="options"/>, pumped until both sides are
+  /// quiet. The cycle claim is released first, as the claim window's passing would release it: each call is one cycle.
+  /// </summary>
+  public async Task RunConsumerAuditAsync(StreamIntegrityOptions options) {
+    await ExecuteAsync(Consumer, "DELETE FROM wh_settings WHERE setting_key = 'integrity_audit_last_run'");
+    var worker = new IntegrityAuditWorker(
+      _consumerProvider!.GetRequiredService<IServiceScopeFactory>(), Options.Create(options), NullLogger<IntegrityAuditWorker>.Instance);
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+    await _pumpUntilQuietAsync();
+  }
+
+  /// <summary>The origin's checkpoint reaches the consumer: its highest stamped position, as the checkpoint announces it.</summary>
+  public async Task CheckpointAsync() {
+    long head;
+    await using (var conn = await _openAsync(Origin)) {
+      head = await _scalarAsync(conn, "SELECT COALESCE(MAX(commit_sequence), 0) FROM wh_event_store");
+    }
+    await using var ctx = new WorkCoordinationDbContext(Consumer.Options);
+    await new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, _json)
+      .IntegrityRecordOriginCheckpointAsync(OriginId, ORIGIN_NAME, ORIGIN_REQUEST_TOPIC, DateTimeOffset.UtcNow, head);
+  }
+
+  /// <summary>The manifest asks the consumer has sent so far.</summary>
+  public int ManifestAsks() =>
+    _consumerTransport.Published.Count(p => p.EnvelopeType?.Contains("RequestIntegrityManifest", StringComparison.Ordinal) == true);
+
   /// <summary>An operator's redelivery request for whole streams.</summary>
   public async Task OperatorRedeliverAsync(IReadOnlyList<Guid> streams, string[] types) {
     await _originRedeliveryReceptor.HandleAsync(new RequestRedeliveryCommand {
@@ -413,7 +444,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
 
   private ServiceProvider _buildProvider(
       TwoServiceStore store, IntegrityWireTransport transport, IntegrityWireDispatcher dispatcher, string serviceName,
-      StreamIntegrityOptions options, IntegrityGapTracker? tracker) {
+      StreamIntegrityOptions options, IntegrityGapTracker? tracker,
+      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(store.Options), _json));
@@ -426,6 +458,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     services.AddSingleton<IIntegrityRepairLedger>(sp =>
       new CoordinatorIntegrityRepairLedger(sp.GetRequiredService<IServiceScopeFactory>()));
     services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
+    if (consumedEventTypes is not null) {
+      services.AddSingleton<IConsumerRegistry>(new ConsumedTypes(consumedEventTypes));
+    }
+    if (clock is not null) {
+      services.AddSingleton(clock);
+    }
     // The consumer's catalog: what the fan-out derives a redelivered child's flags from, by its type name.
     services.AddSingleton<IEventMarkerResolver>(new Markers(_markers));
     if (tracker is not null) {
@@ -459,6 +497,13 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       cmd.Parameters.AddWithValue(name, value);
     }
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>A consumer that consumes exactly the given event types, and keeps everything it receives.</summary>
+  private sealed class ConsumedTypes(IReadOnlyList<string> types) : IConsumerRegistry {
+    public bool HasAnyConsumer(string messageType) => true;
+
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => [.. types.Select(t => new ConsumedMessageInfo(t, IsEvent: true))];
   }
 
   /// <summary>The flags the consumer's catalog declares, by CLR name, as a generated catalog would answer.</summary>

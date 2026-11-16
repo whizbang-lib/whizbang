@@ -3096,6 +3096,37 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// #2349: records how a type-level compare of an origin's window above the seal ended. A full match (the seal advanced
+  /// over it, or the origin had nothing settled above it) remembers the seal, the origin generation recorded beside it,
+  /// the origin's last checkpoint position and the highest position this store holds from the origin, so a later audit
+  /// can skip the ask while none of them moves. The memo is kept only while everything held from the origin lies below
+  /// the seal. A mismatch forgets the memo, so the next audit asks again. Default no-op (no memo store).
+  /// </summary>
+  /// <param name="originServiceId">The origin the compare was against.</param>
+  /// <param name="fullMatch">True when the window matched in full; false when a type disagreed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAskMemoSqlTests.cs</tests>
+  Task IntegrityRecordCompareOutcomeAsync(Guid originServiceId, bool fullMatch, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2349: whether the audit asks an origin this cycle. <see cref="IntegrityAskDecision.Skip"/> when a full match is
+  /// remembered, none of its four values moved, and the last ask is younger than <paramref name="maxSkip"/>; any other
+  /// answer asks and records <paramref name="now"/> as the last ask. Default
+  /// <see cref="IntegrityAskDecision.NothingRemembered"/>: an engine without the memo asks every cycle, as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="now">The audit's clock.</param>
+  /// <param name="maxSkip">The longest an unchanged origin goes unasked.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAskMemoSqlTests.cs</tests>
+  Task<IntegrityAskDecision> IntegrityDecideOriginAskAsync(
+    Guid originServiceId, DateTimeOffset now, TimeSpan maxSkip, CancellationToken cancellationToken = default) =>
+    Task.FromResult(IntegrityAskDecision.NothingRemembered);
+
+  /// <summary>
   /// #80-D: the sweep's SEAL backstop — recomputes each closed digest epoch from the store,
   /// compares bucket-for-bucket, and refolds on drift. Epochs holding an unsettled arrival are
   /// skipped whole (verifying now would fold an in-flight delivery into a seal). Default: nothing
