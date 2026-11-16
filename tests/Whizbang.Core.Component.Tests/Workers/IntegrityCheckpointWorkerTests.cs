@@ -4,7 +4,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -352,13 +354,88 @@ public class IntegrityCheckpointWorkerTests {
       .Because("unparking on shutdown is an ordinary stop, not a fault to report");
   }
 
+  /// <summary>
+  /// #2348: a checkpoint goes out when the origin's settled position moved since the last one sent. A window that did not
+  /// move (from equals to) is not published until <see cref="StreamIntegrityOptions.CheckpointHeartbeatMinutes"/> has
+  /// passed since the last one sent, so an idle origin sends a heartbeat every 15 minutes instead of a checkpoint every
+  /// minute, and a consumer can still tell silence from loss. A moved window goes out on the next cycle, heartbeat or not.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  [Test]
+  public async Task RunCheckpointOnce_AnUnmovedWindow_WaitsForTheHeartbeat_AndAMovedOneGoesAtOnceAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero));
+    var coordinator = new CheckpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 }
+    };
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, serviceName: "origin-svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointIntervalSeconds = 60, CheckpointHeartbeatMinutes = 15 },
+      clock: clock);
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);   // the first one always goes: nothing sent yet
+    var afterFirst = dispatcher.Published.Count;
+    for (var minute = 1; minute < 15; minute++) {
+      clock.Advance(TimeSpan.FromMinutes(1));
+      await worker.RunCheckpointOnceAsync(CancellationToken.None);
+    }
+    var beforeHeartbeat = dispatcher.Published.Count;
+    clock.Advance(TimeSpan.FromMinutes(1));
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);   // 15 minutes since the last one sent
+    var afterHeartbeat = dispatcher.Published.Count;
+    clock.Advance(TimeSpan.FromMinutes(1));
+    coordinator.Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 12 };
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);   // the position moved
+
+    await Assert.That(afterFirst).IsEqualTo(1);
+    await Assert.That(beforeHeartbeat).IsEqualTo(1).Because("an unmoved window is not sent before the heartbeat is due");
+    await Assert.That(afterHeartbeat).IsEqualTo(2).Because("the heartbeat goes once 15 minutes passed since the last one sent");
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(3).Because("a moved window goes at once");
+    await Assert.That(coordinator.AdvanceCalls).IsEqualTo(17).Because("every cycle still advances the watermark");
+  }
+
+  /// <summary>
+  /// #2348: an origin that sends heartbeats is not stale between them. A consumer calls an origin stale only once its
+  /// heartbeat plus two intervals have passed without a checkpoint, not after three intervals as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  [Test]
+  public async Task RunCheckpointOnce_AnOriginQuietForLessThanItsHeartbeat_IsNotStaleAsync() {
+    var now = new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero);
+    var clock = new FakeTimeProvider(now);
+    var tracker = new IntegrityGapTracker();
+    var quiet = TrackedGuid.New().Value;
+    var gone = TrackedGuid.New().Value;
+    tracker.RecordCheckpoint(quiet, "quiet-svc", now.AddMinutes(-16), "quiet.requests");
+    tracker.RecordCheckpoint(gone, "gone-svc", now.AddMinutes(-18), "gone.requests");
+    var logger = new FakeLogger<IntegrityCheckpointWorker>();
+    var worker = _buildWorker(new CheckpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 }
+    }, new CaptureDispatcher(), serviceName: "origin-svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointIntervalSeconds = 60, CheckpointHeartbeatMinutes = 15 },
+      logger: logger, clock: clock, tracker: tracker);
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    var stale = logger.Collector.GetSnapshot().Select(r => r.Message).Where(m => m.Contains("has not checkpointed", StringComparison.Ordinal)).ToList();
+    await Assert.That(stale.Count).IsEqualTo(1).Because("only the origin silent past its heartbeat plus two intervals is stale");
+    await Assert.That(stale[0]).Contains("gone-svc");
+  }
+
+  /// <summary>#2348: the heartbeat defaults to 15 minutes.</summary>
+  [Test]
+  public async Task Options_CheckpointHeartbeatMinutes_DefaultsTo15Async() =>
+    await Assert.That(new StreamIntegrityOptions().CheckpointHeartbeatMinutes).IsEqualTo(15);
+
   private static IntegrityCheckpointWorker _buildWorker(
       CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, string serviceName,
       CaptureTransport? transport = null, IMessageTypeCatalog? catalog = null,
       bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
       ControlClassOptions? controlClass = null, StreamIntegrityOptions? integrityOptions = null,
-      ILogger<IntegrityCheckpointWorker>? logger = null) {
+      ILogger<IntegrityCheckpointWorker>? logger = null, TimeProvider? clock = null, IntegrityGapTracker? tracker = null) {
     var services = new ServiceCollection();
+    if (tracker is not null) {
+      services.AddSingleton(tracker);
+    }
     services.AddSingleton<ICheckpointMint>(new CheckpointMint(
       Options.Create(controlClass ?? new ControlClassOptions())));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -384,13 +461,14 @@ public class IntegrityCheckpointWorkerTests {
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
-      logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
+      logger ?? NullLogger<IntegrityCheckpointWorker>.Instance,
+      clock);
   }
 
   private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private int _advanceCalls;
 
-    public IntegrityCheckpointWindow? Window { get; init; }
+    public IntegrityCheckpointWindow? Window { get; set; }
     public Guid LocalServiceId { get; init; } = TrackedGuid.New().Value;
     public int AdvanceCalls => Volatile.Read(ref _advanceCalls);
     public List<string> OwnAuditedEventTypes { get; init; } = [];

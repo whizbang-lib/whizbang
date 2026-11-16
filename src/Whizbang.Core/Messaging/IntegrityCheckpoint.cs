@@ -307,6 +307,15 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Checkpoint cadence in seconds (default 60).</summary>
   public int CheckpointIntervalSeconds { get; set; } = 60;
 
+  /// <summary>
+  /// The longest an origin goes without sending a checkpoint, in minutes (default 15, #2348). A checkpoint goes out on the
+  /// first cycle after the origin's settled position moved; while it does not move, only this heartbeat goes out, so a
+  /// consumer can still tell an idle origin from a lost one. A consumer calls an origin stale once this heartbeat plus two
+  /// checkpoint intervals have passed without one.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs:RunCheckpointOnce_AnUnmovedWindow_WaitsForTheHeartbeat_AndAMovedOneGoesAtOnceAsync</tests>
+  public int CheckpointHeartbeatMinutes { get; set; }
 
   /// <summary>Verify received counts against other origins' checkpoints (default true).</summary>
   public bool GapDetectionEnabled { get; set; } = true;
