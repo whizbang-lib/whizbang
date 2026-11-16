@@ -56,8 +56,7 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     await using var conn = await dataSource.OpenConnectionAsync();
     var origin = TrackedGuid.New().Value;
-    await _seedHistoryAsync(conn, origin, LARGE_HISTORY, sequencedToo: true);
-    await _foldTheHistoryAsync(conn, origin);
+    await _seedHistoryRebuiltAsync(conn, origin, LARGE_HISTORY, sequencedToo: true);
     await _seedHistoryAsync(conn, origin, UNSETTLED_ROWS, sequencedToo: false, age: "1 minute");
     await _execAsync(conn, "ANALYZE wh_event_store");
 
@@ -174,11 +173,7 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
     await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
     await using var conn = await dataSource.OpenConnectionAsync();
     var origin = TrackedGuid.New().Value;
-    await _seedHistoryAsync(conn, origin, history, sequencedToo: false);
-    await _foldTheHistoryAsync(conn, origin);
-    // The folded changes are deleted rows until vacuum reclaims them, which autovacuum does promptly on this table
-    // (447 sets its thresholds); the steady state is measured after it, as the next answer in production meets it.
-    await _execAsync(conn, "VACUUM wh_unsequenced_digest_changes");
+    await _seedHistoryRebuiltAsync(conn, origin, history, sequencedToo: false);
     await _seedHistoryAsync(conn, origin, NEW_ROWS, sequencedToo: false);
     await _seedHistoryAsync(conn, origin, UNSETTLED_ROWS, sequencedToo: false, age: "1 minute");
     await _execAsync(conn, "ANALYZE");
@@ -206,6 +201,20 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT COUNT(*) FROM wh_unsequenced_digest_changes WHERE origin_service_id = @origin";
     cmd.Parameters.AddWithValue(nameof(origin), origin);
     return (long)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>
+  /// The held history as a service has it once migration 447 ran: rows written before the tracking existed, folded by
+  /// the rebuild, with no change log behind them. Folded changes are deleted rows until vacuum reclaims them, and whether
+  /// a VACUUM here can reclaim them depends on every snapshot open on the server, so a history written through the log
+  /// would measure the cluster, not the answer. A burst of changes in production leaves at most the change log's
+  /// vacuum threshold of dead rows (447).
+  /// </summary>
+  private static async Task _seedHistoryRebuiltAsync(NpgsqlConnection conn, Guid origin, int rows, bool sequencedToo) {
+    await _execAsync(conn, "ALTER TABLE wh_event_store DISABLE TRIGGER USER");
+    await _seedHistoryAsync(conn, origin, rows, sequencedToo);
+    await _execAsync(conn, "ALTER TABLE wh_event_store ENABLE TRIGGER USER");
+    await _execAsync(conn, "SELECT wh_rebuild_unsequenced_digests()");
   }
 
   /// <summary>Sequence-less rows of the origin over two tenants and two types, and as many sequenced ones.</summary>
