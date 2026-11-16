@@ -185,6 +185,9 @@ public static class OperationalTableRegistry {
     _state("wh_type_definitions", "types and their versions"),
     _state("wh_type_history_walks", "types: one walk each"),
     _rolling("wh_unique_emission_claims", OperationalCategory.Deliveries, "own retention: a claim's expiry plus one day"),
+    _state("wh_unsequenced_digest_changes",
+      "work in flight: each change is deleted by the fold that takes it in, and the maintenance fold runs whoever asks (#2351)"),
+    _state("wh_unsequenced_digest_totals", "origins, tenants and types: one row each (#2351)"),
   ];
 
   /// <summary>The entry for a table, or null when the table is not classified.</summary>
