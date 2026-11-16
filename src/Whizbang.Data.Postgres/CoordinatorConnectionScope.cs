@@ -50,7 +50,7 @@ public readonly struct CoordinatorConnectionScope : IAsyncDisposable {
   /// </summary>
   /// <docs>operations/observability/database-attribution</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperCommandAttributionTests.cs</tests>
-  public System.Data.Common.DbConnection Attributed => Connection;
+  public System.Data.Common.DbConnection Attributed => new AttributedDbConnection(Connection);
 
   private readonly bool _ownsConnection;
   private readonly bool _closeOnDispose;
