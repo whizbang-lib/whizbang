@@ -21,10 +21,11 @@
 --              a restored older copy is recognized as superseded on arrival. SupersedingOrderGuardTests fails on a
 --              function that orders the copies of a key by comparing versions itself.
 --
---              A redelivered repair copy that an already held copy of its key supersedes is never stored again
---              (store_inbox_messages): it is settled as satisfied (__REPAIR_SATISFIED_SUPERSEDED__), so no perspective
---              is offered it after the newest, and the bundle reconciles count it present and apart
---              (superseded_satisfied_count), so it is never read as a deficit.
+--              A copy that an already held copy of its key supersedes is never stored (store_inbox_messages), whether it
+--              arrives for the first time (a live receive out of the origin's order, an integrity or an operator
+--              redelivery) or is a repair child deduplication remembers: it is settled as satisfied
+--              (__REPAIR_SATISFIED_SUPERSEDED__), so no perspective is offered it after the newest, and the bundle
+--              reconciles count it present and apart (superseded_satisfied_count), so it is never read as a deficit.
 --
 --              The count is a new result column, and PostgreSQL refuses to change a function's result under CREATE OR
 --              REPLACE (42P13). The earlier definers of the two reconciles (253 through 448) create them without a
@@ -483,10 +484,12 @@ COMMENT ON FUNCTION __SCHEMA__.wh_reap_superseded_events(INTEGER) IS
   'sequence stamped). Skipped under debug_mode. Reduces the digests as wh_truncate_stream_prefix does, refolding the '
   'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152).';
 
--- ── store_inbox_messages: last word 368, copied whole, with a superseded repair child settled as satisfied ──
+-- ── store_inbox_messages: last word 368, copied whole, with an older copy of a held superseding key settled as satisfied ──
 -- <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredOlderCopy_IsNeverStored_IsRecordedSatisfied_AndNoPerspectiveSeesItAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredCopyNewerThanTheHeldOne_IsRestoredAsBeforeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:AnOlderCopyArrivingForTheFirstTime_AfterTheNewest_IsNeverStored_AndIsRecordedSatisfiedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TwoServiceIntegrityConvergenceTests.cs:AnOlderRedeliveredCopy_IsNeverStoredOrApplied_AndThePairConvergesWithNoFurtherResendAsync</tests>
 -- store_inbox_messages: last word 252, with a message discarded on receive stored without its body. Signature unchanged.
 -- <docs>resilience/stream-integrity#remembered-but-missing</docs>
 -- <docs>messaging/transports/transport-consumer#batch-handler</docs>
@@ -620,7 +623,33 @@ BEGIN
     -- repair cannot change. A child the store or the inbox still holds is a duplicate, as before.
     v_restore := FALSE;
     v_refusal := NULL;
-    IF v_observations > 1
+    -- 449 (#2350): a copy of a superseding key that a newer copy already held here supersedes is never stored: stored,
+    -- it would sit above the newest by version and be applied after it. It is settled as satisfied, the redelivery's
+    -- reconciliation reads it as present, and nothing claims, copies or applies it. This holds for a copy arriving for
+    -- the first time, by any path (a live receive out of the origin's order, an integrity or an operator redelivery),
+    -- and for a repair child deduplication remembers and the store lost. Newer is the origin's order
+    -- (_wh_supersedes); without the origin's sequence on both copies nothing is refused, as before.
+    IF v_msg.recovered_from IS NULL
+       AND v_msg.discarded_on_receive IS NULL
+       AND COALESCE(v_msg.is_event, false)
+       AND v_msg.stream_id IS NOT NULL
+       AND COALESCE(v_msg.flags, 0) & c_flag_superseding <> 0
+       AND v_msg.metadata ->> 'sk' IS NOT NULL
+       AND (v_observations = 1
+            OR (v_msg.restore_if_missing
+                AND COALESCE(v_msg.flags, 0) & c_flags_never_repaired = 0
+                AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = v_msg.msg_id)
+                AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_inbox i WHERE i.message_id = v_msg.msg_id)))
+       AND EXISTS (
+         SELECT 1 FROM __SCHEMA__.wh_event_store n
+         WHERE n.stream_id = v_msg.stream_id
+           AND n.supersede_key = v_msg.metadata ->> 'sk'
+           AND COALESCE(n.supersede_group, n.event_type)
+               = COALESCE(v_msg.metadata ->> 'sg', __SCHEMA__.normalize_event_type(v_msg.message_type))
+           AND __SCHEMA__._wh_supersedes(n.origin_service_id, n.origin_commit_sequence, n.version,
+                                        v_msg.source_service_id, NULLIF(v_msg.source_commit_sequence, 0), 2147483647)) THEN
+      v_refusal := __REPAIR_SATISFIED_SUPERSEDED__;
+    ELSIF v_observations > 1
        AND v_msg.restore_if_missing
        AND v_msg.recovered_from IS NULL
        AND v_msg.discarded_on_receive IS NULL
@@ -629,22 +658,7 @@ BEGIN
        AND COALESCE(v_msg.flags, 0) & c_flags_never_repaired = 0
        AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = v_msg.msg_id)
        AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_inbox i WHERE i.message_id = v_msg.msg_id) THEN
-      -- 449 (#2350): a copy of a superseding key that a newer copy already held here supersedes is never stored again:
-      -- stored, it would sit above the newest by version and be applied after it. It is settled as satisfied, the
-      -- redelivery's reconciliation reads it as present, and nothing claims, copies or applies it. Newer is the origin's
-      -- order (_wh_supersedes); without the origin's sequence on both copies nothing is refused, as before.
-      IF COALESCE(v_msg.flags, 0) & c_flag_superseding <> 0
-         AND v_msg.metadata ->> 'sk' IS NOT NULL
-         AND EXISTS (
-           SELECT 1 FROM __SCHEMA__.wh_event_store n
-           WHERE n.stream_id = v_msg.stream_id
-             AND n.supersede_key = v_msg.metadata ->> 'sk'
-             AND COALESCE(n.supersede_group, n.event_type)
-                 = COALESCE(v_msg.metadata ->> 'sg', __SCHEMA__.normalize_event_type(v_msg.message_type))
-             AND __SCHEMA__._wh_supersedes(n.origin_service_id, n.origin_commit_sequence, n.version,
-                                          v_msg.source_service_id, NULLIF(v_msg.source_commit_sequence, 0), 2147483647)) THEN
-        v_refusal := __REPAIR_SATISFIED_SUPERSEDED__;
-      ELSIF (SELECT MIN(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = v_msg.stream_id) > 1 THEN
+      IF (SELECT MIN(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = v_msg.stream_id) > 1 THEN
         v_refusal := __REPAIR_REFUSED_TRUNCATED__;
       ELSE
         v_restore := TRUE;

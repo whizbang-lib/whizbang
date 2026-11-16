@@ -53,13 +53,17 @@ public class TwoServiceIntegrityConvergenceTests : EFCoreTestBase {
 
     await h.OperatorRedeliverAsync([stream], [_superseding]);
 
-    Console.WriteLine($"DIAG older {older} newest {newest} redelivered {string.Join(",", h.Redelivered)}");
-    Console.WriteLine("DIAG " + await TwoServiceHarness.DescribeAsync(h.Consumer, stream));
     await Assert.That(h.Redelivered).Contains(older).Because("positive control: the redelivery carried the older copy");
     await Assert.That(await h.ConsumerHoldsAsync(older)).IsFalse().Because("an older copy than the one held is never stored");
     await Assert.That(await TwoServiceHarness.CountAsync(h.Consumer,
       "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id", ("id", older))).IsEqualTo(0L)
       .Because("a copy never stored is never queued for a perspective");
+    // Each service reaps its own copies (superseding-events#across-services): until the origin reaps its older copy too,
+    // the two digests differ by it, an accepted window. Then the pair agrees.
+    await TwoServiceHarness.ExecuteAsync(h.Origin, "SELECT * FROM wh_reap_superseded_events(5000)");
+    await TwoServiceHarness.ExecuteAsync(h.Consumer, "SELECT * FROM wh_reap_superseded_events(5000)");
+    await Assert.That(await TwoServiceHarness.CountAsync(h.Origin, "SELECT COUNT(*) FROM wh_event_store WHERE event_id = @id",
+      ("id", older))).IsEqualTo(0L).Because("positive control: the origin reaped its older copy");
     var settled = h.Tally();
     var held = await TwoServiceHarness.FingerprintAsync(h.Consumer, [stream]);
 
