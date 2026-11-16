@@ -56,6 +56,8 @@ public static class OperationalTableRegistry {
   /// <summary>The prefix of perspective tables, which are State: application read models, named by the application.</summary>
   public const string PERSPECTIVE_PREFIX = "wh_per_";
 
+  private const string WORK_IN_FLIGHT_REMOVED_ON_COMPLETION = "work in flight: removed on completion";
+
   private static OperationalTable _state(string name, string bound) => new(name, OperationalTableClass.State, bound);
 
   private static OperationalTable _rolling(string name, OperationalCategory category, string bound, bool sweptHere = false) =>
@@ -97,7 +99,7 @@ public static class OperationalTableRegistry {
     _state("wh_event_store", "event data"),
     _state("wh_fillfactor_rewrite_requests", "work in flight: rewrites owed, removed when done"),
     _state("wh_housekeeping_deferrals", "deferral budgets; removed when a pass completes"),
-    _state("wh_inbox", "work in flight: removed on completion"),
+    _state("wh_inbox", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
     _state("wh_inbox_state", "work in flight: removed with its inbox row"),
     _state("wh_index_equivalents", "configuration: declared index names"),
     _state("wh_index_statistics_pending", "work in flight: statistics owed, drained"),
@@ -132,11 +134,11 @@ public static class OperationalTableRegistry {
     _rolling("wh_multi_stream_runs", OperationalCategory.Queues, "own retention: MultiStreamCommandOptions.CompletedRunRetention (7 days)"),
     _state("wh_notify_state", "instances and notification keys"),
     _state("wh_offload_claims", "offloaded bodies; expire after MessageBodyOffloadOptions.PassiveExpiry"),
-    _state("wh_outbox", "work in flight: removed on completion"),
+    _state("wh_outbox", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
     _state("wh_partition_assignments", "instances; no current writer (follow-up)"),
     _rolling("wh_perspective_applied", OperationalCategory.Deliveries, "own retention: one hour"),
     _state("wh_perspective_cursors", "streams and perspectives"),
-    _state("wh_perspective_events", "work in flight: removed on completion"),
+    _state("wh_perspective_events", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
     _state("wh_perspective_forms", "perspective tables"),
     _state("wh_perspective_registry", "configuration: perspectives"),
     _state("wh_perspective_row_hold", "holds on perspective rows; released or removed with the row"),
@@ -149,7 +151,7 @@ public static class OperationalTableRegistry {
     _rolling("wh_request_response", OperationalCategory.Queues, "unbounded today: its expiry sweep has no production caller (follow-up)"),
     _state("wh_role_assignments", "roles"),
     _state("wh_role_candidates", "instances"),
-    _state("wh_role_pending_work", "work in flight: removed on completion"),
+    _state("wh_role_pending_work", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
     _rolling("wh_routes", OperationalCategory.Reports, "own retention: route_idle_days (365)"),
     _state("wh_row_eviction_journal", "work in flight: evictions awaiting their cascade, drained"),
     _rolling("wh_schedule_runs", OperationalCategory.MaintenanceRuns, "own retention: schedule_run_retention_days (30), newest run per schedule kept"),
