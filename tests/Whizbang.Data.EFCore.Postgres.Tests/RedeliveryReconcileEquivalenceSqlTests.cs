@@ -114,7 +114,7 @@ public class RedeliveryReconcileEquivalenceSqlTests : EFCoreTestBase {
 
   /// <summary>
   /// A function compared with 336's definition of <paramref name="Legacy"/>, by the row <paramref name="Row"/> selects
-  /// from its result <c>r</c>. The counting reconciles (449, #2350) add superseded_satisfied_count, which 336 has not,
+  /// from its result <c>r</c>. The counting reconciles (454, #2350) add superseded_satisfied_count, which 336 has not,
   /// so their row leaves it out; the fixture holds no child settled as satisfied.
   /// </summary>
   private sealed record Reconcile(string Legacy, string Current, string Row);

@@ -243,7 +243,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// #2366: a stream as a consumer held it before 449: the newest copy of a key received first (version 1), then three
+  /// #2366: a stream as a consumer held it before 454: the newest copy of a key received first (version 1), then three
   /// older copies of the same key from the same origin stored after it (versions 2 to 4, later commit sequences). The
   /// type's walk had completed under the version order, so nothing queued the copies, and a perspective on the stream
   /// rewinds into the same order forever. The repair restarts the walk, and the walk under the origin's order queues
@@ -265,7 +265,7 @@ public class SupersedingHistoryReconcileSqlTests : EFCoreTestBase {
           origin_commit_sequence = CASE WHEN event_id = @newest THEN 100 ELSE array_position(@copies, event_id) END
       WHERE stream_id = @stream
       """, ("origin", origin), ("newest", newest), ("copies", copies.ToArray()), ("stream", stream));
-    // The walk that ran before 449: complete, and nothing it queued is still waiting.
+    // The walk that ran before 454: complete, and nothing it queued is still waiting.
     await _ensureAsync(conn);
     await _executeAsync(conn, """
       UPDATE wh_type_history_walks

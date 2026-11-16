@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Cursors;
 /// differently from one that compares versions.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/452_StaleCopiesAboveTheNewestAreRewalked.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/455_StaleCopiesAboveTheNewestAreRewalked.sql</code-under-test>
 [Category("Shard2")]
 public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Test.OneOrderPerspective";

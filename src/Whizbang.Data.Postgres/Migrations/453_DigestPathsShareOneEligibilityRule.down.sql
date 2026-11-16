@@ -1,8 +1,8 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 448_DigestPathsShareOneEligibilityRule.sql (#2352): every function goes back to its last word before
--- 448, with its own copy of the digest eligibility rule, and the one-time removal function goes. The digest buckets the
+-- The reverse of 453_DigestPathsShareOneEligibilityRule.sql (#2352): every function goes back to its last word before
+-- 453, with its own copy of the digest eligibility rule, and the one-time removal function goes. The digest buckets the
 -- removal deleted held no counted event and are not restored; the heal reports them as before if they reappear.
 
 SELECT __SCHEMA__.drop_all_overloads('wh_remove_eventless_stream_digests');

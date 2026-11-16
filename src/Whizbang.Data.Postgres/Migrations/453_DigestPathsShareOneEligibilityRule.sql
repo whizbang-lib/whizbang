@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 448_DigestPathsShareOneEligibilityRule.sql
+-- Migration: 453_DigestPathsShareOneEligibilityRule.sql
 -- Date: 2026-11-15
 -- Description: Every digest path counts events by one shared rule, so two paths never disagree about the same event
 --              (#2352).
@@ -30,9 +30,9 @@
 --              what the heal reports as drift_removed on every sweep; they are removed once here, on every service,
 --              gated by the wh_settings marker 'eventless_stream_digests_removed'.
 --
---              Number 448: reserved for this change.
+--              Number 453: after develop's 450 and 451 (#2358), in this bundle's order.
 --
--- Reversal: lossy (every function goes back to its last word before 448; the removed digest buckets held no counted
+-- Reversal: lossy (every function goes back to its last word before 453; the removed digest buckets held no counted
 --           event and are not restored)
 -- Dependencies: 216 (__DIGEST_EXEMPT_TYPES__), 336 (_wh_fold_stream_digests, _wh_digest_lane), and the last word of each
 --               function below
@@ -69,7 +69,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_remove_eventless_stream_digests() IS
-'Removes the stream digest buckets that hold no event the digest eligibility rule counts (#2352): the leftovers of migration 210, which deleted rewind events without touching their digests. Returns the buckets removed. Run once by 448.';
+'Removes the stream digest buckets that hold no event the digest eligibility rule counts (#2352): the leftovers of migration 210, which deleted rewind events without touching their digests. Returns the buckets removed. Run once by 453.';
 
 DO $once$
 BEGIN
@@ -77,8 +77,8 @@ BEGIN
     PERFORM __SCHEMA__.wh_remove_eventless_stream_digests();
     INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
     VALUES ('eventless_stream_digests_removed', 'true', 'boolean',
-            'Set when migration 448 removed the stream digest buckets that held no counted event (#2352). Gates that one-time removal.',
-            NOW(), 'migration:448_DigestPathsShareOneEligibilityRule')
+            'Set when migration 453 removed the stream digest buckets that held no counted event (#2352). Gates that one-time removal.',
+            NOW(), 'migration:453_DigestPathsShareOneEligibilityRule')
     ON CONFLICT (setting_key) DO NOTHING;
   END IF;
 END
@@ -3017,7 +3017,7 @@ BEGIN
   -- The event-store rows. The outbox row records the guarantee declared at fire time and outranks the
   -- schedule, whose guarantee may have changed since; the schedule answers once the outbox row is gone.
   WITH targets AS (
-    -- 448 (#2352): whether the row counted before it is flagged; its flags after the stamp say only that it no longer does.
+    -- 453 (#2352): whether the row counted before it is flagged; its flags after the stamp say only that it no longer does.
     SELECT DISTINCT es.event_id, __DIGEST_ELIGIBLE__(es) AS was_eligible
     FROM (SELECT DISTINCT r.occurrence_id, r.schedule_id FROM __SCHEMA__.wh_schedule_runs r) r
     JOIN __SCHEMA__.wh_event_store es ON es.event_id = r.occurrence_id
@@ -3217,7 +3217,7 @@ BEGIN
       array_agg(COALESCE(r.origin_service_id, __EMPTY_UUID__::uuid)), array_agg(COALESCE(r.scope ->> 't', '')),
       array_agg(r.event_type), array_agg(r.stream_id), array_agg(r.event_id), 'unfold', NOW()) AS unfolded
     FROM reclassified r
-    -- 448 (#2352): a reclassified row was Sourced before the stamp, so it counted exactly when the rest of the rule held:
+    -- 453 (#2352): a reclassified row was Sourced before the stamp, so it counted exactly when the rest of the rule held:
     -- not at most once (214, #1484) and not exempt. Its flags now carry the ephemeral bit, so the digest rule would
     -- read every one as never folded.
     WHERE __INTEGRITY_COUNTED__(r)

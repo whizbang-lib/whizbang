@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// #2351: the type-level fold of the events a store holds from an origin without the origin's commit sequence costs what
 /// changed since the last answer, never the size of that history. The contribution is maintained as the rows change
-/// (migration 447), so an answer reads one row per (tenant, type), the changes not yet folded in, and the rows still
+/// (migration 452), so an answer reads one row per (tenant, type), the changes not yet folded in, and the rows still
 /// inside the settle window. These tests hold the cost (a plan shape and a small-store against large-store comparison)
 /// and the result: whatever changes the sequence-less set, the maintained answer equals a fold of the rows.
 /// </summary>
@@ -204,11 +204,11 @@ public class UnsequencedHeldFoldCostSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// The held history as a service has it once migration 447 ran: rows written before the tracking existed, folded by
+  /// The held history as a service has it once migration 452 ran: rows written before the tracking existed, folded by
   /// the rebuild, with no change log behind them. Folded changes are deleted rows until vacuum reclaims them, and whether
   /// a VACUUM here can reclaim them depends on every snapshot open on the server, so a history written through the log
   /// would measure the cluster, not the answer. A burst of changes in production leaves at most the change log's
-  /// vacuum threshold of dead rows (447).
+  /// vacuum threshold of dead rows (452).
   /// </summary>
   private static async Task _seedHistoryRebuiltAsync(NpgsqlConnection conn, Guid origin, int rows, bool sequencedToo) {
     await _execAsync(conn, "ALTER TABLE wh_event_store DISABLE TRIGGER USER");

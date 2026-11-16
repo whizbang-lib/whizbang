@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// event. These are the paths whose copies disagreed: the digest seed, the consumer's checkpoint count, and the
 /// one-time removal of digest buckets left with no events.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/448_DigestPathsShareOneEligibilityRule.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/453_DigestPathsShareOneEligibilityRule.sql</code-under-test>
 /// <docs>resilience/stream-integrity#one-eligibility-rule</docs>
 [Category("Integration")]
 [Category("Shard2")]

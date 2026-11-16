@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stored: it is settled as satisfied, so no perspective applies it after the newest and the newest is never reaped.
 /// </summary>
 /// <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/449_RedeliveredCopiesKeepTheOriginsOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/454_RedeliveredCopiesKeepTheOriginsOrder.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {

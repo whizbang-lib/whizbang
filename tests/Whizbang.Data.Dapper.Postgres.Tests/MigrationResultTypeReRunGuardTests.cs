@@ -14,9 +14,9 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// PostgreSQL refuses <c>CREATE OR REPLACE FUNCTION</c> that changes an existing function's result type (42P13), so a
 /// definer whose result differs from the latest one must drop the function before it creates it. The simpler way to
 /// keep this is never to change a function's result under its name: a function that returns something new gets a new
-/// name, and the old one keeps its result for callers that still use it (#2350, migration 449).
+/// name, and the old one keeps its result for callers that still use it (#2350, migration 454).
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/449_RedeliveredCopiesKeepTheOriginsOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/454_RedeliveredCopiesKeepTheOriginsOrder.sql</code-under-test>
 /// <docs>contributors/data-engines/writing-migrations#a-functions-result-never-changes-under-its-name</docs>
 [Category("Unit")]
 public partial class MigrationResultTypeReRunGuardTests {

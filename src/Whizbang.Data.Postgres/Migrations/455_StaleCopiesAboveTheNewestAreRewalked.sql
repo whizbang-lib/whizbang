@@ -1,17 +1,17 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 452_StaleCopiesAboveTheNewestAreRewalked.sql
+-- Migration: 455_StaleCopiesAboveTheNewestAreRewalked.sql
 -- Date: 2026-11-15 (one order for a stream's cursor: 2026-11-16)
 -- Description: Stale copies stored above a stream's newest event are walked again, and a perspective cursor follows one
 --              order for its stream, so a stream holding such copies converges after one rewind (#2366).
 --
---              Before 449, a redelivered older copy of a superseding key was stored at the end of a consumer's stream,
---              above the newest copy by local version, and nothing that ordered copies knew better. 449 orders them by
+--              Before 454, a redelivered older copy of a superseding key was stored at the end of a consumer's stream,
+--              above the newest copy by local version, and nothing that ordered copies knew better. 454 orders them by
 --              the origin's commit sequence and stops new stale copies at the store, but the copies already stored stay:
 --              each superseding type's history walk had completed under the old rule. wh_restart_superseding_history_walks()
 --              restarts every completed superseding walk from its first event, and the superseding-history-reconcile
---              maintenance step walks each type again under 449's rule. Called once here.
+--              maintenance step walks each type again under 454's rule. Called once here.
 --
 --              Such a stream's ids and versions disagree: the newest event has the highest id and the lowest version.
 --              Four orders met on it. A rewind reported the largest id it applied with the largest commit sequence it
@@ -32,12 +32,12 @@
 --                so the fixed code resolves each with one rewind; called once here. It queues one row per stuck pair with
 --                no pending work (making the trigger's unpurged processed row pending again) and nothing on a re-run.
 --
---              Number 452: reserved for this change.
+--              Number 455: after develop's 450 and 451 (#2358), in this bundle's order.
 --
 -- Reversal: reversible (the functions return to 005 and 016, the column and the repair function go; a walk restarted
 --           completes again and changes nothing)
 -- Dependencies: 005 (complete_perspective_cursor_work), 016 (update_perspective_cursors), 380 (wh_type_history_walks),
---               449 (_wh_supersedes in the superseding walk)
+--               454 (_wh_supersedes in the superseding walk)
 -- Objects: wh_restart_superseding_history_walks, wh_perspective_cursors, complete_perspective_cursor_work,
 --          update_perspective_cursors, wh_settle_id_ordered_rewind_flags
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
@@ -67,7 +67,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_restart_superseding_history_walks() IS
-'Restarts every completed superseding history walk from its first event, so the walk applies the origin-ordered rule of 449 to the copies already stored (#2366). Returns the walks restarted.';
+'Restarts every completed superseding history walk from its first event, so the walk applies the origin-ordered rule of 454 to the copies already stored (#2366). Returns the walks restarted.';
 
 SELECT __SCHEMA__.wh_restart_superseding_history_walks();
 

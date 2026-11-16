@@ -218,7 +218,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
       await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE stream_id = @id", streamId, ct);
     }
 
-    // The deploy: migration 452's repair, as it runs once on upgrade.
+    // The deploy: migration 455's repair, as it runs once on upgrade.
     await _repairOnDeployAsync(conn, ct);
     var pendingAfterRepair = await _scalarAsync<long>(conn,
       "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id AND processed_at IS NULL", streamId, ct);

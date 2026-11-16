@@ -1,9 +1,9 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 452_StaleCopiesAboveTheNewestAreRewalked.sql (#2366): complete_perspective_cursor_work returns to 005's
+-- The reverse of 455_StaleCopiesAboveTheNewestAreRewalked.sql (#2366): complete_perspective_cursor_work returns to 005's
 -- definition and update_perspective_cursors to 016's, both copied whole; the repair functions and the
--- replayed_through_commit_sequence column go. A walk 452 restarted completes again and changes nothing more.
+-- replayed_through_commit_sequence column go. A walk 455 restarted completes again and changes nothing more.
 
 SELECT __SCHEMA__.drop_all_overloads('wh_restart_superseding_history_walks');
 SELECT __SCHEMA__.drop_all_overloads('wh_settle_id_ordered_rewind_flags');

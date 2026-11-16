@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 447_HeldFoldIsMaintainedAsRowsChange.sql (#2351): the triggers, functions, tables and index go, and
+-- The reverse of 452_HeldFoldIsMaintainedAsRowsChange.sql (#2351): the triggers, functions, tables and index go, and
 -- the type-level held fold reads the rows again.
 
 DROP TRIGGER IF EXISTS wh_event_store_tracks_unsequenced_insert_trg ON __SCHEMA__.wh_event_store;

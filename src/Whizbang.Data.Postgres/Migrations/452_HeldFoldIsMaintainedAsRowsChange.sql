@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 447_HeldFoldIsMaintainedAsRowsChange.sql
+-- Migration: 452_HeldFoldIsMaintainedAsRowsChange.sql
 -- Date: 2026-11-15
 -- Description: The type-level fold of the events held from an origin without its commit sequence costs what changed
 --              since the last answer, never the size of that history (#2351).
@@ -35,7 +35,7 @@
 --              after a fixed number of deleted rows instead of a fraction of the table: a fold never walks a backlog of
 --              dead rows. A TRUNCATE of the event store empties both tables.
 --
---              Number 447: reserved for this change.
+--              Number 452: after develop's 450 and 451 (#2358), in this bundle's order.
 --
 -- Reversal: reversible (the trigger, functions, tables and index go; the coordinator's query reads the rows again)
 -- Dependencies: 087 (origin columns), 336 (_wh_digest_lane); the digest eligibility constant (constants.txt, #2352)
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_unsequenced_digest_totals (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_unsequenced_digest_totals IS
-'447 (#2351): the folded digest of the eligible events held from each origin without its commit sequence, per (origin, tenant, type). Pending changes in wh_unsequenced_digest_changes are added on read; wh_unsequenced_received_type_digests answers from both.';
+'452 (#2351): the folded digest of the eligible events held from each origin without its commit sequence, per (origin, tenant, type). Pending changes in wh_unsequenced_digest_changes are added on read; wh_unsequenced_received_type_digests answers from both.';
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_unsequenced_digest_changes (
   change_id         BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -83,7 +83,7 @@ ALTER TABLE __SCHEMA__.wh_unsequenced_digest_changes SET (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_unsequenced_digest_changes IS
-'447 (#2351): one row per eligible event joining (+1) or leaving (-1) the set held from an origin without its commit sequence, written by the wh_event_store row triggers. Insert-only for writers; wh_unsequenced_received_type_digests folds them into wh_unsequenced_digest_totals.';
+'452 (#2351): one row per eligible event joining (+1) or leaving (-1) the set held from an origin without its commit sequence, written by the wh_event_store row triggers. Insert-only for writers; wh_unsequenced_received_type_digests folds them into wh_unsequenced_digest_totals.';
 
 -- The held rows only: the answer reads the ones younger than the settle window through it, never the settled history.
 CREATE INDEX IF NOT EXISTS idx_event_store_unsequenced_received
@@ -157,7 +157,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_rebuild_unsequenced_digests() IS
-'Recomputes wh_unsequenced_digest_totals from wh_event_store and clears the pending changes, holding writers out while it reads (#2351). Returns the (origin, tenant, type) rows written. Run once by 447; a change to what a digest counts runs it again.';
+'Recomputes wh_unsequenced_digest_totals from wh_event_store and clears the pending changes, holding writers out while it reads (#2351). Returns the (origin, tenant, type) rows written. Run once by 452; a change to what a digest counts runs it again.';
 
 -- Folds up to p_limit of the origin's pending changes into the totals. A change another fold has claimed is skipped,
 -- never waited on: whatever is not folded is still read as pending, so skipping is always correct.

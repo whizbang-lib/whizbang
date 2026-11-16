@@ -100,11 +100,11 @@ public partial class MigrationTransactionBoundaryGuardTests {
       "335 (#2099): the batch form of 253's reconcile, with the same child lookup: it reads error from wh_inbox_state "
       + "(alias ist); wh_inbox supplies only message_id, stream_id, scope and message_type, none of which moved",
     ["wh_reconcile_redelivered_bundle_counting_satisfied"] =
-      "449 (#2350): wh_reconcile_redelivered_bundle_by_first_hop with a satisfied count; reads error from wh_inbox_state "
+      "454 (#2350): wh_reconcile_redelivered_bundle_by_first_hop with a satisfied count; reads error from wh_inbox_state "
       + "(alias ist) for both the refused and the satisfied children; wh_inbox supplies only message_id, stream_id, scope "
       + "and message_type, none of which moved",
     ["wh_reconcile_redelivered_bundles_counting_satisfied"] =
-      "449 (#2350): wh_reconcile_redelivered_bundles with a satisfied count; reads error from wh_inbox_state (alias ist) "
+      "454 (#2350): wh_reconcile_redelivered_bundles with a satisfied count; reads error from wh_inbox_state (alias ist) "
       + "for both the refused and the satisfied children; wh_inbox supplies only message_id, stream_id, scope and "
       + "message_type, none of which moved",
     ["wh_drop_exhausted_inbox_rows"] =

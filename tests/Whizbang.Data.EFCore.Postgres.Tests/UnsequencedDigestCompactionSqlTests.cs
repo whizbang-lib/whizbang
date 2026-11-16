@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// cycle's compaction folds every origin's oldest changes into the totals and deletes them, a bounded batch at a time,
 /// and leaves the totals exactly what a rebuild from the rows computes.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/447_HeldFoldIsMaintainedAsRowsChange.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/452_HeldFoldIsMaintainedAsRowsChange.sql</code-under-test>
 /// <docs>resilience/stream-integrity#the-change-log-stays-bounded</docs>
 [Category("Integration")]
 [Category("Shard2")]

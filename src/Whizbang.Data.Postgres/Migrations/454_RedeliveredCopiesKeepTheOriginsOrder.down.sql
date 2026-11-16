@@ -1,8 +1,8 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 449_RedeliveredCopiesKeepTheOriginsOrder.sql (#2350): the queue, the history walk and the reaper go back
--- to their last words in 352, 380 and 448, ordering the copies of a key by stored version, and _wh_supersedes and the
+-- The reverse of 454_RedeliveredCopiesKeepTheOriginsOrder.sql (#2350): the queue, the history walk and the reaper go back
+-- to their last words in 352, 380 and 453, ordering the copies of a key by stored version, and _wh_supersedes and the
 -- two counting reconciles go.
 
 -- ── _wh_queue_superseded_events: last word 352, copied whole ──
@@ -695,6 +695,6 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated.';
 
--- The counting reconciles are new in 449; 448's two reconciles were never changed, so nothing is restored.
+-- The counting reconciles are new in 454; 453's two reconciles were never changed, so nothing is restored.
 SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundle_counting_satisfied');
 SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundles_counting_satisfied');

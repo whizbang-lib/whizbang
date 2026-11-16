@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// shared server moves, and time depends on the server's load, so both are reported, not asserted; on a quiet server
 /// they are the triggers' cost.
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/447_HeldFoldIsMaintainedAsRowsChange.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/452_HeldFoldIsMaintainedAsRowsChange.sql</code-under-test>
 /// <docs>resilience/stream-integrity#what-the-triggers-cost-a-write</docs>
 [Category("Integration")]
 [Category("Shard2")]

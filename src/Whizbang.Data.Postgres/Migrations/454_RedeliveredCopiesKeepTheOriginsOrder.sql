@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 449_RedeliveredCopiesKeepTheOriginsOrder.sql
+-- Migration: 454_RedeliveredCopiesKeepTheOriginsOrder.sql
 -- Date: 2026-11-15
 -- Description: A redelivered copy of a superseding event keeps its key and its place in the origin's order, so a stale
 --              copy never becomes the newest (#2350).
@@ -28,22 +28,22 @@
 --              reconciles count it present and apart (superseded_satisfied_count), so it is never read as a deficit.
 --
 --              The count is a new result column, and PostgreSQL refuses to change a function's result under CREATE OR
---              REPLACE (42P13). The earlier definers of the two reconciles (253 through 448) create them without a
+--              REPLACE (42P13). The earlier definers of the two reconciles (253 through 453) create them without a
 --              drop, so a replay of any of them over a changed result would fail. The counting reconciles are new
 --              functions, wh_reconcile_redelivered_bundle_counting_satisfied and
 --              wh_reconcile_redelivered_bundles_counting_satisfied; the two reconciles keep their result and their
---              behavior (448), so a service on the previous release keeps calling them during a rolling deploy.
+--              behavior (453), so a service on the previous release keeps calling them during a rolling deploy.
 --              MigrationResultTypeReRunGuardTests fails on a definer that changes a result without dropping first.
 --
---              Number 449: reserved for this change.
+--              Number 454: after develop's 450 and 451 (#2358), in this bundle's order.
 --
--- Reversal: reversible (the four functions go back to their last words in 352, 380, 448 and 368; _wh_supersedes and the
+-- Reversal: reversible (the four functions go back to their last words in 352, 380, 453 and 368; _wh_supersedes and the
 --           two counting reconciles go)
 -- Dependencies: 252 and 368 (store_inbox_messages), 352 (_wh_queue_superseded_events, supersede_group), 380 (wh_superseding_history_apply),
---               448 (wh_reap_superseded_events)
+--               453 (wh_reap_superseded_events)
 -- Objects: _wh_supersedes, _wh_queue_superseded_events, wh_superseding_history_apply, wh_reap_superseded_events,
 --          store_inbox_messages, wh_reconcile_redelivered_bundle_counting_satisfied,
---          wh_reconcile_redelivered_bundles_counting_satisfied (new; they read 448's reconciles, unchanged)
+--          wh_reconcile_redelivered_bundles_counting_satisfied (new; they read 453's reconciles, unchanged)
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -70,7 +70,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_supersedes(UUID, BIGINT, BIGINT, UUID, BIGINT
 -- ── _wh_queue_superseded_events: last word 352, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Queues the older events of each given event's stream, group and key, and each given event an already-stored copy of its
--- key supersedes, ordered by _wh_supersedes (449, #2350). Called by the emit chains and wh_append_event after they store an
+-- key supersedes, ordered by _wh_supersedes (454, #2350). Called by the emit chains and wh_append_event after they store an
 -- event with a key; a separate statement there, so it sees the events stored just before it.
 -- <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredOlderCopy_IsNeverStored_IsRecordedSatisfied_AndNoPerspectiveSeesItAsync</tests>
@@ -84,7 +84,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_supersedes(UUID, BIGINT, BIGINT, UUID, BIGINT
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_queue_superseded_events(p_event_ids UUID[], p_now TIMESTAMPTZ)
 RETURNS VOID AS $$
 BEGIN
-  -- 449 (#2350): in both directions, as the history walk queues: the older copies of each stored event's key, and each
+  -- 454 (#2350): in both directions, as the history walk queues: the older copies of each stored event's key, and each
   -- stored event an already-stored copy supersedes. The second is a restored older copy: stored above the newest by
   -- version, it is older in its origin's order (_wh_supersedes), so it is queued itself and the newest is not.
   INSERT INTO __SCHEMA__.wh_superseded_events (event_id, stream_id, queued_at)
@@ -235,7 +235,7 @@ BEGIN
         ON o.stream_id = s.stream_id
        AND COALESCE(o.supersede_group, o.event_type) = s.grp
        AND o.supersede_key = s.supersede_key
-       -- 449 (#2350): which copy is newer, in the origin's order where both carry it
+       -- 454 (#2350): which copy is newer, in the origin's order where both carry it
        AND __SCHEMA__._wh_supersedes(s.origin_service_id, s.origin_commit_sequence, s.version,
                                   o.origin_service_id, o.origin_commit_sequence, o.version)
       UNION
@@ -294,7 +294,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_superseding_history_apply(TEXT, BIGINT, BIGINT
   'the reaper''s gates remain the only path to deletion. 380 (#2205): the window is a range of the type''s commit '
   'sequences, and the walk ends through _wh_type_history_advance.';
 
--- ── wh_reap_superseded_events: last word 448, copied whole ──
+-- ── wh_reap_superseded_events: last word 453, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamStartedAtSqlTests.cs:Reap_TheStreamsFirstEvent_RecordsItsBusinessTimeOnTheLedgerAsync</tests>
@@ -385,7 +385,7 @@ BEGIN
       WHERE n.stream_id = es.stream_id
         AND COALESCE(n.supersede_group, n.event_type) = COALESCE(es.supersede_group, es.event_type)
         AND n.supersede_key = es.supersede_key
-        -- 449 (#2350): newer in the origin's order where both copies carry it, so a restored older copy stored above
+        -- 454 (#2350): newer in the origin's order where both copies carry it, so a restored older copy stored above
         -- the newest is the one reaped, and the newest never is
         AND __SCHEMA__._wh_supersedes(n.origin_service_id, n.origin_commit_sequence, n.version,
                                   es.origin_service_id, es.origin_commit_sequence, es.version))
@@ -623,7 +623,7 @@ BEGIN
     -- repair cannot change. A child the store or the inbox still holds is a duplicate, as before.
     v_restore := FALSE;
     v_refusal := NULL;
-    -- 449 (#2350): a copy of a superseding key that a newer copy already held here supersedes is never stored: stored,
+    -- 454 (#2350): a copy of a superseding key that a newer copy already held here supersedes is never stored: stored,
     -- it would sit above the newest by version and be applied after it. It is settled as satisfied, the redelivery's
     -- reconciliation reads it as present, and nothing claims, copies or applies it. This holds for a copy arriving for
     -- the first time, by any path (a live receive out of the origin's order, an integrity or an operator redelivery),
@@ -816,7 +816,7 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated.';
 
--- New in 449: wh_reconcile_redelivered_bundle_by_first_hop (448) copied whole, its result gaining
+-- New in 454: wh_reconcile_redelivered_bundle_by_first_hop (453) copied whole, its result gaining
 -- superseded_satisfied_count. A new name, so no earlier definer of the old one ever meets this result.
 SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundle_counting_satisfied');
 
@@ -1045,7 +1045,7 @@ BEGIN
       AND ist.error = __REPAIR_REFUSED_TRUNCATED__
       AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id)
     UNION ALL
-    -- 449 (#2350): a child a newer held copy of its key supersedes is satisfied: present, and counted apart.
+    -- 454 (#2350): a child a newer held copy of its key supersedes is satisfied: present, and counted apart.
     SELECT i.stream_id, COALESCE(i.scope ->> 't', ''), __SCHEMA__.normalize_event_type(i.message_type), 1, 0, 0, 0, 1
     FROM __SCHEMA__.wh_inbox i
     JOIN __SCHEMA__.wh_inbox_state ist ON ist.message_id = i.message_id
@@ -1058,9 +1058,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundle_counting_satisfied(UUID, TEXT, UUID[], BIGINT[]) IS
-'449 (#2350): wh_reconcile_redelivered_bundle_by_first_hop with superseded_satisfied_count: a child settled as satisfied because a newer held copy of its key supersedes it is present and counted apart. 420 (#2181): its working rows are gathered into arrays; 321''s per-connection temporary table is gone. 301 (#2000): the local-lane digest update and delete are driven by the moved streams through idx_stream_digests_stream. 253 (#1843, #1844): reconciles a redelivery bundle with the store; the one entry point per bundle. wh_adopt_redelivered_origin (249) with a first-hop check, plus the children store_inbox_messages (252) refused to restore past deduplication because the stream had earlier history truncated here (refused_truncated_count). An empty origin takes the bundle''s origin only when the stored event''s first hop names the bundle''s origin service (p_origin_service_name, compared without case) or carries no service identity; a first hop naming another service refuses it (the event keeps its empty origin and its local digest) and is counted in refused_foreign_origin_count. Everything else is 249''s: an empty origin commit sequence takes the event''s sequence, nothing is overwritten or re-attributed, the local service adopts nothing, digests move lanes and sealed epochs are refolded. Returns per (stream, tenant, type) bucket the events present, adopted, refused as truncated and refused by the first-hop check.';
+'454 (#2350): wh_reconcile_redelivered_bundle_by_first_hop with superseded_satisfied_count: a child settled as satisfied because a newer held copy of its key supersedes it is present and counted apart. 420 (#2181): its working rows are gathered into arrays; 321''s per-connection temporary table is gone. 301 (#2000): the local-lane digest update and delete are driven by the moved streams through idx_stream_digests_stream. 253 (#1843, #1844): reconciles a redelivery bundle with the store; the one entry point per bundle. wh_adopt_redelivered_origin (249) with a first-hop check, plus the children store_inbox_messages (252) refused to restore past deduplication because the stream had earlier history truncated here (refused_truncated_count). An empty origin takes the bundle''s origin only when the stored event''s first hop names the bundle''s origin service (p_origin_service_name, compared without case) or carries no service identity; a first hop naming another service refuses it (the event keeps its empty origin and its local digest) and is counted in refused_foreign_origin_count. Everything else is 249''s: an empty origin commit sequence takes the event''s sequence, nothing is overwritten or re-attributed, the local service adopts nothing, digests move lanes and sealed epochs are refolded. Returns per (stream, tenant, type) bucket the events present, adopted, refused as truncated and refused by the first-hop check.';
 
--- New in 449: wh_reconcile_redelivered_bundles (448) copied whole, its result gaining superseded_satisfied_count.
+-- New in 454: wh_reconcile_redelivered_bundles (453) copied whole, its result gaining superseded_satisfied_count.
 -- A new name, so no earlier definer of the old one ever meets this result.
 SELECT __SCHEMA__.drop_all_overloads('wh_reconcile_redelivered_bundles_counting_satisfied');
 
@@ -1343,7 +1343,7 @@ BEGIN
     WHERE ist.error = __REPAIR_REFUSED_TRUNCATED__
       AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id)
     UNION ALL
-    -- 449 (#2350): a child a newer held copy of its key supersedes is satisfied: present, and counted apart.
+    -- 454 (#2350): a child a newer held copy of its key supersedes is satisfied: present, and counted apart.
     SELECT u.pos::int, i.stream_id, COALESCE(i.scope ->> 't', ''), __SCHEMA__.normalize_event_type(i.message_type),
            1, 0, 0, 0, 0, 1
     FROM (SELECT DISTINCT p.pos, p.eid FROM unnest(p_event_bundles, p_event_ids) AS p(pos, eid)) u
@@ -1357,5 +1357,5 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_reconcile_redelivered_bundles_counting_satisfied(UUID[], TEXT[], INTEGER[], UUID[], BIGINT[]) IS
-'449 (#2350): wh_reconcile_redelivered_bundles with superseded_satisfied_count, as wh_reconcile_redelivered_bundle_counting_satisfied. 420 (#2181): its working rows are gathered into arrays, not a temporary table. 335 (#2099): reconciles many redelivery bundles at once, with the per-bundle semantics of wh_reconcile_redelivered_bundle_counting_satisfied (253, 321): an empty origin takes its bundle''s origin unless the stored first hop names another service, an empty origin sequence of an event that carries the bundle''s origin takes the bundle''s sequence, nothing is overwritten, the local service adopts nothing, digests move lanes. Each event adopts at most once per batch, for the first bundle that can fill it. Every bundle''s streams are locked once in order, the fills are one update, and each sealed epoch holding a moved event is refolded once per batch rather than every epoch of each bundle''s range. Returns per (bundle, stream, tenant, type) the events present, adopted, whose origin was filled (origins_filled_count; the rest of adopted took only the sequence), refused as truncated and refused by the first-hop check.';
+'454 (#2350): wh_reconcile_redelivered_bundles with superseded_satisfied_count, as wh_reconcile_redelivered_bundle_counting_satisfied. 420 (#2181): its working rows are gathered into arrays, not a temporary table. 335 (#2099): reconciles many redelivery bundles at once, with the per-bundle semantics of wh_reconcile_redelivered_bundle_counting_satisfied (253, 321): an empty origin takes its bundle''s origin unless the stored first hop names another service, an empty origin sequence of an event that carries the bundle''s origin takes the bundle''s sequence, nothing is overwritten, the local service adopts nothing, digests move lanes. Each event adopts at most once per batch, for the first bundle that can fill it. Every bundle''s streams are locked once in order, the fills are one update, and each sealed epoch holding a moved event is refolded once per batch rather than every epoch of each bundle''s range. Returns per (bundle, stream, tenant, type) the events present, adopted, whose origin was filled (origins_filled_count; the rest of adopted took only the sequence), refused as truncated and refused by the first-hop check.';
 
