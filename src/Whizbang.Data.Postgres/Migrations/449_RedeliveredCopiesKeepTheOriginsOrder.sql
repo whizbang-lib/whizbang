@@ -82,7 +82,6 @@ BEGIN
       ON older.stream_id = newer.stream_id
      AND COALESCE(older.supersede_group, older.event_type) = COALESCE(newer.supersede_group, newer.event_type)
      AND older.supersede_key = newer.supersede_key
-     AND older.event_id <> newer.event_id
      AND __SCHEMA__._wh_supersedes(newer.origin_service_id, newer.origin_commit_sequence, newer.version,
                                older.origin_service_id, older.origin_commit_sequence, older.version)
     WHERE newer.event_id = ANY(p_event_ids)
@@ -97,7 +96,6 @@ BEGIN
         WHERE n.stream_id = stored.stream_id
           AND COALESCE(n.supersede_group, n.event_type) = COALESCE(stored.supersede_group, stored.event_type)
           AND n.supersede_key = stored.supersede_key
-          AND n.event_id <> stored.event_id
           AND __SCHEMA__._wh_supersedes(n.origin_service_id, n.origin_commit_sequence, n.version,
                                  stored.origin_service_id, stored.origin_commit_sequence, stored.version))
   ) q
@@ -223,7 +221,6 @@ BEGIN
         ON o.stream_id = s.stream_id
        AND COALESCE(o.supersede_group, o.event_type) = s.grp
        AND o.supersede_key = s.supersede_key
-       AND o.event_id <> s.event_id
        -- 449 (#2350): which copy is newer, in the origin's order where both carry it
        AND __SCHEMA__._wh_supersedes(s.origin_service_id, s.origin_commit_sequence, s.version,
                                   o.origin_service_id, o.origin_commit_sequence, o.version)
@@ -235,7 +232,6 @@ BEGIN
         WHERE n.stream_id = s.stream_id
           AND COALESCE(n.supersede_group, n.event_type) = s.grp
           AND n.supersede_key = s.supersede_key
-          AND n.event_id <> s.event_id
           AND __SCHEMA__._wh_supersedes(n.origin_service_id, n.origin_commit_sequence, n.version,
                                     s.origin_service_id, s.origin_commit_sequence, s.version))
     ),
@@ -375,7 +371,6 @@ BEGIN
       WHERE n.stream_id = es.stream_id
         AND COALESCE(n.supersede_group, n.event_type) = COALESCE(es.supersede_group, es.event_type)
         AND n.supersede_key = es.supersede_key
-        AND n.event_id <> es.event_id
         -- 449 (#2350): newer in the origin's order where both copies carry it, so a restored older copy stored above
         -- the newest is the one reaped, and the newest never is
         AND __SCHEMA__._wh_supersedes(n.origin_service_id, n.origin_commit_sequence, n.version,
