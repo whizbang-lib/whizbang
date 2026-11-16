@@ -307,6 +307,7 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Checkpoint cadence in seconds (default 60).</summary>
   public int CheckpointIntervalSeconds { get; set; } = 60;
 
+
   /// <summary>Verify received counts against other origins' checkpoints (default true).</summary>
   public bool GapDetectionEnabled { get; set; } = true;
 
@@ -689,6 +690,15 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>proposals/paced-repair-drain</docs>
   public bool RepairDrainEnabled { get; set; } = true;
+
+  /// <summary>
+  /// The longest wait, in seconds, of an integrity poller that keeps finding nothing (default 60, #2346): the paced repair
+  /// drain and the subscription backfill double their one-second wait on each idle tick up to this ceiling, and return to
+  /// one second on the first tick that finds work. A new deficit or backfill therefore waits at most this long to start.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:ExecuteAsync_AnIdleLedger_WaitsLongerUpToTheCeiling_AndAClaimReturnsItToOneSecondAsync</tests>
+  public int IdlePollCeilingSeconds { get; set; }
 
   /// <summary>
   /// Steady-state repair dispatch rate in ledger rows per second (default 5). The drain's token

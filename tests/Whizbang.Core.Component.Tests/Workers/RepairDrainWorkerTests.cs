@@ -587,11 +587,64 @@ public class RepairDrainWorkerTests {
     }
   }
 
+  /// <summary>
+  /// #2346: a drain that finds nothing to claim and nothing awaiting an answer waits longer each tick, doubling from one
+  /// second up to <see cref="StreamIntegrityOptions.IdlePollCeilingSeconds"/>, and the first tick that claims returns it to
+  /// one second. An idle service then asks the ledger a few times a minute instead of every second; the pacing of a drain
+  /// with work is unchanged. Each tick is counted by outcome on <c>whizbang.probes.ticks{probe=repair-drain}</c>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
+  [Test]
+  public async Task ExecuteAsync_AnIdleLedger_WaitsLongerUpToTheCeiling_AndAClaimReturnsItToOneSecondAsync() {
+    var origin = TrackedGuid.New().Value;
+    var clock = new ArmSignalingClock(new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero));
+    using var meters = new ProbeTickMeters();
+    var probes = new ProbeCadenceMetrics(new WhizbangMetrics(meters));
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+      IdlePollCeilingSeconds = 8,
+    }, origin, learnTopic: true, clock: clock, probes: probes);
+    var guard = TimeSpan.FromSeconds(30);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      // Five idle ticks: each waits out the delay it armed, then the loop arms the next.
+      await clock.Armed.WaitAsync(guard);
+      for (var tick = 0; tick < 5; tick++) {
+        clock.Advance(clock.DueTimes.Last());
+        await clock.Armed.WaitAsync(guard);
+      }
+      coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+      clock.Advance(clock.DueTimes.Last());
+      await coordinator.FirstClaim.Task.WaitAsync(guard);
+      await clock.Armed.WaitAsync(guard);
+
+      await Assert.That(clock.DueTimes.Select(d => d.TotalSeconds).ToList())
+        .IsEquivalentTo(new List<double> { 1, 2, 4, 8, 8, 8, 1 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+        .Because("idle ticks double the wait up to the ceiling, and the tick that claims returns it to one second");
+      await Assert.That(transport.Published.Count).IsEqualTo(1);
+      var ticks = meters.Read(ProbeCadenceMetrics.PROBE_REPAIR_DRAIN);
+      await Assert.That(ticks.Idle).IsEqualTo(5L);
+      await Assert.That(ticks.Work).IsEqualTo(1L);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>#2346: the idle ceiling defaults to a minute.</summary>
+  [Test]
+  public async Task Options_IdlePollCeilingSeconds_DefaultsTo60Async() =>
+    await Assert.That(new StreamIntegrityOptions().IdlePollCeilingSeconds).IsEqualTo(60);
+
   /// <summary>A fake clock that releases <see cref="Armed"/> each time a timer is created, which is each time the drain's
   /// loop starts waiting out its interval.</summary>
   private sealed class ArmSignalingClock(DateTimeOffset start) : TimeProvider {
     private readonly FakeTimeProvider _inner = new(start);
     public SemaphoreSlim Armed { get; } = new(0);
+    /// <summary>Each wait the loop armed, in order (#2346).</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<TimeSpan> DueTimes { get; } = new();
     public void Advance(TimeSpan by) => _inner.Advance(by);
     public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
     public override long GetTimestamp() => _inner.GetTimestamp();
@@ -599,6 +652,7 @@ public class RepairDrainWorkerTests {
     public override TimeZoneInfo LocalTimeZone => _inner.LocalTimeZone;
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       var timer = _inner.CreateTimer(callback, state, dueTime, period);
+      DueTimes.Enqueue(dueTime);
       Armed.Release();
       return timer;
     }
@@ -635,7 +689,7 @@ public class RepairDrainWorkerTests {
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _build(
       StreamIntegrityOptions options, Guid origin, bool learnTopic, ILogger<RepairDrainWorker>? logger = null,
-      StreamIntegrityMetrics? metrics = null, TimeProvider? clock = null) {
+      StreamIntegrityMetrics? metrics = null, TimeProvider? clock = null, ProbeCadenceMetrics? probes = null) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -651,6 +705,9 @@ public class RepairDrainWorkerTests {
     services.AddSingleton(tracker);
     if (metrics is not null) {
       services.AddSingleton(metrics);
+    }
+    if (probes is not null) {
+      services.AddSingleton(probes);
     }
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
