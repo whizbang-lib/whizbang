@@ -24,11 +24,13 @@
 --                Every event stamped at or below it is applied, so a work row for one, queued again, is covered.
 --              - complete_perspective_cursor_work: never moves the cursor back (by version), stores the frontier, clears
 --                the rewind flag only once the cursor is at or past its trigger or the trigger is covered, and detects a
---                straggler by version, never naming a covered event.
+--                straggler by version, never naming a covered event. It creates the cursor of a pair that has none at
+--                the reported event, as the batched path does (before, a stream completed only here never had one).
 --              - update_perspective_cursors: the batched path already moves by version and never back; it now stores
 --                the frontier too.
 --              - wh_settle_id_ordered_rewind_flags(): places the cursors already in the stuck shape and keeps their flags,
---                so the fixed code resolves each with one rewind; called once here.
+--                so the fixed code resolves each with one rewind; called once here. It queues one row per stuck pair with
+--                no pending work (making the trigger's unpurged processed row pending again) and nothing on a re-run.
 --
 --              Number 452: reserved for this change.
 --
@@ -87,6 +89,9 @@ SELECT __SCHEMA__.drop_all_overloads('complete_perspective_cursor_work');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_AReplayAtTheLastVersion_MovesTheCursorStoresItsFrontierAndClearsTheFlagAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_APositionBelowTheTrigger_KeepsTheFlagAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_APendingRowBelowTheCursorByVersion_IsFlagged_UnlessAReplayReadItAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_AStreamWithNoCursor_GetsOneAtTheReportedEventAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:CompleteCursorWork_AnEventTheStoreDoesNotHold_CreatesNoCursorAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:TwoServices_SupersededReap_Redelivery_AndRewind_TogetherConverge_WithNoLoopAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:AStuckCursorOnTheHighestIdAtTheLowestVersion_ConvergesAfterOneRewind_AndARequeuedCopyIsNotRewoundAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_cursor_work(
   p_stream_id UUID,
@@ -167,6 +172,22 @@ BEGIN
         rewind_first_flagged_at = CASE WHEN v_keep_flag THEN rewind_first_flagged_at END
     WHERE stream_id = p_stream_id
       AND perspective_name = p_perspective_name;
+  ELSE
+    -- A pair with no cursor gets one at the reported event, as update_perspective_cursors creates a missing one (#2366).
+    -- Before, this path only updated, so a new stream completed here never had a cursor. A reported event the store
+    -- does not hold cannot be placed, so it creates none.
+    SELECT e.version INTO v_position_version
+    FROM __SCHEMA__.wh_event_store e WHERE e.event_id = p_last_event_id AND e.stream_id = p_stream_id;
+    IF v_position_version IS NOT NULL THEN
+      INSERT INTO __SCHEMA__.wh_perspective_cursors
+        (stream_id, perspective_name, last_event_id, status, processed_at, error, replayed_through_commit_sequence)
+      VALUES (p_stream_id, p_perspective_name, p_last_event_id, p_status & ~(32::SMALLINT), NOW(), p_error_message,
+              p_replayed_through_commit_sequence)
+      ON CONFLICT (stream_id, perspective_name) DO NOTHING;
+      v_found := FOUND;
+      v_is_catching_up := FALSE;
+      v_replayed_through := p_replayed_through_commit_sequence;
+    END IF;
   END IF;
 
   -- CRITICAL: Mark ONLY actually-processed perspective events
@@ -349,6 +370,8 @@ COMMENT ON FUNCTION __SCHEMA__.update_perspective_cursors(JSONB, BOOLEAN) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_ACursorInTheStuckShape_MovesToTheLastVersionBeforePendingWork_AndKeepsItsFlagAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_AGenuineLateArrivalWhoseRowIsRetired_KeepsItsFlag_AndQueuesItsRewindAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_AFlagWhoseTriggerIsStillPending_OrIsBelowTheCursorByVersion_IsLeftAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_ATriggerWhoseProcessedRowIsNotYetPurged_IsQueuedAgainOnThatRowAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorOneOrderSqlTests.cs:Repair_QueuesOneRowPerStuckPairWithNoPendingWork_NothingElse_AndARerunQueuesNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:AStuckCursorRepairedOnDeploy_IsResolvedByExactlyOneRewind_AndNeverASecondAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_settle_id_ordered_rewind_flags() RETURNS INTEGER AS $$
 DECLARE
@@ -394,6 +417,11 @@ BEGIN
       __SCHEMA__.compute_partition(p.stream_id, 10000), 1, 0, NOW(), 150
     FROM positioned p
     WHERE p.first_pending_version IS NULL
+    -- The trigger's processed row may not be purged yet (debug mode keeps it): it is made pending again, so the rewind
+    -- runs, instead of failing the migration on the row's unique key.
+    ON CONFLICT ON CONSTRAINT uq_perspective_event DO UPDATE
+      SET processed_at = NULL, status = EXCLUDED.status, attempts = 0, error = NULL, failure_reason = NULL,
+          instance_id = NULL, lease_expiry = NULL, claimed_at = NULL, scheduled_for = NULL
     RETURNING stream_id
   )
   SELECT count(*) INTO v_repaired FROM moved;
