@@ -4774,6 +4774,48 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  public Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+    FullHistoryCompareRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        "SELECT buckets_checked, drift_updated, drift_removed, drift_added, streams_checked, pass_completed, pass_runs " +
+        $"FROM {BuildSchemaQualifiedName(schema, "wh_heal_stream_digests_slice")}(@p_settle::interval, @p_lookback::interval, @p_max)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(long)request.SettleWindow.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", $"{(long)request.Lookback.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxPerRun)));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      return new DigestVerificationResult {
+        BucketsChecked = reader.GetInt32(0),
+        DriftUpdated = reader.GetInt32(1),
+        DriftRemoved = reader.GetInt32(2),
+        DriftAdded = reader.GetInt32(3),
+        StreamsChecked = reader.GetInt32(4),
+        PassCompleted = reader.GetBoolean(5),
+        PassRuns = reader.GetInt32(6),
+      };
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<long> GetFullHistoryCompareStartAsync(
+    Guid originServiceId, TimeSpan lookback, long epochWidth, long seal, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText =
+        $"SELECT {BuildSchemaQualifiedName(schema, "wh_full_history_compare_start")}(@p_origin, @p_lookback::interval, @p_width, @p_seal)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", $"{(long)lookback.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_width", epochWidth));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_seal", seal));
+      return (long)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    }, cancellationToken);
+
   private static void _prepareVerifyDigestCommand(
       System.Data.Common.DbCommand cmd, string schema, TimeSpan settleWindow) {
     // A1c trust-but-verify: recompute settled buckets from the event store and heal the table three ways (update

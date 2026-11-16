@@ -237,11 +237,19 @@ public sealed partial class IntegrityAuditWorker(
     if (sweep) {
       var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
       var started = clock.GetTimestamp();
-      var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
+      // #2361: one slice of streams after the stored cursor, within the lookback; the next run resumes after it.
+      var verification = await coordinator.VerifyDigestTableSliceAsync(
+        FullHistoryCompareRequest.From(_options.FullHistoryCompare, settle), cancellationToken).ConfigureAwait(false);
       var check = new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.CHECK_TAG, Observability.StreamIntegrityMetrics.CHECK_FULL_HISTORY_COMPARE);
       metrics?.CheckDuration.Record(clock.GetElapsedTime(started).TotalSeconds, check);
       metrics?.CheckDriftFound.Add(verification.TotalDrift, check);
       metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);
+      metrics?.CompareStreamsCovered.Add(verification.StreamsChecked);
+      metrics?.CompareSlices.Add(1);
+      if (verification.PassCompleted) {
+        metrics?.ComparePassesCompleted.Add(1);
+        metrics?.ComparePassRuns.Record(verification.PassRuns);
+      }
       if (verification.TotalDrift > 0) {
         metrics?.DigestDriftHealed.Add(verification.DriftUpdated, new KeyValuePair<string, object?>("kind", "updated"));
         metrics?.DigestDriftHealed.Add(verification.DriftRemoved, new KeyValuePair<string, object?>("kind", "removed"));
@@ -360,11 +368,16 @@ public sealed partial class IntegrityAuditWorker(
         continue;
       }
       // #80-B/C: steady-state cycles ask WINDOWED from the stored seal — verified history is
-      // never re-shipped or re-verified. The sweep deliberately asks FULL: it is trust-but-verify
-      // for exactly the state the seals assume is fine; a windowed sweep would be circular trust.
-      // An origin that predates the protocol ignores the extra fields and answers unwindowed —
-      // the comparator then compares legacy and the seal simply stays put.
-      var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
+      // never re-shipped or re-verified. The sweep re-verifies below the seal: it is trust-but-verify for exactly the
+      // state the seals assume is fine. #2361: it reaches back to the oldest epoch sealed within its lookback, not to the
+      // start of history, and never above the seal, so a clean answer still advances it. An origin that predates the
+      // protocol ignores the extra fields and answers unwindowed — the comparator then compares legacy and the seal
+      // simply stays put.
+      var seal = await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
+      var since = sweep
+        ? await coordinator.GetFullHistoryCompareStartAsync(
+            originId, _options.FullHistoryCompare.Lookback, _options.Sealing.EpochWidth, seal, cancellationToken).ConfigureAwait(false)
+        : seal;
       // #2262: the generation recorded beside the seal, so the origin answers how far its history was rewritten since and
       // a new generation lowers the seal only that far. A sweep's answer passes the same guard, so it names it too.
       var knownGeneration = await coordinator.GetIntegritySealGenerationAsync(originId, cancellationToken).ConfigureAwait(false);
@@ -378,7 +391,7 @@ public sealed partial class IntegrityAuditWorker(
           EventNamespaces = eventNamespaces,
           Level = ManifestLevel.Types,
           UseRecompute = sweep,
-          Windowed = !sweep,
+          Windowed = true,
           SinceSequence = since,
           KnownOriginGeneration = knownGeneration,
         },

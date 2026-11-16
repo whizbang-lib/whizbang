@@ -76,6 +76,10 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
       "it is how far back, by seal time, the re-check reaches, and an empty lookback reaches no epoch (#2353)");
     _positive(failures, "SealRecheck:RecheckEvery", options.SealRecheck.RecheckEvery,
       "it is how often one epoch may be re-checked, and an empty interval re-checks the same epochs on every run (#2353)");
+    _positive(failures, "FullHistoryCompare:Lookback", options.FullHistoryCompare.Lookback,
+      "it is how far back the full-history compare reaches, and an empty lookback compares nothing (#2361)");
+    _atLeastOne(failures, "FullHistoryCompare:MaxPerRun", options.FullHistoryCompare.MaxPerRun,
+      "it bounds the streams one compare run heals, and a bound below one heals nothing, so the pass never ends (#2361)");
     if (options.MaxOutstandingRepairAnswers < 0) {
       failures.Add(
         $"Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers must not be negative (was {options.MaxOutstandingRepairAnswers}); " +
