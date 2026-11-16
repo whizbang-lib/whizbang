@@ -213,8 +213,39 @@ COMMENT ON FUNCTION __SCHEMA__._wh_fold_unsequenced_digest_changes(UUID, INTEGER
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedDigestCompactionSqlTests.cs</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_compact_unsequenced_digest_changes(p_limit INTEGER)
 RETURNS INTEGER AS $$
+DECLARE
+  v_folded INTEGER;
 BEGIN
-  RETURN 0;
+  WITH claimed AS (
+    SELECT c.change_id FROM __SCHEMA__.wh_unsequenced_digest_changes c
+    ORDER BY c.change_id
+    LIMIT p_limit
+    FOR UPDATE SKIP LOCKED
+  ), moved AS (
+    DELETE FROM __SCHEMA__.wh_unsequenced_digest_changes c
+    USING claimed
+    WHERE c.change_id = claimed.change_id
+    RETURNING c.origin_service_id, c.scope_tenant, c.event_type, c.digest_lo, c.digest_hi, c.event_count
+  ), summed AS (
+    SELECT m.origin_service_id, m.scope_tenant, m.event_type, bit_xor(m.digest_lo) AS lo, bit_xor(m.digest_hi) AS hi,
+           SUM(m.event_count) AS n, COUNT(*) AS changes
+    FROM moved m
+    GROUP BY 1, 2, 3
+  ), written AS (
+    INSERT INTO __SCHEMA__.wh_unsequenced_digest_totals AS t
+      (origin_service_id, scope_tenant, event_type, digest_lo, digest_hi, event_count)
+    SELECT s.origin_service_id, s.scope_tenant, s.event_type, s.lo, s.hi, s.n
+    FROM summed s
+    ORDER BY s.origin_service_id, s.scope_tenant, s.event_type
+    ON CONFLICT (origin_service_id, scope_tenant, event_type) DO UPDATE
+      SET digest_lo = t.digest_lo # EXCLUDED.digest_lo,
+          digest_hi = t.digest_hi # EXCLUDED.digest_hi,
+          event_count = t.event_count + EXCLUDED.event_count
+    RETURNING 1
+  )
+  SELECT COALESCE(SUM(s.changes), 0)::int INTO v_folded FROM summed s;
+  DELETE FROM __SCHEMA__.wh_unsequenced_digest_totals t WHERE t.event_count = 0;
+  RETURN v_folded;
 END;
 $$ LANGUAGE plpgsql;
 

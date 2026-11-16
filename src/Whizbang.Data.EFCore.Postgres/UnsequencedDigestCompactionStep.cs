@@ -51,9 +51,6 @@ public sealed partial class UnsequencedDigestCompactionStep(
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
-    if (_dbContextType != typeof(void)) {
-      return;
-    }
     var context = (DbContext)services.GetRequiredService(_dbContextType);
     var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
     var function = PgIdentifier.QualifyPrefix(string.IsNullOrWhiteSpace(schema) ? "public" : schema)
