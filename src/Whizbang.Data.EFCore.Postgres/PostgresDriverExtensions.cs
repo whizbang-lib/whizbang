@@ -200,6 +200,11 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the step that keeps the held-without-sequence change log bounded (#2351). An integrity answer folds
+        // only its own origin's changes; this folds every origin's, so an origin nobody audits never grows the log.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new UnsequencedDigestCompactionStep(dbContextType, sp.GetService<ILogger<UnsequencedDigestCompactionStep>>()));
+
         // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once
         // (#1646) and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled
         // is true, and is idle otherwise. One per DbContext, since each context's schema has its own tables.

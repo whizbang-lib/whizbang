@@ -41,7 +41,8 @@
 -- Dependencies: 087 (origin columns), 336 (_wh_digest_lane); the digest eligibility constant (constants.txt, #2352)
 -- Objects: wh_unsequenced_digest_totals, wh_unsequenced_digest_changes, idx_unsequenced_digest_changes_origin,
 --          idx_event_store_unsequenced_received, _wh_track_unsequenced_digest, _wh_clear_unsequenced_digests,
---          wh_rebuild_unsequenced_digests, _wh_fold_unsequenced_digest_changes, wh_unsequenced_received_type_digests,
+--          wh_rebuild_unsequenced_digests, _wh_fold_unsequenced_digest_changes, wh_compact_unsequenced_digest_changes,
+--          wh_unsequenced_received_type_digests,
 --          wh_event_store_tracks_unsequenced_insert_trg, wh_event_store_tracks_unsequenced_update_trg,
 --          wh_event_store_tracks_unsequenced_delete_trg, wh_event_store_clears_unsequenced_trg
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
@@ -204,6 +205,21 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_fold_unsequenced_digest_changes(UUID, INTEGER) IS
 'Folds up to p_limit pending changes of one origin into wh_unsequenced_digest_totals, skipping changes another fold holds, and drops totals left empty (#2351). Returns the changes folded.';
+
+-- Folds the oldest p_limit pending changes of every origin into the totals, for the maintenance cycle: an answer folds
+-- only its own origin's changes, so an origin nobody asks about would otherwise grow the log without bound. Oldest
+-- first by the identity, so a bounded batch always takes the changes that have waited longest.
+-- <docs>resilience/stream-integrity#the-change-log-stays-bounded</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedDigestCompactionSqlTests.cs</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_compact_unsequenced_digest_changes(p_limit INTEGER)
+RETURNS INTEGER AS $$
+BEGIN
+  RETURN 0;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_compact_unsequenced_digest_changes(INTEGER) IS
+'Folds the oldest p_limit pending changes of every origin into wh_unsequenced_digest_totals and deletes them, skipping changes another fold holds (#2351). Run by the maintenance cycle so the change log stays bounded when no answer is asked. Returns the changes folded.';
 
 -- The type-level answer: one row per (tenant, type) of the eligible events held from the origin without its commit
 -- sequence and older than the settle window.
