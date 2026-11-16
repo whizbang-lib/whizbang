@@ -80,6 +80,39 @@ public class RedeliveredSupersedingCopySqlTests : EFCoreTestBase {
   }
 
   [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task AnOlderCopyArrivingForTheFirstTime_AfterTheNewest_IsNeverStored_AndIsRecordedSatisfiedAsync(bool byRedelivery) {
+    await using var dbContext = CreateDbContext();
+    var stream = TrackedGuid.New().Value;
+    var first = TrackedGuid.New().Value;
+    var older = TrackedGuid.New().Value;
+    var newest = TrackedGuid.New().Value;
+    var conn = await _openAsync(dbContext);
+    await _executeAsync(conn, """
+      INSERT INTO wh_message_associations
+        (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (gen_random_uuid(), @t, 'perspective', 'ProfilePerspective', 'test-service', @t, NOW(), NOW())
+      ON CONFLICT DO NOTHING
+      """, ("t", TYPE));
+    // The newest copy of key k arrives; the older one never has: it was lost in transit, or arrives out of order.
+    _ = await _receiveAsync(dbContext, _received(stream, first, "once", originSequence: 5),
+      _received(stream, newest, "k", originSequence: 20));
+
+    // Its first arrival: a redelivery (an integrity repair or an operator's) carries it, or the live receive does.
+    _ = await _receiveAsync(dbContext, _received(stream, older, "k", originSequence: 10, restore: byRedelivery));
+
+    await Assert.That(await _storedAsync(conn, stream)).IsEquivalentTo([first, newest])
+      .Because("a newer copy of its key is held, so the older copy is never stored, whichever path brings it");
+    await Assert.That(await _errorAsync(conn, older)).IsEqualTo(_satisfied())
+      .Because("it is settled with the reason, never claimed, copied or applied");
+    await Assert.That(await _countAsync(conn, "SELECT COUNT(*) FROM wh_perspective_events WHERE event_id = @id", older))
+      .IsEqualTo(0L).Because("a copy never stored is never offered to a perspective");
+    await Assert.That(await _reconcileAsync(conn, older)).IsEquivalentTo([$"{stream}|1|0|1"])
+      .Because("the reconcile reads the copy as satisfied (present) and counts it apart, never as a deficit");
+  }
+
+  [Test]
   public async Task ARedeliveredCopyNewerThanTheHeldOne_IsRestoredAsBeforeAsync() {
     await using var dbContext = CreateDbContext();
     var stream = TrackedGuid.New().Value;
