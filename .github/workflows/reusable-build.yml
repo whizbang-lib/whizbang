@@ -88,7 +88,8 @@ jobs:
           VERSION: ${{ inputs.version }}
           RUN_ANALYZERS: ${{ inputs.run-analyzers }}
         run: |
-          BUILD_ARGS=(--no-restore --configuration Release -mt:false)
+          # Two build nodes and no -mt: with more, the hosted runner runs out of memory and is shut down mid-build (#2135).
+          BUILD_ARGS=(--no-restore --configuration Release -mt:false -maxcpucount:2 -nodeReuse:false)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
           # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
           if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi
