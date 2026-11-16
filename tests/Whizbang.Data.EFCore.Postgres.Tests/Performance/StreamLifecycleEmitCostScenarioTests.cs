@@ -183,8 +183,18 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     var clean = await _measureAsync(conn, recorder, _batchOver(untouched));
     await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
       .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
-    await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
-    var (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
+    // A vacuum marks a page all-visible only if no snapshot open in this database at that instant could still see an
+    // older version of a row on it; a connection of the test host taking a snapshot at the same moment leaves that page
+    // unmarked. So the vacuum runs again until every page holding the streams' rows is marked, a bounded number of
+    // times: each pass is the transition itself, not a wait on the clock.
+    long vacuumedPages = 0, vacuumedPagesNotAllVisible = 0;
+    for (var pass = 0; pass < 5; pass++) {
+      await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+      (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
+      if (vacuumedPagesNotAllVisible == 0) {
+        break;
+      }
+    }
     await Assert.That(vacuumedPages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
     await Assert.That(vacuumedPagesNotAllVisible).IsEqualTo(0L)
       .Because($"precondition: the vacuum marked every page holding the streams' rows all-visible ({vacuumedPages} pages), "
