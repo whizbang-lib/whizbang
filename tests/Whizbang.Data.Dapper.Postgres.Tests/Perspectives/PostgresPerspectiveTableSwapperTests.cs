@@ -66,6 +66,117 @@ public class PostgresPerspectiveTableSwapperTests : PostgresTestBase {
       .Because("The primary key the upsert conflicts on, and every index the live table has.");
   }
 
+  /// <summary>
+  /// #2299: <c>LIKE … INCLUDING ALL</c> copies no storage parameters, so the shadow is given the live table's own
+  /// (its fillfactor, its autovacuum settings and its TOAST relation's) before anything is written to it.
+  /// </summary>
+  [Test]
+  public async Task CreateShadow_CopiesTheLiveTablesStorageSettings_AndItsToastTablesAsync() {
+    await _createLiveAsync();
+    await using (var conn = await _openAsync()) {
+      await conn.ExecuteAsync($"""
+        ALTER TABLE {LIVE} SET (fillfactor = 90, autovacuum_vacuum_threshold = 500, autovacuum_vacuum_scale_factor = 0.02,
+          toast.autovacuum_vacuum_threshold = 300)
+        """);
+    }
+
+    await _swapper().CreateShadowAsync(LIVE, CancellationToken.None);
+
+    await using var verify = await _openAsync();
+    await Assert.That(await _reloptionsAsync(verify, SHADOW))
+      .IsEquivalentTo(["fillfactor=90", "autovacuum_vacuum_threshold=500", "autovacuum_vacuum_scale_factor=0.02"])
+      .Because("the replay fills the shadow's pages, so they must be filled at the fillfactor the live table declares.");
+    await Assert.That(await _toastReloptionsAsync(verify, SHADOW)).IsEquivalentTo(["autovacuum_vacuum_threshold=300"]);
+  }
+
+  /// <summary>#2299: a live table with no storage parameters gives its shadow none.</summary>
+  [Test]
+  public async Task CreateShadow_OfATableWithNoStorageSettings_GivesTheShadowNoneAsync() {
+    await _createLiveAsync();
+
+    await _swapper().CreateShadowAsync(LIVE, CancellationToken.None);
+
+    await using var verify = await _openAsync();
+    await Assert.That(await _reloptionsAsync(verify, SHADOW)).IsEmpty();
+    await Assert.That(await _toastReloptionsAsync(verify, SHADOW)).IsEmpty();
+  }
+
+  /// <summary>
+  /// #2299: the reason the settings must reach the shadow before the replay. A table rebuilt at fillfactor 90 keeps a
+  /// tenth of every page free, so an update of a row on a page the rebuild filled stays on that page: a HOT update.
+  /// The count is the updating transaction's own (<c>pg_stat_get_xact_tuples_hot_updated</c>), read before it commits,
+  /// so no statistics flush is waited on. Packed full, the same update has to move the row and is not HOT.
+  /// </summary>
+  [Test]
+  public async Task Swap_OfATableRebuiltAtItsFillFactor_LeavesRoomForAHotUpdateAsync() {
+    await _createLiveAsync();
+    await using (var conn = await _openAsync()) {
+      await conn.ExecuteAsync($"ALTER TABLE {LIVE} SET (fillfactor = 90)");
+    }
+    var swapper = _swapper();
+    await swapper.CreateShadowAsync(LIVE, CancellationToken.None);
+    await using (var conn = await _openAsync()) {
+      await conn.ExecuteAsync($"""
+        INSERT INTO {SHADOW} (id, data)
+        SELECT gen_random_uuid(), jsonb_build_object('Number', g::text, 'Pad', repeat('x', 60)) FROM generate_series(1, 500) g
+        """);
+    }
+    await swapper.SwapAsync(new PerspectiveTableSwap(LIVE, SHADOW, false, TimeSpan.FromSeconds(10)), _ => Task.CompletedTask, CancellationToken.None);
+
+    await using var verify = await _openAsync();
+    await using var tx = await verify.BeginTransactionAsync();
+    await verify.ExecuteAsync($"UPDATE {LIVE} SET version = version + 1 WHERE ctid = '(0,1)'", transaction: tx);
+    var hot = await verify.QuerySingleAsync<long>($"SELECT pg_stat_get_xact_tuples_hot_updated('{LIVE}'::regclass)", transaction: tx);
+    await tx.CommitAsync();
+
+    await Assert.That(hot).IsEqualTo(1L)
+      .Because("the page the rebuild filled kept the fillfactor's free space, so the update stayed on it.");
+    await Assert.That(await _reloptionsAsync(verify, LIVE)).IsEquivalentTo(["fillfactor=90"]);
+    await Assert.That(await verify.QuerySingleAsync<int>($"SELECT count(*)::int FROM {LIVE} WHERE (ctid::text::point)[0] = 0"))
+      .IsGreaterThan(1).Because("the first page holds rows the rebuild wrote, so the update was of a packed page.");
+  }
+
+  /// <summary>
+  /// #2301: the perspective a table can be rebuilt by is the one the registry records as writing it; a table written by
+  /// several perspectives, by none recorded, or not registered at all has none, since no single rebuild recreates it.
+  /// </summary>
+  [Test]
+  public async Task FindPerspective_IsTheTablesOneWriter_OrNoneAsync() {
+    await using (var conn = await _openAsync()) {
+      await conn.ExecuteAsync("""
+        INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name, perspective_names) VALUES
+          ('Tests.OrderModel', 'wh_per_one', '{}'::jsonb, 'h', 'svc', ARRAY['Tests.OrderPerspective']),
+          ('Tests.SharedModel', 'wh_per_two', '{}'::jsonb, 'h', 'svc', ARRAY['Tests.APerspective', 'Tests.BPerspective']),
+          ('Tests.OldModel', 'wh_per_old', '{}'::jsonb, 'h', 'svc', NULL)
+        """);
+    }
+    var swapper = _swapper();
+
+    await Assert.That(await swapper.FindPerspectiveAsync("wh_per_one", CancellationToken.None)).IsEqualTo("Tests.OrderPerspective");
+    await Assert.That(await swapper.FindPerspectiveAsync("wh_per_two", CancellationToken.None)).IsNull();
+    await Assert.That(await swapper.FindPerspectiveAsync("wh_per_old", CancellationToken.None)).IsNull();
+    await Assert.That(await swapper.FindPerspectiveAsync("wh_outbox", CancellationToken.None)).IsNull();
+  }
+
+  /// <summary>
+  /// #2301: the swapped-in table is analyzed, so the planner and the rewrite re-measure read its real row count rather
+  /// than the "never analyzed" of a table just created.
+  /// </summary>
+  [Test]
+  public async Task Swap_AnalyzesTheTableItInstallsAsync() {
+    await _createLiveAsync();
+    var swapper = _swapper();
+    await swapper.CreateShadowAsync(LIVE, CancellationToken.None);
+    await using (var conn = await _openAsync()) {
+      await conn.ExecuteAsync($"INSERT INTO {SHADOW} (id, data) SELECT gen_random_uuid(), jsonb_build_object('Number', g::text) FROM generate_series(1, 40) g");
+    }
+
+    await swapper.SwapAsync(new PerspectiveTableSwap(LIVE, SHADOW, false, TimeSpan.FromSeconds(10)), _ => Task.CompletedTask, CancellationToken.None);
+
+    await using var verify = await _openAsync();
+    await Assert.That(await verify.QuerySingleAsync<float>($"SELECT reltuples FROM pg_class WHERE oid = '{LIVE}'::regclass")).IsEqualTo(40f);
+  }
+
   [Test]
   public async Task Swap_KeepsThePreviousTable_AndTheIndexNamesStayWithTheLiveTableAsync() {
     await _createLiveAsync();
@@ -278,6 +389,14 @@ public class PostgresPerspectiveTableSwapperTests : PostgresTestBase {
     await using var conn = await _openAsync();
     await conn.ExecuteAsync($"INSERT INTO {table} (id, data) VALUES (@id, jsonb_build_object('Number', @number))", new { id, number });
   }
+
+  private static async Task<List<string>> _reloptionsAsync(NpgsqlConnection conn, string table) =>
+    [.. await conn.QueryAsync<string>("SELECT unnest(reloptions) FROM pg_class WHERE oid = to_regclass(@table)", new { table })];
+
+  private static async Task<List<string>> _toastReloptionsAsync(NpgsqlConnection conn, string table) =>
+    [.. await conn.QueryAsync<string>(
+      "SELECT unnest(t.reloptions) FROM pg_class c JOIN pg_class t ON t.oid = c.reltoastrelid WHERE c.oid = to_regclass(@table)",
+      new { table })];
 
   private static async Task<int> _indexCountAsync(NpgsqlConnection conn, string table) =>
     await conn.QuerySingleAsync<int>("SELECT count(*)::int FROM pg_indexes WHERE tablename = @table", new { table });

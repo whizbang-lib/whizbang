@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Strong ids in an assembly of their own, for the test that builds a GraphQL schema before anything has loaded the
+       types of this assembly (Whizbang.Transports.HotChocolate.Ids.Tests, WhizbangIdSchemaTimingTests). Its generated
+       module initializer, which records the ids in WhizbangIdProviderRegistry, has then not run yet. Nothing else
+       may use these ids, or the test no longer shows anything. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Exclude generated files from compilation (they're already compiled via the generator pipeline) -->
+    <Compile Remove=".whizbang/cache/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

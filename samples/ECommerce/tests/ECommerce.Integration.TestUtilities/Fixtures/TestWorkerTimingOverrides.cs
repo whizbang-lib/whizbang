@@ -80,11 +80,6 @@ public static class TestWorkerTimingOverrides {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(100),
       }));
-    services.AddSingleton<IOptions<SlidingWindowApplyOptions>>(
-      Options.Create(new SlidingWindowApplyOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(50),
-        MaxWait = TimeSpan.FromMilliseconds(100),
-      }));
 
     return services;
   }

@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
@@ -65,7 +66,7 @@ public sealed class SignalRNotificationHook<THub>(
       CancellationToken ct) {
     var attribute = context.Attribute;
     if (string.IsNullOrEmpty(attribute.Group)) {
-      SignalRGroupResolver.LogNoGroup(_logger, attribute.Tag, context.MessageType.Name);
+      SignalRGroupResolver.LogNoGroup(_logger, attribute.Tag, TypeNameFormatter.ForLog(context.MessageType));
       return null;
     }
 
@@ -75,7 +76,7 @@ public sealed class SignalRNotificationHook<THub>(
     } else {
       var groupName = SignalRGroupResolver.Resolve(attribute.Group, context.Payload, context.Scope);
       if (groupName is null) {
-        SignalRGroupResolver.LogUnresolvedGroup(_logger, attribute.Tag, context.MessageType.Name, attribute.Group);
+        SignalRGroupResolver.LogUnresolvedGroup(_logger, attribute.Tag, TypeNameFormatter.ForLog(context.MessageType), attribute.Group);
         return null;
       }
       target = _hubContext.Clients.Group(groupName);
@@ -84,7 +85,7 @@ public sealed class SignalRNotificationHook<THub>(
     var notification = new NotificationMessage {
       Tag = attribute.Tag,
       Priority = attribute.Priority.ToString(),
-      MessageType = context.MessageType.Name,
+      MessageType = TypeNameFormatter.SimpleName(context.MessageType),
       Payload = context.Payload,
       Timestamp = DateTimeOffset.UtcNow
     };

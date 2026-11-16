@@ -60,8 +60,13 @@ public class IntegritySweepSchedulerCoverageTests {
     var state = new IntegritySweepScheduleState();
     services.AddSingleton(state);
     var sp = services.BuildServiceProvider();
+    // #2353: both checks on, so StartAsync reaches the throwing manager for each; with the defaults (both off) it would
+    // register nothing and this test would pass without exercising the failure path.
     return new IntegritySweepScheduler(
-      sp, Options.Create(new StreamIntegrityOptions { FullSweepCron = "0 3 * * *" }),
+      sp, Options.Create(new StreamIntegrityOptions {
+        FullHistoryCompare = { Enabled = true, Schedule = "0 3 * * *" },
+        SealRecheck = { Enabled = true, Schedule = "0 3 * * *" },
+      }),
       NullLogger<IntegritySweepScheduler>.Instance);
   }
 

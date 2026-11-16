@@ -82,4 +82,36 @@ public interface IReceptorInvoker {
       IReadOnlyList<LifecycleStage> stages,
       CancellationToken cancellationToken = default) =>
     new(Security.InterceptorResult.Allowed);
+
+  /// <summary>
+  /// Invokes every receptor for the message at the stage, even when one of them throws: each receptor that fails is
+  /// reported to <paramref name="failures"/> and the next one still runs (#2310).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The outbox flush calls this for the Distribute stages, where a batch holds messages from many streams and a
+  /// receptor observes a write that happens either way. One receptor's exception there must not keep the other
+  /// receptors of the same message from running.
+  /// </para>
+  /// <para>
+  /// A failure outside any receptor (the payload cannot be read, the security context cannot be established) is
+  /// thrown, as it is from <see cref="InvokeAsync"/>; the caller isolates it per message. The default implementation,
+  /// for an invoker that does not isolate its receptors, is <see cref="InvokeAsync"/>: its first failure is thrown and
+  /// the caller still isolates it per message.
+  /// </para>
+  /// </remarks>
+  /// <param name="envelope">The message envelope.</param>
+  /// <param name="stage">The lifecycle stage at which to invoke receptors.</param>
+  /// <param name="context">Optional context providing metadata about the invocation.</param>
+  /// <param name="failures">Receives each receptor that throws, with its exception.</param>
+  /// <param name="cancellationToken">Cancellation token. A cancellation is thrown, never reported as a failure.</param>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
+  ValueTask InvokeEveryReceptorAsync(
+      IMessageEnvelope envelope,
+      LifecycleStage stage,
+      ILifecycleContext? context,
+      IReceptorFailureSink failures,
+      CancellationToken cancellationToken = default) =>
+    InvokeAsync(envelope, stage, context, cancellationToken);
 }

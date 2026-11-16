@@ -444,8 +444,9 @@ public partial class DeadLetterRecoveryWorker(
     // gated on settledness: re-driving puts work back onto the same queues, so doing it mid-drain
     // is how a recovery becomes a second storm.
     HousekeepingCoordinator.Decision? housekeepingDecision = null;
+    IWorkCoordinator? coordinatorForBacklog = null;
     if (_housekeeping is not null && _options.WaitForIdle) {
-      var coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
       ServiceBacklog? backlog = null;
       if (coordinatorForBacklog is not null) {
         try {
@@ -455,6 +456,8 @@ public partial class DeadLetterRecoveryWorker(
         }
       }
       var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, backlog);
+      // #2288: the first deferral of a run goes to the store, so the forced-pass ceiling survives a restart.
+      await HousekeepingDeferralStore.RecordAsync(coordinatorForBacklog, decision, _logger, ct).ConfigureAwait(false);
       if (!decision.Granted) {
         LogRecoveryDeferred(_logger, decision.Reason, backlog?.UnprocessedInboxRows ?? -1);
         return;
@@ -685,6 +688,8 @@ public partial class DeadLetterRecoveryWorker(
         // A decision exists only when the coordinator granted the slot (see the TryBegin above),
         // so _housekeeping is non-null whenever housekeepingDecision is.
         _housekeeping!.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
+        // A pass that ended re-arms the stored ceiling for every instance (#2288), as End re-arms the in-memory one.
+        await HousekeepingDeferralStore.ClearAsync(coordinatorForBacklog, housekeepingDecision.Value, _logger).ConfigureAwait(false);
       }
     }
   }

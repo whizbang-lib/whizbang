@@ -69,6 +69,10 @@ public class RetentionSettingsBindingTests {
       ["Whizbang__Workers__Maintenance__Retention__OrphanPerspectiveEventGraceHours"] = "26",
       ["Whizbang__Workers__Maintenance__Retention__CollectiveOrderingHeadDays"] = "27",
       ["Whizbang__Workers__Maintenance__Retention__CompletedInboxPurgeBatchSize"] = "28",
+      ["Whizbang__Workers__Maintenance__Retention__CompletedOutboxPurgeBatchSize"] = "29",
+      ["Whizbang__Workers__Maintenance__Retention__CompletedPerspectiveEventPurgeBatchSize"] = "30",
+      ["Whizbang__Workers__Maintenance__Retention__DeduplicationPurgeBatchSize"] = "31",
+      ["Whizbang__Workers__Maintenance__Retention__StuckInboxPurgeBatchSize"] = "32",
     }, p => p.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.Retention);
 
     await Assert.That(retention.DeduplicationDays).IsEqualTo(21)
@@ -80,6 +84,10 @@ public class RetentionSettingsBindingTests {
     await Assert.That(retention.OrphanPerspectiveEventGraceHours).IsEqualTo(26);
     await Assert.That(retention.CollectiveOrderingHeadDays).IsEqualTo(27);
     await Assert.That(retention.CompletedInboxPurgeBatchSize).IsEqualTo(28);
+    await Assert.That(retention.CompletedOutboxPurgeBatchSize).IsEqualTo(29);
+    await Assert.That(retention.CompletedPerspectiveEventPurgeBatchSize).IsEqualTo(30);
+    await Assert.That(retention.DeduplicationPurgeBatchSize).IsEqualTo(31);
+    await Assert.That(retention.StuckInboxPurgeBatchSize).IsEqualTo(32);
   }
 
   [Test]

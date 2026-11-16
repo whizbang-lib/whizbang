@@ -26,16 +26,23 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/320_RepairWaitsForItsAnswer.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/301_StreamDigestsAreFoundByStream.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/420_RedeliveryReconcilesKeepNoWorkTable.sql</code-under-test>
 /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
 [Category("Integration")]
 [Category("Shard5")]
 public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
   private static readonly DateTimeOffset _now = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+  private static readonly string[] _originNames = ["origin-svc"];
+  private static readonly int[] _firstBundle = [1];
 
   private const string RECORD_ANSWER =
     "SELECT count(*) FROM wh_integrity_record_bundle_answer($1, $2, $3, $4)";
   private const string RECONCILE =
     "SELECT count(*) FROM wh_reconcile_redelivered_bundle_by_first_hop($1, $2, $3, $4)";
+  private const string RECONCILE_BATCH =
+    "SELECT count(*) FROM wh_reconcile_redelivered_bundles($1, $2, $3, $4, $5)";
+  private const string ADOPT =
+    "SELECT count(*) FROM wh_adopt_redelivered_origin($1, $2, $3)";
 
   [Test]
   public async Task RecordBundleAnswer_ASecondCallOnTheConnection_WritesNothingToTheSystemCatalogAsync() {
@@ -88,6 +95,35 @@ public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
 
     await Assert.That(writes).IsEqualTo(0L)
       .Because("the working table is made once per connection; making and dropping it per bundle was the churn");
+  }
+
+  /// <summary>
+  /// #2181: the three reconcile functions that run per bundle or per batch kept their working rows in a temporary
+  /// table too, and every pooled connection is reset before it is handed out, so the table was made again on almost
+  /// every call. They gather their rows into arrays instead, as the bundle answer does (#2179).
+  /// </summary>
+  [Test]
+  public async Task ReconcileBundle_AfterTheSessionIsReset_WritesNothingToTheSystemCatalogAsync() {
+    var writes = await _catalogWritesOfACallAfterAResetAsync(async (conn, tx) => await _reconcileAsync(conn, tx));
+
+    await Assert.That(writes).IsEqualTo(0L)
+      .Because("the pool resets a connection each time it hands it out, so anything kept per connection is made per call");
+  }
+
+  [Test]
+  public async Task ReconcileBatch_AfterTheSessionIsReset_WritesNothingToTheSystemCatalogAsync() {
+    var writes = await _catalogWritesOfACallAfterAResetAsync(async (conn, tx) => await _reconcileBatchAsync(conn, tx));
+
+    await Assert.That(writes).IsEqualTo(0L)
+      .Because("the pool resets a connection each time it hands it out, so anything kept per connection is made per call");
+  }
+
+  [Test]
+  public async Task AdoptRedeliveredOrigin_AfterTheSessionIsReset_WritesNothingToTheSystemCatalogAsync() {
+    var writes = await _catalogWritesOfACallAfterAResetAsync(async (conn, tx) => await _adoptAsync(conn, tx));
+
+    await Assert.That(writes).IsEqualTo(0L)
+      .Because("a working table created per call writes its definition to the catalog and drops it again at commit");
   }
 
   [Test]
@@ -151,6 +187,42 @@ public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
     await using var cmd = new NpgsqlCommand(RECONCILE, conn, transaction);
     cmd.Parameters.Add(new NpgsqlParameter { Value = TrackedGuid.New().Value, NpgsqlDbType = NpgsqlDbType.Uuid });
     cmd.Parameters.Add(new NpgsqlParameter { Value = "origin-svc", NpgsqlDbType = NpgsqlDbType.Text });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = _ids(1), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = new long?[] { 1 }, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Bigint });
+    return (long)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>
+  /// Calls the function once, resets the session as the pool does, and returns what a second call wrote to the catalog.
+  /// </summary>
+  private async Task<long> _catalogWritesOfACallAfterAResetAsync(Func<NpgsqlConnection, NpgsqlTransaction?, Task> call) {
+    await using var conn = await _openAsync();
+    await call(conn, null);
+    await using (var reset = new NpgsqlCommand("DISCARD ALL", conn)) {
+      await reset.ExecuteNonQueryAsync();
+    }
+
+    await using var tx = await conn.BeginTransactionAsync();
+    var before = await _catalogWritesAsync(conn, tx);
+    await call(conn, tx);
+    var writes = await _catalogWritesAsync(conn, tx) - before;
+    await tx.CommitAsync();
+    return writes;
+  }
+
+  private static async Task<long> _reconcileBatchAsync(NpgsqlConnection conn, NpgsqlTransaction? transaction) {
+    await using var cmd = new NpgsqlCommand(RECONCILE_BATCH, conn, transaction);
+    cmd.Parameters.Add(new NpgsqlParameter { Value = _ids(1), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = _originNames, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = _firstBundle, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = _ids(1), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid });
+    cmd.Parameters.Add(new NpgsqlParameter { Value = new long?[] { 1 }, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Bigint });
+    return (long)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  private static async Task<long> _adoptAsync(NpgsqlConnection conn, NpgsqlTransaction? transaction) {
+    await using var cmd = new NpgsqlCommand(ADOPT, conn, transaction);
+    cmd.Parameters.Add(new NpgsqlParameter { Value = TrackedGuid.New().Value, NpgsqlDbType = NpgsqlDbType.Uuid });
     cmd.Parameters.Add(new NpgsqlParameter { Value = _ids(1), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid });
     cmd.Parameters.Add(new NpgsqlParameter { Value = new long?[] { 1 }, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Bigint });
     return (long)(await cmd.ExecuteScalarAsync())!;

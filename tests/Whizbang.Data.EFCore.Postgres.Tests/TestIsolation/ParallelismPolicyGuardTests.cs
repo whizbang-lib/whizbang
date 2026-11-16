@@ -116,6 +116,10 @@ public partial class ParallelismPolicyGuardTests {
   [GeneratedRegex(@"\]\s*//\s*\S+\s+\S+\s+\S+")]
   private static partial Regex _saysWhy();
 
+  /// <summary>A class declaration, capturing its indentation.</summary>
+  [GeneratedRegex(@"^(?<indent>[ \t]*)(?:(?:public|internal|private|protected|sealed|partial|abstract|static)\s+)*class\s+\w+", RegexOptions.Multiline)]
+  private static partial Regex _declaresAClass();
+
   [GeneratedRegex(@"\[assembly:\s*ParallelLimiter<EFCorePostgresParallelism>\]")]
   private static partial Regex _limitsTheAssembly();
 
@@ -182,6 +186,67 @@ public partial class ParallelismPolicyGuardTests {
     await Assert.That(unexplained).IsEmpty()
       .Because("a test that does not run in parallel says what it shares, as a comment on the attribute's line: "
         + string.Join(" | ", unexplained));
+  }
+
+  /// <summary>
+  /// TUnit takes one <c>[NotInParallel]</c> per test, and a class's own attribute shadows its methods' ones: a method
+  /// keyed under a keyed class runs with the class's keys only, whatever its own attribute says (#2318's queue failure:
+  /// a test that swapped the apply-hook registry ran beside another that restored it). A class that serializes
+  /// therefore names every key its tests need on the class, and none of its methods carries its own.
+  /// </summary>
+  [Test]
+  public async Task AClassThatSerializes_HasNoMethodThatSerializesOnItsOwnAsync() {
+    var sources = _sources();
+    var classesThatSerialize = sources.SelectMany(source => _classesWithTheirOwnSerialization(source.Path, source.Text)).ToList();
+
+    await Assert.That(classesThatSerialize.Select(c => c.Class)).Contains("LocalEventStorageTests.cs:LocalEventStorageTests")
+      .Because("the scan must find a class that serializes, or an empty answer proves nothing");
+
+    var shadowed = classesThatSerialize.Where(c => c.MethodSerializations > 0).Select(c => c.Class).ToList();
+
+    await Assert.That(shadowed).IsEmpty()
+      .Because("a method's [NotInParallel] under a class's [NotInParallel] is ignored; put every key on the class: "
+        + string.Join(", ", shadowed));
+  }
+
+  /// <summary>
+  /// Each class in the file whose own attributes include a <c>[NotInParallel]</c>, with how many attributes inside its
+  /// body serialize (its methods', or a nested class's, which serializes nothing a test runs with either).
+  /// </summary>
+  private static IEnumerable<(string Class, int MethodSerializations)> _classesWithTheirOwnSerialization(string path, string text) {
+    var declarations = _declaresAClass().Matches(text).ToList();
+    for (var i = 0; i < declarations.Count; i++) {
+      var declaration = declarations[i];
+      var lineStart = text.LastIndexOf('\n', Math.Max(declaration.Index - 1, 0)) + 1;
+      var attributes = _attributesAbove(text, lineStart);
+      if (!_serializes().IsMatch(attributes)) {
+        continue;
+      }
+      // The class runs to the next class declared at its own depth or shallower; a nested class (a fixture's model or
+      // context) is part of it, and so are the members after it.
+      var indent = declaration.Groups["indent"].Value.Length;
+      var next = declarations.Skip(i + 1).FirstOrDefault(d => d.Groups["indent"].Value.Length <= indent);
+      var body = text[declaration.Index..(next?.Index ?? text.Length)];
+      var name = declaration.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries)[^1];
+      yield return ($"{path}:{name}", _serializes().Count(body));
+    }
+  }
+
+  /// <summary>The attribute lines directly above a declaration, skipping comments and blank lines.</summary>
+  private static string _attributesAbove(string text, int declarationLineStart) {
+    var lines = text[..declarationLineStart].Split('\n');
+    var attributes = new List<string>();
+    for (var i = lines.Length - 1; i >= 0; i--) {
+      var line = lines[i].Trim();
+      if (line.Length == 0 || line.StartsWith("//", StringComparison.Ordinal)) {
+        continue;
+      }
+      if (!line.StartsWith('[')) {
+        break;
+      }
+      attributes.Add(lines[i]);
+    }
+    return string.Join('\n', attributes);
   }
 
   [Test]

@@ -34,6 +34,21 @@ public class PerTestDatabaseSetupPolicyTests {
   }
 
   [Test]
+  public async Task ForSetup_ReplacesTheConnectTimeoutWithTheHangGuardAsync() {
+    // Npgsql's default is 15 seconds for the whole open: socket, startup, authentication and, on the first open of
+    // a connection string, the type load. A setup open is unpooled and to a database nobody has opened yet, so it
+    // pays all of it, and beside another shard's load it overran: "BeforeTest hook failed: The operation has timed
+    // out", Npgsql's own message for an open past its Timeout, failed a test whose code never ran.
+    const string WITH_DEFAULT_CONNECT_TIMEOUT = "Host=localhost;Port=5432;Database=fixture_db;Username=whizbang_user";
+    var setup = new NpgsqlConnectionStringBuilder(PerTestDatabaseFactory.ForSetup(WITH_DEFAULT_CONNECT_TIMEOUT));
+
+    await Assert.That(new NpgsqlConnectionStringBuilder(WITH_DEFAULT_CONNECT_TIMEOUT).Timeout).IsEqualTo(15)
+      .Because("control: the string starts at Npgsql's default connect timeout, the one that failed the setup");
+    await Assert.That(setup.Timeout).IsEqualTo(PerTestDatabaseFactory.SETUP_STATEMENT_GUARD_SECONDS)
+      .Because("opening a setup connection waits out the shared server's load like a setup statement does, up to the same guard");
+  }
+
+  [Test]
   public async Task ForSetup_KeepsEverythingElseAboutTheConnectionAsync() {
     var original = new NpgsqlConnectionStringBuilder(CONNECTION_STRING);
     var setup = new NpgsqlConnectionStringBuilder(PerTestDatabaseFactory.ForSetup(CONNECTION_STRING));

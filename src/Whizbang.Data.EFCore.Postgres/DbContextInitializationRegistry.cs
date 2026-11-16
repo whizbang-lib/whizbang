@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -199,7 +200,7 @@ public static class DbContextInitializationRegistry {
       }
 
       foreach (var initializer in initializersCopy) {
-        var dbContextName = initializer.DbContextType.Name;
+        var dbContextName = TypeNameFormatter.SimpleName(initializer.DbContextType);
         if (logger is not null) {
           DbContextInitializationLog.InitializingDbContext(logger, dbContextName);
         }

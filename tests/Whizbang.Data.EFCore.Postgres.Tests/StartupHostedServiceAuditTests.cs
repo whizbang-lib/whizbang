@@ -65,6 +65,7 @@ public sealed class StartupHostedServiceAuditTests {
     ["TypeDefinitionReconcilerHostedService"] = SCHEMA_READY,
     ["TableStatisticsCollector"] = SCHEMA_READY,
     ["EventTypeBytesSampler"] = SCHEMA_READY,
+    ["PendingReclamationSampler"] = SCHEMA_READY,
     ["NotifyDebounceStatsCollector"] = SCHEMA_READY,
     // Deregistration is the stop of a service that started when the schema was ready (#1991): an instance stopped
     // before then has nothing to deregister, against tables that may not exist yet.
@@ -114,6 +115,8 @@ public sealed class StartupHostedServiceAuditTests {
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     // Reports items two assemblies both register, from what the registrations already hold (#2201).
     "RegistrationCollisionStartupValidator",
+    // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
+    "ServiceAssemblyScopeStartupReporter",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer",

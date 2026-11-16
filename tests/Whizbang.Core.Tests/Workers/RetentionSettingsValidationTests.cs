@@ -117,6 +117,43 @@ public class RetentionSettingsValidationTests {
     await Assert.That(result.FailureMessage).Contains("never purges");
   }
 
+  /// <summary>#2173: the other bounded purges take the same floor, each named in its own message.</summary>
+  [Test]
+  [Arguments("CompletedOutboxPurgeBatchSize", "completed outbox rows")]
+  [Arguments("CompletedPerspectiveEventPurgeBatchSize", "completed perspective events")]
+  [Arguments("DeduplicationPurgeBatchSize", "deduplication rows")]
+  [Arguments("StuckInboxPurgeBatchSize", "stuck inbox rows")]
+  public async Task EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync(string option, string rows) {
+    var retention = new MaintenanceRetentionOptions();
+    switch (option) {
+      case "CompletedOutboxPurgeBatchSize": retention.CompletedOutboxPurgeBatchSize = 0; break;
+      case "CompletedPerspectiveEventPurgeBatchSize": retention.CompletedPerspectiveEventPurgeBatchSize = 0; break;
+      case "DeduplicationPurgeBatchSize": retention.DeduplicationPurgeBatchSize = 0; break;
+      default: retention.StuckInboxPurgeBatchSize = 0; break;
+    }
+
+    var result = new MaintenanceWorkerOptionsValidator().Validate(null, new MaintenanceWorkerOptions { Retention = retention });
+
+    await Assert.That(result.Failed).IsTrue().Because("a batch of zero would stop that purge for good");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:Workers:Maintenance:Retention:" + option + " must be 1 or greater");
+    await Assert.That(result.FailureMessage).Contains("never purges " + rows);
+  }
+
+  [Test]
+  public async Task EveryPurgeBatchOfOne_IsAcceptedAsync() {
+    var options = new MaintenanceWorkerOptions {
+      Retention = new MaintenanceRetentionOptions {
+        CompletedInboxPurgeBatchSize = 1,
+        CompletedOutboxPurgeBatchSize = 1,
+        CompletedPerspectiveEventPurgeBatchSize = 1,
+        DeduplicationPurgeBatchSize = 1,
+        StuckInboxPurgeBatchSize = 1,
+      },
+    };
+
+    await Assert.That(new MaintenanceWorkerOptionsValidator().Validate(null, options).Succeeded).IsTrue();
+  }
+
   [Test]
   public async Task ACompletedInboxPurgeBatchOfOne_IsAcceptedAsync() {
     var options = new MaintenanceWorkerOptions {

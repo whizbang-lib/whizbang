@@ -46,6 +46,13 @@ public partial class MigrationConstantsTests {
   }
 
   [Test]
+  public async Task TheNoRewindFloorMarker_IsSpelledTheSameInTheMigrationsAndInCoreAsync() {
+    // #2295: the startup step registers the marker from Core's constant and the reaper matches it from the token.
+    await Assert.That(MigrationConstants.Tokens["__ASSOCIATION_NO_REWIND_FLOOR__"])
+      .IsEqualTo($"'{Whizbang.Core.Perspectives.EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE}'");
+  }
+
+  [Test]
   public async Task TheMigrationsTheProviderHandsOut_CarryNoTokens_AndTheValuesAreInPlaceAsync() {
     var provider = new PostgresMigrationProvider(_assembly, "svc");
     var scripts = provider.GetMigrations();

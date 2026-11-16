@@ -100,6 +100,8 @@ public sealed partial class RedeliveryRequestReceptor(
         AnswerTimeToLive = TimeSpan.FromMinutes((integrity ?? new StreamIntegrityOptions()).ControlMessageTimeToLiveMinutes),
         // #2092: a backfill window ships across streams, every bundle on the backfill's session.
         BundleStreamId = message.BackfillId,
+        // #2268: a requester that files each child under its own stream is answered across streams by scope.
+        BundleAcrossStreams = message.AcceptsStreamSpanningBundles,
       };
 
       // #2008: only events of types this service owns are its own; the rest were received from their authors.
@@ -136,7 +138,10 @@ public sealed partial class RedeliveryRequestReceptor(
   /// </summary>
   private async Task<(int Shipped, int Composites)> _serveOrdinaryAsync(
       RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
-    var tally = new OrdinaryTally();
+    // #2311: every selection publishes into one answer, whose last bundle says the answer ends with it.
+    var tally = new OrdinaryTally {
+      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly),
+    };
     if (message.EventIds is { Count: > 0 } named) {
       // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
       // this store does not hold (the requester's id lanes named no event it wrote) is answered over the window instead.
@@ -149,11 +154,14 @@ public sealed partial class RedeliveryRequestReceptor(
     } else {
       _ = await _shipSelectionAsync(message, serve, message.StreamIds, null, tally, cancellationToken).ConfigureAwait(false);
     }
+    tally.Composites += await tally.Answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
     return (tally.Shipped, tally.Composites);
   }
 
   /// <summary>What an ordinary request has selected and shipped so far, across its selections.</summary>
   private sealed class OrdinaryTally {
+    /// <summary>The answer every selection publishes into (#2311).</summary>
+    public required RedeliveryAnswerPublication Answer { get; init; }
     public int Selected { get; set; }
     public int Shipped { get; set; }
     public int Composites { get; set; }
@@ -173,20 +181,21 @@ public sealed partial class RedeliveryRequestReceptor(
     Guid? afterStream = null;
     long? afterVersion = null;
     while (tally.Selected < serve.MaxEvents) {
+      var want = Math.Min(serve.PageSize, serve.MaxEvents - tally.Selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(
-        _ordinaryRequest(message, serve, streams, eventIds, Math.Min(serve.PageSize, serve.MaxEvents - tally.Selected),
-          afterStream, afterVersion),
+        _ordinaryRequest(message, serve, streams, eventIds, want, afterStream, afterVersion),
         cancellationToken).ConfigureAwait(false);
       if (page.Count == 0) {
         break;
       }
       var owned = _owned(page, serve);
       if (owned.Count > 0) {
-        // #2143: every bundle says the window it answers, so the receiver marks only the buckets it covered.
-        tally.Composites += await serve.Pump
-          .PublishAnswerAsync(owned, new RedeliveryAnswerWindow(message.FromCommitSequence, message.ToCommitSequence),
-            message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly, cancellationToken)
-          .ConfigureAwait(false);
+        // #2143: every bundle says the window it answers, so the receiver marks only the buckets it covered. #2149: and the
+        // streams this page carries only in part, which the receiver must not mark from it.
+        var window = new RedeliveryAnswerWindow(message.FromCommitSequence, message.ToCommitSequence) {
+          PartialStreamIds = _streamsRunningPastThePage(page, want, afterStream),
+        };
+        tally.Composites += await tally.Answer.PublishAsync(owned, window, cancellationToken).ConfigureAwait(false);
       }
       tally.Shipped += owned.Count;
       tally.Selected += page.Count;
@@ -205,6 +214,23 @@ public sealed partial class RedeliveryRequestReceptor(
       }
     }
     return reached;
+  }
+
+  /// <summary>
+  /// #2149: the streams of one (stream, version)-ordered page whose answer continues past it: the first, when it is the
+  /// stream the previous page ended on, and the last, when the page is full (the next page, or the request's bound, may
+  /// hold more of it). A full page whose last stream happens to end there names it too; that only leaves its bucket
+  /// repairable for another try. Null when the page carries every stream whole.
+  /// </summary>
+  private static List<Guid>? _streamsRunningPastThePage(IReadOnlyList<RedeliveryEvent> page, int want, Guid? previousStream) {
+    var running = new List<Guid>(2);
+    if (page[0].StreamId == previousStream) {
+      running.Add(page[0].StreamId);
+    }
+    if (page.Count >= want) {
+      running.Add(page[page.Count - 1].StreamId);
+    }
+    return running.Count == 0 ? null : [.. running.Distinct()];
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
@@ -242,6 +268,8 @@ public sealed partial class RedeliveryRequestReceptor(
     var shipped = 0;
     var composites = 0;
     var exhausted = false;
+    // #2311: the window's pages publish into one answer, whose last bundle says the answer ends with it.
+    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly);
     while (selected < serve.MaxEvents) {
       var want = Math.Min(serve.PageSize, serve.MaxEvents - selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
@@ -263,10 +291,7 @@ public sealed partial class RedeliveryRequestReceptor(
         // The receiver's fan-out takes each stream's events in version order.
         var owned = _owned(page, serve).OrderBy(e => e.StreamId).ThenBy(e => e.Version).ToList();
         if (owned.Count > 0) {
-          composites += await serve.Pump
-            .PublishAnswerAsync(owned, covered, message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly,
-              cancellationToken)
-            .ConfigureAwait(false);
+          composites += await answer.PublishAsync(owned, covered, cancellationToken).ConfigureAwait(false);
         }
         shipped += owned.Count;
         selected += page.Count;
@@ -277,6 +302,7 @@ public sealed partial class RedeliveryRequestReceptor(
       }
     }
 
+    composites += await answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
     var head = await serve.Coordinator.GetRedeliveryHeadCommitSequenceAsync(eventTypes, cancellationToken).ConfigureAwait(false);
     await serve.Pump.PublishWindowAnswerAsync(new BackfillWindowAnswer {
       BackfillId = backfillId,

@@ -95,7 +95,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
 
   /// <inheritdoc/>
   public TLens GetLens<TLens>(ScopeFilters filters, Permission requiredPermission) where TLens : ILensQuery {
-    _checkPermission(requiredPermission, typeof(TLens).Name);
+    _checkPermission(requiredPermission, TypeNameFormatter.SimpleName(typeof(TLens)));
     return GetLens<TLens>(filters);
   }
 
@@ -107,7 +107,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
       throw new ArgumentException("At least one permission must be specified.", nameof(anyOfPermissions));
     }
 
-    _checkAnyPermission(anyOfPermissions, typeof(TLens).Name);
+    _checkAnyPermission(anyOfPermissions, TypeNameFormatter.SimpleName(typeof(TLens)));
     return GetLens<TLens>(filters);
   }
 
@@ -187,7 +187,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
   private TLens _resolveLensWithFilter<TLens>(ScopeFilterInfo filterInfo) where TLens : ILensQuery {
     var lens = _serviceProvider.GetService(typeof(TLens))
       ?? throw new InvalidOperationException(
-        $"Lens type '{typeof(TLens).Name}' is not registered in the service provider.");
+        $"Lens type '{TypeNameFormatter.ForLog(typeof(TLens))}' is not registered in the service provider.");
 
     // If the lens supports filter application, apply it
     if (lens is IFilterableLens filterable) {
@@ -270,7 +270,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
 
     // Check for interface types
     if (scopeDefinition.FilterInterfaceType is not null) {
-      var interfaceName = scopeDefinition.FilterInterfaceType.Name;
+      var interfaceName = TypeNameFormatter.SimpleName(scopeDefinition.FilterInterfaceType);
       filters |= interfaceName switch {
         "ITenantScoped" => ScopeFilters.Tenant,
         "IUserScoped" => ScopeFilters.Tenant | ScopeFilters.User,

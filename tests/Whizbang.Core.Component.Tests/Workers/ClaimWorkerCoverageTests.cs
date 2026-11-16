@@ -162,6 +162,9 @@ public class ClaimWorkerCoverageTests {
   }
 
   private sealed class WorkerHarness(ClaimWorker worker, CancellationTokenSource cts) : IDisposable {
+    /// <summary>The running worker, for a test that drives its cycles itself.</summary>
+    public ClaimWorker Worker => worker;
+
     public void Dispose() {
       cts.Cancel();
       try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -444,16 +447,33 @@ public class ClaimWorkerCoverageTests {
         }),
       }
     };
+    // The test drives every claim cycle itself: both poll intervals are far longer than the test, so the loop claims
+    // only when SignalNewWork wakes it, and each step waits for exactly the claim it caused. A step rings as soon as the
+    // previous claim has STARTED, so the doorbell often lands while that claim is still running. That is correct by
+    // construction: a doorbell that rings during a claim which served nothing new (an empty or a repeat claim, which
+    // every claim here after the first is) is kept for the next claim, which then skips the repeat-spacing nap
+    // (ClaimWorkerReemissionBackoffTests.RepeatedWorkSet_DoorbellDuringTheRepeatClaim_IsKeptForTheNextClaim_WhichSkipsTheNapAsync).
+    // Before that fix the repeat claim spent the doorbell and the loop napped the full ten minutes, which is how this
+    // test still timed out after it stopped racing the loop's 20-60 ms timers.
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
-      PollingIntervalMilliseconds = 20,
-      PollingMaxIntervalMilliseconds = 60,
+      PollingIntervalMilliseconds = 600_000,
+      PollingMaxIntervalMilliseconds = 600_000,
       MaxStreamsPerBatch = 2000,
       MinStreamsPerBatch = 25,
       ClaimWindowGrowthStep = 100,
       AdaptiveClaimWindow = true,
     }, churnFeedback: churnFeedback);
+    async Task claimOnceMoreAsync() {
+      var next = coord.CallCount + 1;
+      harness.Worker.SignalNewWork();
+      await coord.WaitForCallsAsync(next, TimeSpan.FromSeconds(5));
+    }
 
-    await coord.WaitForCallsAsync(4, TimeSpan.FromSeconds(5));
+    // The first claim needs no wake: the loop claims as soon as it starts.
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+    for (var cycle = 0; cycle < 3; cycle++) {
+      await claimOnceMoreAsync();
+    }
     await Assert.That(coord.LastMaxStreams).IsGreaterThan(25)
       .Because("the window must actually have grown above its floor here, or a later narrowing "
              + "would not be distinguishable from the window simply never having moved");
@@ -461,40 +481,25 @@ public class ClaimWorkerCoverageTests {
     // Phase 2: switch to the stream-id-only shape (no materialized attempts) and report heavy
     // re-claim churn through the SAME path the drain worker uses — the claim response alone cannot
     // see this churn on this shape.
-    // Floor-wide sample: AdaptiveClaimWindow now ignores any sample narrower than the floor, in
-    // BOTH directions. That rule exists because one re-offered row reads as 100% churn on paper,
-    // and a loop that halved on it walked a 1000-stream window down to the floor in under a second
-    // while the queue held a single row. So the churn has to be reported over at least
-    // MinStreamsPerBatch rows to be considered at all.
+    // Floor-wide sample: AdaptiveClaimWindow ignores any sample narrower than the floor, in BOTH
+    // directions, because one re-offered row reads as 100% churn on paper. So the churn has to be
+    // reported over at least MinStreamsPerBatch rows to be considered at all.
     coord.BatchToReturn = new WorkBatch {
       OutboxWork = [],
       PerspectiveWork = [],
       InboxWork = [],
-      // Floor-wide here too: under the new rule a claim narrower than MinStreamsPerBatch does not
-      // move the window in EITHER direction, so a 4-id batch would leave the window pinned and the
-      // narrowing this test exists to prove could never be observed.
       InboxStreamIds = [.. Enumerable.Range(0, 30).Select(_ => TrackedGuid.New().Value)],
     };
 
-    // The swap has to be visible to a WHOLE cycle before the churn is reported, and that ordering
-    // is the difference between this test measuring adaptivity and measuring the scheduler.
-    // ClaimWorker takes the feedback unconditionally and destructively on every cycle
-    // (_churnFeedback?.Take() in _observeChurn), so a cycle still holding the clean phase-1 batch
-    // will consume this report and spend it against thirty first-attempt rows. The evidence is then
-    // gone, every later cycle reads Observed=0, which is UNMEASURED rather than clean, and the
-    // window neither grows nor shrinks again: the assertion below sees the width equal to the peak
-    // and reports a failure to narrow that is really a failure to deliver the sample. Reported
-    // once a cycle that BEGAN after the swap has completed, the churn can only ever be consumed
-    // against the stream-id shape, which is the path under test.
-    var callsAtSwap = coord.CallCount;
-    await coord.WaitForCallsAsync(callsAtSwap + 2, TimeSpan.FromSeconds(5));
-
+    // ClaimWorker takes the feedback destructively after every claim, so the report must be consumed against the
+    // stream-id shape, never the clean phase-1 batch. One driven claim after the swap returns the stream-id batch;
+    // the report lands after that claim was made, so it is consumed by that cycle or the next one, both on the
+    // stream-id shape, and the claim after those two asks with the narrowed window. Nothing grows the window back
+    // meanwhile: an unmeasured cycle blocks growth.
+    await claimOnceMoreAsync();
     churnFeedback.Report([.. Enumerable.Repeat(2, 27), .. Enumerable.Repeat(1, 3)]); // 27 of 30 re-claimed
-
-    // One more cycle is all the shrink needs, since the very next claim consumes the report; the
-    // buffer is for a loaded machine, not for the mechanism. Nothing here can grow the window back,
-    // because an unmeasured cycle blocks growth exactly as an unmeasured drain does.
-    await coord.WaitForCallsAsync(coord.CallCount + 4, TimeSpan.FromSeconds(5));
+    await claimOnceMoreAsync();
+    await claimOnceMoreAsync();
 
     // Compared against the peak rather than a width sampled before the swap. Growth continues
     // until the swapped batch lands, so a sampled width is only a lower bound on how wide the

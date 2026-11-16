@@ -46,9 +46,9 @@ public class MessageTypeRegistryPopulatorBranchTests : EFCoreTestBase {
     await new EFCoreMessageTypeRegistryPopulator(_currentCatalog(), dataSource).PopulateAsync();
 
     var names = await _registryNamesAsync();
-    await Assert.That(names).Contains("New.Renamed, Sample")
+    await Assert.That(names).Contains("New.Renamed")
       .Because("the acknowledged rename is reconciled in place");
-    await Assert.That(names).Contains("Old.Drifted, Sample")
+    await Assert.That(names).Contains("Old.Drifted")
       .Because("an unacknowledged drift is reported, never overwritten");
   }
 
@@ -86,15 +86,15 @@ public class MessageTypeRegistryPopulatorBranchTests : EFCoreTestBase {
 
   private static async Task _seedOldNamesAsync(NpgsqlDataSource dataSource) =>
     await new EFCoreMessageTypeRegistryPopulator(new Catalog([
-      new MessageTypeCatalogEntry(typeof(RenamedEvent), "Old.Renamed, Sample", "event", RENAMED_ID),
-      new MessageTypeCatalogEntry(typeof(DriftedEvent), "Old.Drifted, Sample", "event", DRIFTED_ID),
+      new MessageTypeCatalogEntry(typeof(RenamedEvent), "Old.Renamed", "event", RENAMED_ID),
+      new MessageTypeCatalogEntry(typeof(DriftedEvent), "Old.Drifted", "event", DRIFTED_ID),
     ]), dataSource).PopulateAsync();
 
   private static Catalog _currentCatalog() => new([
-    new MessageTypeCatalogEntry(typeof(RenamedEvent), "New.Renamed, Sample", "event", RENAMED_ID) {
-      FormerNames = ["Old.Renamed, Sample"],
+    new MessageTypeCatalogEntry(typeof(RenamedEvent), "New.Renamed", "event", RENAMED_ID) {
+      FormerNames = ["Old.Renamed"],
     },
-    new MessageTypeCatalogEntry(typeof(DriftedEvent), "New.Drifted, Sample", "event", DRIFTED_ID),
+    new MessageTypeCatalogEntry(typeof(DriftedEvent), "New.Drifted", "event", DRIFTED_ID),
   ]);
 
   private async Task<int> _registryCountAsync() => (await _registryNamesAsync()).Count;

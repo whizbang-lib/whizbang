@@ -49,11 +49,28 @@ public class TableStatisticsContractTests {
   }
 
   [Test]
+  public async Task AProviderThatDoesNotCountPendingReclamation_AnswersNullAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.SamplePendingReclamationAsync(new PendingReclamationRequest("whizbang:pending-reclamation:0", 10)))
+      .IsNull()
+      .Because("null reads as 'not measured', which the sampler reports as nothing; zero would claim nothing is left to clean");
+  }
+
+  [Test]
   public async Task AProviderWithoutIndexStatistics_ReportsNoUnusedIndexesAsync() {
     ITableStatisticsProvider provider = new SizesOnlyProvider();
 
     await Assert.That(await provider.GetUnusedIndexesAsync()).IsEmpty()
       .Because("an engine that does not count index scans reports nothing, rather than every index as unused");
+  }
+
+  [Test]
+  public async Task AProviderWithoutRewriteHistory_ReportsNoFloorsAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.GetRewriteFloorsAsync()).IsEmpty()
+      .Because("an engine that keeps no rewrite history has no post-rewrite floor to report (#2319)");
   }
 
   [Test]

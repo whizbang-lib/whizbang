@@ -160,6 +160,7 @@ public sealed partial class StreamRedeliveryRequester(
         Topic = replyTopic,
         StateOnly = request.StateOnly,
         OperatorRequested = true,
+        AcceptsStreamSpanningBundles = true,
       };
       await RedeliveryRequestDispatch.PublishAsync(
         transport, serializer, instanceProvider, command, request.OriginService,

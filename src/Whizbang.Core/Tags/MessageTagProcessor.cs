@@ -118,7 +118,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       CancellationToken ct = default) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] ProcessTagsAsync called for {MessageType} at stage {Stage}", messageType.Name, stage);
+      Logger.LogDebug("[TAG PROCESSOR] ProcessTagsAsync called for {MessageType} at stage {Stage}", TypeNameFormatter.ForLog(messageType), stage);
     }
 
     // Early return if no hook resolver or scope factory configured
@@ -133,7 +133,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     // Check before creating scope to avoid unnecessary scope creation
     var tags = MessageTagRegistry.GetTagsFor(messageType).ToList();
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Found {TagCount} tag registrations for {MessageType}", tags.Count, messageType.Name);
+      Logger.LogDebug("[TAG PROCESSOR] Found {TagCount} tag registrations for {MessageType}", tags.Count, TypeNameFormatter.ForLog(messageType));
     }
     if (tags.Count == 0) {
       return;
@@ -207,7 +207,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 
     if (errorThreshold is int err && size > err) {
       throw new InvalidOperationException(
-        $"Tag payload for message {messageType.Name} (tag '{registration.Tag}') is {size} bytes, " +
+        $"Tag payload for message {TypeNameFormatter.ForLog(messageType)} (tag '{registration.Tag}') is {size} bytes, " +
         $"exceeding the configured error threshold of {err} bytes. " +
         $"Narrow the '{nameof(Attributes.MessageTagAttribute.Properties)}' list on the tag attribute.");
     }
@@ -216,7 +216,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 #pragma warning disable CA1848 // Diagnostic logging — performance not critical
       Logger.LogWarning(
         "[TAG PROCESSOR] Payload for {MessageType} (tag '{Tag}') is {Size} bytes, exceeding warning threshold of {Threshold} bytes.",
-        messageType.Name,
+        TypeNameFormatter.ForLog(messageType),
         registration.Tag,
         size,
         warn);
@@ -254,7 +254,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     var hooks = _options.GetHooksFor(attributeType, ctx.Stage).ToList();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", attributeType.Name, ctx.Stage, hooks.Count);
+      Logger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", TypeNameFormatter.ForLog(attributeType), ctx.Stage, hooks.Count);
     }
 
     var currentPayload = payload;
@@ -277,17 +277,17 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   private object? _resolveHookInstance(TagHookRegistration registration, Func<Type, object?> hookResolver) {
 #pragma warning disable CA1848
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Resolving hook {HookType}", registration.HookType.Name);
+      Logger.LogDebug("[TAG PROCESSOR] Resolving hook {HookType}", TypeNameFormatter.ForLog(registration.HookType));
     }
     var hookInstance = hookResolver(registration.HookType);
     if (hookInstance is null) {
       if (Logger.IsEnabled(LogLevel.Debug)) {
-        Logger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved to NULL - skipping", registration.HookType.Name);
+        Logger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved to NULL - skipping", TypeNameFormatter.ForLog(registration.HookType));
       }
       return null;
     }
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved successfully", registration.HookType.Name);
+      Logger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved successfully", TypeNameFormatter.ForLog(registration.HookType));
     }
 #pragma warning restore CA1848
     return hookInstance;
@@ -324,7 +324,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       CancellationToken ct) {
 #pragma warning disable CA1848
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Created hook context of type {ContextType}", hookContext.GetType().Name);
+      Logger.LogDebug("[TAG PROCESSOR] Created hook context of type {ContextType}", TypeNameFormatter.ForLog(hookContext.GetType()));
       Logger.LogDebug("[TAG PROCESSOR] Invoking hook...");
     }
     var result = await _invokeHookAsync(hookInstance, hookContext, attributeType, ct);
@@ -472,7 +472,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     // Try dispatcher registry for custom attribute types
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Trying dispatcher registry for {AttributeType}", attributeType.Name);
+      Logger.LogDebug("[TAG PROCESSOR] Trying dispatcher registry for {AttributeType}", TypeNameFormatter.ForLog(attributeType));
     }
     var dispatchResult = await MessageTagHookDispatcherRegistry.TryDispatchAsync(
         hookInstance, context, attributeType, ct);

@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity#a-whole-type-answer-that-brings-nothing-stops-the-asking</docs>
 [Category("Integration")]
 [Category("Shard5")]
-public class IntegrityTypeLaneAnswerSqlTests : EFCoreTestBase {
+public partial class IntegrityTypeLaneAnswerSqlTests : EFCoreTestBase {
   private const string MESSAGE_TYPE = "Upstream.Contracts.ThingsAppliedCollectiveEvent, Upstream.Contracts";
   private static readonly DateTimeOffset _t0 = new(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
   private static readonly TimeSpan _timeout = TimeSpan.FromHours(3);

@@ -48,12 +48,12 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
     ArgumentNullException.ThrowIfNull(options);
     ProviderName = providerName;
     _options = options.Get(providerName);
-    if (string.IsNullOrWhiteSpace(_options.ConnectionString)) {
+    if (string.IsNullOrWhiteSpace(_options.ConnectionString?.Reveal())) {
       // Fall back to the unnamed default binding for tests / single-provider setups.
       _options = options.CurrentValue;
     }
 
-    if (string.IsNullOrWhiteSpace(_options.ConnectionString)) {
+    if (string.IsNullOrWhiteSpace(_options.ConnectionString?.Reveal())) {
       throw new InvalidOperationException(
         $"AzureBlobOffloadOptions.ConnectionString is required for provider '{providerName}'. " +
         "Call services.Configure<AzureBlobOffloadOptions>(\"" + providerName + "\", opts => opts.ConnectionString = ...).");
@@ -63,7 +63,7 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
         $"AzureBlobOffloadOptions.ContainerName is required for provider '{providerName}'.");
     }
 
-    var serviceClient = new BlobServiceClient(_options.ConnectionString);
+    var serviceClient = new BlobServiceClient(_options.ConnectionString.Reveal());
     _containerClient = serviceClient.GetBlobContainerClient(_options.ContainerName);
   }
 

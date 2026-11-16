@@ -100,7 +100,7 @@ public sealed partial class SignalBusHostedService(
       } catch (Exception ex) {
         // A probe that cannot even run is an unverified route, never a silent pass — the exact
         // silent-failure class this service exists to surface. Mark failed and keep the loop alive.
-        _liveness.MarkProbeResult(false, _time.GetUtcNow(), failedTransport: ex.GetType().Name);
+        _liveness.MarkProbeResult(false, _time.GetUtcNow(), failedTransport: TypeNameFormatter.SimpleName(ex.GetType()));
         consecutiveFailures++;
         LogProbeError(_logger, ex);
       }
@@ -157,7 +157,7 @@ public sealed partial class SignalBusHostedService(
           .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), _time, stopping)
           .ConfigureAwait(false);
       } catch (TimeoutException) {
-        return transport.GetType().Name;
+        return TypeNameFormatter.SimpleName(transport.GetType());
       }
     }
     return null;

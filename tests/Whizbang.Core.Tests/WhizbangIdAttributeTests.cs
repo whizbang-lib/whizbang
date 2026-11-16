@@ -74,6 +74,27 @@ public class WhizbangIdAttributeTests {
   }
 
   [Test]
+  public async Task WhizbangIdAttribute_DefaultConstructor_HasFalseAcceptAnyVersionAsync() {
+    // Arrange & Act
+    var attribute = new WhizbangIdAttribute();
+
+    // Assert
+    await Assert.That(attribute.AcceptAnyVersion).IsFalse();
+  }
+
+  [Test]
+  public async Task WhizbangIdAttribute_AcceptAnyVersionProperty_CanBeSetAsync() {
+    // Arrange
+    var attribute = new WhizbangIdAttribute {
+      // Act
+      AcceptAnyVersion = true
+    };
+
+    // Assert
+    await Assert.That(attribute.AcceptAnyVersion).IsTrue();
+  }
+
+  [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_AllowsStructTargetAsync() {
     // Arrange & Act
     var attributeUsage = typeof(WhizbangIdAttribute)

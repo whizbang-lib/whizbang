@@ -27,7 +27,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
 [Category("Messaging")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The in-process ledger's synchronous API sets up and reads the state under test.")]
-public class RedeliveryAnswerCoverageTests {
+public partial class RedeliveryAnswerCoverageTests {
   private const string EVENT_TYPE = "Contracts.OrderPlaced, Contracts";
   private static readonly DateTimeOffset _now = new(2026, 11, 7, 12, 0, 0, TimeSpan.Zero);
   private static readonly TimeSpan _cooldown = TimeSpan.FromMinutes(5);

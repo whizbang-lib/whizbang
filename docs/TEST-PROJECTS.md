@@ -116,7 +116,7 @@ the tags that were already broken, each with a reason.
 
 ## Projects
 
-### Unit (36)
+### Unit (37)
 
 `tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
 `Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
@@ -125,7 +125,7 @@ the tags that were already broken, each with a reason.
 `Whizbang.Observability.Tests`, `Whizbang.Offloads.AzureBlob.Tests`, `Whizbang.Offloads.InMemory.Tests`,
 `Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.TestAnalyzers.Tests`, `Whizbang.Testing.Tests`,
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
-`Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.Mutations.Tests`,
+`Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.HotChocolate.Ids.Tests`, `Whizbang.Transports.Mutations.Tests`,
 `Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
 
 `samples/ECommerce/`: `ECommerce.BFF.API.Tests`, `ECommerce.Contracts.Tests`,

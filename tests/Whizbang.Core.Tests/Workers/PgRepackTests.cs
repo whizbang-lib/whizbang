@@ -157,6 +157,31 @@ public sealed class PgRepackTests {
     }
   }
 
+  // ---- #2301: under Online the client is probed, never required ----
+
+  /// <summary>
+  /// #2301: under <c>Online</c>, pg_repack is the second choice, so its client is probed to learn whether it is usable,
+  /// but nothing requires it: a host without it falls through to the next strategy rather than failing start.
+  /// </summary>
+  [Test]
+  public async Task Online_InProcess_ProbesTheClient_ButDoesNotRequireItAsync() {
+    var options = _options(PgRepackMode.InProcess, TableRewriteStrategy.Online);
+
+    var provider = new PgRepackClientCapabilityProvider(options, new RecordingRunner());
+    var active = new PgRepackClientRequirementSource(options).Resolve(_configuration((MODE_KEY, "InProcess")));
+
+    await Assert.That(provider.Scopes).IsEquivalentTo(["pg_repack"]);
+    await Assert.That(active).IsEmpty().Because("Online never stops start for an extension or a client it can do without");
+  }
+
+  /// <summary>#2301: under <c>Online</c> with the client run by an external job, the client is not probed.</summary>
+  [Test]
+  public async Task Online_External_DoesNotProbeTheClientAsync() {
+    var provider = new PgRepackClientCapabilityProvider(_options(PgRepackMode.External, TableRewriteStrategy.Online), new RecordingRunner());
+
+    await Assert.That(provider.Scopes).IsEmpty();
+  }
+
   // ---- External never starts a process ----
 
   [Test]
@@ -295,9 +320,29 @@ public sealed class PgRepackTests {
   }
 
   [Test]
+  public async Task Auto_InProcess_ProbesTheClient_ButDoesNotRequireItAsync() {
+    // #2319: Auto rewrites through pg_repack in process when pg_squeeze cannot run, so its client is probed to learn
+    // whether it can; nothing requires it, and a host without it keeps VACUUM FULL or detection only.
+    var options = _options(PgRepackMode.InProcess, TableRewriteStrategy.Auto);
+
+    var provider = new PgRepackClientCapabilityProvider(options, new RecordingRunner());
+    var active = new PgRepackClientRequirementSource(options).Resolve(_configuration((MODE_KEY, "InProcess")));
+
+    await Assert.That(provider.Scopes).IsEquivalentTo(["pg_repack"]);
+    await Assert.That(active).IsEmpty().Because("Auto never stops start for a client it can do without");
+  }
+
+  [Test]
+  public async Task Auto_External_DoesNotProbeTheClientAsync() {
+    var provider = new PgRepackClientCapabilityProvider(_options(PgRepackMode.External, TableRewriteStrategy.Auto), new RecordingRunner());
+
+    await Assert.That(provider.Scopes).IsEmpty();
+  }
+
+  [Test]
   public async Task AnotherStrategy_ProbesNothing_AndRequiresNoClientAsync() {
     var runner = new RecordingRunner();
-    var options = _options(PgRepackMode.InProcess, TableRewriteStrategy.Auto);
+    var options = _options(PgRepackMode.InProcess, TableRewriteStrategy.VacuumFull);
     var provider = new PgRepackClientCapabilityProvider(options, runner);
 
     var registry = await _probedAsync(provider);

@@ -42,6 +42,17 @@ public class RowCapAttributeTests {
   }
 
   [Test]
+  public async Task PerProperty_WhenInitialized_KeysTheCapByThatPropertyAsync() {
+    var unset = new RowCapAttribute();
+    var attribute = new RowCapAttribute { PerProperty = "OwnerId", Max = 50 };
+
+    await Assert.That(unset.PerProperty).IsNull();
+    await Assert.That(unset.Max).IsEqualTo(-1);
+    await Assert.That(attribute.PerProperty).IsEqualTo("OwnerId");
+    await Assert.That(attribute.Max).IsEqualTo(50);
+  }
+
+  [Test]
   public async Task AttributeUsage_TargetsClassesOnlyAsync() {
     var usage = typeof(RowCapAttribute)
         .GetCustomAttributes(typeof(AttributeUsageAttribute), false)

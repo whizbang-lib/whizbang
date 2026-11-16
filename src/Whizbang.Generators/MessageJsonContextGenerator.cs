@@ -131,7 +131,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static PropertyInfo _toPropertyInfo(IPropertySymbol p) => new(
       Name: p.Name,
 #pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-      Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+      Type: TypeNameUtilities.Display(p.Type, _fullyQualifiedWithNullabilityFormat),
 #pragma warning restore RS0030
       IsValueType: _isValueType(p.Type),
       IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
@@ -2351,7 +2351,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var nestedTypeInfo = new JsonMessageTypeInfo(
         FullyQualifiedName: typeNameToProcess,
         ClrTypeName: clrTypeName,
-        SimpleName: typeSymbol.Name,
+        SimpleName: TypeNameUtilities.SimpleName(typeSymbol),
         IsCommand: false,
         IsEvent: false,
         IsSerializable: false,
@@ -2397,7 +2397,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var derivedTypeInfo = new JsonMessageTypeInfo(
           FullyQualifiedName: derivedTypeName,
           ClrTypeName: derivedClrTypeName,
-          SimpleName: derivedType.Name,
+          SimpleName: TypeNameUtilities.SimpleName(derivedType),
           IsCommand: false,
           IsEvent: false,
           IsSerializable: false,
@@ -2414,7 +2414,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
       discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
           BaseTypeName: typeNameToProcess,
-          BaseSimpleName: typeSymbol.Name,
+          BaseSimpleName: TypeNameUtilities.SimpleName(typeSymbol),
           DerivedTypes: [.. derivedTypeNames]
       );
     }
@@ -2479,7 +2479,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     discoveredEnums[propertyTypeName] = new JsonEnumInfo(
         FullyQualifiedName: propertyTypeName,
-        SimpleName: typeSymbol.Name
+        SimpleName: TypeNameUtilities.SimpleName(typeSymbol)
     );
   }
 
@@ -3387,7 +3387,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // This is more expensive but handles the common case of projection classes. A type with no
       // containing namespace contributes no candidates, so it reaches the Any() below over an empty
       // list, which is the same false a separate guard returned.
-      var containingNamespace = typeSymbol.ContainingNamespace;
+      var containingNamespace = TypeNameUtilities.NamespaceOf(typeSymbol);
       if (containingNamespace != null) {
         typesToCheck.AddRange(containingNamespace.GetTypeMembers());
       }
@@ -3494,7 +3494,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var iface in typeSymbol.AllInterfaces) {
       if (!_isReceptorInterfaceDefinition(TypeNameUtilities.Display(iface.OriginalDefinition))
           || iface.TypeArguments[0] is not INamedTypeSymbol messageType
-          || !_isReferencedConsumerType(messageType, typeSymbol.ContainingAssembly)) {
+          || !_isReferencedConsumerType(messageType, TypeNameUtilities.AssemblyOf(typeSymbol))) {
         continue;
       }
 
@@ -3521,8 +3521,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       !type.IsAbstract
       && !type.IsGenericType
       && _isPubliclyReachable(type)
-      && !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, self)
-      && type.ContainingAssembly.Name != WHIZBANG_CORE_ASSEMBLY;
+      && !SymbolEqualityComparer.Default.Equals(TypeNameUtilities.AssemblyOf(type), self)
+      && TypeNameUtilities.SimpleName(TypeNameUtilities.AssemblyOf(type)) != WHIZBANG_CORE_ASSEMBLY;
 
   /// <summary>True when the type implements the interface with the given fully qualified name.</summary>
   private static bool _implements(INamedTypeSymbol type, string fullyQualifiedInterfaceName) =>
@@ -3548,7 +3548,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return [];
     }
 
-    var framework = compositeInterface.ContainingAssembly;
+    var framework = TypeNameUtilities.AssemblyOf(compositeInterface);
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
     foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols) {
       if (!SymbolEqualityComparer.Default.Equals(assembly, framework) && _referencesAssembly(assembly, framework)) {
@@ -3614,7 +3614,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return new JsonMessageTypeInfo(
         FullyQualifiedName: TypeNameUtilities.FullyQualified(type),
         ClrTypeName: _getClrTypeName(type),
-        SimpleName: type.Name,
+        SimpleName: TypeNameUtilities.SimpleName(type),
         IsCommand: isCommand,
         IsEvent: isEvent,
         IsSerializable: isSerializable,
@@ -3931,10 +3931,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var fqnByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
-    var livingClrNames = new HashSet<string>(StringComparer.Ordinal);
+    var livingQualifiedNames = new HashSet<string>(StringComparer.Ordinal);
     foreach (var message in messageTypes) {
       fqnByClrName[message.ClrTypeName] = message.FullyQualifiedName;
-      livingClrNames.Add(message.ClrTypeName);
+      livingQualifiedNames.Add($"{message.ClrTypeName}, {actualAssemblyName}");
     }
 
     var emitted = new List<string>();
@@ -3944,12 +3944,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       if (!fqnByClrName.TryGetValue(alias.CurrentClrTypeName, out var fullyQualifiedName)) {
         continue;
       }
+      // A bare former name lived in this assembly; one the ledger records with an assembly (the type moved from another
+      // assembly, #2264) is the name its old events carry, as recorded.
+      var formerQualified = PinnedTypeLedger.AssemblyOf(alias.FormerClrTypeName) is null
+        ? $"{alias.FormerClrTypeName}, {actualAssemblyName}"
+        : alias.FormerClrTypeName;
       // Never shadow a live type that reuses the former name, and de-dupe.
-      if (livingClrNames.Contains(alias.FormerClrTypeName) || !seenFormerNames.Add(alias.FormerClrTypeName)) {
+      if (livingQualifiedNames.Contains(formerQualified) || !seenFormerNames.Add(formerQualified)) {
         continue;
       }
 
-      var formerQualified = $"{alias.FormerClrTypeName}, {actualAssemblyName}";
       emitted.Add(
         REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerQualified}\",\n" +
@@ -4004,12 +4008,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
 
       // Record the relationship for both abstract and non-abstract base classes
-      // so derived types are discovered for polymorphic serialization
-      inheritanceList.Add(new InheritanceInfo(
-          DerivedTypeName: derivedTypeName,
-          BaseTypeName: baseTypeName,
-          IsInterface: false
-      ));
+      // so derived types are discovered for polymorphic serialization. A constructed generic base
+      // ("BaseCommand<OrderId>") has no metadata name, so the by-name check that leaves abstract bases
+      // out cannot see it; an abstract one is left out here, where its symbol is at hand (#2072).
+      if (!(currentBase.IsGenericType && currentBase.IsAbstract)) {
+        inheritanceList.Add(new InheritanceInfo(
+            DerivedTypeName: derivedTypeName,
+            BaseTypeName: baseTypeName,
+            IsInterface: false
+        ));
+      }
 
       currentBase = currentBase.BaseType;
     }

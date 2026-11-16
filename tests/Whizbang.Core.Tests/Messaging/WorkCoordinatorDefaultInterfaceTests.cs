@@ -254,6 +254,22 @@ public class WorkCoordinatorDefaultInterfaceTests {
   }
 
   [Test]
+  public async Task LookupHandledEvents_Default_HasNoLedgerAsync() {
+    var answer = await _coordinator.LookupHandledEventsAsync([TrackedGuid.New().Value]);
+
+    await Assert.That(answer.CoversFrom).IsNull()
+      .Because("#2273: a store that keeps no ledger covers nothing, so no repaired event can be proven never handled");
+    await Assert.That(answer.Handled).IsEmpty();
+  }
+
+  [Test]
+  public async Task SweepHandledLedger_Default_RemovesNothingAsync() {
+    var removed = await _coordinator.SweepHandledLedgerAsync(DateTimeOffset.UnixEpoch, TimeSpan.FromDays(7));
+
+    await Assert.That(removed).IsEqualTo(0L);
+  }
+
+  [Test]
   public async Task GetCursorsRequiringRewindAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     var cursors = await _coordinator.GetCursorsRequiringRewindAsync();
 

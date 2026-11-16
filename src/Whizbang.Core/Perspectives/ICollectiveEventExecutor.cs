@@ -49,7 +49,7 @@ public interface ICollectiveEventExecutor {
   /// Apply the collective event against the executor's
   /// <see cref="ModelType"/>.
   /// </summary>
-  /// <param name="entry">Compile-time entry from <c>CollectiveApplyRegistry</c> describing the handler. Must have <see cref="CollectiveApplyEntry.ModelType"/> matching this executor's <see cref="ModelType"/>.</param>
+  /// <param name="entry">Compile-time entry from the generated collective apply registry describing the handler. Must have <see cref="CollectiveApplyEntry.ModelType"/> matching this executor's <see cref="ModelType"/>.</param>
   /// <param name="handlerInstance">DI-resolved instance of the entry's <c>HandlerType</c>.</param>
   /// <param name="evt">The collective event being applied.</param>
   /// <param name="resolver">DI-resolved <see cref="ICollectiveScopeResolver"/> matching <paramref name="evt"/>'s scope kind.</param>

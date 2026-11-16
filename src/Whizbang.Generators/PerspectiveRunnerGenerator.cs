@@ -148,6 +148,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // window before consumed bodies are reaped. Resolved at compile time — zero reflection.
     var isEphemeral = eventTypeSymbols.Any(static s => EphemeralResolver.IsEphemeral(s));
 
+    // #2295: whether it keeps a rewind floor is decided by what it consumes. Applying only ephemeral events (and not
+    // opting in with [KeepEphemeralRewindFloor]), it takes no snapshots; the EF Core association generator reads the same
+    // classification to register the marker the reaper reads.
+    var keepsRewindFloor = !EphemeralConsumption.KeepsNoRewindFloor(classSymbol, eventTypeSymbols);
+
     // TtlRow perspective-row expiry (E2-4d): resolved virally like isEphemeral. If ANY applied [Ephemeral]
     // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
     // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
@@ -186,6 +191,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // #1739: what happens to this perspective's rows when their stream is archived whole. -1 when undeclared, so an
     // explicit Keep (0) stays distinct from no declaration: an explicit Keep outvotes another perspective that drops.
     var archivedStreamRowPolicy = _resolveArchivedStreamRows(classSymbol);
+
+    // #2246: the write mode a perspective declares with [PerspectiveWriteMode], or -1 to take the service's.
+    var writeMode = _resolveWriteMode(classSymbol);
 
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
@@ -269,6 +277,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             InheritScopeAlways: inheritScopeAlways,
             IsEphemeral: isEphemeral,
+            KeepsRewindFloor: keepsRewindFloor,
             TtlRowSeconds: ttlRowSeconds,
             IsFullHistory: isFullHistory,
             ArchivedStreamRowPolicy: archivedStreamRowPolicy,
@@ -279,7 +288,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
             UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
             IsOverwriteOnly: isOverwriteOnly,
-            OverwriteDecisiveEventTypes: overwriteDecisive),
+            OverwriteDecisiveEventTypes: overwriteDecisive,
+            WriteMode: writeMode),
         Warning: null
     );
   }
@@ -294,8 +304,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return new PerspectiveOrWarning(
         Info: null,
         Warning: new PerspectiveMissingStreamIdWarning(
-            PerspectiveName: classSymbol.Name,
-            ModelName: modelType.Name,
+            PerspectiveName: TypeNameUtilities.SimpleName(classSymbol),
+            ModelName: TypeNameUtilities.SimpleName(modelType),
             Location: classDeclaration.Identifier.GetLocation()
         )
     );
@@ -377,8 +387,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       .First();
 
   /// <summary>
-  /// Reads [RowCap] on the perspective class. PerScope is the more specific partition, so it outranks
-  /// PerTenant when both are declared. Returns (-1, null) when no cap is declared.
+  /// Reads [PerspectiveWriteMode] on the perspective class (#2246): the declared mode's value, or -1 when the class
+  /// declares none (it then takes the service's mode).
+  /// </summary>
+  private static int _resolveWriteMode(INamedTypeSymbol classSymbol) =>
+    classSymbol.GetAttributes()
+      .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "PerspectiveWriteModeAttribute" or "PerspectiveWriteMode")
+      // The attribute's one argument is the mode; an attribute that binds no argument (code that does not compile)
+      // declares nothing, and the class takes the service's mode.
+      .Select(static a => a.ConstructorArguments)
+      .Where(static arguments => arguments.Length == 1)
+      .Select(static arguments => arguments[0].Value)
+      .OfType<int>()
+      .DefaultIfEmpty(-1)
+      .First();
+
+  /// <summary>
+  /// Reads [RowCap] on the perspective class. PerProperty (with Max) is the most specific partition, then PerScope, then
+  /// PerTenant. Returns (-1, null) when no cap is declared.
   /// </summary>
   private static (int PerScope, string? ScopeKey) _resolveRowCap(INamedTypeSymbol classSymbol) {
     var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
@@ -388,12 +414,28 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
     var perScope = -1;
     var perTenant = -1;
+    var max = -1;
+    string? perProperty = null;
     foreach (var namedArg in rowCapAttribute.NamedArguments) {
-      if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
-        perScope = ps;
-      } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
-        perTenant = pt;
+      switch (namedArg.Key) {
+        case "PerScope" when namedArg.Value.Value is int ps:
+          perScope = ps;
+          break;
+        case "PerTenant" when namedArg.Value.Value is int pt:
+          perTenant = pt;
+          break;
+        case "Max" when namedArg.Value.Value is int m:
+          max = m;
+          break;
+        case "PerProperty" when namedArg.Value.Value is string prop && !string.IsNullOrWhiteSpace(prop):
+          perProperty = prop;
+          break;
       }
+    }
+    // #2330: a per-property cap is the most specific partition: the newest Max rows per value of that model property,
+    // read by the sweep from the stored document (data ->> name).
+    if (perProperty is not null && max >= 0) {
+      return (max, "data:" + perProperty);
     }
     if (perScope >= 0) {
       return (perScope, "u");
@@ -545,6 +587,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
+    var prepareWriteCode = _generatePrepareWriteCode(perspective);
 
     // Generate scope event handling code
     var scopeEventCode = _generateScopeEventHandlingCode(perspective);
@@ -562,6 +605,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
+    result = TemplateUtilities.ReplaceRegion(result, "PREPARE_WRITE_CALL", prepareWriteCode);
     result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
     result = TemplateUtilities.ReplaceRegion(
         result,
@@ -583,7 +627,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ? $"@event is {string.Join(" or ", decisive)};"
           : "false;"));
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
-        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
+        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};\n"
+        + $"  private const bool _keepsRewindFloor = {_csharpBool(perspective.KeepsRewindFloor)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
@@ -608,6 +653,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ? "\n  [global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerArchivedStreamRows() =>\n"
             + $"      global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.Register(_archivedStreamRowsName, (global::Whizbang.Core.Archival.ArchivedStreamRowPolicy){perspective.ArchivedStreamRowPolicy});"
           : ""));
+    // #2246: every generated runner registers its perspective's write mode, so the worker chooses each pair's path
+    // without resolving the runner: the declared mode, or null to take the service's. A perspective with no generated
+    // runner is never registered and is always written per stream.
+    result = TemplateUtilities.ReplaceRegion(result, "WRITE_MODE_REGISTRATION",
+        "[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerWriteMode() =>\n"
+        + "      global::Whizbang.Core.Perspectives.PerspectiveWriteModes.Register(_archivedStreamRowsName, "
+        + (perspective.WriteMode >= 0 ? $"(global::Whizbang.Core.Perspectives.PerspectiveWriteMode){perspective.WriteMode});" : "null);"));
     // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
     // membership, decoded from the compact spec, so the maintenance cascade can compute the
     // eviction closure without reflection.
@@ -850,6 +902,38 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     } else {
       _appendPhysicalFieldsUpsertCode(sb, perspective);
     }
+
+    return sb.ToString().TrimEnd('\r', '\n');
+  }
+
+  /// <summary>
+  /// Generates the body of the runner's PrepareRowWrite, the set-based twin of the upsert (#2246): the same physical
+  /// values and Split stripping the upsert code emits, from the same helpers, handed to the store's PrepareWrite.
+  /// </summary>
+  private static string _generatePrepareWriteCode(PerspectiveInfo perspective) {
+    var sb = new StringBuilder();
+    var hasPhysicalFields = perspective.PhysicalFields is { Length: > 0 };
+
+    if (hasPhysicalFields) {
+      _appendPhysicalFieldValuesDictionary(sb, perspective);
+      if (perspective.StorageMode == 2) {
+        _appendSplitModePhysicalFieldStripping(sb, perspective);
+      }
+    }
+
+    sb.AppendLine("    // Prepare the row write the upsert would make, with the same document, physical values and scope;");
+    sb.AppendLine("    // the batch's write sink writes it with the rest of the batch.");
+    sb.AppendLine("    return _perspectiveStore.PrepareWrite(");
+    sb.AppendLine("        streamId,");
+    sb.AppendLine("        model,");
+    sb.AppendLine("        scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope(),");
+    // The upsert without physical fields writes a null scope as an empty one that forces no update; the one with
+    // physical fields passes the flag through. Each prepared write does what its upsert does.
+    sb.AppendLine(hasPhysicalFields ? "        forceUpdateScope," : "        scope != null && forceUpdateScope,");
+    sb.AppendLine("        metadata,");
+    sb.AppendLine("        expectedVersion,");
+    sb.AppendLine(hasPhysicalFields ? "        physicalFieldValues" : "        null");
+    sb.AppendLine("    );");
 
     return sb.ToString().TrimEnd('\r', '\n');
   }

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -199,7 +200,7 @@ public class IntegrityAuditWorkerTests {
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -241,7 +242,7 @@ public class IntegrityAuditWorkerTests {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -275,7 +276,7 @@ public class IntegrityAuditWorkerTests {
     var transport = new CaptureTransport();
     var sweepState = new IntegritySweepScheduleState { CronActive = true };
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker, sweepState: sweepState);
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker, sweepState: sweepState);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -294,7 +295,7 @@ public class IntegrityAuditWorkerTests {
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 0, FullHistoryCompare = { Enabled = true } }, tracker,
       sweepState: new IntegritySweepScheduleState { CronActive = true });
 
     await ((IIntegritySweepRunner)worker).RunSweepOnceAsync(CancellationToken.None);
@@ -328,6 +329,43 @@ public class IntegrityAuditWorkerTests {
       .Because("the window starts at the seal — anything below it already proved clean");
   }
 
+  /// <summary>
+  /// #2262: the ask names the origin generation recorded beside the seal, so the origin can answer how far its history
+  /// was rewritten since, and a new generation lowers the seal only that far instead of resetting it.
+  /// </summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task EveryCycle_NamesTheRecordedOriginGenerationAsync(bool sweep) {
+    var coordinator = new AuditCoordinator { SealedThrough = 123, SealGeneration = 41 };
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock.GetUtcNow(), "origin-a.requests");
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = sweep ? 1 : 0, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker, clock: clock);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    var request = _deserializeRequest(transport.Published.Single().Envelope);
+    await Assert.That(request.KnownOriginGeneration).IsEqualTo(41L)
+      .Because("a sweep's answer passes the same generation guard as a windowed one");
+  }
+
+  [Test]
+  public async Task FirstContact_NamesNoOriginGenerationAsync() {
+    var coordinator = new AuditCoordinator();
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock.GetUtcNow(), "origin-a.requests");
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker, clock: clock);
+
+    await worker.RunAuditOnceAsync(CancellationToken.None);
+
+    await Assert.That(_deserializeRequest(transport.Published.Single().Envelope).KnownOriginGeneration).IsNull();
+  }
+
   [Test]
   public async Task SweepCycle_AsksFullHistory_NotWindowedAsync() {
     // The sweep is trust-but-verify: it exists to catch exactly the state the seals assume is
@@ -337,7 +375,7 @@ public class IntegrityAuditWorkerTests {
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
+      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -381,7 +419,7 @@ public class IntegrityAuditWorkerTests {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1 }, tracker, metrics);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, tracker, metrics);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
     // Passive counters: one collection reports every series' cumulative value (the declared ones
@@ -527,7 +565,7 @@ public class IntegrityAuditWorkerTests {
     };
     var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, metrics: metrics,
       logger: logger);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
@@ -554,7 +592,7 @@ public class IntegrityAuditWorkerTests {
     };
     var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, metrics: metrics,
       logger: logger);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
@@ -574,7 +612,7 @@ public class IntegrityAuditWorkerTests {
     var coordinator = new AuditCoordinator { EpochResult = new EpochVerificationResult(4, 2) };
     var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, metrics: metrics,
       logger: logger);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
@@ -594,7 +632,7 @@ public class IntegrityAuditWorkerTests {
     var coordinator = new AuditCoordinator { EpochResult = new EpochVerificationResult(6, 0) };
     var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, FullHistoryCompare = { Enabled = true }, SealRecheck = { Enabled = true } }, metrics: metrics,
       logger: logger);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
@@ -623,8 +661,12 @@ public class IntegrityAuditWorkerTests {
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegritySweepScheduleState? sweepState = null,
-      ILogger<IntegrityAuditWorker>? logger = null) {
+      ILogger<IntegrityAuditWorker>? logger = null,
+      TimeProvider? clock = null) {
     var services = new ServiceCollection();
+    if (clock is not null) {
+      services.AddSingleton(clock);
+    }
     if (sweepState is not null) {
       services.AddSingleton(sweepState);
     }
@@ -693,13 +735,19 @@ public class IntegrityAuditWorkerTests {
     public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
       Task.FromResult(SealedThrough);
 
+    /// <summary>#2262: the origin generation recorded beside the seal; null = never seen.</summary>
+    public long? SealGeneration { get; init; }
+
+    public Task<long?> GetIntegritySealGenerationAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(SealGeneration);
+
     public int EpochVerifyCalls { get; private set; }
 
     /// <summary>Epoch result to return; defaults to "nothing checked, nothing drifted".</summary>
     public EpochVerificationResult EpochResult { get; init; } = new(0, 0);
 
-    public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
-      TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) {
+    public Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+      SealRecheckRequest request, CancellationToken cancellationToken = default) {
       EpochVerifyCalls++;
       return Task.FromResult(EpochResult);
     }

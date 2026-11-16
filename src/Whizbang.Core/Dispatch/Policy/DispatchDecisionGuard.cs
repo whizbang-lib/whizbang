@@ -21,7 +21,7 @@ public static class DispatchDecisionGuard {
     var problem = _findProblem(policy, in situation, in decision);
     if (problem is not null) {
       throw new InvalidDispatchPolicyException(
-        $"The {policy.Name} dispatch policy decided something the dispatcher cannot do for {situation.MessageType.Name}: {problem}.");
+        $"The {policy.Name} dispatch policy decided something the dispatcher cannot do for {TypeNameFormatter.ForLog(situation.MessageType)}: {problem}.");
     }
   }
 

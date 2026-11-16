@@ -156,7 +156,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       CancellationToken ct) {
     // Create span for perspective sync wait - shows blocking time in traces
     using var syncActivity = ActivitySource.StartActivity(
-      $"PerspectiveSync {perspectiveType.Name}",
+      $"PerspectiveSync {TypeNameFormatter.ForLog(perspectiveType)}",
       ActivityKind.Internal);
     syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
     syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
@@ -242,7 +242,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       Guid? eventIdToAwait,
       CancellationToken ct) {
     using var syncActivity = ActivitySource.StartActivity(
-      $"PerspectiveSync {perspectiveType.Name} Stream",
+      $"PerspectiveSync {TypeNameFormatter.ForLog(perspectiveType)} Stream",
       ActivityKind.Internal);
     _setStreamSyncActivityTags(syncActivity, perspectiveType, streamId, timeout, eventIdToAwait);
 
@@ -381,7 +381,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     }
     if (appliedHere is null) {
       throw new NotSupportedException(
-        $"{_coordinator.GetType().Name} cannot read the applied-event ledger, so an event named by stream "
+        $"{TypeNameFormatter.ForLog(_coordinator.GetType())} cannot read the applied-event ledger, so an event named by stream "
         + "position cannot be resolved. Name the event by id, or use a work coordinator that reads the ledger.");
     }
     await appliedHere;
@@ -448,12 +448,12 @@ public sealed partial class PerspectiveSyncAwaiter(
     var trackedSyncEvents = _syncEventTracker.GetPendingEvents(streamId, perspectiveName, eventTypes);
 #pragma warning disable CA1848
     if (_logger.IsEnabled(LogLevel.Debug)) {
-      var eventTypeNames = eventTypes?.Select(t => t.Name).ToArray() ?? [];
+      var eventTypeNames = eventTypes?.Select(t => TypeNameFormatter.SimpleName(t)).ToArray() ?? [];
       _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Queried singleton tracker - StreamId={StreamId}, Perspective={Perspective}, EventTypes=[{Types}], FoundCount={Count}",
         streamId, perspectiveName, string.Join(", ", eventTypeNames), trackedSyncEvents.Count);
       if (trackedSyncEvents.Count > 0) {
         _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Tracked events - [{Events}]",
-          string.Join(", ", trackedSyncEvents.Select(e => $"{e.EventType.Name}:{e.EventId}")));
+          string.Join(", ", trackedSyncEvents.Select(e => $"{TypeNameFormatter.ForLog(e.EventType)}:{e.EventId}")));
       }
     }
 #pragma warning restore CA1848

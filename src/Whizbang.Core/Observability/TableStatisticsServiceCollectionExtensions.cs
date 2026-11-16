@@ -19,6 +19,7 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:RegisteringTwice_RunsOnePendingReclamationSampler_OnTheMaintenanceMeterAsync</tests>
 public static class TableStatisticsServiceCollectionExtensions {
   /// <summary>
   /// Registers the table statistics meter and its collector over the provider
@@ -61,6 +62,9 @@ public static class TableStatisticsServiceCollectionExtensions {
     services.AddMetrics();
     services.TryAddSingleton(sp => new WhizbangMetrics(sp.GetRequiredService<IMeterFactory>()));
     services.TryAddSingleton(sp => new TableStatisticsMetrics(sp.GetRequiredService<WhizbangMetrics>()));
+    // #2289: what cleanup has left to do is on the maintenance meter, which a host without the maintenance worker still
+    // needs. TryAdd: the worker pipeline registers the same singleton.
+    services.TryAddSingleton(sp => new MaintenanceMetrics(sp.GetRequiredService<WhizbangMetrics>()));
     services.TryAddSingleton(sp => createProvider(sp, sp.GetRequiredService<IOptions<TableStatisticsOptions>>().Value));
 
     // The collector and the sampler tolerate a host with no logging (they log to nothing), and are hosted to start when
@@ -78,6 +82,13 @@ public static class TableStatisticsServiceCollectionExtensions {
         sp.GetRequiredService<TableStatisticsMetrics>(),
         sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
         sp.GetService<ILogger<EventTypeBytesSampler>>(),
+        sp.GetService<TimeProvider>()));
+    services.AddWhizbangWorkerAtSchemaReady(sp =>
+      new PendingReclamationSampler(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<MaintenanceMetrics>(),
+        sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
+        sp.GetService<ILogger<PendingReclamationSampler>>(),
         sp.GetService<TimeProvider>()));
 
     return services;

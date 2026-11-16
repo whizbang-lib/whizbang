@@ -39,6 +39,32 @@ internal static class ProbeMeterReader {
     lock (seen) { return [.. seen]; }
   }
 
+  /// <summary>Every series of a <see cref="double"/> instrument named <paramref name="instrumentName"/> on
+  /// <paramref name="meter"/>, with its tags.</summary>
+  /// <param name="meter">The meter to read.</param>
+  /// <param name="instrumentName">The instrument to read.</param>
+  /// <returns>The observed series.</returns>
+  public static List<(double Value, Dictionary<string, object?> Tags)> ReadDoubleSeries(Meter meter, string instrumentName) {
+    var seen = new List<(double, Dictionary<string, object?>)>();
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (instrument.Meter == meter && instrument.Name == instrumentName) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      }
+    };
+    listener.SetMeasurementEventCallback<double>((_, value, tags, _) => {
+      var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
+      foreach (var tag in tags) {
+        dict[tag.Key] = tag.Value;
+      }
+      lock (seen) { seen.Add((value, dict)); }
+    });
+    listener.Start();
+    listener.RecordObservableInstruments();
+    lock (seen) { return [.. seen]; }
+  }
+
   /// <summary>The probe tick series keyed by (probe, outcome).</summary>
   /// <param name="meter">The meter to read.</param>
   /// <param name="instrumentName">The instrument to read.</param>

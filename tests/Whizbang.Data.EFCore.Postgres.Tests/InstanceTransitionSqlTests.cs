@@ -43,6 +43,8 @@ public class InstanceTransitionSqlTests : EFCoreTestBase {
     await Assert.That(recorded).IsTrue();
     await Assert.That(_coordinator(dbContext).RecordsInstanceTransitions).IsTrue()
       .Because("the EF Core driver keeps instance rows, so the data plane waits for the row to record Accept commands");
+    await Assert.That(_coordinator(dbContext).ReadsCursorsInBatches).IsTrue()
+      .Because("the EF Core driver reads cursors in batches, so a batch may skip a pair its read found no cursor for");
     var row = await _rowAsync(conn, instance);
     await Assert.That($"{row.Stage} {row.Message} {row.Phase} {row.Version}")
       .IsEqualTo("60 accepting AcceptingCommands 3.2.1");

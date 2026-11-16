@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Azure.Messaging.ServiceBus.Administration;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.AzureServiceBus;
 
@@ -226,7 +227,7 @@ public interface IServiceBusAdminClient {
     RuleProperties rule,
     CancellationToken cancellationToken = default) =>
     throw new NotSupportedException(
-      $"{GetType().Name} cannot update a subscription rule in place; implement UpdateRuleAsync to filter excluded event types at the broker.");
+      $"{TypeNameFormatter.ForLog(GetType())} cannot update a subscription rule in place; implement UpdateRuleAsync to filter excluded event types at the broker.");
 
   #endregion
 }

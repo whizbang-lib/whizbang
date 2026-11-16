@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
@@ -53,7 +54,7 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   // source won (ConnectionStringName-via-IConfiguration vs inline ConnectionString). Internal
   // because tests need visibility but the value would leak passwords if surfaced publicly.
   // The constructor refuses options without a connection string.
-  internal string ConnectionStringForTesting => _options.ConnectionString!;
+  internal string ConnectionStringForTesting => _options.ConnectionString!.Reveal();
 
   /// <summary>Builds the pool from options + worker registry. The Npgsql connection pool is constructed once and reused for the pool's lifetime.</summary>
   /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="registry"/> is null.</exception>
@@ -69,14 +70,14 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
     _registry = registry;
     _metrics = metrics;
 
-    if (string.IsNullOrWhiteSpace(options.ConnectionString)) {
+    if (string.IsNullOrWhiteSpace(options.ConnectionString?.Reveal())) {
       throw new InvalidOperationException(
         "PinnedConnectionPool requires a non-empty WhizbangPinnedPoolOptions.ConnectionString; " +
         "register NoOpPinnedConnectionPool when the pool is disabled instead.");
     }
 
     var poolSize = options.Size < 1 ? 1 : options.Size;
-    var connStrBuilder = new NpgsqlConnectionStringBuilder(options.ConnectionString) {
+    var connStrBuilder = new NpgsqlConnectionStringBuilder(options.ConnectionString.Reveal()) {
       MinPoolSize = poolSize,
       MaxPoolSize = poolSize,
       ConnectionLifetime = options.ConnectionLifetimeSeconds,
@@ -108,13 +109,13 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
       // Caller's CT didn't fire — the borrow timeout deadline did. Record timeout and
       // surface as OCE rooted at the original CT so callers don't confuse a pool-starvation
       // timeout with their own cancellation.
-      _metrics?.BorrowTimeouts.Add(1, new KeyValuePair<string, object?>("worker", workerType.Name));
+      _metrics?.BorrowTimeouts.Add(1, new KeyValuePair<string, object?>("worker", TypeNameFormatter.ForLog(workerType)));
       throw new OperationCanceledException(
-        $"Pinned pool borrow timed out after {_options.BorrowTimeoutMilliseconds} ms (worker={workerType.Name}). " +
+        $"Pinned pool borrow timed out after {_options.BorrowTimeoutMilliseconds} ms (worker={TypeNameFormatter.ForLog(workerType)}). " +
         "Raise WhizbangPinnedPoolOptions.Size or investigate worker that's holding too long.");
     }
     sw.Stop();
-    _metrics?.BorrowDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("worker", workerType.Name));
+    _metrics?.BorrowDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("worker", TypeNameFormatter.ForLog(workerType)));
 
     return new ActiveBorrow(conn);
   }

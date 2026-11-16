@@ -201,7 +201,7 @@ public class RedeliveryReconcilerTests {
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
       if (ReferenceEquals(instrument, metrics.OriginsAdopted.Instrument) || ReferenceEquals(instrument, metrics.RepairsUnhealable.Instrument)
-          || ReferenceEquals(instrument, metrics.OriginsRefused.Instrument)) {
+          || ReferenceEquals(instrument, metrics.OriginsRefused.Instrument) || ReferenceEquals(instrument, metrics.LedgerBucketsClosed.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -227,6 +227,8 @@ public class RedeliveryReconcilerTests {
 
     await Assert.That(readings).Contains(("whizbang.stream_integrity.origins_adopted", 2L));
     await Assert.That(readings).Contains(("whizbang.stream_integrity.repairs_unhealable", 1L));
+    await Assert.That(readings).Contains(("whizbang.stream_integrity.ledger_buckets_closed", 1L))
+      .Because("#2256: a bucket marked unhealable is settled, and the backlog's completion counts it closed");
     await Assert.That(readings.Any(r => r.Name == "whizbang.stream_integrity.origins_refused" && r.Value > 0)).IsFalse()
       .Because("neither bundle had an event whose first hop names another service");
   }

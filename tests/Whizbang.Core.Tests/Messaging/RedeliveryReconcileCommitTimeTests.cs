@@ -102,6 +102,8 @@ public class RedeliveryReconcileCommitTimeTests {
     await Assert.That(recordedSequences).IsEquivalentTo(new long?[] { 1, 2 });
     await Assert.That(recordedAt).IsEqualTo(_now);
     await Assert.That(probe.Total(probe.Metrics.RepairsUnhealable)).IsEqualTo(2);
+    await Assert.That(probe.Total(probe.Metrics.LedgerBucketsClosed)).IsEqualTo(2)
+      .Because("#2256: each bucket the answer marked unhealable is closed once on the backlog's counter");
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning)).IsEqualTo(2)
       .Because("each newly marked bucket is reported once, with the reason it was marked");
     await Assert.That(coordinator.Pending.Single().Payload).Contains("\"allPresentAtCommit\":true");

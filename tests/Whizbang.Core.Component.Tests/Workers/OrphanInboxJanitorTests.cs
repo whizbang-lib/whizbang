@@ -271,19 +271,25 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {
-    var coordinator = new RecordingCoordinator();
+    // The purge is HELD in flight until the test lets it answer, so StartAsync returning proves it did not wait for the
+    // purge, by construction. The sweep runs on the background task StartAsync schedules, so whether the purge has
+    // been CALLED when StartAsync returns is a race; whether it has ANSWERED is not.
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var coordinator = new RecordingCoordinator { HoldPurge = release.Task };
     await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(sp, snapshot, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
-    await janitor.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+    await janitor.StartAsync(CancellationToken.None);
 
-    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(0)
-      .Because("host startup must not block on — or be coupled to — the orphan purge");
+    await Assert.That(coordinator.PurgesCompleted).IsEqualTo(0)
+      .Because("host startup must not block on, or be coupled to, the orphan purge");
 
+    release.SetResult();
     await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1)
       .Because("once migrations complete the sweep must actually run");
+    await Assert.That(coordinator.PurgesCompleted).IsEqualTo(1);
     await janitor.StopAsync(CancellationToken.None);
   }
 
@@ -368,6 +374,14 @@ public class OrphanInboxJanitorTests {
     public bool ThrowOnPurge { get; set; }
     public IReadOnlyList<string> PendingTypes { get; init; } = [];
 
+    /// <summary>When set, a purge waits for it before it answers: a purge the test holds in flight.</summary>
+    public Task? HoldPurge { get; init; }
+
+    private int _purgesCompleted;
+
+    /// <summary>Purges that have answered.</summary>
+    public int PurgesCompleted => Volatile.Read(ref _purgesCompleted);
+
     Task<IReadOnlyList<string>> IWorkCoordinator.GetPendingInboxMessageTypesAsync(CancellationToken cancellationToken) =>
       Task.FromResult(PendingTypes);
 
@@ -382,7 +396,17 @@ public class OrphanInboxJanitorTests {
       if (ThrowOnPurge) {
         throw new InvalidOperationException("simulated purge failure");
       }
+      return HoldPurge is { } hold ? _answerAfterAsync(hold) : _answered();
+    }
+
+    private Task<IReadOnlyList<PurgedOrphanInboxRow>> _answered() {
+      Interlocked.Increment(ref _purgesCompleted);
       return Task.FromResult(PurgeResult);
+    }
+
+    private async Task<IReadOnlyList<PurgedOrphanInboxRow>> _answerAfterAsync(Task hold) {
+      await hold;
+      return await _answered();
     }
   }
 

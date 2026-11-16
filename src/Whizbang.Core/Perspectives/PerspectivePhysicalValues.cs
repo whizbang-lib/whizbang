@@ -45,6 +45,6 @@ public static class PerspectivePhysicalValues {
     if (underlyingType == typeof(ulong)) {
       return typeof(decimal);
     }
-    throw new ArgumentException($"{underlyingType.Name} is not an enumeration's underlying integral type.", nameof(underlyingType));
+    throw new ArgumentException($"{TypeNameFormatter.ForLog(underlyingType)} is not an enumeration's underlying integral type.", nameof(underlyingType));
   }
 }

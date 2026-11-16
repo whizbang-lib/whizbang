@@ -108,9 +108,9 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     var names = new HashSet<string>(StringComparer.Ordinal);
 
     foreach (var t in _receptorSnapshot.ReceptorMessageTypes) {
-      var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
-      if (!string.IsNullOrEmpty(qualified)) {
-        names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
+      // The wire form (#2267); a type with no name (an open generic's parameter) has none to compare.
+      if (TypeNameFormatter.TryFormatClrTypeName(t, out _)) {
+        names.Add(TypeNameFormatter.Format(t));
       }
     }
 

@@ -65,7 +65,40 @@ public class MaintenanceWorkerReapDrivenSnapshotTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private static MaintenanceWorker _buildWorker(FakeCoordinator coord, FakeRegistry? registry) {
+  /// <summary>A runner that reports a chosen bootstrap outcome (#2294).</summary>
+  private sealed class OutcomeRunner(SnapshotBootstrapOutcome outcome) : IPerspectiveRunner {
+    public int Calls { get; private set; }
+    public Type PerspectiveType => typeof(object);
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("the worker asks for the outcome");
+    public Task<SnapshotBootstrapOutcome> TryBootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) {
+      Calls++;
+      return Task.FromResult(outcome);
+    }
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
+  /// <summary>Records each log entry's event id and message.</summary>
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<MaintenanceWorker> {
+    public List<(int EventId, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Entries) {
+        Entries.Add((eventId.Id, formatter(state, exception)));
+      }
+    }
+  }
+
+  // The worker's reap-driven log events: 20 is the snapshot written, 71 the stream had no row, 72 nothing written for
+  // another reason.
+  private const int SNAPSHOT_WRITTEN = 20;
+  private const int ROW_MISSING = 71;
+  private const int NOT_WRITTEN = 72;
+
+  private static MaintenanceWorker _buildWorker(FakeCoordinator coord, FakeRegistry? registry,
+      Microsoft.Extensions.Logging.ILogger<MaintenanceWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     if (registry is not null) {
@@ -75,7 +108,51 @@ public class MaintenanceWorkerReapDrivenSnapshotTests {
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
-      NullLogger<MaintenanceWorker>.Instance);
+      logger ?? NullLogger<MaintenanceWorker>.Instance);
+  }
+
+  [Test]
+  public async Task RunMaintenanceOnce_ASnapshotWritten_IsLoggedAsWrittenAsync() {
+    var streamId = Guid.NewGuid();
+    var coord = new FakeCoordinator { Pairs = [new EphemeralSnapshotTarget(streamId, "MyPerspective", Guid.NewGuid())] };
+    var runner = new OutcomeRunner(SnapshotBootstrapOutcome.Written);
+    var logger = new RecordingLogger();
+
+    await _buildWorker(coord, new FakeRegistry(runner), logger).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(runner.Calls).IsEqualTo(1).Because("the pass asks the runner for the bootstrap's outcome");
+    await Assert.That(logger.Entries.Count(e => e.EventId == SNAPSHOT_WRITTEN && e.Message.Contains(streamId.ToString(), StringComparison.Ordinal)))
+      .IsEqualTo(1).Because("the positive control: a written snapshot is reported as written");
+  }
+
+  [Test]
+  public async Task RunMaintenanceOnce_AStreamWithNoRow_IsNotLoggedAsASnapshot_ButAsAMissingRowAsync() {
+    var streamId = Guid.NewGuid();
+    var coord = new FakeCoordinator { Pairs = [new EphemeralSnapshotTarget(streamId, "MyPerspective", Guid.NewGuid())] };
+    var logger = new RecordingLogger();
+
+    await _buildWorker(coord, new FakeRegistry(new OutcomeRunner(SnapshotBootstrapOutcome.RowMissing)), logger)
+      .RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Entries.Any(e => e.EventId == SNAPSHOT_WRITTEN)).IsFalse()
+      .Because("#2294: success was logged for a snapshot that was never taken");
+    await Assert.That(logger.Entries.Any(e => e.EventId == ROW_MISSING && e.Message.Contains(streamId.ToString(), StringComparison.Ordinal)))
+      .IsTrue().Because("the missing row is reported, naming the stream");
+  }
+
+  [Test]
+  [Arguments(SnapshotBootstrapOutcome.Deferred)]
+  [Arguments(SnapshotBootstrapOutcome.SnapshotsOff)]
+  [Arguments(SnapshotBootstrapOutcome.NotReported)]
+  public async Task RunMaintenanceOnce_ABootstrapThatWroteNothing_IsNotLoggedAsASnapshotAsync(SnapshotBootstrapOutcome outcome) {
+    var coord = new FakeCoordinator { Pairs = [new EphemeralSnapshotTarget(Guid.NewGuid(), "MyPerspective", Guid.NewGuid())] };
+    var logger = new RecordingLogger();
+
+    await _buildWorker(coord, new FakeRegistry(new OutcomeRunner(outcome)), logger).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Entries.Any(e => e.EventId == SNAPSHOT_WRITTEN)).IsFalse();
+    await Assert.That(logger.Entries.Any(e => e.EventId == NOT_WRITTEN && e.Message.Contains(outcome.ToString(), StringComparison.Ordinal)))
+      .IsTrue().Because("a bootstrap that wrote nothing says why");
   }
 
   [Test]

@@ -48,18 +48,17 @@ public static class WhizbangReceptorRegistryQuery {
 
   /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>
   public static bool HasReceptors(LifecycleStage stage, string messageType) {
-    var stageTypes = _currentSnapshot().StageTypes;
-    return stageTypes.TryGetValue(stage, out var set) && set.Contains(_normalizeTypeName(messageType));
+    return _currentSnapshot().StageHas(stage, NormalizeTypeName(messageType));
   }
 
   /// <summary>True if any inbox handler (IReceptor without lifecycle FireAt) is registered for the type.</summary>
   public static bool HasInboxHandler(string messageType) {
-    return _currentSnapshot().InboxHandler.Contains(_normalizeTypeName(messageType));
+    return _currentSnapshot().InboxHandler.Contains(NormalizeTypeName(messageType));
   }
 
   /// <summary>True if any consumer (handler / lifecycle receptor / perspective / tag-attribute) cares about this message type.</summary>
   public static bool HasAnyConsumer(string messageType) {
-    return _currentSnapshot().AnyConsumer.Contains(_normalizeTypeName(messageType));
+    return _currentSnapshot().AnyConsumer.Contains(NormalizeTypeName(messageType));
   }
 
   /// <summary>
@@ -94,9 +93,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// <returns>The consumed message, or <see langword="null"/>.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:FindConsumedMessage_FindsByTypeAndAssembly_IgnoringVersionDetailsAsync</tests>
   public static ConsumedMessageInfo? FindConsumedMessage(string messageType) =>
-    _currentSnapshot().ConsumedByName.TryGetValue(EventTypeMatchingHelper.NormalizeTypeName(messageType), out var consumed)
-      ? consumed
-      : null;
+    _currentSnapshot().FindConsumed(messageType);
 
   /// <summary>
   /// The collective event types a <c>[CollectiveApplyFor]</c> handler applies, across every loaded assembly's
@@ -121,7 +118,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// uses <c>+</c> for nested types and includes the assembly (e.g., <c>"Ns.Outer+Inner, Asm"</c>).
   /// This method bridges the two formats so the drop-gate lookup works correctly.
   /// </summary>
-  private static string _normalizeTypeName(string typeName) {
+  internal static string NormalizeTypeName(string typeName) {
     // Strip assembly qualifier (everything after first ", ")
     var commaIdx = typeName.IndexOf(", ", System.StringComparison.Ordinal);
     var nameOnly = commaIdx >= 0 ? typeName[..commaIdx] : typeName;
@@ -144,39 +141,34 @@ public static class WhizbangReceptorRegistryQuery {
     if (snapshot is not null && snapshot.ContributionCount == currentCount) {
       return snapshot;
     }
-    snapshot = _buildSnapshot(currentCount);
+    snapshot = BuildSnapshot(currentCount);
     Volatile.Write(ref _snapshot, snapshot);
     return snapshot;
   }
 
-  private static Snapshot _buildSnapshot(int contributionCount) {
+  internal static Snapshot BuildSnapshot(int contributionCount, System.Func<ReceptorRegistryContribution, bool>? include = null) {
     var any = new HashSet<string>(System.StringComparer.Ordinal);
     var inbox = new HashSet<string>(System.StringComparer.Ordinal);
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
     var handledByName = new Dictionary<string, HandledMessageInfo>(System.StringComparer.Ordinal);
     var consumedByName = new Dictionary<string, ConsumedMessageInfo>(System.StringComparer.Ordinal);
     var handledCollective = new SortedSet<string>(System.StringComparer.Ordinal);
-    var handledCollectiveKnown = contributionCount > 0;
-    foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
-      foreach (var t in contribution.AnyConsumerTypes) {
-        any.Add(t);
-      }
-      foreach (var t in contribution.InboxHandlerTypes) {
-        inbox.Add(t);
-      }
+    // Unknown until a contribution is counted (#2145); under a host's scope, one of the host's own (#2243).
+    var counted = 0;
+    var everyOneListed = true;
+    foreach (var contribution in _included(include)) {
+      counted++;
+      any.UnionWith(contribution.AnyConsumerTypes);
+      inbox.UnionWith(contribution.InboxHandlerTypes);
       _addStageTypes(stages, contribution.StageTypes);
-      foreach (var handled in contribution.HandledMessages) {
-        // Dedupe by type name across assemblies (first contribution wins — the same type
-        // handled in two assemblies carries identical namespace/kind metadata anyway).
-        handledByName.TryAdd(handled.MessageTypeName, handled);
-      }
-      foreach (var consumed in contribution.ConsumedMessages) {
-        consumedByName.TryAdd(consumed.TypeName, consumed);
-      }
+      // Dedupe by type name across assemblies (first contribution wins: the same type
+      // handled in two assemblies carries identical namespace/kind metadata anyway).
+      _addFirst(handledByName, contribution.HandledMessages, static handled => handled.MessageTypeName);
+      _addFirst(consumedByName, contribution.ConsumedMessages, static consumed => consumed.TypeName);
       if (contribution.HandledCollectiveEventTypes is { } collective) {
         handledCollective.UnionWith(collective);
       } else {
-        handledCollectiveKnown = false;
+        everyOneListed = false;
       }
     }
     var handledList = new List<HandledMessageInfo>(handledByName.Values);
@@ -184,8 +176,19 @@ public static class WhizbangReceptorRegistryQuery {
     var consumedList = new List<ConsumedMessageInfo>(consumedByName.Values);
     consumedList.Sort(static (a, b) => string.CompareOrdinal(a.TypeName, b.TypeName));
     return new Snapshot(contributionCount, any, inbox, stages, handledList, consumedList, consumedByName) {
-      HandledCollective = handledCollectiveKnown ? [.. handledCollective] : null,
+      HandledCollective = counted > 0 && everyOneListed ? [.. handledCollective] : null,
     };
+  }
+
+  /// <summary>Every registered contribution, or only those <paramref name="include"/> accepts (a host's own, #2243).</summary>
+  private static IEnumerable<ReceptorRegistryContribution> _included(System.Func<ReceptorRegistryContribution, bool>? include) =>
+    AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions().Where(contribution => include?.Invoke(contribution) ?? true);
+
+  /// <summary>Adds each item under its key unless the key is already present: the first contribution wins.</summary>
+  private static void _addFirst<TItem>(Dictionary<string, TItem> byKey, IEnumerable<TItem> items, System.Func<TItem, string> key) {
+    foreach (var item in items) {
+      byKey.TryAdd(key(item), item);
+    }
   }
 
   /// <summary>Merges one contribution's types per lifecycle stage into the snapshot's per-stage sets.</summary>
@@ -238,7 +241,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// One immutable build of every aggregated view, tagged with the contribution count it
   /// was built from. Never mutated after construction, so it is safe to share across threads.
   /// </summary>
-  private sealed class Snapshot(
+  internal sealed class Snapshot(
       int contributionCount,
       HashSet<string> anyConsumer,
       HashSet<string> inboxHandler,
@@ -254,5 +257,50 @@ public static class WhizbangReceptorRegistryQuery {
     public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; } = consumedMessages;
     public Dictionary<string, ConsumedMessageInfo> ConsumedByName { get; } = consumedByName;
     public IReadOnlyList<string>? HandledCollective { get; init; }
+
+    public bool StageHas(LifecycleStage stage, string normalizedType) =>
+      StageTypes.TryGetValue(stage, out var set) && set.Contains(normalizedType);
+
+    public ConsumedMessageInfo? FindConsumed(string messageType) =>
+      ConsumedByName.TryGetValue(EventTypeMatchingHelper.NormalizeTypeName(messageType), out var consumed) ? consumed : null;
+  }
+}
+
+/// <summary>
+/// The answers of <see cref="WhizbangReceptorRegistryQuery"/> over the contributions of one host's own service (#2243):
+/// a receptor another service in the process declares does not make this host consume, subscribe to or fire for its
+/// message. Rebuilt, like the process-wide view, when a contribution arrives.
+/// </summary>
+/// <param name="scope">The host's scope.</param>
+/// <tests>tests/Whizbang.Core.Tests/ServiceScope/ScopedReceptorRegistryQueryTests.cs</tests>
+internal sealed class ScopedReceptorRegistryQuery(ServiceAssemblyScope scope) {
+  private WhizbangReceptorRegistryQuery.Snapshot? _snapshot;
+
+  public bool HasReceptors(LifecycleStage stage, string messageType) =>
+    _current().StageHas(stage, WhizbangReceptorRegistryQuery.NormalizeTypeName(messageType));
+
+  public bool HasInboxHandler(string messageType) =>
+    _current().InboxHandler.Contains(WhizbangReceptorRegistryQuery.NormalizeTypeName(messageType));
+
+  public bool HasAnyConsumer(string messageType) =>
+    _current().AnyConsumer.Contains(WhizbangReceptorRegistryQuery.NormalizeTypeName(messageType));
+
+  public IReadOnlyList<HandledMessageInfo> GetHandledMessages() => _current().HandledMessages;
+
+  public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => _current().ConsumedMessages;
+
+  public ConsumedMessageInfo? FindConsumedMessage(string messageType) => _current().FindConsumed(messageType);
+
+  public IReadOnlyList<string>? GetHandledCollectiveEventTypes() => _current().HandledCollective;
+
+  private WhizbangReceptorRegistryQuery.Snapshot _current() {
+    var currentCount = AssemblyRegistry<ReceptorRegistryContribution>.Count;
+    var snapshot = Volatile.Read(ref _snapshot);
+    if (snapshot is not null && snapshot.ContributionCount == currentCount) {
+      return snapshot;
+    }
+    snapshot = WhizbangReceptorRegistryQuery.BuildSnapshot(currentCount, contribution => scope.Includes(contribution.AssemblyName));
+    Volatile.Write(ref _snapshot, snapshot);
+    return snapshot;
   }
 }

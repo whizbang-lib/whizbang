@@ -121,6 +121,59 @@ public class MintedCompositeConstructionAnalyzerTests {
   }
 
   [Test]
+  public async Task Construction_InsideACompositeBatchesFactory_IsSilentAsync() {
+    const string source = """
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Minting;
+
+      namespace ConsumerApp;
+
+      public sealed class RowsImported : CompositeEventBase;
+
+      public class Import {
+        public IAsyncEnumerable<RowsImported> Batches(IAsyncEnumerable<IEvent> rows, CompositeBatchOptions options) =>
+          rows.ToCompositeBatches(batch => new RowsImported { Inner = [.. batch] }, options);
+
+        public System.Threading.Tasks.Task<int> Publish(IDispatcher dispatcher, IAsyncEnumerable<IEvent> rows, CompositeBatchOptions options) =>
+          dispatcher.PublishCompositeBatchesAsync(rows, batch => new RowsImported { Inner = [.. batch] }, options);
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<MintedCompositeConstructionAnalyzer>(source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ150")).IsEmpty()
+      .Because("the factory of the composite batch helpers (#2285) is a sanctioned seam: the helper enforces the count "
+             + "cap and the byte budget");
+  }
+
+  [Test]
+  public async Task Construction_PassedToSomeOtherMethodsFactory_StillReportsAsync() {
+    const string source = """
+      using System;
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Minting;
+
+      namespace ConsumerApp;
+
+      public sealed class RowsImported : CompositeEventBase;
+
+      public static class Elsewhere {
+        public static RowsImported Build(Func<IReadOnlyList<IMessage>, RowsImported> factory) => factory([]);
+        public static RowsImported Make(Func<IReadOnlyList<IMessage>, RowsImported> make) => make([]);
+        public static RowsImported Use() => Build(batch => new RowsImported());
+        public static RowsImported UseToo() => Make(batch => new RowsImported());
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<MintedCompositeConstructionAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ150")).IsEqualTo(2)
+      .Because("only the composite batch helpers' own factory parameter is a sanctioned seam");
+  }
+
+  [Test]
   public async Task Construction_InsideMintingNamespace_IsSilentAsync() {
     const string source = """
       using Whizbang.Core.Minting;

@@ -27,8 +27,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.BranchCoverage.DapperDriver;
 [Category("Integration")]
 public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
   private const string PINNED_ID = "11111111-1111-1111-1111-111111111111";
-  private const string OLD_NAME = "Old.Namespace.CoverageEvent, Sample";
-  private const string NEW_NAME = "New.Namespace.CoverageEvent, Sample";
+  private const string OLD_NAME = "Old.Namespace.CoverageEvent";
+  private const string NEW_NAME = "New.Namespace.CoverageEvent";
 
   private string? _testDatabaseName;
   private PostgresConnectionFactory? _connectionFactory;

@@ -336,7 +336,7 @@ public partial class DapperPostgresEventStore(
     var policy = await _policyEngine.MatchAsync(policyCtx);
 
     var jsonb = _adapter.ToJsonb(envelope, policy);
-    return _sizeValidator.Validate(jsonb, typeof(TMessage).Name, policy);
+    return _sizeValidator.Validate(jsonb, TypeNameFormatter.SimpleName(typeof(TMessage)), policy);
   }
 
   /// <summary>

@@ -174,4 +174,12 @@ public interface ILifecycleContext {
   /// </remarks>
   /// <docs>fundamentals/receptors/lifecycle-receptors#replay-safety</docs>
   bool IsNewEvent => true;
+
+  /// <summary>
+  /// <c>true</c> when the invocation handles a repaired event (a stream-integrity redelivery) that this service can
+  /// prove it never handled. Only receptors declared <see cref="RunOnRepairAttribute"/> run for it (#2273). False for
+  /// every other delivery.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  bool IsRepair => false;
 }

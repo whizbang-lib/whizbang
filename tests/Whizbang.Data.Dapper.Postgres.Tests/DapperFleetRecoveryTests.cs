@@ -114,6 +114,30 @@ public class DapperFleetRecoveryTests : PostgresTestBase {
       .Because("both rows are unprocessed and claimable, leased or not");
     await Assert.That(busy.ActiveLeasedRows).IsEqualTo(1L);
     await Assert.That(busy.PendingOutboxRows).IsEqualTo(0L);
+    await Assert.That(idle.NonIntegrityWorkRows).IsEqualTo(0L)
+      .Because("#2253: the Dapper driver measures work besides integrity traffic as the EF Core driver does");
+    await Assert.That(busy.NonIntegrityWorkRows).IsEqualTo(1L).Because("application rows are work besides integrity, bounded at one");
+  }
+
+  [Test]
+  public async Task HousekeepingDeferral_IsReadWithTheBacklog_KeepsTheFirstWriter_AndClearsAsync() {
+    // #2288: the Dapper driver holds the forced-pass ceiling's first deferral as the EF Core driver does.
+    var coordinator = _coordinator();
+    var first = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    var empty = await coordinator.CountServiceBacklogAsync();
+
+    await coordinator.RecordHousekeepingDeferralAsync("maintenance", first);
+    await coordinator.RecordHousekeepingDeferralAsync("maintenance", first + TimeSpan.FromMinutes(10));
+    await coordinator.RecordHousekeepingDeferralAsync("dead-letter-recovery", first);
+    var recorded = await coordinator.CountServiceBacklogAsync();
+    await coordinator.ClearHousekeepingDeferralAsync("maintenance");
+    var cleared = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(empty!.HousekeepingDeferrals).IsNotNull().Because("this backend holds the figure, so nothing deferred reads empty, not null");
+    await Assert.That(empty.HousekeepingDeferrals).IsEmpty();
+    await Assert.That(recorded!.HousekeepingDeferrals!["maintenance"]).IsEqualTo(first).Because("the first writer wins");
+    await Assert.That(cleared!.HousekeepingDeferrals!.ContainsKey("maintenance")).IsFalse();
+    await Assert.That(cleared.HousekeepingDeferrals!["dead-letter-recovery"]).IsEqualTo(first);
   }
 
   [Test]

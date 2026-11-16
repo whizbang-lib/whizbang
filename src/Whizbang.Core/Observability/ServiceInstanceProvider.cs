@@ -85,7 +85,7 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   internal static string ResolveServiceName(IConfiguration configuration, Assembly? entryAssembly) =>
     _unlessBlank(configuration["Whizbang:ServiceName"])
     ?? _unlessBlank(configuration["ServiceName"])
-    ?? entryAssembly?.GetName().Name
+    ?? (entryAssembly is null ? null : TypeNameFormatter.AssemblySimpleName(entryAssembly))
     ?? "Unknown";
 
   // A key present with an empty value (an appsettings placeholder, an environment variable set to nothing) names no

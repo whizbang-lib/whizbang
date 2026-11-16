@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 
 namespace Whizbang.Data.Postgres;
@@ -38,7 +39,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
     _assembly = assembly;
     ArgumentNullException.ThrowIfNull(schemaName);
     _schemaName = schemaName;
-    _resourcePrefix = $"{_assembly.GetName().Name}.Migrations.";
+    _resourcePrefix = $"{TypeNameFormatter.AssemblySimpleName(_assembly)}.Migrations.";
   }
 
   /// <summary>

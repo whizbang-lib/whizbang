@@ -91,6 +91,19 @@ public class ConfigurationValueBinderTests {
   }
 
   [Test]
+  public async Task BindSensitive_WrapsTheValue_AndSkipsBlankOrMissingAsync() {
+    var config = _config(("Good", "Host=db;Password=hunter2"), ("Blank", "  "));
+    var applied = new List<SensitiveString>();
+
+    ConfigurationValueBinder.BindSensitive(config, "Good", applied.Add);
+    ConfigurationValueBinder.BindSensitive(config, "Blank", applied.Add);
+    ConfigurationValueBinder.BindSensitive(config, "Missing", applied.Add);
+
+    await Assert.That(applied.Count).IsEqualTo(1);
+    await Assert.That(applied[0].Reveal()).IsEqualTo("Host=db;Password=hunter2");
+  }
+
+  [Test]
   public async Task BindEnum_ParsesNameCaseInsensitively_AndSkipsUnknownAsync() {
     var config = _config(("Good", "leasturgent"), ("Bad", "Sideways"), ("Undefined", "7"));
     var applied = new List<CompositePriorityFold>();

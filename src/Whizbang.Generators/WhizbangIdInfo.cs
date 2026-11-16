@@ -42,13 +42,15 @@ public enum DiscoverySource {
 /// <param name="Source">How the ID was discovered (ExplicitType, Property, or Parameter)</param>
 /// <param name="SuppressDuplicateWarning">True if WHIZ024 warning should be suppressed for this ID</param>
 /// <param name="Location">Where the [WhizbangId] attribute is written; WHIZ024 is reported there. Not part of equality.</param>
+/// <param name="AcceptAnyVersion">True if the generated id takes any non-empty Guid rather than UUIDv7 only (#2071)</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,
   string Namespace,
   DiscoverySource Source,
   bool SuppressDuplicateWarning = false,
-  Location? Location = null
+  Location? Location = null,
+  bool AcceptAnyVersion = false
 ) {
   /// <summary>
   /// Gets the fully qualified name of the ID type (Namespace.TypeName).
@@ -59,15 +61,19 @@ public sealed record WhizbangIdInfo(
 
   /// <summary>
   /// Value equality is used for deduplication.
-  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName.
+  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName and AcceptAnyVersion.
   /// </summary>
-  /// <tests>No tests found</tests>
+  /// <remarks>
+  /// AcceptAnyVersion changes the generated code, so it takes part: an id whose option was toggled must not
+  /// compare equal to the cached one, or the incremental pipeline would keep the old output.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
   public bool Equals(WhizbangIdInfo? other) =>
-    other is not null && FullyQualifiedName == other.FullyQualifiedName;
+    other is not null && FullyQualifiedName == other.FullyQualifiedName && AcceptAnyVersion == other.AcceptAnyVersion;
 
   /// <summary>
-  /// Hash code based on FullyQualifiedName for deduplication.
+  /// Hash code based on FullyQualifiedName and AcceptAnyVersion.
   /// </summary>
-  /// <tests>No tests found</tests>
-  public override int GetHashCode() => FullyQualifiedName.GetHashCode();
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
+  public override int GetHashCode() => (FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode();
 }

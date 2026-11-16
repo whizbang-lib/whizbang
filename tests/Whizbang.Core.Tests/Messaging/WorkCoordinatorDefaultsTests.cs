@@ -98,6 +98,35 @@ public class WorkCoordinatorDefaultsTests {
     await Assert.That(result).IsEmpty();
   }
 
+  /// <summary>
+  /// #2255: an engine that does not implement the mixed-stream members ignores no ephemeral type (every stream holding
+  /// an ephemeral event stays refused, the safe direction) and syncs nothing.
+  /// </summary>
+  [Test]
+  public async Task MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync() {
+    var mixed = Guid.NewGuid();
+    IWorkCoordinator coordinator = new StateBasedOnlyCoordinator(mixed);
+
+    var stateBased = await coordinator.GetStateBasedStreamIdsAsync([mixed], ["Ns.Pinged, Contracts"]);
+    var task = coordinator.SyncMixedStreamAllowancesAsync([new Whizbang.Core.Perspectives.MixedStreamPair("Ns.Pinged, Contracts", "Ns.Opened, Contracts")]);
+
+    await Assert.That(stateBased).IsEquivalentTo([mixed])
+      .Because("the default passes over nothing, so the stream is refused as it was before the allowance");
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  private sealed class StateBasedOnlyCoordinator(Guid stateBased) : IWorkCoordinator {
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyCollection<Guid>>([.. streamIds.Where(s => s == stateBased)]);
+  }
+
   [Test]
   public async Task SyncEphemeralTypeGraceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
@@ -434,6 +463,18 @@ public class WorkCoordinatorDefaultsTests {
     await task;
   }
 
+  /// <summary>#2301: without provider support, completing a rewrite clears its request and records nothing.</summary>
+  [Test]
+  public async Task CompleteTableRewriteAsync_WithoutProviderSupport_ClearsTheRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.CompleteTableRewriteAsync(new TableRewriteOutcome("x", "PgSqueeze", TableRewriteReason.Bloat, 4.0, 1.0));
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+    await Assert.That(() => coordinator.CompleteTableRewriteAsync(null!)).Throws<ArgumentNullException>();
+  }
+
   [Test]
   public async Task RequestTableRewriteAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
@@ -442,6 +483,22 @@ public class WorkCoordinatorDefaultsTests {
 
     await Assert.That(task.IsCompletedSuccessfully).IsTrue();
     await task;
+  }
+
+  [Test]
+  public async Task GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var status = await coordinator.GetTableRewriteQueueStatusAsync();
+
+    await Assert.That(status).IsEqualTo(new TableRewriteQueueStatus(0, 3.0, 0));
+  }
+
+  [Test]
+  public async Task GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetTableTotalBytesAsync("wh_outbox")).IsNull();
   }
 
   [Test]
@@ -492,6 +549,14 @@ public class WorkCoordinatorDefaultsTests {
 
     await Assert.That(result).IsFalse()
       .Because("a coordinator with no instance rows records nothing, so the reporter holds the transition as unwritten");
+  }
+
+  [Test]
+  public async Task ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(coordinator.ReadsCursorsInBatches).IsFalse()
+      .Because("the default batched cursor read returns nothing, which a batch must not take for 'no cursor' (#2246)");
   }
 
   [Test]
@@ -685,6 +750,45 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegrityLedgerBacklogAsync(0);
+
+    await Assert.That(result.Reported).IsFalse()
+      .Because("an engine with no ledger has no backlog to report, and a zero would read as a healed service");
+  }
+
+  [Test]
+  public async Task IntegrityRecordOriginCheckpointAsync_WithoutProviderSupport_KeepsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityRecordOriginCheckpointAsync(Guid.Empty, "origin", null, DateTimeOffset.UnixEpoch, 10);
+    await task;
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue()
+      .Because("an engine with no store keeps no checkpoint, and says so by doing nothing");
+  }
+
+  [Test]
+  public async Task IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var written = await coordinator.IntegrityAddLedgerTallyAsync(DateTimeOffset.UnixEpoch, 1, 1, DateTimeOffset.UnixEpoch);
+
+    await Assert.That(written).IsFalse().Because("an engine with no ledger keeps no tally, and the caller keeps its counts");
+  }
+
+  [Test]
+  public async Task GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var tally = await coordinator.GetIntegrityLedgerTallyAsync(DateTimeOffset.UnixEpoch);
+
+    await Assert.That(tally).IsNull().Because("no tally is no reading, and a zero would read as no progress");
+  }
+
+  [Test]
   public async Task GetIntegritySettledMaxAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -727,6 +831,16 @@ public class WorkCoordinatorDefaultsTests {
     var pending = await coordinator.IntegrityCountAnswerPendingAsync(DateTimeOffset.MinValue, 500);
 
     await Assert.That(pending).IsEqualTo(0).Because("#2184: an engine without the ledger has no answer outstanding");
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var key = new IntegrityRepairLedger.DivergenceKey(Guid.Empty, null, "Contracts.A", Guid.Empty);
+
+    var withdrawn = await coordinator.IntegrityWithdrawAnswerPendingAsync(Guid.Empty, [key], DateTimeOffset.MinValue, TimeSpan.FromMinutes(1));
+
+    await Assert.That(withdrawn).IsEqualTo(0).Because("#2223: an engine without the ledger recorded no answer to withdraw");
   }
 
   [Test]
@@ -794,6 +908,17 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task RecheckDigestEpochsAsync_WithoutProviderSupport_ChecksNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecheckDigestEpochsAsync(new SealRecheckRequest(
+      TimeSpan.Zero, 1, TimeSpan.FromDays(30), TimeSpan.FromDays(7), Refold: true));
+
+    await Assert.That(result).IsEqualTo(new EpochVerificationResult(0, 0))
+      .Because("#2353: an engine without the epoch substrate re-checks nothing and finds no drift");
+  }
+
+  [Test]
   public async Task GetIntegrityOriginGenerationAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -809,6 +934,29 @@ public class WorkCoordinatorDefaultsTests {
     var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 0L);
 
     await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task EnsureIntegritySealGenerationAsync_WithARewrite_WithoutProviderSupport_FallsBackToTheGenerationOnlyGuardAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 3L, new IntegrityHistoryRewrite(2, 10));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task GetIntegritySealGenerationAsync_WithoutProviderSupport_IsUnknownAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegritySealGenerationAsync(Guid.Empty)).IsNull();
+  }
+
+  [Test]
+  public async Task GetIntegrityHistoryRewriteAsync_WithoutProviderSupport_VouchesForNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegrityHistoryRewriteAsync(0L)).IsNull();
   }
 
   [Test]

@@ -40,7 +40,25 @@ public sealed record StreamIdInfo(
     Location? PropertyLocation = null,
     int InheritanceDepth = 0,
     bool DeclinesInheritedGenerate = false
-);
+) {
+  /// <summary>
+  /// The stream id's strong-id type, <c>global::</c> qualified, or null when it is not a strong id (#2072). The generated
+  /// <c>GetStreamIdType</c> reports it, so a message this type cascades from can check the id type it inherits.
+  /// </summary>
+  public string? StrongIdType { get; init; }
+
+  /// <summary>
+  /// Whether the generated setter can build the strong id with its <c>From(Guid)</c>; false for a stream id that is not
+  /// a strong id.
+  /// </summary>
+  public bool StrongIdSettable { get; init; }
+
+  /// <summary>
+  /// The setter's accept clauses for the source id types <c>[StreamId(InheritFrom = ...)]</c> lists (see
+  /// <c>StrongIdStreamIds.AcceptClauses</c>); empty when it lists none.
+  /// </summary>
+  public string InheritFromClauses { get; init; } = "";
+}
 
 /// <summary>
 /// Value type containing information about a discovered event without stream key.
@@ -87,4 +105,22 @@ public sealed record CommandStreamIdInfo(
     Location? PropertyLocation = null,
     int InheritanceDepth = 0,
     bool DeclinesInheritedGenerate = false
-);
+) {
+  /// <summary>
+  /// The stream id's strong-id type, <c>global::</c> qualified, or null when it is not a strong id (#2072). The generated
+  /// <c>GetStreamIdType</c> reports it, so a message this type cascades from can check the id type it inherits.
+  /// </summary>
+  public string? StrongIdType { get; init; }
+
+  /// <summary>
+  /// Whether the generated setter can build the strong id with its <c>From(Guid)</c>; false for a stream id that is not
+  /// a strong id.
+  /// </summary>
+  public bool StrongIdSettable { get; init; }
+
+  /// <summary>
+  /// The setter's accept clauses for the source id types <c>[StreamId(InheritFrom = ...)]</c> lists (see
+  /// <c>StrongIdStreamIds.AcceptClauses</c>); empty when it lists none.
+  /// </summary>
+  public string InheritFromClauses { get; init; } = "";
+}

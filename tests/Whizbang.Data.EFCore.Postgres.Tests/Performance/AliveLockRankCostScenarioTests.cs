@@ -78,6 +78,7 @@ public class AliveLockRankCostScenarioTests : EFCoreTestBase {
 
     // The first claim on a session compiles its statements and warms the catalog; a claimer pays that once.
     _ = await _claimAsync(conn, cancellationToken);
+    await _settleAsync(conn);
     var (fresh, freshPartitions) = await _claimAsync(conn, cancellationToken);
     var freshRank = await _rankPlanAsync(conn, cancellationToken);
 
@@ -87,6 +88,7 @@ public class AliveLockRankCostScenarioTests : EFCoreTestBase {
     await _compactAsync(conn);
     var slowRegistryPages = await _registryPagesAsync(conn);
     _ = await _claimAsync(conn, cancellationToken);
+    await _settleAsync(conn);
     var (slow, slowPartitions) = await _claimAsync(conn, cancellationToken);
     var slowRank = await _rankPlanAsync(conn, cancellationToken);
 
@@ -189,6 +191,19 @@ public class AliveLockRankCostScenarioTests : EFCoreTestBase {
   private static async Task _compactAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "VACUUM FULL wh_service_instances";
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Removes the row versions the earlier claims left. Every claim leases the outbox rows and rolls back, so each one
+  /// leaves a dead version of every row it leased and an index entry for it. The slow measurement follows three such
+  /// claims and the fresh one follows one, and whether a later read has already pruned them varies from run to run.
+  /// Vacuumed before each measured claim, both start from the same live rows. A plain vacuum keeps the relation's
+  /// file, so the plans the warm-up compiled stay valid.
+  /// </summary>
+  private static async Task _settleAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "VACUUM wh_outbox, wh_service_instances";
     await cmd.ExecuteNonQueryAsync();
   }
 

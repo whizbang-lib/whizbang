@@ -337,6 +337,8 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
     result = result.Replace("{{PERSPECTIVE_SERVICE_COUNT}}", perspectiveServices.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("{{LENS_SERVICE_COUNT}}", lensServices.Length.ToString(CultureInfo.InvariantCulture));
+    // #2243: both registrations are named by this assembly, so a host replays only its own service's
+    result = result.Replace("{{ASSEMBLY_NAME_LITERAL}}", ServiceAssemblyFactsGenerator.Literal(assemblyName));
     result = TemplateUtilities.ReplaceRegion(result, "LENS_REGISTRATIONS", lensRegistrations);
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_REGISTRATIONS", perspectiveRegistrations);
 

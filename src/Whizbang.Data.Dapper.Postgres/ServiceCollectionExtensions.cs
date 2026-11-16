@@ -535,7 +535,8 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<IStreamPurger>(sp =>
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
-        logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+        integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
     // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
     // registered first wins.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
@@ -559,6 +560,9 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
+    // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+      AuditBodyConversionStep.FromServices));
     // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
       SupersedingHistoryReconcileStep.FromServices));

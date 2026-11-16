@@ -18,12 +18,23 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <para>
 /// Same layout as <see cref="EmissionIdentity"/> (see <see cref="DerivedIdentity"/>): the composite id's first 80
-/// bits, then the child's ordinal, then SHA-256 over <c>whizbang.composite-child.v2\n{composite}\n{ordinal}\n{type}</c>,
+/// bits, then the child's ordinal, then SHA-256 over <c>whizbang.composite-child.v2\n{composite}\n{ordinal}\n{type}</c> (the type version-free),
 /// so children sort in the order the composite lists them and after every child of an earlier composite.
 /// The ordinal is the child's position in the composite as the producer packed it, never its position in
 /// the set a given consumer keeps, so two consumers of one composite derive the same id for the same child.
 /// A composite that carries its children's original ids (<see cref="Whizbang.Core.Minting.IIdentityPreservingComposite"/>)
 /// keeps them; derivation applies only where a fresh id would otherwise be minted.
+/// </para>
+/// <para>
+/// <b>One rendering of the type (#2266).</b> Every path derives through <see cref="ForChild(Guid, int, Type)"/> or
+/// <see cref="ForChild(Guid, int, string)"/>, and the type name enters the hash version-free
+/// (<see cref="EventTypeMatchingHelper.NormalizeTypeName"/>: <c>Namespace.Type, Assembly</c>, generic arguments
+/// likewise). The raw expansion reads the type off the wire, which is the publisher's versioned assembly-qualified
+/// name; the typed expansion and the publisher's local fan-out have only the local CLR type. A receiver whose contract
+/// assembly carries another version rendered another name from its own type and derived a third id for the same child,
+/// so its stream digests disagreed with nothing missing. The version is the one part of the name no path can reproduce
+/// from what another holds, so it is the part left out. A name the publisher already wrote without it (the framework's
+/// stored form) derives the id it always did.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#deterministic-child-ids</docs>
@@ -31,15 +42,71 @@ namespace Whizbang.Core.Messaging;
 public static class CompositeChildIdentity {
   private const string PREFIX = "whizbang.composite-child.v2";
 
-  /// <summary>Derives the child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>.</summary>
+  /// <summary>
+  /// The child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>, from the
+  /// child's CLR type: the typed expansion and the publisher's local fan-out (#2266).
+  /// </summary>
   /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
   /// <param name="ordinal">Zero-based position of the child within the composite.</param>
-  /// <param name="childTypeName">The child's type name as the fan-out renders it.</param>
+  /// <param name="childType">The child's runtime type.</param>
+  /// <returns>The id every path derives for this child.</returns>
+  /// <exception cref="ArgumentNullException">The type is null.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_TheTypeAndEveryRenderingOfItsName_DeriveOneIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_ANullType_ThrowsAsync</tests>
+  public static Guid ForChild(Guid compositeMessageId, int ordinal, Type childType) =>
+    _derive(compositeMessageId, ordinal, HashedTypeName(childType));
+
+  /// <summary>
+  /// The child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>, from the
+  /// child's type name as a bundle carries it on the wire: the raw expansion (#2266).
+  /// </summary>
+  /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
+  /// <param name="ordinal">Zero-based position of the child within the composite.</param>
+  /// <param name="wireTypeName">The child's type name, with or without the assembly version decoration.</param>
+  /// <returns>The id every path derives for this child.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:TryExpand_TheTypedAndTheRawPath_DeriveTheSameIds_WhenThePublisherRanAnotherBuildAsync</tests>
+  public static Guid ForChild(Guid compositeMessageId, int ordinal, string wireTypeName) =>
+    _derive(compositeMessageId, ordinal, wireTypeName);
+
+  /// <summary>
+  /// The type name a child id hashes (#2266): the canonical wire form, <see cref="TypeNameFormatter.Format"/>
+  /// (<c>Namespace.Type, Assembly</c>, nested types with <c>+</c>, version-free at every depth). A name read off the wire
+  /// goes through the one string normalizer, <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>, which turns any
+  /// rendering of a type's name into that same form (#2267), so a receiver on another build of any assembly in the name
+  /// derives the same id.
+  /// </summary>
+  /// <param name="childType">The child's runtime type.</param>
+  /// <returns>The name the child id is derived from.</returns>
+  /// <exception cref="ArgumentNullException">The type is null.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_IsOneDefinition_ForTheTypeAndForEveryRenderingOfItsNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_ForATypeWithoutTypeArguments_IsTheCanonicalWireFormAsync</tests>
+  internal static string HashedTypeName(Type childType) {
+    ArgumentNullException.ThrowIfNull(childType);
+    return TypeNameFormatter.Format(childType);
+  }
+
+  /// <summary>The one definition of the hashed name (see <see cref="HashedTypeName(Type)"/>), from a rendered name.</summary>
+  /// <param name="typeName">The type name, with or without version decorations at any depth.</param>
+  /// <returns>The name the child id is derived from.</returns>
+  internal static string HashedTypeName(string typeName) => EventTypeMatchingHelper.NormalizeTypeName(typeName);
+
+  /// <summary>
+  /// Derives the child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>. The
+  /// type name enters the hash version-free, so any rendering of one type derives one id (#2266). Library code calls
+  /// <see cref="ForChild(Guid, int, Type)"/> or <see cref="ForChild(Guid, int, string)"/>: this member is banned for it
+  /// (BannedSymbols.txt, #2267), so a second call site does not compile.
+  /// </summary>
+  /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
+  /// <param name="ordinal">Zero-based position of the child within the composite.</param>
+  /// <param name="childTypeName">The child's type name, with or without the assembly version decoration.</param>
   /// <returns>A UUIDv7-shaped id that is identical for identical inputs.</returns>
   /// <exception cref="ArgumentException">The composite id is empty.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The ordinal is negative.</exception>
   /// <exception cref="ArgumentNullException">The type name is null.</exception>
-  public static Guid Derive(Guid compositeMessageId, int ordinal, string childTypeName) {
+  public static Guid Derive(Guid compositeMessageId, int ordinal, string childTypeName) =>
+    _derive(compositeMessageId, ordinal, childTypeName);
+
+  private static Guid _derive(Guid compositeMessageId, int ordinal, string childTypeName) {
     if (compositeMessageId == Guid.Empty) {
       throw new ArgumentException("A deterministic child id needs the composite it was expanded from.", nameof(compositeMessageId));
     }
@@ -50,7 +117,7 @@ public static class CompositeChildIdentity {
       PREFIX, "\n",
       compositeMessageId.ToString("N"), "\n",
       ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture), "\n",
-      childTypeName);
+      HashedTypeName(childTypeName));
 
     return DerivedIdentity.FromCanonical(compositeMessageId, ordinal, canonical);
   }

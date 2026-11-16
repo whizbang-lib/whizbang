@@ -46,10 +46,31 @@ public partial class DapperWorkCoordinator {
     _withGatedCommandAsync((cmd, prefix) => TableMaintenanceSql.TablesNeedingRewriteAsync(cmd, prefix, cancellationToken), cancellationToken);
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  public Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) =>
+    _withGatedCommandAsync((cmd, prefix) => TableMaintenanceSql.QueueStatusAsync(cmd, prefix, cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  public Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
+    _withGatedCommandAsync((cmd, prefix) => TableMaintenanceSql.TotalBytesAsync(cmd, prefix, tableName, cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
   public Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     return _withGatedCommandAsync(async (cmd, prefix) => {
       await TableMaintenanceSql.RequestRewriteAsync(cmd, prefix, tableName, cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:CompleteTableRewrite_ClearsTheRequest_AndRecordsTheStrategyAsync</tests>
+  public Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(outcome);
+    TableMaintenanceSql.RequireFrameworkTable(outcome.TableName);
+    return _withGatedCommandAsync(async (cmd, prefix) => {
+      await TableMaintenanceSql.CompleteRewriteAsync(cmd, prefix, outcome, cancellationToken).ConfigureAwait(false);
       return true;
     }, cancellationToken);
   }

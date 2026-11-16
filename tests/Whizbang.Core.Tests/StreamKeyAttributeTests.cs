@@ -95,4 +95,22 @@ public class StreamIdAttributeTests {
 
     await Assert.That(attribute.Override).IsTrue();
   }
+
+  [Test]
+  public async Task StreamIdAttribute_InheritFrom_DefaultsToNullAsync() {
+    // A plain [StreamId] names no extra source types: only its own strong id or a plain Guid is inherited (#2072)
+    var attribute = new StreamIdAttribute();
+
+    await Assert.That(attribute.InheritFrom).IsNull();
+  }
+
+  [Test]
+  public async Task StreamIdAttribute_InheritFrom_CanBeSetAsync() {
+    var attribute = new StreamIdAttribute { InheritFrom = [typeof(Whizbang.Core.ValueObjects.MessageId), typeof(Whizbang.Core.ValueObjects.CorrelationId)] };
+
+    // Types are compared by identity: an equivalence check would walk each Type's members
+    await Assert.That(attribute.InheritFrom!.Length).IsEqualTo(2);
+    await Assert.That(attribute.InheritFrom[0] == typeof(Whizbang.Core.ValueObjects.MessageId)).IsTrue();
+    await Assert.That(attribute.InheritFrom[1] == typeof(Whizbang.Core.ValueObjects.CorrelationId)).IsTrue();
+  }
 }

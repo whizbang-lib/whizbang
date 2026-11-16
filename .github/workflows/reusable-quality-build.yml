@@ -191,8 +191,11 @@ jobs:
           if (-not $out.Contains('<Configurations>')) { throw 'Configurations block must survive (see comment above)' }
           if ($analyzed -eq 0) { throw 'refusing to analyze an empty solution' }
 
+      # Two build nodes, not one per core: with every node, the compiler server and the analyzers loaded at once the
+      # hosted runner ran out of memory, stalled for an hour and was dropped ("The hosted runner lost communication
+      # with the server"), twice in a day. A slower analysis that finishes beats a fast one the runner never reports.
       - name: Build (analyzed)
-        run: dotnet build Whizbang.Analysis.slnx --configuration Release
+        run: dotnet build Whizbang.Analysis.slnx --configuration Release -maxcpucount:2 -nodeReuse:false
 
       # The scanner's state for the End step: .sonarqube (its configuration, the per-project file lists and
       # the analyzers' reports), the scanner version, and this checkout's path, which the state's files name

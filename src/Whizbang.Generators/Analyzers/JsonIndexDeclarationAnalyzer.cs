@@ -270,7 +270,7 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
     context.ReportDiagnostic(Diagnostic.Create(
         DeclaredIndexCannotBeReached,
         declaration.Identifier.GetLocation(),
-        model.Name,
+        TypeNameUtilities.SimpleName(model),
         forcingMember));
   }
 

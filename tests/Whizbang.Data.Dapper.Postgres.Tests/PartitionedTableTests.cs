@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
@@ -136,13 +137,15 @@ public class PartitionedTableTests {
     var services = new ServiceCollection();
     services.Configure<WhizbangNotificationOptions>(o => o.SignalRetention = TimeSpan.FromDays(2));
     services.Configure<MaintenanceWorkerOptions>(o => o.LifecycleCompletionRetentionDays = 4);
+    services.Configure<StreamIntegrityOptions>(o => o.RepairReceptorLookback = TimeSpan.FromDays(3));
 
     services.AddFrameworkPartitionedTables();
 
     await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo(
       [PartitionedTables.Log, PartitionedTables.StagedMetadata, PartitionedTables.Traces,
-       PartitionedTables.Signals(TimeSpan.FromDays(2)), PartitionedTables.LifecycleCompletions(4)]);
+       PartitionedTables.Signals(TimeSpan.FromDays(2)), PartitionedTables.LifecycleCompletions(4),
+       PartitionedTables.HandledLedger(TimeSpan.FromDays(3))]);
     await Assert.That(() => ((IServiceCollection)null!).AddFrameworkPartitionedTables()).ThrowsExactly<ArgumentNullException>();
   }
 
@@ -155,8 +158,9 @@ public class PartitionedTableTests {
     await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo(
       [PartitionedTables.Log, PartitionedTables.StagedMetadata, PartitionedTables.Traces,
-       PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
-      .Because("seven days is the default of both SignalRetention and LifecycleCompletionRetentionDays");
+       PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7),
+       PartitionedTables.HandledLedger(TimeSpan.FromDays(7))])
+      .Because("seven days is the default of SignalRetention, LifecycleCompletionRetentionDays and RepairReceptorLookback");
   }
 
   [Test]
@@ -167,5 +171,18 @@ public class PartitionedTableTests {
     await Assert.That(PartitionedTables.Traces).IsEqualTo(
       PartitionedTable.RetainedBySetting("wh_traces", "recorded_at", TimeSpan.FromDays(1), "trace_retention_days", 30))
       .Because("a trace is kept thirty days by default (#1726)");
+  }
+
+  /// <summary>
+  /// #2273: the handled ledger is daily by its event id (a version-7 id carries the event's origin time), kept exactly
+  /// as long as the repair receptor lookback, so a partition is dropped only once no event in it can still be proven
+  /// never handled.
+  /// </summary>
+  [Test]
+  public async Task TheHandledLedger_IsDailyByEventId_KeptForTheRepairReceptorLookbackAsync() {
+    await Assert.That(PartitionedTables.HandledLedger(TimeSpan.FromDays(5))).IsEqualTo(
+      PartitionedTable.RetainedFor("wh_receptor_handled", "event_id", TimeSpan.FromDays(1), TimeSpan.FromDays(5)));
+    await Assert.That(PartitionedTables.HandledLedger(TimeSpan.FromMinutes(-1)).Retention).IsEqualTo(TimeSpan.Zero)
+      .Because("a lookback below zero is refused at start; the declaration never carries a negative window");
   }
 }

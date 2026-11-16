@@ -83,12 +83,60 @@ public partial class DapperWorkCoordinator {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamAllowanceTests.cs:SyncMixedStreamAllowancesAsync_AllowsThePair_AndAnEmptyListAllowsNothingAsync</tests>
+  public Task SyncMixedStreamAllowancesAsync(IReadOnlyList<Whizbang.Core.Perspectives.MixedStreamPair> pairs, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(pairs);
+    return _withGatedCommandAsync(async (cmd, prefix) => {
+      await CoordinatorMixedStreamSql.SyncAllowancesAsync(cmd, prefix, pairs, cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamAllowanceTests.cs:GetStateBasedStreamIdsAsync_PassingOverTheAllowedType_LeavesTheMixedStreamRebuildableAsync</tests>
+  public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+      IReadOnlyList<Guid> streamIds, IReadOnlyList<string> ignoredEphemeralTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    ArgumentNullException.ThrowIfNull(ignoredEphemeralTypes);
+    return streamIds.Count == 0
+      ? Task.FromResult<IReadOnlyCollection<Guid>>([])
+      : _withGatedCommandAsync((cmd, prefix) =>
+        CoordinatorMixedStreamSql.StateBasedStreamIdsAsync(cmd, prefix, streamIds, ignoredEphemeralTypes, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
   public Task SyncEphemeralTypeGraceAsync(IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(graceOverrides);
     return _withGatedCommandAsync(async (cmd, prefix) => {
       await CoordinatorRetentionSql.SyncEphemeralTypeGraceAsync(cmd, prefix, graceOverrides, cancellationToken).ConfigureAwait(false);
       return true;
     }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperHandledLedgerTests.cs:Lookup_AndSweep_RunOnTheDapperDriverAsync</tests>
+  public Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return Task.FromResult(new HandledLedgerAnswer(null, new HashSet<Guid>()));
+    }
+    return _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorRetentionSql.LookupHandledEventsAsync(cmd, prefix, eventIds, cancellationToken), cancellationToken);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperHandledLedgerTests.cs:Lookup_AndSweep_RunOnTheDapperDriverAsync</tests>
+  public Task<long> SweepHandledLedgerAsync(DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) =>
+    _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorRetentionSql.SweepHandledLedgerAsync(cmd, prefix, now, keep, cancellationToken), cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+      IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention, int batchSize,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(retention);
+    return _withGatedCommandAsync((cmd, prefix) =>
+      CoordinatorRetentionSql.SweepOperationalRetentionAsync(cmd, prefix, retention, batchSize, cancellationToken), cancellationToken);
   }
 
   /// <inheritdoc />

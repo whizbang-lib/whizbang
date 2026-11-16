@@ -84,6 +84,25 @@ public partial class DapperWorkCoordinator {
       .ConfigureAwait(false);
 
   /// <inheritdoc />
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFleetRecoveryTests.cs:HousekeepingDeferral_IsReadWithTheBacklog_KeepsTheFirstWriter_AndClearsAsync</tests>
+  public async ValueTask RecordHousekeepingDeferralAsync(
+      string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(budgetKey);
+    _ = await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.RecordHousekeepingDeferralAsync(
+      cmd, prefix, budgetKey, firstDeferredAt, cancellationToken), cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFleetRecoveryTests.cs:HousekeepingDeferral_IsReadWithTheBacklog_KeepsTheFirstWriter_AndClearsAsync</tests>
+  public async ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(budgetKey);
+    _ = await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.ClearHousekeepingDeferralAsync(
+      cmd, prefix, budgetKey, cancellationToken), cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   /// <remarks>
   /// A failed import throws, never returns false: false means the custody already existed, which the drainer settles at
   /// the broker, so a failure reported as false would lose the message.

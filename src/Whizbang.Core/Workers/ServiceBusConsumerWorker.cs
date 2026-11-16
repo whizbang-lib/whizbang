@@ -782,7 +782,7 @@ public partial class ServiceBusConsumerWorker(
       // This means envelope is probably IMessageEnvelope<object> with JsonElement payload
       // DEFENSIVE: This should not happen - envelopes from transport should be strongly-typed
       throw new InvalidOperationException(
-        $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. " +
+        $"Envelope has JsonElement payload but envelope type is {TypeNameFormatter.ForLog(envelope.GetType())}. " +
         $"MessageId: {envelope.MessageId}. " +
         "This indicates double-serialization or incorrect envelope creation. " +
         "Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +

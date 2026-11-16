@@ -164,8 +164,20 @@ internal static class PartitionedTables {
     PartitionedTable.RetainedBySetting("wh_traces", RECORDED_AT, _day, "trace_retention_days", 30);
 
   /// <summary>
+  /// <c>wh_receptor_handled</c>, the handled ledger (#2273): daily by <c>event_id</c> range (a version-7 id carries its
+  /// event's origin time), kept for <see cref="Whizbang.Core.Messaging.StreamIntegrityOptions.RepairReceptorLookback"/>, the
+  /// window inside which a repaired event can be proven never handled. Created partitioned, so it is never converted.
+  /// </summary>
+  /// <param name="lookback">The repair receptor lookback; below zero keeps nothing.</param>
+  /// <returns>The declaration.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PartitionedTableTests.cs:TheHandledLedger_IsDailyByEventId_KeptForTheRepairReceptorLookbackAsync</tests>
+  public static PartitionedTable HandledLedger(TimeSpan lookback) =>
+    PartitionedTable.RetainedFor("wh_receptor_handled", EVENT_ID, _day, lookback < TimeSpan.Zero ? TimeSpan.Zero : lookback);
+
+  /// <summary>
   /// Registers the framework's partitioned tables: <c>wh_log</c>, <c>wh_event_metadata_staging</c> and <c>wh_traces</c>,
-  /// and <c>wh_signals</c> and <c>wh_lifecycle_completions</c> with the windows their options carry. Each driver calls
+  /// and <c>wh_signals</c>, <c>wh_lifecycle_completions</c> and <c>wh_receptor_handled</c> with the windows their options
+  /// carry. Each driver calls
   /// this once per schema.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -184,7 +196,9 @@ internal static class PartitionedTables {
       .AddPartitionedTable(Traces)
       .AddPartitionedTable(sp => Signals(sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value.SignalRetention))
       .AddPartitionedTable(sp =>
-        LifecycleCompletions(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.LifecycleCompletionRetentionDays));
+        LifecycleCompletions(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.LifecycleCompletionRetentionDays))
+      .AddPartitionedTable(sp =>
+        HandledLedger(sp.GetRequiredService<IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>().Value.RepairReceptorLookback));
   }
 
   /// <summary>

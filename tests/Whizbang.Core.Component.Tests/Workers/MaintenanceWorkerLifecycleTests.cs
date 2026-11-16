@@ -156,6 +156,59 @@ public class MaintenanceWorkerLifecycleTests {
       .Because("the loop survived the failed sweep and ran the next tick");
   }
 
+  /// <summary>
+  /// Every task of a cycle is isolated (#2174), but a tick does work around its tasks: it opens a scope and resolves the
+  /// work coordinator from it before any task runs. A coordinator that cannot be built (a missing connection string, a
+  /// disposed provider) throws there, outside every task, and only the loop's own catch stands between that and a
+  /// worker that stops maintaining for the life of the process.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_TheCoordinatorCannotBeResolved_LogsTheTickAsRetryable_AndTheNextTickSweepsAsync() {
+    var coord = new FakeCoordinator();
+    var resolutionFails = 1;
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => Volatile.Read(ref resolutionFails) == 1
+      ? throw new InvalidOperationException("the coordinator could not be built")
+      : coord);
+    var sp = services.BuildServiceProvider();
+    var logger = new CapturingLogger();
+    var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var waits = 0;
+    var worker = new MaintenanceWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      logger) {
+      DelayAsync = (_, ct) => {
+        if (Interlocked.Increment(ref waits) > 1) {
+          return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(ct);
+        }
+        Volatile.Write(ref resolutionFails, 0);
+        waiting.TrySetResult();
+        return release.Task.WaitAsync(ct);
+      },
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // The bounds below are hang guards only: each wait is on the transition itself.
+    await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    release.TrySetResult();
+    await coord.FirstMaintenance.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<LogEntry> entries;
+    lock (logger.Entries) {
+      entries = [.. logger.Entries];
+    }
+    await Assert.That(entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("tick failed", StringComparison.Ordinal)
+        && e.Exception is InvalidOperationException { Message: "the coordinator could not be built" })).IsTrue()
+      .Because("a failure outside every task is the loop's to log, with what failed, and to retry next interval");
+    await Assert.That(coord.MaintenanceCalls).IsEqualTo(1).Because("the loop survived the failed tick and swept on the next");
+  }
+
   [Test]
   public async Task RunMaintenanceOnceAsync_SettlednessProbeFails_SweepsAnywayAsync() {
     // Unmeasured is not busy. Treating a failed backlog read as "busy" would let one

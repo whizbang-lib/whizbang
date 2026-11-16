@@ -45,7 +45,7 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
 
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.ListenNotify);
     await Assert.That(opts.ConnectionStringKey).IsEqualTo("gatewayservice-db");
-    await Assert.That(opts.DirectConnectionString).IsEqualTo("Host=explicit");
+    await Assert.That(opts.DirectConnectionString?.Reveal()).IsEqualTo("Host=explicit");
     await Assert.That(opts.DisableNotifications).IsFalse();
     await Assert.That(opts.PollingFallbackInterval).IsEqualTo(TimeSpan.FromSeconds(45));
     await Assert.That(opts.ListenKeepaliveInterval).IsEqualTo(TimeSpan.FromSeconds(20));

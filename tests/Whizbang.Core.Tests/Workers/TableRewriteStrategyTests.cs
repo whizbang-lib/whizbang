@@ -22,14 +22,14 @@ namespace Whizbang.Core.Tests.Workers;
 /// <summary>
 /// <c>Whizbang:Workers:Maintenance:TableRewriteStrategy</c> resolved against <c>AllowTableRewrite</c> and whether
 /// pg_squeeze is usable: one test per cell of the resolution matrix (four values, pg_squeeze usable or not,
-/// AllowTableRewrite or not). <c>Auto</c> never starts an online rewrite (decision 1, #1671): it rewrites with
-/// <c>VACUUM FULL</c> when permitted and otherwise only detects and reports. An explicit <c>PgSqueeze</c> is never
+/// AllowTableRewrite or not). <c>Auto</c> rewrites online when an online tool can run on the host (#2319), and
+/// otherwise rewrites with <c>VACUUM FULL</c> when permitted and only detects and reports when not. An explicit <c>PgSqueeze</c> is never
 /// replaced by a blocking rewrite, and it requires pg_squeeze, so on a server that does not allow it start fails
 /// with the fix.
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
 public class TableRewriteStrategyTests {
-  private const string ONLINE_HINT = "Auto never starts an online rewrite";
+  private const string ONLINE_HINT = "Auto runs an online tool only once it is Ready";
   private const string NOT_PERMITTED = "VACUUM FULL is not permitted (Whizbang:Workers:Maintenance:AllowTableRewrite = false)";
 
   [Test]
@@ -48,6 +48,11 @@ public class TableRewriteStrategyTests {
   [Arguments(TableRewriteStrategy.VacuumFull, true, false, null, NOT_PERMITTED)]
   [Arguments(TableRewriteStrategy.VacuumFull, false, true, TableRewriteStrategies.VACUUM_FULL, "VacuumFull: VACUUM FULL at boot")]
   [Arguments(TableRewriteStrategy.VacuumFull, false, false, null, NOT_PERMITTED)]
+  // Online (#2301): the maintenance cycle picks pg_squeeze, pg_repack or a blue-green rebuild, whatever else holds.
+  [Arguments(TableRewriteStrategy.Online, true, true, TableRewriteStrategies.ONLINE, "Online: ")]
+  [Arguments(TableRewriteStrategy.Online, true, false, TableRewriteStrategies.ONLINE, "Online: ")]
+  [Arguments(TableRewriteStrategy.Online, false, true, TableRewriteStrategies.ONLINE, "Online: ")]
+  [Arguments(TableRewriteStrategy.Online, false, false, TableRewriteStrategies.ONLINE, "Online: ")]
   // None: nothing is rewritten, whatever else holds.
   [Arguments(TableRewriteStrategy.None, true, true, null, "None: no table is rewritten")]
   [Arguments(TableRewriteStrategy.None, true, false, null, "None: no table is rewritten")]
@@ -62,12 +67,31 @@ public class TableRewriteStrategyTests {
   }
 
   [Test]
-  public async Task Auto_WithPgSqueezeUsable_SaysHowToOptIn_AndNeverPicksItAsync() {
+  public async Task Auto_WithPgSqueezeUsableButNotRunnable_SaysWhatItNeeds_AndDoesNotPickItAsync() {
     var plan = TableRewriteStrategyResolver.Resolve(TableRewriteStrategy.Auto, allowTableRewrite: false, pgSqueezeUsable: true);
 
     await Assert.That(plan.Reason).IsEqualTo(
-      "Auto detects and reports only: " + NOT_PERMITTED + "; pg_squeeze is usable, but Auto never starts an online rewrite: "
-      + "set Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze to opt in");
+      "Auto detects and reports only: " + NOT_PERMITTED + "; pg_squeeze is usable, but Auto runs an online tool only once it "
+      + "is Ready on every database with its rewriter registered: provision it, or set "
+      + "Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze");
+  }
+
+  /// <summary>#2319: Auto resolves to the online tool that can run on this host, whatever AllowTableRewrite says.</summary>
+  [Test]
+  [Arguments(TableRewriteStrategies.PG_SQUEEZE, "Auto: online rewrite through pg_squeeze, which is Ready here")]
+  [Arguments(TableRewriteStrategies.PG_REPACK, "Auto: online rewrite through pg_repack in process, which is Ready here")]
+  public async Task Auto_WithAnOnlineToolThatCanRun_ResolvesToItAsync(string tool, string reason) {
+    var plan = TableRewriteStrategyResolver.Resolve(TableRewriteStrategy.Auto, allowTableRewrite: false, pgSqueezeUsable: true, tool);
+
+    await Assert.That(plan).IsEqualTo(new TableRewritePlan(tool, reason));
+  }
+
+  [Test]
+  public async Task AnOnlineTool_IsIgnoredForEveryStrategyButAutoAsync() {
+    var plan = TableRewriteStrategyResolver.Resolve(TableRewriteStrategy.VacuumFull, allowTableRewrite: false, pgSqueezeUsable: true,
+      TableRewriteStrategies.PG_SQUEEZE);
+
+    await Assert.That(plan.Strategy).IsNull().Because("only Auto chooses a tool; VacuumFull without permission rewrites nothing");
   }
 
   [Test]
@@ -215,5 +239,21 @@ public class TableRewriteStrategyTests {
     var report = CapabilityReport.FormatUnusable(registry.Statuses);
 
     await Assert.That(report).Contains("Fix: set wal_level = logical");
+  }
+
+  /// <summary>
+  /// #2301 (decision 1, #1671): <c>Auto</c> never starts an online rewrite of any kind, a blue-green rebuild included.
+  /// The rebuild is opted into with <c>Online</c>, as pg_squeeze is with <c>PgSqueeze</c>.
+  /// </summary>
+  [Test]
+  [Arguments(true, true)]
+  [Arguments(true, false)]
+  [Arguments(false, true)]
+  [Arguments(false, false)]
+  public async Task Auto_NeverResolvesToAnOnlineRewrite_ABlueGreenRebuildIncludedAsync(bool allowTableRewrite, bool pgSqueezeUsable) {
+    var plan = TableRewriteStrategyResolver.Resolve(TableRewriteStrategy.Auto, allowTableRewrite, pgSqueezeUsable);
+
+    await Assert.That(plan.Strategy is null or TableRewriteStrategies.VACUUM_FULL).IsTrue()
+      .Because("Auto is VACUUM FULL when permitted, or detect and report");
   }
 }

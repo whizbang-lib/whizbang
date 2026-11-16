@@ -20,6 +20,13 @@ using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
+/// <summary>An event type whose definition drifts in these tests (Sourced before, declared ephemeral now).</summary>
+public sealed record ReconcilerDriftProbe : IEvent {
+  /// <summary>The order, which is the stream.</summary>
+  [StreamId]
+  public Guid OrderId { get; init; }
+}
+
 /// <summary>
 /// Integration tests for the startup <see cref="TypeDefinitionReconciler"/> (fingerprint F-4): it
 /// registers each type's current definition, detects drift against the stored fingerprint, records a
@@ -31,7 +38,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
 [Category("Shard3")]
 public class TypeDefinitionReconcilerTests : EFCoreTestBase {
-  private const string EventType = "Whizbang.Tests.ReconcilerDriftEvent";
+  // The bare CLR name keys the type-definition registry; the dispatcher writes the versioned assembly-qualified name to
+  // the outbox, and the store keeps the stored form (#2254). Each is built by its helper, as the write paths build it.
+  private static readonly string _eventType = TypeNameFormatter.FormatClrTypeName(typeof(ReconcilerDriftProbe));
+  private static readonly string _outboxMessageType = TypeNameFormatter.AssemblyQualifiedName(typeof(ReconcilerDriftProbe));
 
   private sealed class FakeCatalog(params MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
@@ -59,7 +69,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
         catalog);
 
   private static MessageTypeCatalogEntry _ephemeralEntry(string settingsHash, string schemaHash) =>
-    new(typeof(object), EventType, "event", null) {
+    new(typeof(ReconcilerDriftProbe), _eventType, "event", null) {
       Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.TtlRow),
       SettingsHash = settingsHash,
       SchemaHash = schemaHash,
@@ -80,7 +90,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
         "service_name": "test", "host_name": "test-host", "process_id": 1,
         "new_outbox_messages": [{
           "MessageId": "{{eventId}}", "Destination": "out-topic",
-          "MessageType": "{{EventType}}", "EnvelopeType": null,
+          "MessageType": "{{_outboxMessageType}}", "EnvelopeType": null,
           "Envelope": {"Payload": {"OrderId": 42}, "MessageId": "{{eventId}}", "Hops": []},
           "Metadata": {}, "Scope": null, "StreamId": "{{streamId}}", "IsEvent": true, "Flags": 0
         }]
@@ -145,7 +155,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     var coordinator = _coordinator(dbContext);
 
     // The type's PRIOR (Sourced-era) definition is already stored, and it has historical Sourced events.
-    await coordinator.RegisterTypeDefinitionAsync(EventType, _hex('a'), _hex('c'), 0);
+    await coordinator.RegisterTypeDefinitionAsync(_eventType, _hex('a'), _hex('c'), 0);
     var e1 = Guid.NewGuid();
     var e2 = Guid.NewGuid();
     await _commitSourcedAsync(connection, e1, Guid.NewGuid());
@@ -187,7 +197,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
     var coordinator = _coordinator(dbContext);
 
-    await coordinator.RegisterTypeDefinitionAsync(EventType, _hex('a'), _hex('c'), 0);
+    await coordinator.RegisterTypeDefinitionAsync(_eventType, _hex('a'), _hex('c'), 0);
     var e1 = Guid.NewGuid();
     await _commitSourcedAsync(connection, e1, Guid.NewGuid());
 
@@ -207,7 +217,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
     var coordinator = _coordinator(dbContext);
 
-    var entry = new MessageTypeCatalogEntry(typeof(object), "Whizbang.Tests.GraceSyncEvent", "event", null) {
+    var entry = new MessageTypeCatalogEntry(typeof(ReconcilerDriftProbe), _eventType, "event", null) {
       Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.TtlRow, RewindGraceSeconds: 42),
       SettingsHash = new string('a', 64),
       SchemaHash = new string('c', 64),
@@ -215,9 +225,11 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     await _reconciler(coordinator, new FakeCatalog(entry), act: false).ReconcileAsync();
 
     await using var v = connection.CreateCommand();
-    v.CommandText = "SELECT grace_seconds FROM wh_ephemeral_type_grace WHERE event_type = normalize_event_type('Whizbang.Tests.GraceSyncEvent')";
+    v.CommandText = "SELECT grace_seconds FROM wh_ephemeral_type_grace WHERE event_type = @stored";
+    v.Parameters.AddWithValue("stored", TypeNameFormatter.Format(typeof(ReconcilerDriftProbe)));
     await Assert.That((int)(await v.ExecuteScalarAsync())!).IsEqualTo(42)
-      .Because("The startup reconciler syncs each type's [Ephemeral(RewindGraceSeconds)] override into the grace table.");
+      .Because("The startup reconciler syncs each type's [Ephemeral(RewindGraceSeconds)] override into the grace table, "
+        + "keyed by the stored form the reaper joins to event_type (#2254).");
   }
 
   [Test]
@@ -227,7 +239,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     var coordinator = _coordinator(dbContext);
 
     // The stored definition matches what the code produces now.
-    await coordinator.RegisterTypeDefinitionAsync(EventType, _hex('b'), _hex('c'), 0);
+    await coordinator.RegisterTypeDefinitionAsync(_eventType, _hex('b'), _hex('c'), 0);
     var catalog = new FakeCatalog(_ephemeralEntry(settingsHash: _hex('b'), schemaHash: _hex('c')));
 
     var summary = await _reconciler(coordinator, catalog, act: true).ReconcileAsync();

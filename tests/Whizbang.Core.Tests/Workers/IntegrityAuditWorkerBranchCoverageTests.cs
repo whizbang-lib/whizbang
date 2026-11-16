@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// and the subscribed-type list when no event-type provider is available.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityAuditWorker.cs</code-under-test>
-public class IntegrityAuditWorkerBranchCoverageTests {
+public partial class IntegrityAuditWorkerBranchCoverageTests {
 
   // ── constructor guard ───────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     };
     var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, logger: logger);
+      _bothChecksOn(), logger: logger);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
 
@@ -120,7 +120,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       EpochResult = new EpochVerificationResult(9, 5),
     };
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics);
+      _bothChecksOn(), metrics: metrics);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
 
@@ -398,9 +398,14 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       bool registerTypeProvider = false,
       ConsumedMessageInfo[]? consumed = null,
       string[]? absorbedNamespaces = null,
-      string[]? ownedDomains = null) {
+      string[]? ownedDomains = null,
+      FakeTimeProvider? clock = null,
+      IntegritySweepScheduleState? scheduleState = null) {
     var services = new ServiceCollection();
-    services.AddSingleton<TimeProvider>(new FakeTimeProvider(_auditNow));
+    services.AddSingleton<TimeProvider>(clock ?? new FakeTimeProvider(_auditNow));
+    if (scheduleState is not null) {
+      services.AddSingleton(scheduleState);
+    }
     if (absorbedNamespaces is not null || ownedDomains is not null) {
       services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions()
         .AbsorbNamespaces(absorbedNamespaces ?? []).OwnDomains(ownedDomains ?? [])));
@@ -524,9 +529,19 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
       Task.FromResult(0L);
 
-    public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
-      TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) {
+    public List<SealRecheckRequest> RecheckRequests { get; } = [];
+
+    /// <summary>Runs inside the re-check, so a test can move the clock while it is "working".</summary>
+    public Action? DuringRecheck { get; init; }
+
+    /// <summary>Runs inside the full-history heal, for the same reason.</summary>
+    public Action? DuringHeal { get; init; }
+
+    public Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+      SealRecheckRequest request, CancellationToken cancellationToken = default) {
       EpochVerifyCalls++;
+      RecheckRequests.Add(request);
+      DuringRecheck?.Invoke();
       return Task.FromResult(EpochResult);
     }
 
@@ -537,6 +552,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public Task<DigestVerificationResult> VerifyDigestTableAsync(
       TimeSpan settleWindow, CancellationToken cancellationToken = default) {
       VerifyCalls++;
+      DuringHeal?.Invoke();
       return Task.FromResult(DigestResult);
     }
   }

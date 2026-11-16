@@ -12,15 +12,10 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <remarks>
 /// <para>
-/// One comparator per batch, chosen by what the batch can prove:
+/// Two steps. First the batch takes its <b>local order</b>, one comparator per batch, chosen by what the batch can prove:
 /// </para>
 /// <list type="number">
-/// <item><description>A <b>single-origin</b> stream, where every event carries the same non-empty
-/// <see cref="MessageEnvelope{T}.SourceServiceId"/> and a positive
-/// <see cref="MessageEnvelope{T}.SourceCommitSequence"/>, replays in origin order. A reconciled straggler keeps
-/// its original origin slot but lands with an arrival-fresh local sequence, and a local-order replay would apply
-/// it last.</description></item>
-/// <item><description>Otherwise <b>stream order</b>, when every event carries the version the local store appended it
+/// <item><description><b>Stream order</b>, when every event carries the version the local store appended it
 /// at (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>). That is the order the stream was written in and the
 /// order the live apply folded it in. A commit sequence only records when the stamper reached a row: rows stamped
 /// after the fact carry sequences unrelated to their versions, and folding by them applied a stream's last event
@@ -32,6 +27,17 @@ namespace Whizbang.Core.Perspectives;
 /// <item><description>Any unstamped event (stamper lag) falls the whole batch back to id order, because a partial
 /// mix would interleave two orderings.</description></item>
 /// </list>
+/// <para>
+/// Then <b>origin order within each origin's slots</b> (#2257). An event received from another service carries its
+/// origin (<see cref="MessageEnvelope{T}.SourceServiceId"/>, non-empty) and its position there
+/// (<see cref="MessageEnvelope{T}.SourceCommitSequence"/>, positive). A receiver stores events in arrival order, which
+/// delivery across topics and partitions, and integrity redelivery, do not keep in the origin's order: an update the
+/// origin committed before a delete can arrive after it. So the places each origin's events hold in the local order are
+/// kept, and the origin's events are dealt into those places in origin order. Local and origin-less events keep their
+/// places, and the interleaving of different origins stays the arrival order, the only order the receiver knows between
+/// them. A stream with one origin throughout therefore replays in pure origin order, and a stream with no origins in
+/// pure local order.
+/// </para>
 /// <para>
 /// Ties break on the id's canonical text, so the order is total and the same on every run.
 /// </para>
@@ -51,11 +57,10 @@ public static class ReplayEventOrder {
     if (events.Count < 2 || events is MergedReplayBatch) {
       return events;
     }
-    var firstOrigin = events[0].SourceServiceId;
-    if (firstOrigin != Guid.Empty
-        && events.All(e => e.SourceServiceId == firstOrigin && e.SourceCommitSequence > 0)) {
-      return [.. events.OrderBy(e => e.SourceCommitSequence).ThenBy(_tieBreak, StringComparer.Ordinal)];
-    }
+    return _inOriginOrderWithinTheirSlots(_localOrder(events));
+  }
+
+  private static MessageEnvelope<IEvent>[] _localOrder(IReadOnlyList<MessageEnvelope<IEvent>> events) {
     if (events.All(e => e.LocalStreamVersion.HasValue)) {
       return [.. events.OrderBy(e => e.LocalStreamVersion!.Value).ThenBy(_tieBreak, StringComparer.Ordinal)];
     }
@@ -63,6 +68,31 @@ public static class ReplayEventOrder {
       return [.. events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(_tieBreak, StringComparer.Ordinal)];
     }
     return [.. events.OrderByMessageId()];
+  }
+
+  // #2257: each origin's events dealt, in origin order, into the places that origin holds in the local order.
+  private static MessageEnvelope<IEvent>[] _inOriginOrderWithinTheirSlots(MessageEnvelope<IEvent>[] local) {
+    var slotsByOrigin = new Dictionary<Guid, List<int>>();
+    for (var i = 0; i < local.Length; i++) {
+      var origin = local[i].SourceServiceId;
+      if (origin == Guid.Empty || local[i].SourceCommitSequence <= 0) {
+        continue;
+      }
+      if (!slotsByOrigin.TryGetValue(origin, out var slots)) {
+        slotsByOrigin[origin] = slots = [];
+      }
+      slots.Add(i);
+    }
+    var ordered = local;
+    foreach (var slots in slotsByOrigin.Values.Where(s => s.Count > 1)) {
+      // Read before any write: each origin's slots are its own, so dealing one origin never moves another's events.
+      var inOriginOrder = slots.Select(i => local[i])
+        .OrderBy(e => e.SourceCommitSequence).ThenBy(_tieBreak, StringComparer.Ordinal).ToList();
+      for (var k = 0; k < slots.Count; k++) {
+        ordered[slots[k]] = inOriginOrder[k];
+      }
+    }
+    return ordered;
   }
 
   private static string _tieBreak(MessageEnvelope<IEvent> envelope) => envelope.MessageId.Value.ToString("D");

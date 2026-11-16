@@ -72,10 +72,8 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
         ? uri
         : throw _unreadable(nameof(AzureBlobArchiveOptions.ServiceUri), serviceUri);
     }
-    var connectionString = section[nameof(AzureBlobArchiveOptions.ConnectionString)];
-    if (!string.IsNullOrWhiteSpace(connectionString)) {
-      options.ConnectionString = connectionString;
-    }
+    Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(
+      section, nameof(AzureBlobArchiveOptions.ConnectionString), value => options.ConnectionString = value);
     var containerName = section[nameof(AzureBlobArchiveOptions.ContainerName)];
     if (!string.IsNullOrWhiteSpace(containerName)) {
       options.ContainerName = containerName;
@@ -128,14 +126,14 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   /// the endpoint is set and no credential is registered.</exception>
   internal static BlobContainerClient CreateContainerClient(AzureBlobArchiveOptions options, TokenCredential? credential) {
     var hasUri = options.ServiceUri is not null;
-    var hasConnectionString = !string.IsNullOrWhiteSpace(options.ConnectionString);
+    var hasConnectionString = !string.IsNullOrWhiteSpace(options.ConnectionString?.Reveal());
     if (hasUri == hasConnectionString) {
       throw new InvalidOperationException(
         $"Set exactly one of {CONFIGURATION_SECTION}:ServiceUri (with a TokenCredential registered for its identity) or " +
         $"{CONFIGURATION_SECTION}:ConnectionString for the Azure Blob archive store.");
     }
     if (hasConnectionString) {
-      return new BlobContainerClient(options.ConnectionString, options.ContainerName);
+      return new BlobContainerClient(options.ConnectionString!.Reveal(), options.ContainerName);
     }
     if (credential is null) {
       throw new InvalidOperationException(

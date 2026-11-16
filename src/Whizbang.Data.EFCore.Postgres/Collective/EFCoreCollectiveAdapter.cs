@@ -10,6 +10,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -125,7 +126,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       .ToList();
 
     var (table, schema) = PerspectiveRowTable.Resolve(
-      dbContext.Model, typeof(PerspectiveRow<TModel>), typeof(TModel).Name,
+      dbContext.Model, typeof(PerspectiveRow<TModel>), TypeNameFormatter.SimpleName(typeof(TModel)),
       "the collective event's perspective is not registered in this DbContext.");
     var qualifiedTable = schema is null
       ? PgIdentifier.Quote(table)
@@ -183,7 +184,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // event. The parent span carries the event type/namespace; this one carries the physical detail.
     using var applyActivity = WhizbangActivitySource.Tracing.StartActivity("Collective Apply", ActivityKind.Client);
     if (applyActivity is not null) {
-      applyActivity.SetTag("whizbang.collective.model_type", typeof(TModel).Name);
+      applyActivity.SetTag("whizbang.collective.model_type", TypeNameFormatter.ForLog(typeof(TModel)));
       applyActivity.SetTag("whizbang.collective.table", table);
       applyActivity.SetTag("whizbang.collective.event_id", collectiveEventId);
       applyActivity.SetTag("whizbang.collective.batch_size", batchSize);

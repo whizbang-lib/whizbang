@@ -186,7 +186,7 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, Whizba
       return new MultiStreamOutcome(item.RunId, item.StreamId, null);
     } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
       LogStreamFailed(_logger, ex, item.CommandType, item.RunId, item.StreamId, item.Attempt);
-      return new MultiStreamOutcome(item.RunId, item.StreamId, $"{ex.GetType().Name}: {ex.Message}");
+      return new MultiStreamOutcome(item.RunId, item.StreamId, $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}");
     } finally {
       ScopeContextAccessor.CurrentContext = previous;
       ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;

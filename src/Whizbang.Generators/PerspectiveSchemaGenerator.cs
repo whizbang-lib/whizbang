@@ -185,7 +185,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
-    var modelClassName = modelType.Name;
+    var modelClassName = TypeNameUtilities.SimpleName(modelType);
     // Use shared utility to include inherited properties from base model classes. A model type that
     // is NOT a named type — an array (IPerspectiveFor<TModel> only constrains TModel to `class`, which
     // an array satisfies), a type parameter — declares no member symbols at all in Roslyn, so there is

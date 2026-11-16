@@ -116,6 +116,8 @@ public class TableStatisticsRegistrationTests {
   [Arguments("MaxTrackedTables", "0")]
   [Arguments("CollectionInterval", "00:00:00")]
   [Arguments("CollectionInterval", "-00:00:01")]
+  [Arguments("PendingReclamationSampleInterval", "-00:00:01")]
+  [Arguments("PendingReclamationCountCap", "0")]
   public async Task AValueNoReadingCouldHonor_IsRefusedNamingItsKeyAsync(string setting, string value) {
     var exception = Assert.Throws<OptionsValidationException>(() => _bound(new Dictionary<string, string?> {
       ["Whizbang:TableStatistics:" + setting] = value,
@@ -148,6 +150,43 @@ public class TableStatisticsRegistrationTests {
     await Assert.That(provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<EventTypeBytesSampler>().Count()).IsEqualTo(1)
       .Because("two samplers would each try to claim the same window, and one is all a fleet needs");
     await Assert.That(provider.GetServices<IValidateOptions<TableStatisticsOptions>>().Count()).IsEqualTo(1);
+  }
+
+  // ==== #2289: how much cleanup has left to do ====
+
+  [Test]
+  public async Task ThePendingReclamationReading_BindsFromTheTableStatisticsSectionAsync() {
+    var options = _bound(new Dictionary<string, string?> {
+      ["Whizbang:TableStatistics:PendingReclamationSampleInterval"] = "00:01:00",
+      ["Whizbang:TableStatistics:PendingReclamationCountCap"] = "250",
+    });
+
+    await Assert.That(options.PendingReclamationSampleInterval).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(options.PendingReclamationCountCap).IsEqualTo(250)
+      .Because("a documented key that binds to nothing is a setting that silently does nothing (#646)");
+  }
+
+  [Test]
+  public async Task WithoutConfiguration_PendingReclamationIsReadEveryFiveMinutes_CountingUpToTenThousandAsync() {
+    var options = _bound([]);
+
+    await Assert.That(options.PendingReclamationSampleInterval).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.PendingReclamationCountCap).IsEqualTo(10_000)
+      .Because("the cap bounds what one task's count reads, so a reading costs the same however large the backlog is");
+  }
+
+  [Test]
+  public async Task RegisteringTwice_RunsOnePendingReclamationSampler_OnTheMaintenanceMeterAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
+    services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>().Select(g => g.Service).OfType<PendingReclamationSampler>().Count()).IsEqualTo(1)
+      .Because("one instance of the fleet reads each window, and one sampler per host is all that takes");
+    await Assert.That(provider.GetService<MaintenanceMetrics>()).IsNotNull()
+      .Because("the readings are on the maintenance meter, which a host that registers no maintenance worker still needs");
   }
 
   // ==== #1668: the collection interval is a setting ====

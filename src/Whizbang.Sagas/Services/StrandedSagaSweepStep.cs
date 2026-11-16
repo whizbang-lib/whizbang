@@ -29,7 +29,7 @@ namespace Whizbang.Sagas.Services;
 public sealed partial class StrandedSagaSweepStep(ILogger<StrandedSagaSweepStep> logger) : IMaintenanceStep {
 
   private static readonly string[] _tickTypeNames = [
-    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(SagaCompletionWatchdogTickEvent))),
+    TypeNameFormatter.Format(typeof(SagaCompletionWatchdogTickEvent)),
   ];
 
   /// <inheritdoc />

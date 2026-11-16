@@ -122,6 +122,32 @@ public class EventStoreDecoratorForwardingTests {
   }
 
   [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTheBatchedRead_ToInnerStoreAsync(IEventStore decorated) {
+    // #2246: a set-based batch reads its pairs' streams with one read through the decorated store. A decorator serving
+    // the interface default (null) would quietly send every pair back to its own read.
+    var stream = Guid.NewGuid();
+
+    var read = await decorated.ReadPolymorphicManyAsync([(stream, null)], [typeof(ProbeEvent)]);
+
+    await Assert.That(read![stream].Select(e => e.MessageId.Value)).IsEquivalentTo([ProbeAwareStore.BatchedReadSentinel])
+      .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (null)");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTheBatchedHistoryProbe_ToInnerStoreAsync(IEventStore decorated) {
+    // #2246: a set-based batch asks every missing row's history with one probe. The interface default asks each stream
+    // through the per-stream probe, so the sentinel answer proves the batched override was reached.
+    var stream = Guid.NewGuid();
+
+    var answer = await decorated.StreamsWithEventsBeforeAsync([(stream, Guid.NewGuid())], [typeof(ProbeEvent)]);
+
+    await Assert.That(answer).IsEquivalentTo([ProbeAwareStore.BatchedProbeSentinel])
+      .Because($"{decorated.GetType().Name} must forward the batched probe to the inner store's override");
+  }
+
+  [Test]
   [MethodDataSource(nameof(ThroughArchiveForwarders))]
   public async Task Decorator_ForwardsTheReadThroughTheArchive_ToInnerStoreAsync(IEventStore decorated) {
     var read = new List<MessageEnvelope<IEvent>>();
@@ -192,6 +218,29 @@ public class EventStoreDecoratorForwardingTests {
 
     public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
+
+    public static readonly Guid BatchedProbeSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000b9b0");
+
+    public Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+        IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid> { BatchedProbeSentinel });
+
+    public static readonly Guid BatchedReadSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000b47c");
+
+    public Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+        IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(streams.ToDictionary(
+        s => s.StreamId,
+        s => (IReadOnlyList<MessageEnvelope<IEvent>>)[new MessageEnvelope<IEvent> {
+          MessageId = Whizbang.Core.ValueObjects.MessageId.From(BatchedReadSentinel),
+          Payload = new ProbeEvent(),
+          Hops = [],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+          // The stream's first event: no gap at its start, so a store that reads through the archive has nothing to add.
+          LocalStreamVersion = 1,
+        }]));
 
     public static readonly DateTime StartedAtSentinel = new(2020, 3, 1, 9, 0, 0, DateTimeKind.Utc);
 

@@ -75,8 +75,8 @@ public static class NotificationConnectionStringResolver {
       ? options.SearchPath
       : fallback?.GetSearchPath();
 
-    if (!string.IsNullOrWhiteSpace(options.DirectConnectionString)) {
-      return new Resolution(options.DirectConnectionString, ResolutionSource.ExplicitOption, searchPath);
+    if (options.DirectConnectionString?.Reveal() is { } explicitString && !string.IsNullOrWhiteSpace(explicitString)) {
+      return new Resolution(explicitString, ResolutionSource.ExplicitOption, searchPath);
     }
 
     if (!string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {

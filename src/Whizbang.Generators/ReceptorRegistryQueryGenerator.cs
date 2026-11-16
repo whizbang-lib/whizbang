@@ -141,15 +141,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       .Combine(taggedTypes.Collect())
       .Combine(compositeTypes.Collect())
       .Combine(collectiveTypes.Collect())
-      .Combine(handledCollectiveTypes.Collect());
+      .Combine(handledCollectiveTypes.Collect())
+      .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
-    context.RegisterSourceOutput(combined, static (ctx, data) => {
-      var receptorEntries = data.Left.Left.Left.Left.Left;
-      var perspectiveEntries = data.Left.Left.Left.Left.Right;
-      var taggedEntries = data.Left.Left.Left.Right;
-      var compositeEntries = data.Left.Left.Right;
-      var collectiveEntries = data.Left.Right;
-      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, data.Right);
+    context.RegisterSourceOutput(combined, static (ctx, all) => {
+      var (((((receptorEntries, perspectiveEntries), taggedEntries), compositeEntries), collectiveEntries), handledCollectiveEntries) = all.Left;
+      _emitRegistryQuery(ctx, new RegistryQuerySources(
+        receptorEntries, perspectiveEntries, taggedEntries, compositeEntries, collectiveEntries, handledCollectiveEntries, all.Right));
     });
   }
 
@@ -333,14 +331,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   // ===== Emission =====
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Generator emission walks every (receptor, perspective) pair and renders the routing branches inline; splitting would require building intermediate models for each branch shape, which costs incremental-cache parity.")]
-  private static void _emitRegistryQuery(
-      SourceProductionContext context,
-      ImmutableArray<ReceptorRegistryEntry?> receptors,
-      ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
-      ImmutableArray<ConsumedTypeEntry?> taggedTypes,
-      ImmutableArray<ConsumedTypeEntry?> compositeTypes,
-      ImmutableArray<ConsumedTypeEntry?> collectiveTypes,
-      ImmutableArray<string?> handledCollectiveTypes) {
+  private static void _emitRegistryQuery(SourceProductionContext context, RegistryQuerySources sources) {
+    var (receptors, perspectives, taggedTypes, compositeTypes, collectiveTypes, handledCollectiveTypes, assemblyName) = sources;
 
     // The wire form of every consumed type, keyed by the display name the predicate sets hold (#2058).
     var consumed = new System.Collections.Generic.Dictionary<string, ConsumedTypeEntry>(System.StringComparer.Ordinal);
@@ -455,6 +447,10 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
     sb.AppendLine("    var contribution = new ReceptorRegistryContribution {");
+    // #2243: named by this assembly, so a host's query counts only its own service's receptors
+    if (assemblyName is not null) {
+      sb.AppendLine($"      AssemblyName = {ServiceAssemblyFactsGenerator.Literal(assemblyName)},");
+    }
     sb.AppendLine("      AnyConsumerTypes = new string[] {");
     foreach (var type in anyConsumerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
       sb.AppendLine($"        \"{type}\",");
@@ -495,4 +491,21 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     context.AddSource("WhizbangReceptorRegistryQueryRegistration.g.cs", sb.ToString());
   }
+
+  /// <summary>Everything the receptor registry query is emitted from: one compilation's discovered entries and its name.</summary>
+  /// <param name="Receptors">The receptors.</param>
+  /// <param name="Perspectives">Each perspective's handled events.</param>
+  /// <param name="TaggedTypes">Tagged message types consumed.</param>
+  /// <param name="CompositeTypes">Composite types consumed.</param>
+  /// <param name="CollectiveTypes">Collective types consumed.</param>
+  /// <param name="HandledCollectiveTypes">Collective event types a handler applies (#2145).</param>
+  /// <param name="AssemblyName">The compilation's assembly name, which names the contribution (#2243).</param>
+  private sealed record RegistryQuerySources(
+      ImmutableArray<ReceptorRegistryEntry?> Receptors,
+      ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> Perspectives,
+      ImmutableArray<ConsumedTypeEntry?> TaggedTypes,
+      ImmutableArray<ConsumedTypeEntry?> CompositeTypes,
+      ImmutableArray<ConsumedTypeEntry?> CollectiveTypes,
+      ImmutableArray<string?> HandledCollectiveTypes,
+      string? AssemblyName);
 }

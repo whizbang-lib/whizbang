@@ -170,7 +170,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
     // cannot be reported here), so it is reported at the perspective that projects its model.
     var location = property.Locations.FirstOrDefault(l => l.SourceTree is { } tree && context.Compilation.ContainsSyntaxTree(tree))
       ?? perspective.Locations[0];
-    context.ReportDiagnostic(Diagnostic.Create(descriptor, location, [path, model.Name, .. types]));
+    context.ReportDiagnostic(Diagnostic.Create(descriptor, location, [path, TypeNameUtilities.SimpleName(model), .. types]));
   }
 
   /// <summary>The models a type projects: the first type argument of each perspective interface it implements.</summary>

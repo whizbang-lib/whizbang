@@ -447,6 +447,38 @@ public class DispatcherSnippets {
   }
 
   /// <summary>
+  /// How a receptor registry route resolves its receptor: the <c>__RESOLVE_RECEPTOR__</c> line of the four routing
+  /// snippets below. <c>__RECEPTOR_SERVICE__</c> is the receptor's interface, closed over its message (and response).
+  /// </summary>
+  protected async ValueTask<object?> ReceptorRegistryResolveExample(IServiceProvider sp, object msg, CancellationToken ct) {
+    var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
+    #region RECEPTOR_REGISTRY_RESOLVE_SNIPPET
+    // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
+    var receptor = sp.GetKeyedService<__RECEPTOR_SERVICE__>("__RECEPTOR_CLASS__")
+                ?? sp.GetRequiredService<__RECEPTOR_SERVICE__>();
+    #endregion
+
+    #region RECEPTOR_REGISTRY_SUPPRESSED_RESOLVE_SNIPPET
+    // [SuppressReceptorRegistration]: its owner registers it by hand or only at runtime, so a route nothing in DI can
+    // resolve skips the receptor rather than throwing (#2309)
+    var receptor = global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<__RECEPTOR_SERVICE__, __RECEPTOR_CLASS__>(sp, "__RECEPTOR_CLASS__");
+    if (receptor is null) {
+      return null;
+    }
+    #endregion
+
+    #region RECEPTOR_REGISTRY_SUPPRESSED_TRACED_RESOLVE_SNIPPET
+    // [SuppressReceptorRegistration]: its owner registers it by hand or only at runtime, so a route nothing in DI can
+    // resolve skips the receptor rather than throwing (#2309); the trace records an early return, not a success
+    var receptor = global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<__RECEPTOR_SERVICE__, __RECEPTOR_CLASS__>(sp, "__RECEPTOR_CLASS__");
+    if (receptor is null) {
+      status = global::Whizbang.Core.Tracing.HandlerStatus.EarlyReturn;
+      return null;
+    }
+    #endregion
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for receptor registry routing.
   /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
   /// Used for async receptors with response.
@@ -462,9 +494,7 @@ public class DispatcherSnippets {
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
-            // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-            var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
-                        ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+            __RESOLVE_RECEPTOR__
             // Returned as it is: the worker's cascade reads a Routed<T> result's route
             return await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
           },
@@ -472,6 +502,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)
@@ -499,9 +531,7 @@ public class DispatcherSnippets {
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
-            // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-            var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
-                        ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+            __RESOLVE_RECEPTOR__
             await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             return null;
           },
@@ -509,6 +539,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)
@@ -555,9 +587,7 @@ public class DispatcherSnippets {
             var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
 
             try {
-              // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-              var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
-                          ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+              __RESOLVE_RECEPTOR__
               // Kept as it is: the worker's cascade reads a Routed<T> result's route
               result = await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             } catch (System.Exception ex) {
@@ -585,6 +615,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)
@@ -630,9 +662,7 @@ public class DispatcherSnippets {
             var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
 
             try {
-              // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-              var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
-                          ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+              __RESOLVE_RECEPTOR__
               await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             } catch (System.Exception ex) {
               handlerException = ex;
@@ -659,6 +689,8 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
           DefaultRouting: __DEFAULT_ROUTING__,
           // The receptor class the receptor interceptors are asked about before it runs (#1996)
           ReceptorType: typeof(__RECEPTOR_CLASS__)

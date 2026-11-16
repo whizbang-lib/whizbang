@@ -1078,6 +1078,9 @@ public partial class DapperWorkCoordinator(
   public bool RecordsInstanceTransitions => true;
 
   /// <inheritdoc />
+  public bool ReadsCursorsInBatches => true;
+
+  /// <inheritdoc />
   public async Task<bool> RecordInstanceTransitionAsync(
       Whizbang.Core.Startup.InstanceTransition transition, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(transition);

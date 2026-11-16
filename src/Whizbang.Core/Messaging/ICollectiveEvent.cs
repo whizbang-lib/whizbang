@@ -35,7 +35,7 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="EventFlags.Collective"/> in the inbox envelope's
 /// <c>Flags</c> column, looks up the <see cref="ICollectiveScopeResolver"/>
 /// matching <see cref="ICollectiveScope.ScopeKind"/>, finds matching
-/// handlers in <c>CollectiveApplyRegistry</c>, and fans out via
+/// handlers in the served <c>ICollectiveApplyRegistry</c> (every assembly's), and fans out via
 /// <c>ICollectiveEventExecutor</c> per <c>TModel</c>.
 /// </para>
 /// </remarks>

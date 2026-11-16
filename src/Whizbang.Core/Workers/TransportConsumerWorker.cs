@@ -1052,7 +1052,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // Never a silent skip (#915): a message that cannot become an inbox row is dead-lettered with
       // its body by the batch handler; the reflective serializer call wraps the real cause.
       var cause = ex.GetBaseException();
-      var description = $"{cause.GetType().Name}: {cause.Message}";
+      var description = $"{TypeNameFormatter.ForLog(cause.GetType())}: {cause.Message}";
       // Not logged here: the dead-letter record logged when the message is given custody carries this exception and is
       // its one terminal record, at the configured level (#1901); a custody failure is logged with the cause instead.
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
@@ -1372,7 +1372,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       jsonEnvelope = alreadyJsonEnvelope;
     } else if (payloadType == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. MessageId: {envelope.MessageId}");
+        $"Envelope has JsonElement payload but envelope type is {TypeNameFormatter.ForLog(envelope.GetType())}. MessageId: {envelope.MessageId}");
     } else {
       // Strongly-typed envelope - serialize it
       // Required: an unregistered serializer throws InvalidOperationException naming the type.

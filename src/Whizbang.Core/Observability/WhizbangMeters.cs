@@ -43,6 +43,7 @@ public static class WhizbangMeters {
   private static readonly List<string> _names = [
     DeadLetterMetrics.METER_NAME,
     DispatcherMetrics.METER_NAME,
+    EphemeralBlockerMetrics.METER_NAME,
     EventCategoryMetrics.METER_NAME,
     GovernorMetrics.METER_NAME,
     HousekeepingMetrics.METER_NAME,

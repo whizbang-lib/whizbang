@@ -39,7 +39,8 @@ public static class ReceptorRegistryServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     return services.AddContribution<IReceptorRegistry, TRegistry>(
       CONTRIBUTION_KEY,
-      static registries => new CompositeReceptorRegistry(registries),
+      // A host whose every contribution was removed has no receptors, as the null registry says (#2243).
+      static registries => registries.Count == 0 ? NullReceptorRegistry.Instance : new CompositeReceptorRegistry(registries),
       static registry => registry.GetCompiledReceptorIds());
   }
 }

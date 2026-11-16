@@ -137,8 +137,8 @@ public sealed class RoutingOptions {
   /// <docs>fundamentals/dispatcher/routing#own-namespace-of</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
   public RoutingOptions OwnNamespaceOf<T>() {
-    var ns = typeof(T).Namespace
-      ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
+    var ns = TypeNameFormatter.NamespaceOf(typeof(T))
+      ?? throw new InvalidOperationException($"Type {TypeNameFormatter.ForLog(typeof(T))} has no namespace");
     return OwnDomains(ns);
   }
 
@@ -207,8 +207,8 @@ public sealed class RoutingOptions {
   /// <docs>fundamentals/dispatcher/routing#subscribe-to-namespace-of</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
   public RoutingOptions SubscribeToNamespaceOf<T>() {
-    var ns = typeof(T).Namespace
-      ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
+    var ns = TypeNameFormatter.NamespaceOf(typeof(T))
+      ?? throw new InvalidOperationException($"Type {TypeNameFormatter.ForLog(typeof(T))} has no namespace");
     return SubscribeTo(ns);
   }
 

@@ -31,7 +31,7 @@ public static class MultiStreamCommandServiceCollectionExtensions {
       if (descriptor.ImplementationInstance is HandlerRegistration existing && existing.Command == typeof(TCommand)) {
         if (existing.Handler != typeof(THandler)) {
           throw new InvalidOperationException(
-            $"{MultiStreamCommandNames.Of(typeof(TCommand))} already has a handler ({existing.Handler.Name}); a multi-stream command has exactly one, so {typeof(THandler).Name} cannot be added.");
+            $"{MultiStreamCommandNames.Of(typeof(TCommand))} already has a handler ({TypeNameFormatter.ForLog(existing.Handler)}); a multi-stream command has exactly one, so {TypeNameFormatter.ForLog(typeof(THandler))} cannot be added.");
         }
         return services;
       }

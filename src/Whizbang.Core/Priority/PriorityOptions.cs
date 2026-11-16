@@ -39,7 +39,9 @@ public sealed class PriorityOptions {
   /// <summary>Every message of type <typeparamref name="TMessage"/> gets <paramref name="priority"/>; wins over a namespace rule.</summary>
   public PriorityOptions ClassifyType<TMessage>(int priority) where TMessage : notnull {
     ArgumentOutOfRangeException.ThrowIfNegativeOrZero(priority);
-    _byType[TypeNameFormatter.AssemblyQualifiedName(typeof(TMessage))] = priority;
+    // Keyed by the wire form and matched against a received name normalized to it, so a publisher on another build of
+    // the contract still matches (#2267).
+    _byType[TypeNameFormatter.Format(typeof(TMessage))] = priority;
     return this;
   }
 

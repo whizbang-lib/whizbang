@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 
@@ -57,14 +58,14 @@ public static class ProviderCapabilities {
 
   /// <summary>The Entity Framework Core version actually loaded.</summary>
   public static Version EfCoreVersion { get; } =
-    typeof(DbContext).Assembly.GetName().Version!;
+    TypeNameFormatter.AssemblyVersion(typeof(DbContext).Assembly)!;
 
   /// <summary>The Npgsql Entity Framework Core provider version actually loaded.</summary>
   [SuppressMessage("Usage", "EF1001:Internal EF Core API usage",
     Justification = "Anchoring the version read on the very type the containment rewrite depends on is the " +
       "point: if that type moves or disappears, this stops compiling, which is exactly the signal wanted.")]
   public static Version NpgsqlProviderVersion { get; } =
-    typeof(PgUnknownBinaryExpression).Assembly.GetName().Version!;
+    TypeNameFormatter.AssemblyVersion(typeof(PgUnknownBinaryExpression).Assembly)!;
 
   /// <summary>
   /// Whether both loaded versions fall inside the ranges the containment rewrite was verified

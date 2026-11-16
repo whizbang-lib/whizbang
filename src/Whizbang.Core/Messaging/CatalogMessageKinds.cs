@@ -15,7 +15,11 @@ internal sealed class CatalogMessageKinds {
   private const string EVENT_KIND = "event";
   private readonly Dictionary<string, bool> _isEventByClrName = new(StringComparer.Ordinal);
 
-  /// <summary>Indexes the catalog's declared kinds. A living entry's own name wins over another entry's former name.</summary>
+  /// <summary>
+  /// Indexes the catalog's declared kinds. A living entry's own name wins over another entry's former name, and a former
+  /// name is indexed by its bare CLR name, also when the ledger records it with the assembly the type moved from (#2264).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/FormerNameFromAnotherAssemblyTests.cs:TheDeclaredKind_IsFoundForAnEnvelopeWrittenUnderTheOldAssemblyAsync</tests>
   /// <param name="catalog">The message type catalog.</param>
   public CatalogMessageKinds(IMessageTypeCatalog catalog) {
     ArgumentNullException.ThrowIfNull(catalog);
@@ -25,7 +29,7 @@ internal sealed class CatalogMessageKinds {
     }
     foreach (var entry in entries) {
       var isEvent = _isEventByClrName[entry.ClrTypeName];
-      foreach (var formerName in entry.FormerNames) {
+      foreach (var formerName in entry.FormerClrTypeNames()) {
         _isEventByClrName.TryAdd(formerName, isEvent);
       }
     }
