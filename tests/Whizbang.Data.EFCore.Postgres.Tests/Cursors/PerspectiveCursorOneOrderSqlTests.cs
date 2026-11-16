@@ -172,6 +172,76 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
       .Because("a flag the repair cannot tell from an owed rewind is left for the rewind");
     await Assert.That(cursor.Trigger).IsEqualTo(late);
     await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(1).Because("the trigger is queued, so its rewind runs");
+    await Assert.That(await _settleAsync(conn)).IsEqualTo(0).Because("a re-run finds the placed cursor out of the shape");
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(1).Because("a re-run never queues the trigger twice");
+  }
+
+  /// <summary>
+  /// The trigger's row can still be there, processed and not yet purged (debug mode keeps it; otherwise until the next
+  /// purge). The repair queues the trigger again on that row rather than failing the migration on the row's unique key.
+  /// </summary>
+  [Test]
+  public async Task Repair_ATriggerWhoseProcessedRowIsNotYetPurged_IsQueuedAgainOnThatRowAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var (terminal, c0, c1) = (_id(100), _id(1), _id(2));
+    await _appendAsync(conn, stream, terminal, c0, c1);
+    await _cursorAsync(conn, stream, terminal, COMPLETED | REWIND_REQUIRED, trigger: c0);
+    await _pendingAsync(conn, stream, c0);
+    await using (var processed = new NpgsqlCommand(
+        "UPDATE wh_perspective_events SET processed_at = NOW(), status = 2, attempts = 1 WHERE stream_id = @s AND event_id = @e", conn)) {
+      processed.Parameters.AddWithValue("s", (Guid)stream);
+      processed.Parameters.AddWithValue("e", c0);
+      await processed.ExecuteNonQueryAsync();
+    }
+
+    var repaired = await _settleAsync(conn);
+
+    await Assert.That(repaired).IsEqualTo(1);
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(1)
+      .Because("the trigger's processed row is made pending again, so its rewind runs");
+    await Assert.That(await _settleAsync(conn)).IsEqualTo(0).Because("a re-run finds the placed cursor out of the shape");
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// The deploy repair's queueing is bounded: one work row for each flagged pair in the stuck shape with no pending
+  /// work, none for a pair that has pending work, a flag outside the shape or a cursor with no flag, and a re-run, as
+  /// a re-applied migration makes, queues nothing more.
+  /// </summary>
+  [Test]
+  public async Task Repair_QueuesOneRowPerStuckPairWithNoPendingWork_NothingElse_AndARerunQueuesNothingAsync() {
+    await using var conn = await _openAsync();
+    var idle = new List<Guid>();
+    for (var i = 0; i < 3; i++) {
+      var stream = (Guid)TrackedGuid.New();
+      var (terminal, c0, c1) = (_id(100 + i), _id((10 * i) + 1), _id((10 * i) + 2));
+      await _appendAsync(conn, stream, terminal, c0, c1);
+      await _cursorAsync(conn, stream, terminal, COMPLETED | REWIND_REQUIRED, trigger: c0);
+      idle.Add(stream);
+    }
+    var busy = (Guid)TrackedGuid.New();
+    var (busyTerminal, busyC0, busyC1) = (_id(200), _id(51), _id(52));
+    await _appendAsync(conn, busy, busyTerminal, busyC0, busyC1);
+    await _cursorAsync(conn, busy, busyTerminal, COMPLETED | REWIND_REQUIRED, trigger: busyC0);
+    await _pendingAsync(conn, busy, busyC1);
+    var outside = (Guid)TrackedGuid.New();
+    var (straggler, cursorAt) = (_id(61), _id(300));
+    await _appendAsync(conn, outside, straggler, cursorAt);
+    await _cursorAsync(conn, outside, cursorAt, COMPLETED | REWIND_REQUIRED, trigger: straggler);
+    var unflagged = (Guid)TrackedGuid.New();
+    var (u1, u2) = (_id(400), _id(71));
+    await _appendAsync(conn, unflagged, u1, u2);
+    await _cursorAsync(conn, unflagged, u1, COMPLETED, trigger: null);
+
+    var repaired = await _settleAsync(conn);
+    var queued = await _pendingByStreamAsync(conn);
+
+    await Assert.That(repaired).IsEqualTo(4).Because("the three idle pairs and the busy one are placed");
+    await Assert.That(queued).IsEquivalentTo(new Dictionary<Guid, long> { [idle[0]] = 1, [idle[1]] = 1, [idle[2]] = 1, [busy] = 1 })
+      .Because("one row per idle pair (its trigger), the busy pair's own pending row only, nothing for the others");
+    await Assert.That(await _settleAsync(conn)).IsEqualTo(0);
+    await Assert.That(await _pendingByStreamAsync(conn)).IsEquivalentTo(queued).Because("a re-run queues nothing more");
   }
 
   [Test]
@@ -284,6 +354,18 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("s", stream);
     cmd.Parameters.AddWithValue("p", PERSPECTIVE);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  private static async Task<Dictionary<Guid, long>> _pendingByStreamAsync(NpgsqlConnection conn) {
+    await using var cmd = new NpgsqlCommand(
+      "SELECT stream_id, count(*) FROM wh_perspective_events WHERE perspective_name = @p AND processed_at IS NULL GROUP BY stream_id", conn);
+    cmd.Parameters.AddWithValue("p", PERSPECTIVE);
+    var counts = new Dictionary<Guid, long>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      counts[reader.GetGuid(0)] = reader.GetInt64(1);
+    }
+    return counts;
   }
 
   private sealed record CursorRow(Guid LastEventId, int Status, Guid? Trigger, long? ReplayedThrough);
