@@ -423,9 +423,9 @@ public class SubscriptionBackfillWorkerTests {
       .IsEquivalentTo(new List<double> { 2, 4, 8, 8, 1 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("idle ticks double the wait up to the ceiling, and a running backfill returns it to one second");
     await Assert.That(coordinator.Reads).IsEqualTo(5);
-    var ticks = meters.Read(ProbeCadenceMetrics.PROBE_SUBSCRIPTION_BACKFILL);
-    await Assert.That(ticks.Idle).IsEqualTo(4L);
-    await Assert.That(ticks.Work).IsEqualTo(1L);
+    var (idle, work) = meters.Read(ProbeCadenceMetrics.PROBE_SUBSCRIPTION_BACKFILL);
+    await Assert.That(idle).IsEqualTo(4L);
+    await Assert.That(work).IsEqualTo(1L);
   }
 
   /// <summary>A fake clock whose timers record every period the worker sets, and signal each change.</summary>

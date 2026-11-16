@@ -625,9 +625,9 @@ public class RepairDrainWorkerTests {
         .IsEquivalentTo(new List<double> { 1, 2, 4, 8, 8, 8, 1 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
         .Because("idle ticks double the wait up to the ceiling, and the tick that claims returns it to one second");
       await Assert.That(transport.Published.Count).IsEqualTo(1);
-      var ticks = meters.Read(ProbeCadenceMetrics.PROBE_REPAIR_DRAIN);
-      await Assert.That(ticks.Idle).IsEqualTo(5L);
-      await Assert.That(ticks.Work).IsEqualTo(1L);
+      var (idle, work) = meters.Read(ProbeCadenceMetrics.PROBE_REPAIR_DRAIN);
+      await Assert.That(idle).IsEqualTo(5L);
+      await Assert.That(work).IsEqualTo(1L);
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
