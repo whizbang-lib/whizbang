@@ -29,7 +29,10 @@ namespace Whizbang.Data.Dapper.Postgres;
 internal sealed partial class MessageTypeRegistryReconciliationHostedService(
     ILogger<MessageTypeRegistryReconciliationHostedService> logger,
     IMessageTypeCatalog? catalog = null,
-    IMessageTypeRegistryPopulator? populator = null) : BackgroundService {
+    IMessageTypeRegistryPopulator? populator = null) : BackgroundService, Whizbang.Core.Observability.IDbMechanismOwner {
+  /// <inheritdoc />
+  public Whizbang.Core.Observability.DbMechanism DbMechanism => Whizbang.Core.Observability.DbMechanism.TypeRegistry;
+
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (catalog is null || populator is null) {
       LogSkipped(logger);

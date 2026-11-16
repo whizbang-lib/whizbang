@@ -25,12 +25,13 @@ internal static class CoordinatorCommandExtensions {
     Whizbang.Data.Postgres.CoordinatorCommandTimeout.SECONDS;
 
   /// <summary>
-  /// Applies the coordinator's command budget to a freshly created command, overriding whatever the
-  /// connection string carried. Returns the same command so it composes at the creation site.
+  /// Creates a coordinator command on <paramref name="connection"/>: attributed to the mechanism that runs it
+  /// (<see cref="Whizbang.Data.Postgres.WhizbangCommand"/>) and given the coordinator's command budget, overriding
+  /// whatever the connection string carried.
   /// </summary>
+  /// <param name="connection">The coordinator's connection, always an Npgsql one.</param>
+  /// <returns>The command.</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorCommandTimeoutSqlTests.cs</tests>
-  internal static TCommand WithCoordinatorTimeout<TCommand>(this TCommand command) where TCommand : DbCommand {
-    ArgumentNullException.ThrowIfNull(command);
-    return Whizbang.Data.Postgres.CoordinatorCommandTimeout.Apply(command);
-  }
+  internal static Npgsql.NpgsqlCommand CreateCoordinatorCommand(this DbConnection connection) =>
+    Whizbang.Data.Postgres.WhizbangCommand.CreateCoordinatorCommand((Npgsql.NpgsqlConnection)connection);
 }

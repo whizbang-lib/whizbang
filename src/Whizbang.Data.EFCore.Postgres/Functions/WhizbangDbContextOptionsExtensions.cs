@@ -90,6 +90,14 @@ public static class WhizbangDbContextOptionsExtensions {
     ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder
       .ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
 
+    // Statement attribution: commands run inside a framework mechanism lead with its comment and are counted. Added
+    // once, however often this is called, so a statement is never counted twice.
+    var coreOptionsBuilder = ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder;
+    var interceptors = coreOptionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors;
+    if (interceptors?.Contains(WhizbangCommandAttributionInterceptor.Instance) != true) {
+      coreOptionsBuilder.AddInterceptors(WhizbangCommandAttributionInterceptor.Instance);
+    }
+
     // Add our custom method call translator plugin to the existing collection
     // This preserves Npgsql's built-in translators while adding our own
     return _update(optionsBuilder, static existing => existing ?? new WhizbangOptionsExtension());

@@ -388,6 +388,41 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     await Assert.That(timeout).IsEqualTo(TimeSpan.FromMilliseconds(expectedMs));
   }
 
+  /// <summary>
+  /// The notification connection is the liveness connection: its session is how an instance is known to be alive, and
+  /// it is never attributed to a mechanism. Started inside one (as the host may start it from a worker's flow), its
+  /// keepalive still reaches the database exactly as written.
+  /// </summary>
+  /// <docs>operations/observability/database-attribution</docs>
+  [Test]
+  [Timeout(60000)]
+  public async Task StartedInsideAMechanism_TheLivenessConnectionsStatementsCarryNoAttributionAsync(
+      CancellationToken cancellationToken) {
+    var instanceProvider = new ServiceInstanceProvider(
+      Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    using var gate = _sharedConnection(new CapturingLogger(), instanceProvider, clock);
+    var waits = new ScriptedWaits();
+    gate.WaitForMessageAsync = waits.WaitAsync;
+    var appName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
+    using (Whizbang.Core.Observability.DbMechanismScope.Begin(Whizbang.Core.Observability.DbMechanism.Heartbeat)) {
+      await gate.StartAsync(cancellationToken);
+    }
+    try {
+      await _awaitAvailableAsync(gate, cancellationToken);
+      var firstWait = await waits.NextParkedAsync(cancellationToken);
+      clock.Advance(new WhizbangNotificationOptions().ListenKeepaliveInterval);
+      firstWait.Completion.SetResult(false);
+      _ = await waits.NextParkedAsync(cancellationToken);
+
+      await Assert.That(await _lastStatementAsync(appName, cancellationToken)).IsEqualTo("SELECT 1")
+        .Because("the keepalive ran, and reached the database with no mechanism comment in front of it");
+    } finally {
+      await gate.StopAsync(CancellationToken.None);
+      waits.ReleaseAll();
+    }
+  }
+
   private async Task<string> _lastStatementAsync(string appName, CancellationToken cancellationToken) {
     await using var admin = new NpgsqlConnection(ConnectionString);
     await admin.OpenAsync(cancellationToken);

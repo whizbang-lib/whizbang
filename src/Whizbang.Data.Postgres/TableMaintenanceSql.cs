@@ -173,7 +173,7 @@ internal static class TableMaintenanceSql {
   /// </remarks>
   internal static async Task<double?> MeasureRatioAsync(
       DbConnection conn, string tableName, string? schema, CancellationToken cancellationToken) {
-    await using var measure = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    await using var measure = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     var function = schema is null ? "wh_estimate_table_bloat" : $"{PgIdentifier.Quote(schema)}.wh_estimate_table_bloat";
     measure.CommandText = $"SELECT {function}(@t)";
     measure.Parameters.Add(new NpgsqlParameter("t", tableName));
@@ -191,7 +191,7 @@ internal static class TableMaintenanceSql {
   /// </summary>
   internal static async Task<string?> NotOwnedReasonAsync(
       DbConnection conn, string qualified, string table, CancellationToken cancellationToken, string remedy = INIT_CONNECTION_REMEDY) {
-    await using var check = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    await using var check = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     check.CommandText = """
       SELECT current_user::TEXT, (SELECT pg_has_role(current_user, c.relowner, 'MEMBER') FROM pg_class c WHERE c.oid = to_regclass(@q))
       """;
@@ -209,7 +209,7 @@ internal static class TableMaintenanceSql {
 
   /// <summary>The rewrite itself, then <c>ANALYZE</c> so the caller's re-measure sees what the rewrite did.</summary>
   internal static async Task VacuumFullAndAnalyzeAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using (var vacuum = conn.CreateCommand()) {
+    await using (var vacuum = conn.CreateWhizbangCommand()) {
       vacuum.CommandText = $"VACUUM (FULL) {qualified}";
       vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
       await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -219,7 +219,7 @@ internal static class TableMaintenanceSql {
 
   /// <summary><c>ANALYZE</c>, so a re-measure reads the row count the rewrite left rather than the one before it.</summary>
   internal static async Task AnalyzeAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using var analyze = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    await using var analyze = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     analyze.CommandText = $"ANALYZE {qualified}";
     await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
@@ -266,7 +266,7 @@ internal static class TableMaintenanceSql {
   /// </summary>
   private static async Task<double?> _vacuumedSecondsAgoAsync(
       DbConnection conn, string qualified, TimeSpan window, CancellationToken cancellationToken) {
-    await using var cmd = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    await using var cmd = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     cmd.CommandText = """
       SELECT EXTRACT(EPOCH FROM now() - GREATEST(s.last_vacuum, s.last_autovacuum))::DOUBLE PRECISION
         FROM pg_stat_user_tables s
@@ -280,7 +280,7 @@ internal static class TableMaintenanceSql {
 
   /// <summary><c>VACUUM ANALYZE</c> of one work table, bounded by <see cref="WORK_TABLE_VACUUM_TIMEOUT_SECONDS"/>.</summary>
   internal static async Task VacuumAnalyzeAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using var vacuum = conn.CreateCommand();
+    await using var vacuum = conn.CreateWhizbangCommand();
     vacuum.CommandText = $"VACUUM ANALYZE {qualified}";
     vacuum.CommandTimeout = WORK_TABLE_VACUUM_TIMEOUT_SECONDS;
     await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -297,7 +297,7 @@ internal static class TableMaintenanceSql {
     if (prerequisitesUnmet(facts, tableName) is { } unmet) {
       return unmet;
     }
-    await using (var squeeze = conn.CreateCommand()) {
+    await using (var squeeze = conn.CreateWhizbangCommand()) {
       squeeze.CommandText = """
         SELECT squeeze.squeeze_table(n.nspname, c.relname, NULL, NULL, NULL)
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -333,7 +333,7 @@ internal static class TableMaintenanceSql {
   /// <summary>The queue table <paramref name="indexName"/> indexes and whether it is valid; a null table when it is not one.</summary>
   internal static async Task<(string? Table, bool Valid)> QueueIndexLookupAsync(
       DbConnection conn, string prefix, string indexName, CancellationToken cancellationToken) {
-    await using var cmd = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    await using var cmd = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     cmd.CommandText = QueueIndexSql.LOOKUP;
     cmd.Parameters.Add(new NpgsqlParameter(nameof(prefix), prefix));
     cmd.Parameters.Add(new NpgsqlParameter("tables", QueueIndexSql.TABLES));
@@ -357,7 +357,7 @@ internal static class TableMaintenanceSql {
   /// finish, as a concurrent drop must, so it has no timeout.
   /// </summary>
   internal static async Task<bool> DropIndexConcurrentlyAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using var drop = conn.CreateCommand();
+    await using var drop = conn.CreateWhizbangCommand();
     drop.CommandText = $"DROP INDEX CONCURRENTLY IF EXISTS {qualified}";
     drop.CommandTimeout = 0;
     await drop.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -369,12 +369,12 @@ internal static class TableMaintenanceSql {
   /// stays readable and writable, so it has no timeout: one index per cycle bounds it.
   /// </summary>
   internal static async Task<long?> ReindexConcurrentlyAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using (var reindex = conn.CreateCommand()) {
+    await using (var reindex = conn.CreateWhizbangCommand()) {
       reindex.CommandText = $"REINDEX INDEX CONCURRENTLY {qualified}";
       reindex.CommandTimeout = 0;
       await reindex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
-    await using var size = CoordinatorCommandTimeout.Apply(conn.CreateCommand());
+    await using var size = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     size.CommandText = "SELECT pg_relation_size(to_regclass(@q))";
     size.Parameters.Add(new NpgsqlParameter("q", qualified));
     return (long)(await size.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;

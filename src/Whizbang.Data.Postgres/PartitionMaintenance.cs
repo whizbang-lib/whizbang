@@ -156,7 +156,7 @@ internal static partial class PartitionMaintenance {
     void relay(object sender, NpgsqlNoticeEventArgs e) => LogPgPartmanNotice(logger, table.Table, e.Notice.MessageText);
     connection.Notice += relay;
     try {
-      await using var command = connection.CreateCommand();
+      await using var command = connection.CreateWhizbangCommand();
       command.CommandText = $"SELECT action, partition_name FROM {quotedSchema}.wh_partition_partman(@table, @interval, @ahead, NULL, @now)";
       command.Parameters.AddWithValue(nameof(table), table.Table);
       command.Parameters.AddWithValue("interval", table.Interval);
@@ -181,7 +181,7 @@ internal static partial class PartitionMaintenance {
 
   private static async Task<string> _convertAsync(
       NpgsqlConnection connection, string quotedSchema, PartitionedTable table, DateTimeOffset now, CancellationToken cancellationToken) {
-    await using var command = connection.CreateCommand();
+    await using var command = connection.CreateWhizbangCommand();
     command.CommandText = $"SELECT {quotedSchema}.wh_partition_convert(@table, @column, @interval, @now)";
     command.Parameters.AddWithValue(nameof(table), table.Table);
     command.Parameters.AddWithValue("column", table.PartitionColumn);
@@ -194,7 +194,7 @@ internal static partial class PartitionMaintenance {
       NpgsqlConnection connection, string quotedSchema, PartitionedTable table, int createAhead, DateTimeOffset now,
       ILogger logger, CancellationToken cancellationToken) {
     var results = new List<PartitionMaintenanceResult>();
-    await using var command = connection.CreateCommand();
+    await using var command = connection.CreateWhizbangCommand();
     // The window is read in the same statement, so a fixed window, a stored window and the stored window's default
     // are one expression: COALESCE(fixed, stored days, default days). All three null means no window.
     command.CommandText =

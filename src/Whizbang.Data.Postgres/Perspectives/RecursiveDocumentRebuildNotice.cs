@@ -81,14 +81,14 @@ public static partial class RecursiveDocumentRebuildNotice {
   /// <summary>Whether a migration ledger exists and lacks the marker: an earlier release migrated it.</summary>
   private static async Task<bool> _ledgerPredatesTheFixAsync(
       NpgsqlConnection connection, string prefix, CancellationToken cancellationToken) {
-    await using var probe = connection.CreateCommand();
+    await using var probe = connection.CreateWhizbangCommand();
     probe.CommandText = "SELECT to_regclass($1) IS NOT NULL";
     probe.Parameters.AddWithValue(prefix + "wh_schema_migrations");
     if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
       return false;
     }
 
-    await using var marker = connection.CreateCommand();
+    await using var marker = connection.CreateWhizbangCommand();
 #pragma warning disable S2077 // the prefix is quoted by PgIdentifier; the marker names are bound
     // Both spellings: the Entity Framework driver records a file with its extension, the Dapper driver without.
     marker.CommandText = $"SELECT NOT EXISTS (SELECT 1 FROM {prefix}wh_schema_migrations WHERE file_name IN ($1, $2))";
@@ -102,14 +102,14 @@ public static partial class RecursiveDocumentRebuildNotice {
   private static async Task<bool> _holdsRowsAsync(
       NpgsqlConnection connection, string prefix, string table, CancellationToken cancellationToken) {
     var qualified = prefix + PgIdentifier.Quote(table);
-    await using var probe = connection.CreateCommand();
+    await using var probe = connection.CreateWhizbangCommand();
     probe.CommandText = "SELECT to_regclass($1) IS NOT NULL";
     probe.Parameters.AddWithValue(qualified);
     if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
       return false;
     }
 
-    await using var rows = connection.CreateCommand();
+    await using var rows = connection.CreateWhizbangCommand();
 #pragma warning disable S2077 // the table name is quoted by PgIdentifier
     rows.CommandText = $"SELECT EXISTS (SELECT 1 FROM {qualified})";
 #pragma warning restore S2077
