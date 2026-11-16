@@ -704,10 +704,11 @@ public sealed class StreamIntegrityOptions {
   /// The longest wait, in seconds, of an integrity poller that keeps finding nothing (default 60, #2346): the paced repair
   /// drain and the subscription backfill double their one-second wait on each idle tick up to this ceiling, and return to
   /// one second on the first tick that finds work. A new deficit or backfill therefore waits at most this long to start.
+  /// 1 or less keeps the one-second tick, as before.
   /// </summary>
   /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:ExecuteAsync_AnIdleLedger_WaitsLongerUpToTheCeiling_AndAClaimReturnsItToOneSecondAsync</tests>
-  public int IdlePollCeilingSeconds { get; set; }
+  public int IdlePollCeilingSeconds { get; set; } = 60;
 
   /// <summary>
   /// Steady-state repair dispatch rate in ledger rows per second (default 5). The drain's token

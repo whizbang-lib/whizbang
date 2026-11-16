@@ -46,16 +46,27 @@ public sealed partial class SubscriptionBackfillWorker(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    // #2346: one second while a backfill runs, doubling on each idle tick up to the ceiling, set on the timer's period.
+    var backoff = IdlePollBackoff.For(_options);
+    ProbeCadenceMetrics? probes;
+    using (var scope = _scopeFactory.CreateScope()) {
+      probes = scope.ServiceProvider.GetService<ProbeCadenceMetrics>();
+    }
     try {
       while (await _timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) {
         var now = _time.GetUtcNow();
         var elapsed = (now - _lastTick).TotalSeconds;
         _lastTick = now;
+        bool foundWork;
         try {
-          await TickAsync(elapsed, now, stoppingToken).ConfigureAwait(false);
+          foundWork = await TickAsync(elapsed, now, stoppingToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
           LogTickFailed(_logger, ex);
+          foundWork = true;   // a failing tick is not known to be idle: keep the one-second step
         }
+        backoff.Next(foundWork);
+        probes?.RecordTick(ProbeCadenceMetrics.PROBE_SUBSCRIPTION_BACKFILL, foundWork);
+        _timer.Period = backoff.Current;
       }
     } catch (OperationCanceledException) {
       // stopping is the normal way out of the loop
@@ -74,9 +85,10 @@ public sealed partial class SubscriptionBackfillWorker(
   /// as the concurrency limit and the bucket allow, least recently asked first. Internal for deterministic tests; the
   /// loop above supplies real elapsed time.
   /// </summary>
-  internal async Task TickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
+  /// <returns>Whether a backfill is running (#2346); without one the loop waits longer before the next tick.</returns>
+  internal async Task<bool> TickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
     if (!SubscriptionBackfillGate.ShouldRequestBackfill(_options.BackfillOnSubscriptionGrowth, _options.RepairMode)) {
-      return;
+      return false;
     }
     var windowSize = _options.BackfillWindowSize;
     var perMinute = _options.BackfillEventsPerMinute;
@@ -85,11 +97,11 @@ public sealed partial class SubscriptionBackfillWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     if (!MaintainerDuty.IsThisInstancesTurn(services)) {
-      return;
+      return false;
     }
     var coordinator = services.GetService<IWorkCoordinator>();
     if (coordinator is null) {
-      return;
+      return false;
     }
     var backfills = await coordinator.GetSubscriptionBackfillsAsync(cancellationToken).ConfigureAwait(false);
     var running = backfills.Where(b => b.CompletedAt is null).ToList();
@@ -107,6 +119,7 @@ public sealed partial class SubscriptionBackfillWorker(
         .Where(r => r.Remaining is not null)
         .Select(r => new BackfillRemaining(r.EventType, r.Remaining!.Value))],
     });
+    return running.Count > 0;
   }
 
   /// <summary>A backfill whose next request may go now: no window awaits an answer, or the awaited one is past due.</summary>
