@@ -145,6 +145,136 @@ public class OperationalRetentionSweepSqlTests : EFCoreTestBase {
       .IsEqualTo(3L).Because("Pending and Restoring are work, and a Failed request holds back a restore storm until a restore succeeds");
   }
 
+  // ── #2359: records nothing else removed ───────────────────────────────────────────────────
+
+  private static async Task _seedDeadLetterAsync(
+      NpgsqlConnection conn, string fingerprint, string? stackId = null) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      INSERT INTO wh_dead_letters
+        (dead_letter_id, source_table, source_id, message_type, envelope, failure_reason, attempts_when_dlq,
+         recovery_status, generation, error_fingerprint, error_fingerprint_version, error_text, stack_id)
+      VALUES (@id, 'wh_inbox', @source, 'T.A', '{}'::jsonb, 5, 3, 0, 'seed/1', @fp, 1, 'boom', @sk)
+      """;
+    cmd.Parameters.AddWithValue("id", TrackedGuid.New().Value);
+    cmd.Parameters.AddWithValue("source", TrackedGuid.New().Value);
+    cmd.Parameters.AddWithValue("fp", fingerprint);
+    cmd.Parameters.AddWithValue("sk", (object?)stackId ?? DBNull.Value);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static long _reportsRetention => 14 * DAY;
+
+  /// <summary>
+  /// #2359: an advisory finding no scan has touched for the Reports retention goes. A finding still detected keeps its
+  /// row, because its row is what keeps a repeat inside the cooldown from being reported again.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#what-the-sweep-removes</docs>
+  [Test]
+  public async Task AnAdvisoryFinding_UntouchedPastTheRetention_GoesAsync() {
+    await using var conn = await _openAsync();
+    await _executeAsync(conn, """
+      INSERT INTO wh_advisory_ledger (finding_key, signature, first_seen_at, last_reported_at, last_touched) VALUES
+        ('gone', 's', NOW() - INTERVAL '60 days', NOW() - INTERVAL '60 days', NOW() - INTERVAL '30 days'),
+        ('live', 's', NOW() - INTERVAL '60 days', NOW() - INTERVAL '60 days', NOW() - INTERVAL '2 days')
+      """);
+
+    var row = (await _sweepAsync(conn, $$"""{"Reports": {{_reportsRetention}}}""")).Single(r => r.Table == "wh_advisory_ledger");
+
+    await Assert.That(row.Category).IsEqualTo(nameof(OperationalCategory.Reports));
+    await Assert.That(row.Expired).IsEqualTo(1);
+    await Assert.That(row.Remaining).IsEqualTo(1L);
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_advisory_ledger WHERE finding_key = 'live'")).IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// #2359: a dead letter summary row goes once it is past the retention AND no dead letter of its cluster is left. While
+  /// one is, the next aggregation would only write it back.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#what-the-sweep-removes</docs>
+  [Test]
+  public async Task ADeadLetterSummary_GoesOnlyOnceItsDeadLettersAreGoneAsync() {
+    await using var conn = await _openAsync();
+    await _executeAsync(conn, """
+      INSERT INTO wh_dead_letter_summary
+        (error_fingerprint, source_table, message_type, occurrence_count, first_seen_at, last_seen_at, sample_error_text) VALUES
+        ('fpgone', 'wh_inbox', 'T.A', 1, NOW() - INTERVAL '40 days', NOW() - INTERVAL '30 days', 'boom'),
+        ('fpheld', 'wh_inbox', 'T.A', 1, NOW() - INTERVAL '40 days', NOW() - INTERVAL '30 days', 'boom'),
+        ('fpnew',  'wh_inbox', 'T.A', 1, NOW() - INTERVAL '3 days',  NOW() - INTERVAL '2 days',  'boom')
+      """);
+    await _seedDeadLetterAsync(conn, "fpheld");
+
+    var row = (await _sweepAsync(conn, $$"""{"Reports": {{_reportsRetention}}}""")).Single(r => r.Table == "wh_dead_letter_summary");
+
+    await Assert.That(row.Expired).IsEqualTo(1);
+    await Assert.That(row.Remaining).IsEqualTo(2L);
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_dead_letter_summary WHERE error_fingerprint = 'fpgone'"))
+      .IsEqualTo(0L);
+  }
+
+  /// <summary>
+  /// #2359: a finished probe campaign goes once it is past the retention AND its cohort has no dead letter left. A
+  /// running campaign is work, and a finished one whose cohort remains is evidence (a failed campaign spends the cohort's
+  /// generation budget; a passed one lets its rows be re-driven), so both stay.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#what-the-sweep-removes</docs>
+  [Test]
+  public async Task AFinishedProbeCampaign_GoesOnceItsCohortIsGone_ARunningOneNeverAsync() {
+    await using var conn = await _openAsync();
+    await _executeAsync(conn, """
+      INSERT INTO wh_dlq_probe_campaigns (fingerprint, generation, started_at, probe_ids, verdict, verdict_at) VALUES
+        ('cgone',  'g1', NOW() - INTERVAL '40 days', '{}', 2, NOW() - INTERVAL '30 days'),
+        ('cheld',  'g1', NOW() - INTERVAL '40 days', '{}', 1, NOW() - INTERVAL '30 days'),
+        ('crun',   'g1', NOW() - INTERVAL '40 days', '{}', 0, NULL),
+        ('crecent','g1', NOW() - INTERVAL '3 days',  '{}', 3, NOW() - INTERVAL '2 days')
+      """);
+    await _seedDeadLetterAsync(conn, "cheld");
+
+    var row = (await _sweepAsync(conn, $$"""{"Reports": {{_reportsRetention}}}""")).Single(r => r.Table == "wh_dlq_probe_campaigns");
+
+    await Assert.That(row.Expired).IsEqualTo(1);
+    await Assert.That(row.Remaining).IsEqualTo(2L).Because("the finished campaigns left; a running one is work, not a record");
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_dlq_probe_campaigns WHERE fingerprint = 'cgone'")).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_dlq_probe_campaigns WHERE fingerprint = 'crun'")).IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// #2359: a stack goes with its links once it is past the retention and neither a dead letter nor the daily history
+  /// names it; then every frame old enough that no link names any more goes too. A frame another stack still uses stays.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#what-the-sweep-removes</docs>
+  [Test]
+  public async Task AStack_GoesWithItsLinks_OnceNothingNamesIt_AndThenItsUnusedFramesAsync() {
+    await using var conn = await _openAsync();
+    await _executeAsync(conn, """
+      INSERT INTO wh_stack_frames (frame, first_seen)
+        SELECT f, NOW() - INTERVAL '40 days' FROM unnest(ARRAY['only-s1', 'shared', 'orphan']) f;
+      INSERT INTO wh_stacks (stack_id, frame_count, is_prose, first_seen, last_seen) VALUES
+        ('s1', 2, false, NOW() - INTERVAL '40 days', NOW() - INTERVAL '30 days'),
+        ('s2', 1, false, NOW() - INTERVAL '40 days', NOW() - INTERVAL '30 days'),
+        ('s3', 1, false, NOW() - INTERVAL '40 days', NOW() - INTERVAL '30 days'),
+        ('s4', 1, false, NOW() - INTERVAL '3 days',  NOW() - INTERVAL '2 days');
+      INSERT INTO wh_stack_links (stack_id, position, frame_id)
+        SELECT v.s, v.p, f.frame_id FROM (VALUES ('s1', 0, 'only-s1'), ('s1', 1, 'shared'), ('s2', 0, 'shared'),
+                                                 ('s3', 0, 'shared'), ('s4', 0, 'shared')) v(s, p, fr)
+        JOIN wh_stack_frames f ON f.frame = v.fr;
+      INSERT INTO wh_stack_daily (stack_id, day, occurrences) VALUES ('s3', CURRENT_DATE - 1, 4);
+      """);
+    await _seedDeadLetterAsync(conn, "fps2", stackId: "s2");
+
+    var rows = await _sweepAsync(conn, $$"""{"Reports": {{_reportsRetention}}}""");
+
+    var stacks = rows.Single(r => r.Table == "wh_stacks");
+    var links = rows.Single(r => r.Table == "wh_stack_links");
+    var frames = rows.Single(r => r.Table == "wh_stack_frames");
+    await Assert.That(stacks.Expired).IsEqualTo(1).Because("only s1 is old and named by nothing");
+    await Assert.That(stacks.Remaining).IsEqualTo(3L);
+    await Assert.That(links.Expired).IsEqualTo(2).Because("a stack's links go with it");
+    await Assert.That(links.Remaining).IsEqualTo(3L);
+    await Assert.That(frames.Expired).IsEqualTo(2).Because("the frame only s1 used, and the frame no link ever named");
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_stack_frames WHERE frame = 'shared'")).IsEqualTo(1L);
+  }
+
   // ── no retention: report only ───────────────────────────────────────────────────────────────
 
   [Test]
