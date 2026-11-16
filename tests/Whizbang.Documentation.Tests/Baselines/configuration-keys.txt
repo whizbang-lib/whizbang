@@ -199,6 +199,7 @@ Whizbang:Perspectives:Rewind:DebounceWindow
 Whizbang:Perspectives:Rewind:Enabled
 Whizbang:Perspectives:Rewind:MaxConcurrentRewinds
 Whizbang:Perspectives:Rewind:MaxDebounceWindow
+Whizbang:Perspectives:Rewind:RepeatWarningThreshold
 Whizbang:Perspectives:Rewind:StartupRewindMode
 Whizbang:Perspectives:Rewind:StartupScanEnabled
 Whizbang:Perspectives:Snapshots:Enabled
@@ -219,6 +220,7 @@ Whizbang:Postgres:*:InitialRetryDelay
 Whizbang:Postgres:*:MaxInFlightCommands
 Whizbang:Postgres:*:MaxRetryDelay
 Whizbang:Postgres:*:RetryIndefinitely
+Whizbang:Postgres:*:TransactionPooler
 Whizbang:Postgres:BackoffMultiplier
 Whizbang:Postgres:CollectiveApplyBatchSize
 Whizbang:Postgres:CollectiveApplyStatementTimeoutSeconds
@@ -318,6 +320,7 @@ Whizbang:StreamIntegrity:BackfillOnSubscriptionGrowth
 Whizbang:StreamIntegrity:BackfillWindowSize
 Whizbang:StreamIntegrity:BacklogEtaGaugeEnabled
 Whizbang:StreamIntegrity:BulkBackfillThresholdEvents
+Whizbang:StreamIntegrity:CheckpointHeartbeatMinutes
 Whizbang:StreamIntegrity:CheckpointIntervalSeconds
 Whizbang:StreamIntegrity:CheckpointsEnabled
 Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes
@@ -328,6 +331,7 @@ Whizbang:StreamIntegrity:FullHistoryCompare:Schedule
 Whizbang:StreamIntegrity:FullSweepCron
 Whizbang:StreamIntegrity:FullSweepEveryNthAudit
 Whizbang:StreamIntegrity:GapDetectionEnabled
+Whizbang:StreamIntegrity:IdlePollCeilingSeconds
 Whizbang:StreamIntegrity:IntegrityDeliveryBatchSize
 Whizbang:StreamIntegrity:IntegrityDeliveryIntervalSeconds
 Whizbang:StreamIntegrity:IntegrityDeliveryLeaseSeconds
@@ -407,6 +411,7 @@ Whizbang:SystemEvents:LocalOnly
 Whizbang:SystemEvents:PermissionChangedEnabled
 Whizbang:SystemEvents:ScopeContextEstablishedEnabled
 Whizbang:TableStatistics:CollectionInterval
+Whizbang:TableStatistics:CollectionJitter
 Whizbang:TableStatistics:EventTypeSampleInterval
 Whizbang:TableStatistics:EventTypeSamplePercent
 Whizbang:TableStatistics:MaxEventTypes
