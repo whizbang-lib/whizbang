@@ -32,55 +32,35 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <param name="logger">Optional logger.</param>
 /// <docs>resilience/stream-integrity#the-change-log-stays-bounded</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnsequencedDigestCompactionStepTests.cs</tests>
-public sealed partial class UnsequencedDigestCompactionStep(
+public sealed class UnsequencedDigestCompactionStep(
     Type dbContextType,
     ILogger<UnsequencedDigestCompactionStep>? logger = null) : IMaintenanceStep {
 
   /// <summary>How many changes one fold takes at most.</summary>
-  public const int BATCH_SIZE = 10_000;
+  public const int BATCH_SIZE = UnsequencedDigestCompaction.BATCH_SIZE;
 
   /// <summary>How many folds one run issues at most.</summary>
-  public const int MAX_BATCHES_PER_RUN = 10;
+  public const int MAX_BATCHES_PER_RUN = UnsequencedDigestCompaction.MAX_BATCHES_PER_RUN;
 
   private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
   private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
 
   /// <inheritdoc />
-  public string Name => "unsequenced-digest-compaction";
+  public string Name => UnsequencedDigestCompaction.STEP_NAME;
 
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     var context = (DbContext)services.GetRequiredService(_dbContextType);
     var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var function = PgIdentifier.QualifyPrefix(string.IsNullOrWhiteSpace(schema) ? "public" : schema)
-      + "wh_compact_unsequenced_digest_changes";
 
     await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
     try {
-      var connection = (NpgsqlConnection)context.Database.GetDbConnection();
-      var folded = 0L;
-      for (var batch = 0; batch < MAX_BATCHES_PER_RUN; batch++) {
-        await using var cmd = connection.CreateCoordinatorCommand();
-#pragma warning disable S2077 // the function name is the context's own schema, quoted by PgIdentifier
-        cmd.CommandText = $"SELECT {function}(@limit)";
-#pragma warning restore S2077
-        cmd.Parameters.AddWithValue("limit", BATCH_SIZE);
-        var changes = Convert.ToInt64(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
-          System.Globalization.CultureInfo.InvariantCulture);
-        folded += changes;
-        if (changes < BATCH_SIZE) {
-          break;
-        }
-      }
-      if (folded > 0) {
-        LogCompacted(_logger, folded);
-      }
+      await UnsequencedDigestCompaction.RunAsync(
+        (NpgsqlConnection)context.Database.GetDbConnection(), schema, BATCH_SIZE, MAX_BATCHES_PER_RUN, _logger,
+        cancellationToken).ConfigureAwait(false);
     } finally {
       await context.Database.CloseConnectionAsync().ConfigureAwait(false);
     }
   }
-
-  [LoggerMessage(Level = LogLevel.Debug, Message = "Folded {Count} held-without-sequence digest change(s) into their totals")]
-  private static partial void LogCompacted(ILogger logger, long count);
 }

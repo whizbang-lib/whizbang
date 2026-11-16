@@ -170,6 +170,7 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
     _addStreamLifecycleBackfill(services, connectionString);
+    _addUnsequencedDigestCompaction(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -331,6 +332,7 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
     _addStreamLifecycleBackfill(services, connectionString);
+    _addUnsequencedDigestCompaction(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -639,6 +641,14 @@ public static class ServiceCollectionExtensions {
       new DapperStreamLifecycleBackfillMaintenanceStep(
         connectionString,
         sp.GetService<ILogger<DapperStreamLifecycleBackfillMaintenanceStep>>()));
+
+  // TURNKEY (#2351): the fold that keeps the held-without-sequence change log bounded, the same one the EF Core driver
+  // runs, so the event store's row triggers never grow the log on a Dapper service.
+  private static void _addUnsequencedDigestCompaction(IServiceCollection services, string connectionString) =>
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperUnsequencedDigestCompactionStep(
+        connectionString,
+        sp.GetService<ILogger<DapperUnsequencedDigestCompactionStep>>()));
 
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
     services.AddFrameworkPartitionedTables();
