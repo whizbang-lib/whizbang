@@ -79,9 +79,14 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     await _receivedFromOneOriginAsync(conn, streamId, terminal, copies, ct);
     await _appliedAndFlaggedAsync(conn, streamId, terminal, copies[0], ct);
 
-    await pipeline.StartAsync(ct);
+    // Read before the worker starts: a completed row is deleted, so a lookup after the start can find nothing.
+    var workIds = new List<Guid>();
     foreach (var copy in copies) {
-      await pipeline.CompletionOf(await _workIdAsync(conn, copy, ct)).WaitAsync(_signalDeadline, ct);
+      workIds.Add(await _workIdAsync(conn, copy, ct));
+    }
+    await pipeline.StartAsync(ct);
+    foreach (var workId in workIds) {
+      await pipeline.CompletionOf(workId).WaitAsync(_signalDeadline, ct);
     }
     var rewindsWhenSettled = rewinds.Count;
 
@@ -140,9 +145,14 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
       // The trigger's own row was retired by an earlier pass; only the two later copies are pending.
       await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE event_id = @id", copies[0], ct);
 
-      await pipeline.StartAsync(ct);
+      // Read before the worker starts: a completed row is deleted, so a lookup after the start can find nothing.
+      var workIds = new List<Guid>();
       foreach (var copy in copies[1..]) {
-        await pipeline.CompletionOf(await _workIdAsync(conn, copy, ct)).WaitAsync(_signalDeadline, ct);
+        workIds.Add(await _workIdAsync(conn, copy, ct));
+      }
+      await pipeline.StartAsync(ct);
+      foreach (var workId in workIds) {
+        await pipeline.CompletionOf(workId).WaitAsync(_signalDeadline, ct);
       }
       var rewindsWhenSettled = rewinds.Count;
       Console.WriteLine($"restart={restart} settled: rewinds={rewindsWhenSettled} {await _cursorAsync(conn, streamId, ct)}");
@@ -455,10 +465,9 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
         call.Parameters.AddWithValue("req", request);
         _ = await call.ExecuteScalarAsync(ct);
       }
-      await using (var stamp = conn.CreateCommand()) {
-        stamp.CommandText = "SELECT stamp_pending_commit_sequences(10000, false)";
-        _ = await stamp.ExecuteScalarAsync(ct);
-      }
+      await using var stamp = conn.CreateCommand();
+      stamp.CommandText = "SELECT stamp_pending_commit_sequences(10000, false)";
+      _ = await stamp.ExecuteScalarAsync(ct);
     }
 
     public async ValueTask DisposeAsync() {

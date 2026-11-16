@@ -78,6 +78,47 @@ public class PerspectiveRewindWriteCheckTests {
     await Assert.That(harness.Rows.Row(streamId).Attempts).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// #2366: a stream whose ids disagree with its versions (copies of an older event stored after a newer one) is
+  /// replayed through, and the rewind reports one position in the stream's one order: the event last by version. It used
+  /// to report the highest id it applied, the newest event at the lowest version, and the cursor was put back there.
+  /// </summary>
+  [Test]
+  public async Task ARewind_ReportsTheReplayedEventLastByVersion_NotTheHighestIdAsync() {
+    var harness = new Harness();
+    var streamId = TrackedGuid.New().Value;
+    var minted = DateTimeOffset.UtcNow.AddHours(-2);
+    var copies = new[] { Guid.CreateVersion7(minted), Guid.CreateVersion7(minted.AddSeconds(1)), Guid.CreateVersion7(minted.AddSeconds(2)) };
+    var terminal = Guid.CreateVersion7(minted.AddHours(1));
+    await harness.AppendAsync(streamId, new RewindCheckCompleted { StreamId = streamId }, terminal);
+    foreach (var copy in copies) {
+      await harness.AppendAsync(streamId, new RewindCheckStarted { StreamId = streamId }, copy);
+    }
+
+    var result = await harness.Runner.RewindAndRunAsync(streamId, PERSPECTIVE_NAME, copies[0], CancellationToken.None);
+
+    await Assert.That(result.LastEventId).IsEqualTo(copies[^1])
+      .Because("the replay read the stream through its last version, so the cursor reports that event, not the highest id");
+    await Assert.That(result.EventsProcessed).IsEqualTo(4);
+  }
+
+  /// <summary>
+  /// The framework's null snapshot store (registered when no driver supplies one) is no store: a rewind replays in full
+  /// instead of asking it for a floor, which it refuses.
+  /// </summary>
+  [Test]
+  public async Task ARewind_WithTheNullSnapshotStore_ReplaysInFullAsync() {
+    var harness = new Harness(NullPerspectiveSnapshotStore.Instance);
+    var streamId = TrackedGuid.New().Value;
+    var started = await harness.AppendAsync(streamId, new RewindCheckStarted { StreamId = streamId });
+
+    var result = await harness.Runner.RewindAndRunAsync(streamId, PERSPECTIVE_NAME, started.MessageId.Value, 7, CancellationToken.None);
+
+    await Assert.That(result.Status).IsEqualTo(PerspectiveProcessingStatus.Completed)
+      .Because("with no snapshot store configured the rewind replays the stream from its start");
+    await Assert.That(harness.Rows.Row(streamId).Attempts).IsEqualTo(1);
+  }
+
   [Test]
   public async Task ARowThatMovesDuringTheRewind_IsReplayedAgain_AndHoldsTheCorrectionAndTheNewerEventAsync() {
     var harness = new Harness();
@@ -334,9 +375,12 @@ public class PerspectiveRewindWriteCheckTests {
       return (IPerspectiveRunner)ctor.Invoke(args);
     }
 
-    public async Task<MessageEnvelope<IEvent>> AppendAsync(Guid streamId, IEvent payload) {
+    public Task<MessageEnvelope<IEvent>> AppendAsync(Guid streamId, IEvent payload) =>
+      AppendAsync(streamId, payload, MessageId.New().Value);
+
+    public async Task<MessageEnvelope<IEvent>> AppendAsync(Guid streamId, IEvent payload, Guid eventId) {
       var envelope = new MessageEnvelope<IEvent> {
-        MessageId = MessageId.New(),
+        MessageId = MessageId.From(eventId),
         Payload = payload,
         Hops = [
           new MessageHop {

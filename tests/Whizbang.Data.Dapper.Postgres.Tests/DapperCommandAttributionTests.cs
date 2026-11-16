@@ -65,8 +65,7 @@ public class DapperCommandAttributionTests : PostgresTestBase {
   [Test]
   public async Task TheAttributedConnection_ForwardsEverythingToTheConnection_AndDisposesNothingAsync() {
     await using var inner = new NpgsqlConnection(ConnectionString);
-    var attributed = new AttributedDbConnection(inner);
-    attributed.ConnectionString = ConnectionString;
+    var attributed = new AttributedDbConnection(inner) { ConnectionString = ConnectionString };
     await attributed.OpenAsync();
     attributed.Close();
     attributed.Open();

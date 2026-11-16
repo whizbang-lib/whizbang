@@ -146,9 +146,12 @@ internal static class CoordinatorCatalogSql {
   internal static async Task<List<PerspectiveCursorInfo>> PerspectiveCursorsBatchAsync(
       DbCommand cmd, string prefix, Guid[] streamIds, CancellationToken cancellationToken) {
     cmd.CommandText =
-        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, c.rewind_trigger_event_id, e.commit_sequence "
+        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, c.rewind_trigger_event_id, e.commit_sequence, "
+      // #2366: the frontier a completed replay read through, from the live cursor (a parked one resumes without it).
+      + "lc.replayed_through_commit_sequence "
       + $"FROM {prefix}wh_perspective_resume_cursors(@p_stream_ids, NULL) c "
-      + $"LEFT JOIN {prefix}wh_event_store e ON e.event_id = c.last_event_id";
+      + $"LEFT JOIN {prefix}wh_event_store e ON e.event_id = c.last_event_id "
+      + $"LEFT JOIN {prefix}wh_perspective_cursors lc ON lc.stream_id = c.stream_id AND lc.perspective_name = c.perspective_name";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = streamIds });
     var results = new List<PerspectiveCursorInfo>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -159,7 +162,8 @@ internal static class CoordinatorCatalogSql {
         LastEventId = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
         Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
         RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4),
-        LastCommitSequence = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)
+        LastCommitSequence = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
+        ReplayedThroughCommitSequence = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(6)
       });
     }
     return results;

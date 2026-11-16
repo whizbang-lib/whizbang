@@ -363,14 +363,16 @@ public partial class DapperWorkCoordinator(
       _jsonOptions.GetTypeInfo(typeof(Guid[])));
 
     await connection.ExecuteAsync(
-      $"SELECT {prefix}complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
+      $"SELECT {prefix}complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error, @ReplayedThrough::bigint)",
       new {
         completion.StreamId,
         completion.PerspectiveName,
         completion.LastEventId,
         ProcessedEventIds = processedEventIdsJson,
         Status = (short)completion.Status,
-        Error = (string?)null
+        Error = (string?)null,
+        // #2366: the replay frontier, stored on the cursor.
+        ReplayedThrough = completion.ReplayedThroughCommitSequence
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
@@ -771,7 +773,10 @@ public partial class DapperWorkCoordinator(
     var prefix = await _prefixAsync(connection, cancellationToken);
     var result = await connection.QueryFirstOrDefaultAsync<CursorQueryResult>(
       // #1734: the live cursor, else the one a whole-stream archive parked (a NewGeneration stream resumes after it).
-      $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {prefix}wh_perspective_resume_cursors(ARRAY[@StreamId]::uuid[], @PerspectiveName)",
+      // #2366: and the frontier a completed replay read through, from the live cursor.
+      "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, c.rewind_trigger_event_id, lc.replayed_through_commit_sequence "
+      + $"FROM {prefix}wh_perspective_resume_cursors(ARRAY[@StreamId]::uuid[], @PerspectiveName) c "
+      + $"LEFT JOIN {prefix}wh_perspective_cursors lc ON lc.stream_id = c.stream_id AND lc.perspective_name = c.perspective_name",
       new { StreamId = streamId, PerspectiveName = perspectiveName },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
@@ -784,7 +789,8 @@ public partial class DapperWorkCoordinator(
       PerspectiveName = result.perspective_name,
       LastEventId = result.last_event_id,
       Status = (PerspectiveProcessingStatus)result.status,
-      RewindTriggerEventId = result.rewind_trigger_event_id
+      RewindTriggerEventId = result.rewind_trigger_event_id,
+      ReplayedThroughCommitSequence = result.replayed_through_commit_sequence
     };
   }
 
@@ -1526,6 +1532,7 @@ internal class CursorQueryResult {
   public Guid? last_event_id { get; set; }
   public short status { get; set; }
   public Guid? rewind_trigger_event_id { get; set; }
+  public long? replayed_through_commit_sequence { get; set; }
 }
 
 /// <summary>

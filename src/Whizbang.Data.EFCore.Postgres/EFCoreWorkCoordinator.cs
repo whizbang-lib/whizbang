@@ -5326,6 +5326,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       completion.StreamId, completion.PerspectiveName,
       completion.LastEventId, completion.ProcessedEventIds,
       (short)completion.Status, null,
+      completion.ReplayedThroughCommitSequence,
       cancellationToken);
 
     await _logCheckpointDiagnosticAsync(completion.StreamId, completion.PerspectiveName, cancellationToken);
@@ -5339,6 +5340,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     Guid streamId, string perspectiveName, Guid lastEventId,
     Guid[] processedEventIds,
     short status, string? error,
+    long? replayedThroughCommitSequence,
     CancellationToken cancellationToken) {
     var transaction = _dbContext.Database.CurrentTransaction;
     var needsCommit = transaction == null;
@@ -5350,8 +5352,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     try {
       var schema = _resolveSchema(typeof(OutboxRecord));
       var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{5})
-      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}::jsonb, {{4}}, {{5}}::text)";
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{6})
+      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}::jsonb, {{4}}, {{5}}::text, {{6}}::bigint)";
 #pragma warning restore S2077
 
       // Serialize ProcessedEventIds as JSON string for the JSONB parameter (AOT-safe)
@@ -5361,7 +5363,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        [streamId, perspectiveName, lastEventId, processedEventIdsJson, status, error!],
+        // #2366: the replay frontier, stored on the cursor; a typed null when the run was not a replay.
+        [streamId, perspectiveName, lastEventId, processedEventIdsJson, status, error!, replayedThroughCommitSequence!],
         cancellationToken);
 
       if (needsCommit && transaction != null) {
@@ -5461,6 +5464,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       failure.StreamId, failure.PerspectiveName,
       failure.LastEventId, failure.ProcessedEventIds,
       (short)failure.Status, failure.Error,
+      replayedThroughCommitSequence: null,
       cancellationToken);
   }
 
@@ -5481,10 +5485,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // commit_sequence half of PerspectiveCursorCache (see GetPerspectiveCursorsBatchAsync).
     // #1734: the live cursor, else the one a whole-stream archive parked (a NewGeneration stream resumes after it).
     var resumeCursors = BuildSchemaQualifiedName(schema, RESUME_CURSORS_FUNCTION);
+    var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
     var sql = "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
-            + "c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence "
+            + "c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence, "
+            // #2366: the frontier a completed replay read through, from the live cursor.
+            + "lc.replayed_through_commit_sequence "
             + $"FROM {resumeCursors}(ARRAY[{{0}}]::uuid[], {{1}}) c "
-            + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id";
+            + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
+            + $"LEFT JOIN {cursorsTable} lc ON lc.stream_id = c.stream_id AND lc.perspective_name = c.perspective_name";
 #pragma warning restore S2077
 
     var result = await _dbContext.Database
@@ -5502,7 +5510,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       LastEventId = result.LastEventId,
       Status = (PerspectiveProcessingStatus)result.Status,
       RewindTriggerEventId = result.RewindTriggerEventId,
-      LastCommitSequence = result.LastCommitSequence
+      LastCommitSequence = result.LastCommitSequence,
+      ReplayedThroughCommitSequence = result.ReplayedThroughCommitSequence
     };
   }
 
@@ -6553,6 +6562,9 @@ internal class CursorQueryResult {
 
   [Column("last_commit_sequence")]
   public long? LastCommitSequence { get; set; }
+
+  [Column("replayed_through_commit_sequence")]
+  public long? ReplayedThroughCommitSequence { get; set; }
 }
 
 /// <summary>

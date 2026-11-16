@@ -1420,8 +1420,15 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       Frontier is null
         ? _completed(streamId, perspectiveName, triggeringEventId)
         : _completed(streamId, perspectiveName, Frontier.Value.EventId) with {
-          LastCommitSequence = Frontier.Value.CommitSequence
+          LastCommitSequence = Frontier.Value.CommitSequence,
+          ReplayedThroughCommitSequence = ReplayedThrough
         };
+
+    /// <summary>
+    /// #2366: what a replay from the stream's start reports it read through. Null for a replay from a snapshot, which
+    /// reads only the events after the snapshot's id.
+    /// </summary>
+    public long? ReplayedThrough { get; init; }
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;

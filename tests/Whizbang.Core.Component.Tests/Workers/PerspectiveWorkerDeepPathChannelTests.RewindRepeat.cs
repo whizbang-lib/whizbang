@@ -8,9 +8,9 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core.Workers;
 using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tests.Observability;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 

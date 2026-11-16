@@ -4173,6 +4173,14 @@ public record PerspectiveCursorInfo {
   /// NULL when no rewind is needed.
   /// </summary>
   public Guid? RewindTriggerEventId { get; init; }
+
+  /// <summary>
+  /// The commit-sequence frontier the last completed replay of this pair read through
+  /// (<see cref="PerspectiveCursorCompletion.ReplayedThroughCommitSequence"/>); null when no replay recorded one. A work
+  /// row for an event stamped at or below it is already applied (#2366).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  public long? ReplayedThroughCommitSequence { get; init; }
 }
 
 /// <summary>
@@ -4976,6 +4984,19 @@ public record PerspectiveCursorCompletion {
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? LastCommitSequence { get; init; }
+
+  /// <summary>
+  /// The commit-sequence frontier a completed replay (a rewind or a rebuild) read through: every event of the stream
+  /// stamped at or below it was folded into the row. Null for a live apply, which reads only the events it was given.
+  /// </summary>
+  /// <remarks>
+  /// The cursor stores it (<c>wh_perspective_cursors.replayed_through_commit_sequence</c>, never lowered), so a work row
+  /// for an event at or below it is known to be applied whichever instance takes it, after a restart too: a copy of an
+  /// event a rewind already read, queued again under a new work row, is completed without a second rewind (#2366).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:AStuckCursorOnTheHighestIdAtTheLowestVersion_ConvergesAfterOneRewind_AndARequeuedCopyIsNotRewoundAsync</tests>
+  public long? ReplayedThroughCommitSequence { get; init; }
 
   /// <summary>
   /// Whether this batch actually changed the row: it was written, or it was purged.

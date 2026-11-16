@@ -41,6 +41,15 @@ public sealed class PerspectiveCursorCache {
   /// </summary>
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), HashSet<Guid>> _replayed = new();
 
+  /// <summary>
+  /// #2366 — the commit-sequence frontier the last completed replay of each (stream, perspective) read through. Unlike
+  /// <see cref="_replayed"/> it is also stored on the cursor, so a cold cache (restart, eviction) reads it back.
+  /// </summary>
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), long> _replayedThrough = new();
+
+  /// <summary>#2366 — the rewind the stored cursor asks for (its RewindRequired trigger), as the cursor was last read.</summary>
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), Guid> _rewindRequests = new();
+
   /// <summary>The most events remembered per (stream, perspective); past it the set starts over.</summary>
   internal const int MAX_REPLAYED_EVENTS_PER_PAIR = 4096;
 
@@ -146,7 +155,67 @@ public sealed class PerspectiveCursorCache {
   public void Invalidate(Guid streamId, string perspectiveName) {
     _cache.TryRemove((streamId, perspectiveName), out _);
     _commitSeqCache.TryRemove((streamId, perspectiveName), out _);
+    // The rewind that invalidates the pair is the one the stored flag asked for.
+    _rewindRequests.TryRemove((streamId, perspectiveName), out _);
   }
+
+  /// <summary>
+  /// #2366 — records the commit-sequence frontier a completed replay of (stream, perspective) read through. Never lowered:
+  /// an event stamped at or below it stays applied.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="commitSequence">The replay's frontier.</param>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  public void RecordReplayedThrough(Guid streamId, string perspectiveName, long commitSequence) {
+    _touch(streamId);
+    _replayedThrough.AddOrUpdate((streamId, perspectiveName), commitSequence, (_, held) => Math.Max(held, commitSequence));
+  }
+
+  /// <summary>
+  /// #2366 — whether a completed replay of (stream, perspective) read the event stamped at <paramref name="commitSequence"/>.
+  /// False for an unstamped event: no frontier can say it was read.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="commitSequence">The event's commit sequence, or null when it is not stamped yet.</param>
+  /// <returns>True when a completed replay read through the event.</returns>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  public bool WasReplayedThrough(Guid streamId, string perspectiveName, long? commitSequence) =>
+    commitSequence is long seq
+      && _replayedThrough.TryGetValue((streamId, perspectiveName), out var through)
+      && seq <= through;
+
+  /// <summary>
+  /// #2366 — records the rewind the stored cursor asks for: its RewindRequired trigger, or none.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="triggerEventId">The flag's trigger; null when the cursor is not flagged.</param>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  public void SetRewindRequest(Guid streamId, string perspectiveName, Guid? triggerEventId) {
+    _touch(streamId);
+    if (triggerEventId is Guid trigger) {
+      _rewindRequests[(streamId, perspectiveName)] = trigger;
+    } else {
+      _rewindRequests.TryRemove((streamId, perspectiveName), out _);
+    }
+  }
+
+  /// <summary>
+  /// #2366 — the trigger of the rewind the stored cursor asked for when it was last read, if it asked for one.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="triggerEventId">The flag's trigger.</param>
+  /// <returns>True when the cursor is flagged for a rewind.</returns>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  public bool TryGetRewindRequest(Guid streamId, string perspectiveName, out Guid triggerEventId) =>
+    _rewindRequests.TryGetValue((streamId, perspectiveName), out triggerEventId);
 
   /// <summary>
   /// #1361 — records that a completed rewind applied <paramref name="eventIds"/> for (stream, perspective).
@@ -227,6 +296,12 @@ public sealed class PerspectiveCursorCache {
     foreach (var key in _replayed.Keys.Where(k => k.StreamId == streamId).ToList()) {
       _replayed.TryRemove(key, out _);
     }
+    foreach (var key in _replayedThrough.Keys.Where(k => k.StreamId == streamId).ToList()) {
+      _replayedThrough.TryRemove(key, out _);
+    }
+    foreach (var key in _rewindRequests.Keys.Where(k => k.StreamId == streamId).ToList()) {
+      _rewindRequests.TryRemove(key, out _);
+    }
   }
 
   /// <summary>
@@ -244,6 +319,8 @@ public sealed class PerspectiveCursorCache {
     _cache.Clear();
     _commitSeqCache.Clear();
     _replayed.Clear();
+    _replayedThrough.Clear();
+    _rewindRequests.Clear();
     _streamLastActivityTicks.Clear();
   }
 
