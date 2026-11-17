@@ -196,8 +196,14 @@ jobs:
       # Two nodes were enough on .NET 10 and are not on .NET 11 (#2135). A slower analysis that finishes beats a fast one
       # the runner never reports. The libraries are analyzed for net11.0 alone: they build net10.0 too, the same source
       # twice, which would double the analysis without adding a finding.
+      # Restored for every framework first, then built for net11.0 alone. A restore limited to net11.0 fails with NU1510:
+      # .NET 11 already carries some of the packages the libraries reference for net10.0, and a restore that only sees
+      # net11.0 calls those references redundant.
+      - name: Restore (every framework)
+        run: dotnet restore Whizbang.Analysis.slnx
+
       - name: Build (analyzed)
-        run: dotnet build Whizbang.Analysis.slnx --configuration Release -maxcpucount:1 -nodeReuse:false -mt:false -p:WhizbangReleaseTargetFrameworks=net11.0
+        run: dotnet build Whizbang.Analysis.slnx --no-restore --configuration Release -maxcpucount:1 -nodeReuse:false -mt:false -p:WhizbangReleaseTargetFrameworks=net11.0
 
       # The scanner's state for the End step: .sonarqube (its configuration, the per-project file lists and
       # the analyzers' reports), the scanner version, and this checkout's path, which the state's files name
