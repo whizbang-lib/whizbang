@@ -67,8 +67,9 @@ COMMENT ON COLUMN __SCHEMA__.wh_event_store.supersede_slot_at IS
 COMMENT ON COLUMN __SCHEMA__.wh_event_store.supersede_slot_type IS
   '466 (#2364): the type bucket the key''s slot is counted in, inherited from a deleted older copy; NULL: this row''s own type.';
 
+-- Keyed by lane, then the slot's type bucket (an equality a type-filtered window reads through), then its place.
 CREATE INDEX IF NOT EXISTS idx_event_store_slot_at
-  ON __SCHEMA__.wh_event_store (origin_service_id, supersede_slot_at)
+  ON __SCHEMA__.wh_event_store (origin_service_id, (COALESCE(supersede_slot_type, event_type)), supersede_slot_at)
   WHERE supersede_slot_at IS NOT NULL;
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -2232,7 +2233,8 @@ BEGIN
     FROM __SCHEMA__.wh_event_store es
     WHERE ((p_origin_lane IS NULL AND es.origin_service_id IS NULL) OR es.origin_service_id = p_origin_lane)
       AND es.supersede_slot_at >= p_since AND es.supersede_slot_at < p_until
-      AND (v_types IS NULL OR (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END) = ANY(v_types))
+      -- A row with an inherited place carries a key, so its bucket type is this expression, which the index holds.
+      AND (v_types IS NULL OR COALESCE(es.supersede_slot_type, es.event_type) = ANY(v_types))
       AND __DIGEST_ELIGIBLE__(es)
       AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
       AND es.created_at < v_settled
