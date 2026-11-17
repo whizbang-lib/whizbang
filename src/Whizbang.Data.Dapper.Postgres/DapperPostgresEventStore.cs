@@ -451,13 +451,25 @@ public partial class DapperPostgresEventStore(
   /// when one is given: the order a replay applies the stream in. Commit order matched it only for rows stamped as
   /// they were written; rows stamped after the fact run backward against their versions (#1352).
   /// </summary>
+  /// <remarks>
+  /// "After" the starting event is after its position in the stream, its version (#2379). After its id selected nothing
+  /// when the event carries the stream's highest id, and a rewind from a snapshot there replayed nothing, forever. A
+  /// starting event the stream does not hold has no position in it (the version comparison is NULL), and the read keeps
+  /// the order it always had for one: after its id.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_AfterTheEventWithTheHighestId_ReadsTheEventsAfterItsVersionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_AfterAnEventTheStreamDoesNotHold_ReadsAfterItsIdAsync</tests>
   private static string _getReadInStreamOrderSql(Guid? fromEventId) =>
     fromEventId is null
       ? READ_IN_STREAM_ORDER_COLUMNS + @"
           WHERE es.stream_id = @StreamId
           ORDER BY es.version, es.event_id"
       : READ_IN_STREAM_ORDER_COLUMNS + @"
-          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          WHERE es.stream_id = @StreamId
+            AND COALESCE(
+              es.version > (SELECT a.version FROM wh_event_store a WHERE a.stream_id = @StreamId AND a.event_id = @FromEventId),
+              es.event_id > @FromEventId)
           ORDER BY es.version, es.event_id";
 
   /// <summary>

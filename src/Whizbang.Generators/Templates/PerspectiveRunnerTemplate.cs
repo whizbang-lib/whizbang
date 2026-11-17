@@ -2765,20 +2765,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       } // closes foreach (var envelope in foldEvents)
 
       // v0.688 — advance the catch-up anchor past everything this pass READ so the next
-      // iteration's ReadPolymorphicAsync only returns events appended since. The anchor is
-      // the MAX MessageId of the read window, not the last-APPLIED id: the apply order is
-      // commit order, whose final event need not carry the window's largest id — an
-      // id-anchored refetch from a smaller last-applied id would re-serve (and re-apply)
-      // the window's tail every pass.
+      // iteration's ReadPolymorphicAsync only returns events appended since. The store reads after the anchor's
+      // position in the stream, its version (#2379), so the anchor is the event read last in stream order, never the
+      // largest id, which sits anywhere in a stream whose ids and versions disagree.
       // Collectives are other streams' events, so they never anchor this stream's read; a pass that folded only
       // collectives leaves the anchor where it was.
-      var readIds = events
-        .Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent)
-        .Select(e => e.MessageId.Value)
-        .ToList();
-      if (readIds.Count > 0) {
-        anchorEventId = readIds.OrderBy(id => id.ToString("D"), StringComparer.Ordinal).Last();
-      }
+      anchorEventId = global::Whizbang.Core.Perspectives.StreamReadAnchor.After(
+        events.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent), anchorEventId);
     } // closes while (true)
 
     return await _finishReplayAsync(new ReplayOutcome {
@@ -2989,7 +2982,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
       var read = new global::Whizbang.Core.Perspectives.LastInReplayOrder(static e => e.GetCurrentScope()?.Scope is not null);
-      Guid? readUpTo = null;
+      var readAnchor = new global::Whizbang.Core.Perspectives.StreamReadAnchor();
       await foreach (var envelope in _eventStore.ReadPolymorphicAsync(streamId, anchorEventId, eventTypes, cancellationToken)) {
         if (!DecidesTheRowAlone(envelope.Payload)) {
           return null;
@@ -2998,7 +2991,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         outcome.FirstStreamEvent ??= envelope;
         (outcome.FrontierEventId, outcome.FrontierCommitSequence) = _advanceFrontier(outcome.FrontierEventId, outcome.FrontierCommitSequence, envelope);
         outcome.LastInStream.Offer(envelope);
-        readUpTo = _laterId(readUpTo, envelope.MessageId.Value);
+        readAnchor.Offer(envelope);
       }
       if (read.Count == 0) {
         break;
@@ -3014,7 +3007,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       outcome.LastSuccessfulEventType = last.Payload.GetType().FullName ?? last.Payload.GetType().Name;
       outcome.LastSuccessfulEventAt = last.Hops is { Count: > 0 } ? last.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
       outcome.LastScope = read.LastMatching?.GetCurrentScope()?.Scope ?? outcome.LastScope;
-      anchorEventId = readUpTo;
+      // #2379: the next pass reads after the event last in stream order, as the store places the anchor.
+      anchorEventId = readAnchor.Next(anchorEventId);
       _logger.LogDebug(
           "Overwrite-only rewind of {PerspectiveName} stream {StreamId}: applied the last of {EventCount} event(s) read",
           perspectiveName, streamId, read.Count);
@@ -3038,10 +3032,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       return null;
     }
   }
-
-  /// <summary>The later of two event ids by their canonical text, the catch-up anchor's order.</summary>
-  private static Guid _laterId(Guid? current, Guid candidate) =>
-      current is { } held && string.CompareOrdinal(held.ToString("D"), candidate.ToString("D")) >= 0 ? held : candidate;
 
   /// <summary>
   /// The replayed event last in stream order (#2366): the highest version read. A replay of a stream whose ids disagree

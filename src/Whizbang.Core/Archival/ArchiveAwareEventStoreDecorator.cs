@@ -155,7 +155,8 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// archive. Reads through whatever <see cref="ReadThrough"/> says: the caller asked for it.
   /// </summary>
   /// <param name="streamId">The stream.</param>
-  /// <param name="fromEventId">The snapshot's event: the hot events after it are read.</param>
+  /// <param name="fromEventId">The snapshot's event. The hot events are placed after it by <paramref name="afterVersion"/>,
+  /// because the hot store may no longer hold it (#2379).</param>
   /// <param name="afterVersion">The snapshot's version: the archived events above it are read.</param>
   /// <param name="eventTypes">The event types the reader folds.</param>
   /// <param name="cancellationToken">Cancellation.</param>
@@ -170,8 +171,10 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
       seen.Add(envelope.MessageId.Value);
       yield return envelope;
     }
-    await foreach (var envelope in Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken).ConfigureAwait(false)) {
-      if (!seen.Contains(envelope.MessageId.Value)) {
+    // The hot events after the snapshot's version (#2379): the snapshot's event may be archived, and an anchor the hot
+    // store no longer holds can be placed only by the version the caller passed, never by its id.
+    await foreach (var envelope in Inner.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes, cancellationToken).ConfigureAwait(false)) {
+      if (envelope.LocalStreamVersion > afterVersion && !seen.Contains(envelope.MessageId.Value)) {
         yield return envelope;
       }
     }

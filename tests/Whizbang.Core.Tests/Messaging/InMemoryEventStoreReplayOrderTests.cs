@@ -75,15 +75,29 @@ public class InMemoryEventStoreReplayOrderTests {
       .Because("the replay order is decided from the envelope, so the read must carry each event's version");
   }
 
+  /// <summary>
+  /// "After" an event is after its position in the stream, its version, as the SQL stores read it (#2379). The id filter
+  /// this replaced read the events whose ids sort above the anchor, which in this stream are the ones written before it.
+  /// </summary>
   [Test]
-  public async Task ReadPolymorphicAsync_FromAnEvent_KeepsTheIdFilterAndTheStreamOrderAsync() {
+  public async Task ReadPolymorphicAsync_FromAnEvent_ReadsTheEventsAfterItsVersionAsync() {
     var (store, streamId) = await _seedAsync();
 
-    // The anchor filters by id, as the SQL stores do: everything whose id sorts above it, in stream order.
     var read = await _readAsync(store, streamId, _appendOrder[2]);
 
-    Guid[] expected = [_appendOrder[0], _appendOrder[1]];
+    Guid[] expected = [_appendOrder[3]];
     await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the anchor keeps its id semantics and the read keeps the stream's order");
+      .Because("the event after version 3 is version 4, whatever the ids say");
+  }
+
+  /// <summary>An anchor the stream does not hold has no position in it, so the read is after its id (#2379).</summary>
+  [Test]
+  public async Task ReadPolymorphicAsync_FromAnEventTheStreamDoesNotHold_ReadsAfterItsIdAsync() {
+    var (store, streamId) = await _seedAsync();
+
+    var read = await _readAsync(store, streamId, Guid.Parse("019df109-0004-7000-8000-000000000001"));
+
+    Guid[] expected = [_appendOrder[0]];
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 }
