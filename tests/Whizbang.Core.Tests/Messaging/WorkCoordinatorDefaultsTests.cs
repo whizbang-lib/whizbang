@@ -1149,4 +1149,16 @@ public class WorkCoordinatorDefaultsTests {
     await Assert.That(async () => await coordinator.ImportBrokerDeadLetterAsync(import))
         .ThrowsExactly<NotSupportedException>();
   }
+
+  [Test]
+  public async Task CutGatesConsumerSealsAndCarriedDetail_WithoutProviderSupport_DoNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await coordinator.SetCutGatesAsync(waitForSeal: true, waitForConsumers: true);
+    await coordinator.RecordConsumerSealAsync("consumer-a", 7);
+    var cleared = await coordinator.RollOffCarriedDetailAsync(TimeSpan.FromDays(14), 100);
+
+    await Assert.That(cleared).IsEqualTo(0)
+      .Because("#2363: an engine whose cuts carry no digest has no gate to write, no seal to record and no detail to clear");
+  }
 }
