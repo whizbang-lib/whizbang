@@ -66,7 +66,7 @@ public class DapperArchiveRestoreRedriveTests : PostgresTestBase {
     await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_outbox WHERE message_id = @write", new { write }))
       .IsEqualTo(1L).Because("the write re-enters the outbox it was refused from, now that its stream is back");
     await Assert.That(await conn.ExecuteScalarAsync<int>(
-        "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id", new { id = deadLetter.Value }))
+        "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id", new { id = deadLetter.GetValueOrDefault() }))
       .IsEqualTo((int)DeadLetterRecoveryStatus.Recovering)
       .Because("the outbox store claims the dead letter as it stores the write; its completion settles it");
   }
