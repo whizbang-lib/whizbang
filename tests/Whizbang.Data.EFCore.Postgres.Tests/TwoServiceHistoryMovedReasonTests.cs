@@ -74,9 +74,10 @@ public class TwoServiceHistoryMovedReasonTests : EFCoreTestBase {
       originRules: originRules, consumerRules: consumerRules, consumerMetrics: metrics);
     var ids = await h.EmitAsync(new TwoServiceEmit((Guid)TrackedGuid.New(), SHARED, 0, null, PAYLOAD));
     await h.DeliverAsync([ids[0]]);
-    await h.RunConsumerAuditAsync(_audit());   // the consumer records the origin's generation
+    await h.RunConsumerAuditAsync(_audit());   // the consumer records the origin's generation and seals what it verified
     await h.RewriteOriginHistoryAsync();       // a generation the consumer has seen under these rules
-    await h.RunConsumerAuditAsync(_audit());
+    await h.RunConsumerAuditAsync(_audit());   // the seal falls to the rewrite's floor
+    await h.RunConsumerAuditAsync(_audit());   // and the next audit verifies and seals again: a lowered seal is not lowered twice
 
     // The rollout: both services take new rules for the shared type, and the origin refolds its history under them.
     originRules.Shared = new TypeRules(SHARED_NAME) { Terminal = true };
@@ -84,6 +85,7 @@ public class TwoServiceHistoryMovedReasonTests : EFCoreTestBase {
     await h.RewriteOriginHistoryAsync();
     await h.RunConsumerAuditAsync(_audit());
     var afterTheRuleChange = _lowered(metrics);
+    await h.RunConsumerAuditAsync(_audit());
 
     // An ordinary rewrite under the same rules.
     await h.RewriteOriginHistoryAsync();
@@ -91,7 +93,7 @@ public class TwoServiceHistoryMovedReasonTests : EFCoreTestBase {
     var afterTheRewrite = _lowered(metrics);
 
     await Assert.That(afterTheRuleChange.GetValueOrDefault("rule_change")).IsEqualTo(1L)
-      .Because("the rules changed after the generation the consumer knew");
+      .Because($"the rules changed after the generation the consumer knew (lowered: {string.Join(", ", afterTheRuleChange)})");
     await Assert.That(afterTheRewrite.GetValueOrDefault("rule_change")).IsEqualTo(1L);
     await Assert.That(afterTheRewrite.GetValueOrDefault("rewrite")).IsEqualTo(
       afterTheRuleChange.GetValueOrDefault("rewrite") + 1).Because("the same rules, history rewritten: a rewrite");
