@@ -975,9 +975,11 @@ jobs:
       - name: Restore Dependencies
         run: dotnet restore --locked-mode
 
-      # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0.
+      # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0. One build
+      # node: with two, the hosted runner ran out of memory and was shut down mid-build ("The runner has received a
+      # shutdown signal") on three runs in a row, as the quality build did (#2135).
       - name: Build every project for net10.0
-        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:2 -nodeReuse:false
+        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
