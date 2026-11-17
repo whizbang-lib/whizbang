@@ -941,30 +941,42 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     // ----- the invariant -----
 
     /// <summary>
-    /// On each side, every stored digest of the scenario equals a fresh fold over the events still ELIGIBLE to count:
-    /// durable (not ephemeral, not at most once), not digest-exempt, and not superseded by a newer event of its key in
-    /// its stream. A removal that left its contribution behind, or a superseded copy still counted, fails here.
+    /// On each side, every stored digest of the scenario equals a fresh fold over the events still ELIGIBLE to count,
+    /// plus what cuts carried: durable (not ephemeral, not at most once), not digest-exempt, and, for a superseding type,
+    /// each key once, as its slot, whichever of its copies are held (#2364). A removal that left its contribution behind
+    /// uncarried, or a key counted per copy, fails here.
     /// </summary>
     public async Task AssertDigestsFollowEligibilityAsync(MatrixCase pair) {
       foreach (var store in new[] { Origin, Consumer }) {
         await using var conn = await _openAsync(store);
         var differing = await _scalarAsync(conn, """
           WITH eligible AS (
+            -- #2364: a superseding key counts once, as its slot (stream, group, key), whichever of its copies are held,
+            -- in its first copy's type bucket; the copy that counts it is the oldest held.
             SELECT COALESCE(es.origin_service_id, '00000000-0000-0000-0000-000000000000'::uuid) AS origin_service_id,
-                   COALESCE(es.scope->>'t', '') AS scope_tenant, es.event_type, es.stream_id,
-                   bit_xor(hashtextextended(es.event_id::text, 0)) AS digest_lo,
-                   bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
+                   COALESCE(es.scope->>'t', '') AS scope_tenant,
+                   CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END AS event_type,
+                   es.stream_id,
+                   bit_xor(hashtextextended(x.id::text, 0)) AS digest_lo,
+                   bit_xor(hashtextextended(x.id::text, 1)) AS digest_hi,
                    COUNT(*)::int AS event_count
             FROM wh_event_store es
+            CROSS JOIN LATERAL (SELECT CASE WHEN es.supersede_key IS NULL THEN es.event_id
+                                            ELSE md5(es.stream_id::text || '|' || COALESCE(es.supersede_group, es.event_type)
+                                                     || '|' || es.supersede_key)::uuid END AS id) x
             WHERE COALESCE(es.flags, 0) & 8 = 0
               AND COALESCE(es.flags, 0) & 32 = 0
               AND split_part(es.event_type, ',', 1) <> ALL(@exempt::text[])
               AND NOT (es.supersede_key IS NOT NULL AND EXISTS (
-                SELECT 1 FROM wh_event_store n
-                WHERE n.stream_id = es.stream_id
-                  AND COALESCE(n.supersede_group, n.event_type) = COALESCE(es.supersede_group, es.event_type)
-                  AND n.supersede_key = es.supersede_key
-                  AND n.event_id > es.event_id))
+                SELECT 1 FROM wh_event_store o
+                WHERE o.stream_id = es.stream_id
+                  AND COALESCE(o.supersede_group, o.event_type) = COALESCE(es.supersede_group, es.event_type)
+                  AND o.supersede_key = es.supersede_key
+                  AND o.event_id <> es.event_id
+                  AND CASE WHEN o.origin_service_id IS NOT NULL AND o.origin_service_id = es.origin_service_id
+                                AND o.origin_commit_sequence IS NOT NULL AND es.origin_commit_sequence IS NOT NULL
+                           THEN o.origin_commit_sequence < es.origin_commit_sequence
+                           ELSE o.version < es.version END))
             GROUP BY 1, 2, 3, 4
           ),
           -- #2363: a bucket's digest is its live events plus what cuts carried; the live part is what must equal the fold.
