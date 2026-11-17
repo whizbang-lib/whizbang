@@ -47,7 +47,6 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_inbox");
     await Assert.That(tables).Contains("wh_outbox");
     await Assert.That(tables).Contains("wh_event_store");
-    await Assert.That(tables).Contains("wh_receptor_processing");
     await Assert.That(tables).Contains("wh_perspective_cursors");
     await Assert.That(tables).Contains("wh_request_response");
     await Assert.That(tables).Contains("wh_sequences");

@@ -1267,8 +1267,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
   /// <summary>
   /// Executes core infrastructure table DDL at runtime.
-  /// Creates all Whizbang core tables: Inbox, Outbox, EventStore, ReceptorProcessing,
-  /// PerspectiveCursors, RequestResponse, ServiceInstances, PartitionAssignments,
+  /// Creates all Whizbang core tables: Inbox, Outbox, EventStore,
+  /// PerspectiveCursors, RequestResponse, ServiceInstances,
   /// MessageDeduplication, Sequences, and EventSequence.
   /// SQL is generated at runtime using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
   /// AOT-compatible - no reflection or dynamic code generation, just string building.
@@ -1320,6 +1320,14 @@ END $$;
       // take its table's lock to find it already there.
       await dbContext.Database.ExecuteSqlRawAsync(
         Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(coreInfrastructureSchema), cancellationToken);
+      // 477: wh_receptor_processing is created only until its drop has recorded the hash it has now, so migration 031,
+      // which indexes it, finds it whenever it runs, and no pass after the drop creates it again.
+      if (Whizbang.Data.Postgres.RetiredReceptorTable.FindDropMigration(GetMigrationScripts().Select(m => m.Name)) is { } drop) {
+        await dbContext.Database.ExecuteSqlRawAsync(Whizbang.Data.Postgres.RetiredReceptorTable.BootstrapSql(
+          _quotedSchema, drop,
+          _migrationHash(_transformMigrationSql(GetMigrationScripts().Single(m => m.Name == drop).Sql, "__SCHEMA__"))),
+          cancellationToken);
+      }
       logger?.LogDebug("Core infrastructure tables created successfully");
     } catch (Exception ex) {
       logger?.LogError(ex, "Failed to create core infrastructure tables");
@@ -1543,15 +1551,6 @@ END $$;
 -- Foreign keys (note: PostgreSQL doesn't support IF NOT EXISTS for FK constraints)
 DO $$
 BEGIN
-  -- FK: receptor_processing.event_id -> event_store.event_id
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'fk_receptor_processing_event'
-  ) THEN
-    ALTER TABLE __QUOTED_SCHEMA__.wh_receptor_processing
-      ADD CONSTRAINT fk_receptor_processing_event
-      FOREIGN KEY (event_id) REFERENCES __QUOTED_SCHEMA__.wh_event_store(event_id) ON DELETE CASCADE;
-  END IF;
-
   -- FK: perspective_cursors.last_event_id -> event_store.event_id
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_cursors_event'
@@ -1562,13 +1561,7 @@ BEGIN
   END IF;
 END $$;
 
--- Unique constraint for receptor_processing (event_id, receptor_name)
-CREATE UNIQUE INDEX IF NOT EXISTS uq_receptor_processing_event_receptor
-  ON __QUOTED_SCHEMA__.wh_receptor_processing(event_id, receptor_name);
-
 -- Partial indexes for status-based queries
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_status_failed
-  ON __QUOTED_SCHEMA__.wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
 
 CREATE INDEX IF NOT EXISTS idx_perspective_cursors_catching_up
   ON __QUOTED_SCHEMA__.wh_perspective_cursors(status) WHERE (status & 8) = 8; -- CatchingUp flag
@@ -1715,6 +1708,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
   /// <summary>The ledger, as the reversal recorder names it (#2122).</summary>
   private const string _ledgerName = @"__QUOTED_SCHEMA__.wh_schema_migrations";
+
+  /// <summary>The context's schema, quoted, as the retired-table bootstrap writes it (477).</summary>
+  private const string _quotedSchema = @"__QUOTED_SCHEMA__";
 
   /// <summary>The placeholder the library's reverse scripts carry, spelled so the generator leaves it alone.</summary>
   private const string _reverseSchemaToken = "__" + "SCHEMA__";

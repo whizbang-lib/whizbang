@@ -170,30 +170,6 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// Receptor work owned by this instance comes back from the claim with its own source, which the
-  /// Dapper claim neither treats as stream work nor refuses as unsupported outbox or inbox work.
-  /// </summary>
-  [Test]
-  public async Task ClaimWorkAsync_OwnedReceptorWork_IsNeitherStreamWorkNorRefusedAsync() {
-    var c = _build();
-    var instanceId = (Guid)TrackedGuid.New();
-    await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-claim-r", "host-claim-r", 1));
-    var receptorWorkId = (Guid)TrackedGuid.New();
-    await _executeAsync(@"
-      INSERT INTO wh_receptor_processing (id, event_id, receptor_name, stream_id, instance_id, lease_expiry)
-      VALUES (@id, @eventId, 'CoverageReceptor', @streamId, @instanceId, NOW() + INTERVAL '5 minutes')",
-      new { id = receptorWorkId, eventId = (Guid)TrackedGuid.New(), streamId = (Guid)TrackedGuid.New(), instanceId });
-
-    var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
-      instanceId, "svc-claim-r", "host-claim-r", 1,
-      MaxStreams: 50, PartitionCount: 100, LeaseSeconds: 300));
-
-    await Assert.That(batch.PerspectiveStreamIds).IsEmpty();
-    await Assert.That(await _countAsync("SELECT COUNT(*) FROM wh_receptor_processing WHERE id = @m", receptorWorkId))
-      .IsEqualTo(1L);
-  }
-
-  /// <summary>
   /// A handler commit in debug mode keeps the acknowledged inbox row (stamped processed) instead of
   /// deleting it, which is what debug mode exists for.
   /// </summary>

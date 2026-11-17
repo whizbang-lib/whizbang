@@ -34,16 +34,6 @@ CREATE INDEX IF NOT EXISTS idx_active_streams_instance ON wh_active_streams (ass
 CREATE INDEX IF NOT EXISTS idx_active_streams_partition ON wh_active_streams (partition_number) WHERE assigned_instance_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_active_streams_lease_expiry ON wh_active_streams (lease_expiry) WHERE lease_expiry IS NOT NULL;
 
--- Partition Assignments - Distributed work coordination
-CREATE TABLE IF NOT EXISTS wh_partition_assignments (
-  partition_number INTEGER NOT NULL PRIMARY KEY,
-  instance_id UUID NOT NULL,
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_partition_assignments_instance ON wh_partition_assignments (instance_id, last_heartbeat);
-
 -- Message Deduplication - Permanent idempotency tracking
 CREATE TABLE IF NOT EXISTS wh_message_deduplication (
   message_id UUID NOT NULL PRIMARY KEY,
@@ -137,22 +127,6 @@ CREATE TABLE IF NOT EXISTS wh_event_store (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream ON wh_event_store (stream_id, version);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate ON wh_event_store (aggregate_id, version);
 CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type ON wh_event_store (aggregate_type, created_at);
-
--- Receptor Processing - Event handler tracking (log-style)
-CREATE TABLE IF NOT EXISTS wh_receptor_processing (
-  id UUID NOT NULL PRIMARY KEY,
-  event_id UUID NOT NULL,
-  receptor_name TEXT NOT NULL,
-  status SMALLINT NOT NULL DEFAULT 0,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT NULL,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  processed_at TIMESTAMPTZ NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_event_id ON wh_receptor_processing (event_id);
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_receptor_name ON wh_receptor_processing (receptor_name);
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_status ON wh_receptor_processing (status);
 
 -- Perspective Cursors - Read model projection tracking (checkpoint-style)
 CREATE TABLE IF NOT EXISTS wh_perspective_cursors (

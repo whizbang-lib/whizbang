@@ -331,7 +331,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
           DELETE FROM inventory.wh_lifecycle_completions;
           DELETE FROM inventory.wh_outbox;
           DELETE FROM inventory.wh_inbox;
-          DELETE FROM inventory.wh_receptor_processing;
           DELETE FROM inventory.wh_message_deduplication;
           DELETE FROM inventory.wh_event_store;
           DELETE FROM inventory.wh_active_streams;
@@ -358,7 +357,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
           DELETE FROM bff.wh_lifecycle_completions;
           DELETE FROM bff.wh_outbox;
           DELETE FROM bff.wh_inbox;
-          DELETE FROM bff.wh_receptor_processing;
           DELETE FROM bff.wh_message_deduplication;
           DELETE FROM bff.wh_event_store;
           DELETE FROM bff.wh_active_streams;
