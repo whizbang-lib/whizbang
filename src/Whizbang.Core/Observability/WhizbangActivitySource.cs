@@ -76,6 +76,22 @@ public static class WhizbangActivitySource {
   public static readonly ActivitySource Tracing = new("Whizbang.Tracing", ACTIVITY_SOURCE_VERSION);
 
   /// <summary>
+  /// ActivitySource for stream integrity (#2365): audits, answers, repair requests, repairs and re-checks. A request
+  /// carries its span's trace link, so an origin's answer and a consumer's repair join the trace that found the gap.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  /// <tests>tests/Whizbang.Observability.Tests/IntegrityTracingTests.cs:TheSource_IsWhizbangIntegrity_AndIsListedWithEveryWhizbangSourceAsync</tests>
+  public static readonly ActivitySource Integrity = new("Whizbang.Integrity.Stub", ACTIVITY_SOURCE_VERSION);
+
+  /// <summary>
+  /// Every activity source the framework publishes, the turnkey answer to "which sources do I subscribe?"
+  /// (<c>AddWhizbangInstrumentation</c> on a tracer provider subscribes them all).
+  /// </summary>
+  /// <docs>operations/observability/tracing#collecting-activities</docs>
+  /// <tests>tests/Whizbang.Observability.Tests/IntegrityTracingTests.cs:EveryActivitySourceWhizbangDeclares_IsOnTheListAsync</tests>
+  public static IReadOnlyList<string> All { get; } = [];
+
+  /// <summary>
   /// Records a defensive exception that should never occur in normal operation.
   /// Sets activity status to Error and adds exception details.
   /// </summary>
