@@ -312,15 +312,19 @@ public static class StoredFormDiscovery {
       string or char when kind == Scalar.Text => _jsonString(Convert.ToString(value.Value, CultureInfo.InvariantCulture)!),
       bool flag when kind == Scalar.Bool => flag ? "true" : "false",
       string or char or bool => null,
-      _ when kind is Scalar.Number or Scalar.Enum => _jsonNumber(value.Value, kind, number),
+      _ when kind is Scalar.Number or Scalar.Enum => _jsonNumber(value.Value, number),
       _ => null,
     };
   }
 
+  // The numeric types that hold a fraction. An enum's underlying type is never one of them, so an enum default is
+  // integral by the same lookup; a lookup rather than a pattern, whose null test no number ever takes.
+  private static readonly HashSet<string?> _fractional = new(StringComparer.Ordinal) { "Decimal", "Single", "Double" };
+
   // A numeric default as JSON, or null when it is not finite or has a fraction the property's type cannot hold.
-  private static string? _jsonNumber(object? raw, Scalar kind, string? number) {
+  private static string? _jsonNumber(object? raw, string? number) {
     var d = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
-    var integral = kind == Scalar.Enum || number is not ("Decimal" or "Single" or "Double");
+    var integral = !_fractional.Contains(number);
     if (double.IsNaN(d) || double.IsInfinity(d) || (integral && Math.Abs(d % 1) > 0)) {
       return null;
     }
