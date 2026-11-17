@@ -756,14 +756,22 @@ public class CollectiveReplayRunnerTests {
         .Where(m => m.Tags.TryGetValue("perspective_name", out var name) && name == PerspectiveName)
         .Sum(m => m.Value);
 
+    /// <summary>
+    /// A rewind for the stream's first event, as a late event triggers one: the trigger is an event of the stream, which
+    /// the rewind places a snapshot floor against (#2379). A stream with no event is rewound for an id it does not hold.
+    /// </summary>
     public async Task<PerspectiveCursorCompletion> RewindAsync(Guid userId) {
       ApplyCounter.Current.Value = Counter;
-      return await Runner.RewindAndRunAsync(userId, PerspectiveName, TrackedGuid.New().Value, CancellationToken.None);
+      var trigger = _firstAppended.TryGetValue(userId, out var first) ? first : TrackedGuid.New().Value;
+      return await Runner.RewindAndRunAsync(userId, PerspectiveName, trigger, CancellationToken.None);
     }
+
+    private readonly Dictionary<Guid, Guid> _firstAppended = [];
 
     public async Task<MessageEnvelope<IEvent>> AppendAsync(Guid userId, IEvent payload) {
       var envelope = GeneratedRunners.Envelope(payload);
       await Events.AppendAsync(userId, envelope);
+      _firstAppended.TryAdd(userId, envelope.MessageId.Value);
       return envelope;
     }
 

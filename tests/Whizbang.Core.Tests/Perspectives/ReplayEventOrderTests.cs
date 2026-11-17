@@ -143,13 +143,51 @@ public class ReplayEventOrderTests {
     await _assertOrderAsync(ordered, 2, 1);
   }
 
+  /// <summary>
+  /// An event of the origin with no origin position (a redelivery that lost it) is still the origin's (#2379): it is
+  /// placed among the origin's events by its id, which the origin minted in order, not left in its arrival slot.
+  /// </summary>
   [Test]
-  public async Task Order_WhenAnEventHasNoOriginSequence_FollowsCommitOrderAsync() {
+  public async Task Order_WhenAnEventHasNoOriginSequence_TakesItsPlaceInTheOriginByIdAsync() {
     var ordered = ReplayEventOrder.Order([
       _event(1, local: 41, origin: _originA, source: 1),
       _event(2, local: 40, origin: _originA, source: 0)]);
 
-    await _assertOrderAsync(ordered, 2, 1);
+    await _assertOrderAsync(ordered, 1, 2);
+  }
+
+  /// <summary>
+  /// The deployed shape of #2379: the origin produced three Started events (ids 1 to 3) and then Completed (id 4). The
+  /// consumer stored Completed first, then the Started events redelivered from a dead letter, two of which lost their
+  /// origin position. The replay folds the producer's order.
+  /// </summary>
+  [Test]
+  public async Task Order_OneOriginsEventsWithNoOriginPosition_TakeTheirPlacesByIdAsync() {
+    var ordered = ReplayEventOrder.Order([
+      _event(4, local: 100, origin: _originA, source: 50),
+      _event(1, local: 200, origin: _originA, source: 20),
+      _event(2, local: 300, origin: _originA, source: 0),
+      _event(3, local: 301, origin: _originA, source: 0)]);
+
+    await _assertOrderAsync(ordered, 1, 2, 3, 4);
+  }
+
+  /// <summary>
+  /// The merge keeps the origin's positions among the positioned events and the ids among the unpositioned ones, and
+  /// places an unpositioned event before the first positioned event whose id sorts after its own (#2379).
+  /// </summary>
+  [Test]
+  public async Task Order_UnpositionedEventsOfAnOrigin_MergeByIdAmongItsPositionedOnesAsync() {
+    var ordered = ReplayEventOrder.Order([
+      _event(5, local: 1, origin: _originA, source: 0),
+      _event(2, local: 2, origin: _originA, source: 9),
+      _event(4, local: 3, origin: _originA, source: 3),
+      _event(1, local: 4, origin: _originA, source: 0),
+      _event(6, local: 5)]);
+
+    // Positioned by origin position: 4 (3), then 2 (9). Unpositioned by id: 1, 5. Merged on the id: 1 < 4, then 4, 2,
+    // then 5. The local event keeps its slot.
+    await _assertOrderAsync(ordered, 1, 4, 2, 5, 6);
   }
 
   [Test]

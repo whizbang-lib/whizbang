@@ -307,15 +307,18 @@ public class InMemoryEventStore : IEventStore {
     }
 
     /// <summary>
-    /// The events after <paramref name="fromEventId"/> (by id, as the SQL stores filter), in the order they were
-    /// appended, with each one's version and whether it is the stream's first: the replay read (#1352, #1878).
+    /// The events after <paramref name="fromEventId"/>'s position in the stream (its version, as the SQL stores filter;
+    /// #2379), in the order they were appended, with each one's version and whether it is the stream's first: the replay
+    /// read (#1352, #1878). An anchor the stream does not hold has no position, and the read is after its id.
     /// </summary>
     public IEnumerable<(long Version, bool IsFirst, IMessageEnvelope Envelope)> ReadInStreamOrder(Guid? fromEventId) {
       lock (_lock) {
         // Null only for a stream a reader reaches between its creation and its first append, which holds no event.
         var first = _events.FirstOrDefault();
+        var anchor = fromEventId is { } from ? _events.FirstOrDefault(e => e.EventId == from) : null;
         return [.. _events
-          .Where(e => fromEventId == null || e.EventId.CompareTo(fromEventId.Value) > 0)
+          .Where(e => fromEventId == null
+            || (anchor is not null ? e.Version > anchor.Version : e.EventId.CompareTo(fromEventId.Value) > 0))
           .OrderBy(e => e.Version)
           .Select(e => (e.Version, ReferenceEquals(e, first), e.Envelope))];
       }
