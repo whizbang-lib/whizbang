@@ -2063,6 +2063,9 @@ SELECT __SCHEMA__.drop_all_overloads('_wh_hand_on_slots');
 SELECT __SCHEMA__.drop_all_overloads('_wh_is_slot_anchor');
 SELECT __SCHEMA__.drop_all_overloads('_wh_slot_id');
 DROP INDEX IF EXISTS __SCHEMA__.idx_event_store_slot_at;
-ALTER TABLE __SCHEMA__.wh_event_store DROP COLUMN IF EXISTS supersede_slot_type;
-ALTER TABLE __SCHEMA__.wh_event_store DROP COLUMN IF EXISTS supersede_slot_at;
+-- RECLAIM: not required. The dropped columns are NULL or zero on every row this reversal reaches unless a cut or a
+--          reap wrote them, and a NULL takes no heap bytes; where they hold values, run pg_repack on wh_event_store after the
+--          reversal to return the space.
+ALTER TABLE __SCHEMA__.wh_event_store DROP COLUMN IF EXISTS supersede_slot_type;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_event_store DROP COLUMN IF EXISTS supersede_slot_at;  -- RECLAIM: as noted above
 DELETE FROM __SCHEMA__.wh_settings WHERE setting_key = 'superseding_slot_digests_recomputed';

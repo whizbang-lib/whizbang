@@ -1591,10 +1591,13 @@ SELECT __SCHEMA__.drop_all_overloads('_wh_epoch_width');
 DROP TABLE IF EXISTS __SCHEMA__.wh_integrity_consumer_seals;
 DROP TABLE IF EXISTS __SCHEMA__.wh_digest_epoch_removed;
 DROP INDEX IF EXISTS __SCHEMA__.idx_stream_digests_carried_at;
-ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_at;
-ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_id_hi;
-ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_id_lo;
-ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_count;
-ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_hi;
-ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_lo;
+-- RECLAIM: not required. The dropped columns are NULL or zero on every row this reversal reaches unless a cut or a
+--          reap wrote them, and a NULL takes no heap bytes; where they hold values, run pg_repack on wh_stream_digests after the
+--          reversal to return the space.
+ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_at;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_id_hi;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_id_lo;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_count;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_hi;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_stream_digests DROP COLUMN IF EXISTS carried_lo;  -- RECLAIM: as noted above
 DELETE FROM __SCHEMA__.wh_settings WHERE setting_key IN ('integrity_cut_waits_for_seal', 'integrity_cut_waits_for_consumers');
