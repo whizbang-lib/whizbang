@@ -153,6 +153,15 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       .OrderBy(name => name, StringComparer.Ordinal)
       .ToArray();
 
+    // The bootstrap both drivers run before the migrations (#2345): the schema no longer declares
+    // wh_receptor_processing, yet migration 031 indexes it, so it exists until its drop migration runs, as on a
+    // database the runner migrates from empty. This harness keeps no ledger, so no recorded hash can match.
+    if (RetiredReceptorTable.FindDropMigration(functionFiles) is { } retiredTableDrop) {
+      await using var retired = (NpgsqlCommand)connection.CreateCommand();
+      retired.CommandText = RetiredReceptorTable.BootstrapSql("public", retiredTableDrop, dropMigrationHash: "");
+      await retired.ExecuteNonQueryAsync();
+    }
+
     foreach (var functionFile in functionFiles) {
       var functionFilePath = Path.Combine(migrationPath, functionFile);
       var functionSql = await File.ReadAllTextAsync(functionFilePath);
