@@ -14,9 +14,8 @@
 --              claim_work probed it on every poll (the empty-call guard, an acquisition guard and a re-offer query, 475)
 --              and claim_orphaned_receptor_work, the instance release paths, the stream purge, the statistics refresh and
 --              the rewind cleanup read or wrote it. Each function is redefined whole without it, copied from its last
---              word, and claim_orphaned_receptor_work is dropped. The table itself stays: migration 031 indexes it at
---              the top level, so a database migrating from empty, and the replay of every migration over its own earlier
---              run, need it to exist when 031 runs (see the PR notes; dropping it is the owner's call).
+--              word, and claim_orphaned_receptor_work is dropped. The table itself is dropped by 477, after the
+--              bootstrap stops creating it (migration 031 indexes it at the top level).
 --
 --              Upgrade safety: every function is replaced before anything is dropped, in this one transaction, so no
 --              function in the schema names a dropped object at any point. DROP ... IF EXISTS throughout.

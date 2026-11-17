@@ -128,22 +128,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream ON wh_event_store (stre
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate ON wh_event_store (aggregate_id, version);
 CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type ON wh_event_store (aggregate_type, created_at);
 
--- Receptor Processing - Event handler tracking (log-style)
-CREATE TABLE IF NOT EXISTS wh_receptor_processing (
-  id UUID NOT NULL PRIMARY KEY,
-  event_id UUID NOT NULL,
-  receptor_name TEXT NOT NULL,
-  status SMALLINT NOT NULL DEFAULT 0,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT NULL,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  processed_at TIMESTAMPTZ NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_event_id ON wh_receptor_processing (event_id);
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_receptor_name ON wh_receptor_processing (receptor_name);
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_status ON wh_receptor_processing (status);
-
 -- Perspective Cursors - Read model projection tracking (checkpoint-style)
 CREATE TABLE IF NOT EXISTS wh_perspective_cursors (
   stream_id UUID NOT NULL,

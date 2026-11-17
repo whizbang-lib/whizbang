@@ -20,7 +20,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/RetiredReceptorTable.cs</code-under-test>
 [Category("Integration")]
 public class DapperRetiredReceptorTableTests : IAsyncDisposable {
-  private const string DROP = "%_ReceptorProcessingTableIsDropped.sql";
+  private const string DROP = "%ReceptorProcessingTableIsDropped%";
   private string? _databaseName;
   private string _connectionString = null!;
 

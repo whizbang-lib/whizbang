@@ -150,7 +150,6 @@ public static class OperationalTableRegistry {
     _state("wh_published_partition_assignment", "one row"),
     _rolling("wh_receptor_handled", OperationalCategory.Deliveries, "own retention: StreamIntegrity:RepairReceptorLookback (7 days), daily partitions"),
     _state("wh_receptor_handled_coverage", "one row: where the handled ledger starts"),
-    _state("wh_receptor_processing", "streams; no current writer (follow-up)"),
     _rolling("wh_request_response", OperationalCategory.Queues,
       "own expiry: RequestResponseExpiryStep removes records past expires_at every maintenance cycle (#2359)"),
     _state("wh_role_assignments", "roles"),

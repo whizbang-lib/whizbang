@@ -952,7 +952,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
           await dbContext.Database.ExecuteSqlRawAsync(@"
               DO $$ BEGIN
-                TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+                TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
               EXCEPTION WHEN undefined_table THEN NULL; END $$;
             ", cancellationToken);
 
@@ -966,7 +966,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
           await dbContext.Database.ExecuteSqlRawAsync(@"
               DO $$ BEGIN
-                TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+                TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
               EXCEPTION WHEN undefined_table THEN NULL; END $$;
             ", cancellationToken);
 

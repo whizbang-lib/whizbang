@@ -371,6 +371,17 @@ public sealed class PostgresSchemaInitializer {
     command.CommandTimeout = 30; // 30 seconds should be plenty for schema creation
     await command.ExecuteNonQueryAsync(cancellationToken);
 
+    // 477: wh_receptor_processing is created only until its drop has recorded the hash it has now, so migration 031,
+    // which indexes it, finds it whenever it runs, and no pass after the drop creates it again.
+    if (RetiredReceptorTable.FindDropMigration(_migrationProvider.GetMigrations().Select(m => m.Name)) is { } drop) {
+      await using var retired = connection.CreateCommand();
+      retired.CommandText = RetiredReceptorTable.BootstrapSql(
+        "\"" + schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"", drop,
+        MigrationSqlNormalizer.ContentHash(_migrationProvider.GetMigrations().Single(m => m.Name == drop).Sql));
+      retired.CommandTimeout = 30;
+      await retired.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     // Execute migration SQL files with hash-based change detection
     await _executeMigrationsWithHashDetectionAsync(connection, schema, cancellationToken);
 

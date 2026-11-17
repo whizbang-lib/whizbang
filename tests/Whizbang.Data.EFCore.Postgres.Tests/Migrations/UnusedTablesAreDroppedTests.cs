@@ -17,11 +17,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// (the claim ranks from the live instances and the published assignment, never from it) is created by no bootstrap
 /// and dropped by migration 476. <c>wh_receptor_processing</c> has had no writer since receptors stopped recording
 /// per-event progress, yet the claim probed it on every poll and the instance, purge and statistics functions touched
-/// it: after migration 476 no framework function reads or writes it.
+/// it: after migration 476 no framework function reads or writes it, and migration 477 drops it (see the partial
+/// <c>UnusedTablesAreDroppedTests.ReceptorTable.cs</c>).
 /// </summary>
 /// <docs>operations/infrastructure/migrations#unused-tables-are-dropped</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/476_UnusedCoordinationTablesAreDropped.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Schema/PostgresSchemaBuilder.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/477_ReceptorProcessingTableIsDropped.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
 public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
@@ -89,6 +91,8 @@ public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
 
+    // Rolled back newest first, as a rollback runs: 477's reverse restores the table the restored functions read.
+    await _executeAsync(conn, _migrationSql("477_", down: true));
     await _executeAsync(conn, _migrationSql(DROP_MIGRATION, down: true));
 
     await Assert.That(await _existsAsync(conn, "wh_partition_assignments")).IsTrue()
@@ -100,8 +104,10 @@ public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
     }
 
     await _executeAsync(conn, _dropMigrationSql());
+    await _executeAsync(conn, _migrationSql("477_", down: false));
 
     await Assert.That(await _existsAsync(conn, "wh_partition_assignments")).IsFalse();
+    await Assert.That(await _existsAsync(conn, "wh_receptor_processing")).IsFalse();
   }
 
   private static string _dropMigrationSql() => _migrationSql(DROP_MIGRATION, down: false);

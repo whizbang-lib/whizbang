@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/RetiredReceptorTable.cs</code-under-test>
 public partial class UnusedTablesAreDroppedTests {
   private const string RECEPTOR_TABLE = "wh_receptor_processing";
-  private const string RECEPTOR_DROP = "%_ReceptorProcessingTableIsDropped.sql";
+  private const string RECEPTOR_DROP = "%ReceptorProcessingTableIsDropped%";
 
   [Test]
   public async Task AFreshDatabase_EndsWithNoReceptorProcessingTableAsync(CancellationToken cancellationToken) {
@@ -103,13 +103,13 @@ public partial class UnusedTablesAreDroppedTests {
     private readonly string _name;
     private readonly string _connectionString;
 
-    private FreshDatabase(string name, string connectionString) {
+    public FreshDatabase(string name, string connectionString) {
       _name = name;
       _connectionString = connectionString;
     }
 
     public static async Task<FreshDatabase> CreateAsync(CancellationToken cancellationToken) {
-      var database = await PerTestDatabaseFactory.CreateAsync("unusedtables");
+      var database = await PerTestDatabaseFactory.CreateAsync("unusedtables", cancellationToken: cancellationToken);
       var fresh = new FreshDatabase(database.Name, database.ConnectionString);
       await fresh.InitializeAsync(cancellationToken);
       return fresh;

@@ -158,7 +158,6 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
       (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),
       (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
-      (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
       // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
       (PerspectiveCursorsSchema.Table, "Perspective Cursors - Read model projection tracking (cursor-style)"),
       (PerspectiveSnapshotsSchema.Table, "Perspective Snapshots - Periodic state snapshots for efficient rewind"),
