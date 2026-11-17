@@ -239,7 +239,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     await _lockStreamAsync(connection, transaction, batch.StreamId, cancellationToken).ConfigureAwait(false);
     var recorded = await _manifestAsync(connection, transaction, batch.StreamId, fromVersion: 0, cancellationToken).ConfigureAwait(false);
     await _checkLocationAsync(connection, transaction, batch.StreamId, "write", recorded, cancellationToken).ConfigureAwait(false);
-    await _ensureContainerAsync(cancellationToken).ConfigureAwait(false);
+    await _ensureContainerAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
     var moved = await _moveIntoStagingAsync(connection, transaction, batch, cancellationToken).ConfigureAwait(false);
     if (!moved.Archived) {
@@ -333,11 +333,56 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   // ── Writing ──────────────────────────────────────────────────────────────────────────────────────────
 
-  private async Task _ensureContainerAsync(CancellationToken cancellationToken) {
+  // The container, created when it does not exist, and claimed for this database by its owner marker (#2367). A write
+  // never depends on the marker: a container another database claimed, or one that cannot be claimed, is logged and the
+  // write goes on; only the orphan sweep is refused.
+  private async Task _ensureContainerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken) {
     if (Volatile.Read(ref _containerReady) == 0) {
       _ = await _container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+      var databaseId = await _databaseIdAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+      if (await _claimAsync(databaseId, cancellationToken).ConfigureAwait(false) is { } refusal) {
+        LogContainerNotClaimed(_logger, ConfiguredLocation.Container, refusal);
+      }
       Volatile.Write(ref _containerReady, 1);
     }
+  }
+
+  // ── The owner marker (#2367) ─────────────────────────────────────────────────────────────────────────
+
+  // The id migration 480 gave this database. A copy or a restore of the database carries it; a database migrated on its
+  // own has its own.
+  private async Task<string> _databaseIdAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand(
+      $"SELECT setting_value FROM {_prefix}wh_settings WHERE setting_key = 'archive_database_id'", connection, transaction);
+    return (string)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+  }
+
+  // Claims the container for the database (a create-only marker holding its id), or reads the marker already there and
+  // compares. Null when the container is this database's; otherwise why it cannot be shown to be. Never updates a marker.
+  private async Task<string?> _claimAsync(string databaseId, CancellationToken cancellationToken) {
+    var marker = _container.GetBlobClient(OWNER_MARKER_NAME);
+    try {
+      _ = await marker.UploadAsync(BinaryData.FromString(databaseId),
+        new BlobUploadOptions { Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All } }, cancellationToken).ConfigureAwait(false);
+      return null;
+    } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
+      // Claimed already: by this database (an earlier write or process), or by another.
+    } catch (RequestFailedException ex) {
+      LogMarkerUnavailable(_logger, ex, ConfiguredLocation.Container);
+      return SweepRefusal.MARKER_UNCLAIMABLE;
+    }
+    try {
+      var owner = (await marker.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToString();
+      return string.Equals(owner, databaseId, StringComparison.Ordinal) ? null : SweepRefusal.FOREIGN_MARKER;
+    } catch (RequestFailedException ex) {
+      LogMarkerUnavailable(_logger, ex, ConfiguredLocation.Container);
+      return SweepRefusal.MARKER_UNCLAIMABLE;
+    }
+  }
+
+  private void _refuseSweep(string reason) {
+    LogSweepRefused(_logger, ConfiguredLocation.Container, reason);
+    Metrics?.SweepsRefused.Add(1, new KeyValuePair<string, object?>("reason", reason));
   }
 
   // wh_archive_stream (262): the guards, the copy into wh_event_archive, the truncate, the generation bump and the
@@ -397,13 +442,19 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       AccessTier = _accessTier,
       Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
     };
+    var blob = _container.GetBlobClient(name);
     try {
-      _ = await _container.GetBlobClient(name).UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
+      _ = await blob.UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
     } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
       // The name carries the content hash, so the object already there is these bytes, left by an earlier attempt whose
       // transaction never committed, or by the same events archived before a restore whose delete has not run. It is
-      // kept as it is, and checked like a read checks it: anything else under the name refuses the write.
-      _ = await _downloadAsync(streamId, row, cancellationToken).ConfigureAwait(false);
+      // kept as it is and checked against the bytes this write encoded (the hash covers the length): anything else under
+      // the name refuses the write.
+      var existing = (await blob.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
+      var existingSha256 = ArchiveChunk.Sha256(existing);
+      if (!string.Equals(existingSha256, sha256, StringComparison.Ordinal)) {
+        throw ArchiveObjectCorruptedException.ForExistingObject(streamId, name, bytes.LongLength, existing.LongLength, sha256, existingSha256);
+      }
     }
     return row;
   }
@@ -571,12 +622,21 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     if (_deleteAfter is not { } delay) {
       return 0;
     }
+    string databaseId;
     await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
       // A database that never wrote to the configured location (a copy not yet repointed) names nothing in it, so a sweep
       // would delete every object there: it deletes nothing.
       if (await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false) is null) {
+        _refuseSweep(SweepRefusal.UNKNOWN_LOCATION);
         return 0;
       }
+      databaseId = await _databaseIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false);
+    }
+    // One database per container: a container another database owns, or one this database cannot show it owns, holds
+    // objects this database does not name and must not delete.
+    if (await _claimAsync(databaseId, cancellationToken).ConfigureAwait(false) is { } refusal) {
+      _refuseSweep(refusal);
+      return 0;
     }
     var cutoff = _clock.GetUtcNow() - delay;
     var deleted = 0;
@@ -867,6 +927,18 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Orphaned archive object {RelativePath} of stream {StreamId} could not be deleted; the next sweep tries again")]
   static partial void LogOrphanNotDeleted(ILogger logger, Exception exception, string relativePath, Guid streamId);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Archive orphan sweep refused for container {Container} ({Reason}): nothing was deleted. The sweep runs only for the database the container's owner marker names; give each database its own container")]
+  static partial void LogSweepRefused(ILogger logger, string container, string reason);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Archive container {Container} is not claimed for this database ({Reason}); archive writes go on, and its orphan sweep is refused. A foreign_marker means another database claimed it first, and its own sweep cannot see this database's objects: give each database its own container")]
+  static partial void LogContainerNotClaimed(ILogger logger, string container, string reason);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "The owner marker of archive container {Container} could not be written or read")]
+  static partial void LogMarkerUnavailable(ILogger logger, Exception exception, string container);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Archive location {FromLocationId} repointed by an operator to {Configured}; its records now name location {LocationId}")]

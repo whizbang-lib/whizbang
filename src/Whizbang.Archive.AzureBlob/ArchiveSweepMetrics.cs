@@ -35,5 +35,12 @@ public sealed class ArchiveSweepMetrics {
     SweepsRefused = meter.CreatePassiveCounter<long>(
       "whizbang.archive.orphan_sweep.refused",
       description: "Orphan sweeps that deleted nothing because the container could not be proven this database's, tagged by reason");
+    SweepsRefused.Touch("reason", _reasons);
   }
+
+  private static readonly string[] _reasons = [
+    AzureBlobArchiveStore.SweepRefusal.UNKNOWN_LOCATION,
+    AzureBlobArchiveStore.SweepRefusal.FOREIGN_MARKER,
+    AzureBlobArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE,
+  ];
 }

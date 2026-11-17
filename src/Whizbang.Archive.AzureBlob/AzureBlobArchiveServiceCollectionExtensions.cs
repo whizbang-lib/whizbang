@@ -168,7 +168,8 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
       CreateContainerClient(options, services.GetService<TokenCredential>()),
       options,
       services.GetService<ILogger<AzureBlobArchiveStore>>(),
-      services.GetService<TimeProvider>());
+      services.GetService<TimeProvider>(),
+      services.GetService<Whizbang.Core.Observability.WhizbangMetrics>() is { } metrics ? new ArchiveSweepMetrics(metrics) : null);
   }
 
   private static int _int(IConfiguration section, string key, int current) {

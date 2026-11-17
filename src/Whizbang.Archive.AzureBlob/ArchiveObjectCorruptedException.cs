@@ -56,7 +56,18 @@ public sealed class ArchiveObjectCorruptedException : Exception {
   /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveObjectCorruptedExceptionTests.cs:ForExistingObject_SaysTheExpectedBytesAreTheWritesOwn_NotTheManifestsAsync</tests>
   public static ArchiveObjectCorruptedException ForExistingObject(
       Guid streamId, string locator, long expectedLength, long actualLength, string expectedSha256, string actualSha256) =>
-    new(streamId, locator, expectedLength, actualLength, expectedSha256, actualSha256);
+    new($"The archive object {locator} of stream {streamId} was not written: storage already holds {locator}, and an " +
+        $"archived object is never replaced: this write encoded {expectedLength} bytes with SHA-256 {expectedSha256}; " +
+        $"storage holds {actualLength} bytes with SHA-256 {actualSha256}.",
+      streamId, locator, expectedSha256, actualSha256);
+
+  private ArchiveObjectCorruptedException(string message, Guid streamId, string locator, string expectedSha256, string actualSha256)
+    : base(message) {
+    StreamId = streamId;
+    Locator = locator;
+    ExpectedSha256 = expectedSha256;
+    ActualSha256 = actualSha256;
+  }
 
   /// <summary>The archived stream, when known.</summary>
   public Guid? StreamId { get; }

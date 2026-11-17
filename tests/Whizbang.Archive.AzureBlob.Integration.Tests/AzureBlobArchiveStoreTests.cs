@@ -1025,8 +1025,10 @@ public partial class AzureBlobArchiveStoreTests {
       ProcessAsync(message, pipeline).AsTask().GetAwaiter().GetResult();
 
     public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline) {
+      // An archive object's upload: not the container's creation, and not the owner marker (#2367).
       var target = Armed && message.Request.Method == RequestMethod.Put
-        && !message.Request.Uri.Query.Contains("restype=container", StringComparison.Ordinal);
+        && !message.Request.Uri.Query.Contains("restype=container", StringComparison.Ordinal)
+        && !message.Request.Uri.Path.EndsWith("/" + AzureBlobArchiveStore.OWNER_MARKER_NAME, StringComparison.Ordinal);
       if (target && !afterSending) {
         Faulted++;
         throw new RequestFailedException(503, "injected: the upload failed");
