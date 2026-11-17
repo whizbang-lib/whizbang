@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 [Category("Integration")]
 [Category("Shard3")]
 public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
-  private const string DROP_MIGRATION = "476_";
+  private const string DROP_MIGRATION = "463_";
 
   [Test]
   public async Task AfterTheMigrations_ThePartitionAssignmentsTable_DoesNotExistAsync() {
@@ -92,7 +92,7 @@ public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
 
     // Rolled back newest first, as a rollback runs: 464's reverse restores the table the restored functions read.
-    await _executeAsync(conn, _migrationSql("477_", down: true));
+    await _executeAsync(conn, _migrationSql("464_", down: true));
     await _executeAsync(conn, _migrationSql(DROP_MIGRATION, down: true));
 
     await Assert.That(await _existsAsync(conn, "wh_partition_assignments")).IsTrue()
@@ -104,7 +104,7 @@ public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
     }
 
     await _executeAsync(conn, _dropMigrationSql());
-    await _executeAsync(conn, _migrationSql("477_", down: false));
+    await _executeAsync(conn, _migrationSql("464_", down: false));
 
     await Assert.That(await _existsAsync(conn, "wh_partition_assignments")).IsFalse();
     await Assert.That(await _existsAsync(conn, "wh_receptor_processing")).IsFalse();

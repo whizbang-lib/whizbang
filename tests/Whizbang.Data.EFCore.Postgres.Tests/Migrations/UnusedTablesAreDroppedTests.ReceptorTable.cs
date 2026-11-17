@@ -85,7 +85,7 @@ public partial class UnusedTablesAreDroppedTests {
   public async Task TheReceptorTableDropReverses_AndAppliesAgainAsync(CancellationToken cancellationToken) {
     await using var db = await FreshDatabase.CreateAsync(cancellationToken);
 
-    await db.ExecuteAsync(_migrationSql("477_", down: true));
+    await db.ExecuteAsync(_migrationSql("464_", down: true));
 
     await Assert.That(await db.ScalarAsync<long>(
         $"SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '{RECEPTOR_TABLE}'"))
@@ -93,20 +93,15 @@ public partial class UnusedTablesAreDroppedTests {
     await Assert.That(await db.ScalarAsync<bool>("SELECT to_regclass('public.idx_receptor_processing_claim') IS NOT NULL")).IsTrue()
       .Because("and the index migration 031 gave it");
 
-    await db.ExecuteAsync(_migrationSql("477_", down: false));
+    await db.ExecuteAsync(_migrationSql("464_", down: false));
 
     await Assert.That(await db.ScalarAsync<bool>($"SELECT to_regclass('public.{RECEPTOR_TABLE}') IS NULL")).IsTrue();
   }
 
   /// <summary>A database of its own, migrated from empty through the EF Core driver in <c>public</c>.</summary>
-  private sealed class FreshDatabase : IAsyncDisposable {
-    private readonly string _name;
-    private readonly string _connectionString;
-
-    public FreshDatabase(string name, string connectionString) {
-      _name = name;
-      _connectionString = connectionString;
-    }
+  private sealed class FreshDatabase(string name, string connectionString) : IAsyncDisposable {
+    private readonly string _name = name;
+    private readonly string _connectionString = connectionString;
 
     public static async Task<FreshDatabase> CreateAsync(CancellationToken cancellationToken) {
       var database = await PerTestDatabaseFactory.CreateAsync("unusedtables", cancellationToken: cancellationToken);
