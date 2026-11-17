@@ -16,7 +16,7 @@ public static class RuleSemantics {
   /// means (a cut that carries its removed part, a superseding key counted once), so a mixed pair during the rollout
   /// halts instead of repairing losses that are not real.
   /// </summary>
-  public const int VERSION = 1;
+  public const int VERSION = 2;
 
   /// <summary>
   /// The version of the SQL eligibility rule (<c>__DIGEST_ELIGIBLE__</c>, <c>__INTEGRITY_COUNTED__</c> and
