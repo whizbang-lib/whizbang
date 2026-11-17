@@ -135,6 +135,20 @@ public static class SupersedingEvents {
   public static string? GroupOf(object? payload, string? wireTypeName) =>
     payload is JsonElement ? _registered(wireTypeName)?.Group : GroupOf(payload);
 
+  /// <summary>
+  /// The key property of <paramref name="eventType"/> (#2362): the CLR name of its
+  /// <see cref="Attributes.SupersedingKeyAttribute"/> property, or <see langword="null"/> when it has none (one key per
+  /// stream), when it is not superseding, or when the registration did not name it. Part of the type's eligibility rules.
+  /// </summary>
+  /// <param name="eventType">The event type.</param>
+  /// <returns>The key property's name, or <see langword="null"/>.</returns>
+  /// <docs>resilience/stream-integrity#rule-fingerprint</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:KeyMemberOf_IsTheRegisteredKeyProperty_OrNoneAsync</tests>
+  public static string? KeyMemberOf(Type eventType) {
+    ArgumentNullException.ThrowIfNull(eventType);
+    return _byType.TryGetValue(eventType, out var registration) ? registration.KeyMember : null;
+  }
+
   /// <summary>The event types registered as superseding, as a snapshot.</summary>
   /// <returns>Every registered superseding type; the history reconcile walks the stored events of each (#2110).</returns>
   /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>

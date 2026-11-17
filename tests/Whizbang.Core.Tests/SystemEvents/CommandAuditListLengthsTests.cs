@@ -53,6 +53,7 @@ public class CommandAuditListLengthsTests {
   [Test]
   public async Task ARedeliveryRequest_IsAuditedWithItsStreamCountAsync() {
     var command = new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "service-a",
       Topic = "topic-a",
       StreamIds = [Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7()],

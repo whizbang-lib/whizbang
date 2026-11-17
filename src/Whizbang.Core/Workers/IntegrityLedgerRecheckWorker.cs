@@ -154,6 +154,7 @@ public sealed partial class IntegrityLedgerRecheckWorker(
           MaxDigests = windowed ? _options.MaxDigestsPerManifest : null,
           Recheck = true,
           KnownOriginGeneration = knownGeneration,
+          RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([group.Key.EventType]),
         },
         Hops = [ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },

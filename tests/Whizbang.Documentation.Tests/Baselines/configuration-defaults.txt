@@ -228,6 +228,7 @@ Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers=500
 Whizbang:StreamIntegrity:MaxReattributionBatchesPerPass=20
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket=8
 Whizbang:StreamIntegrity:MaxRepairDrainBacklog=10000
+Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter=02:00:00
 Whizbang:StreamIntegrity:PublishReportEvents=false
 Whizbang:StreamIntegrity:ReattributionBatchSize=5000
 Whizbang:StreamIntegrity:ReattributionEnabled=true

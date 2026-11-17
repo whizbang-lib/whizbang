@@ -244,6 +244,16 @@ public class SupersedingEventsTests {
     await Assert.That(() => SupersedingEvents.GroupOf((Type)null!)).Throws<ArgumentNullException>();
   }
 
+  /// <summary>#2362: the key property is part of a type's eligibility rules, so the fingerprint reads it here.</summary>
+  [Test]
+  public async Task KeyMemberOf_IsTheRegisteredKeyProperty_OrNoneAsync() {
+    await Assert.That(SupersedingEvents.KeyMemberOf(typeof(EmbeddingUpdated))).IsEqualTo("Model");
+    await Assert.That(SupersedingEvents.KeyMemberOf(typeof(PermissionsReplaced))).IsNull()
+      .Because("a superseding type without a key property has one key per stream");
+    await Assert.That(SupersedingEvents.KeyMemberOf(typeof(PlainEvent))).IsNull();
+    await Assert.That(() => SupersedingEvents.KeyMemberOf(null!)).Throws<ArgumentNullException>();
+  }
+
   [Test]
   public async Task SupersedingAttribute_Group_IsNoneUnlessNamed_AndReadsBackAsNamedAsync() {
     var named = new SupersedingAttribute { Group = "region-state" };

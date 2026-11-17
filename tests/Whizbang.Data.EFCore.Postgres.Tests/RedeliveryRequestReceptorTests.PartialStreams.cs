@@ -29,7 +29,7 @@ public partial class RedeliveryRequestReceptorTests {
     await using var sp = _buildProvider(coordinator, new CaptureTransport(), serializer, options);
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t", FromCommitSequence = 0 });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t", FromCommitSequence = 0 });
     return serializer;
   }
 

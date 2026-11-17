@@ -91,6 +91,22 @@ public class IntegrityCheckpointReceptorTests {
       .Because("capping must not silence gaps entirely — the first ones still have to be named.");
   }
 
+  /// <summary>#2362: a checkpoint from an origin whose rules differ (here: one that sent none) keeps the origin known and
+  /// verifies nothing: no pending, no report, no repair, on this checkpoint or the next.</summary>
+  [Test]
+  public async Task ACheckpointWithoutTheOriginsRules_KeepsTheOriginKnown_AndVerifiesNothingAsync() {
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true });
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3, requestTopic: "origin.requests", withRules: false));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true, withRules: false));
+
+    await Assert.That(fx.Dispatcher.Published).IsEmpty();
+    await Assert.That(fx.Transport.Published).IsEmpty();
+    await Assert.That(fx.Tracker.GetOrigins().Any(o => o.OriginServiceId == fx.OriginId)).IsTrue()
+      .Because("the origin stays known, so the audit keeps asking it and the pair resumes once the rules match");
+  }
+
   [Test]
   public async Task DeficitPersistingPastNextCheckpoint_ConfirmsAndReportsAsync() {
     var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly, PublishReportEvents = true });
@@ -202,6 +218,7 @@ public class IntegrityCheckpointReceptorTests {
     fx.Coordinator.Counts = _ => [];
 
     var own = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = fx.Coordinator.LocalServiceId,
       OriginServiceId = fx.Coordinator.LocalServiceId,
       OriginServiceName = "consumer-svc",
@@ -223,6 +240,7 @@ public class IntegrityCheckpointReceptorTests {
     fx.Coordinator.Counts = _ => [];
 
     var checkpoint = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = fx.OriginId,
       OriginServiceId = fx.OriginId,
       OriginServiceName = "origin-svc",
@@ -351,6 +369,7 @@ public class IntegrityCheckpointReceptorTests {
     public required IntegrityCheckpointReceptor Receptor { get; init; }
     public required Whizbang.Core.Messaging.IntegrityRepairLedger Ledger { get; init; }
     public required RecordingIntegrityRepairLedger Recorder { get; init; }
+    public required IntegrityGapTracker Tracker { get; init; }
     public Guid OriginId { get; } = TrackedGuid.New().Value;
   }
 
@@ -451,7 +470,8 @@ public class IntegrityCheckpointReceptorTests {
       services.AddSingleton(metrics
         ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     }
-    services.AddSingleton(new IntegrityGapTracker());
+    var tracker = new IntegrityGapTracker();
+    services.AddSingleton(tracker);
     if (ownedDomains is not null) {
       services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().OwnDomains(ownedDomains)));
     }
@@ -477,6 +497,7 @@ public class IntegrityCheckpointReceptorTests {
       Transport = transport,
       Ledger = ledger.Inner,
       Recorder = ledger,
+      Tracker = tracker,
       Receptor = new IntegrityCheckpointReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(), logger ?? NullLogger<IntegrityCheckpointReceptor>.Instance),
     };
@@ -549,7 +570,7 @@ public class IntegrityCheckpointReceptorTests {
 
   private static IntegrityCheckpoint _checkpoint(
       FixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null,
-      IReadOnlyList<string>? tenantScopes = null) {
+      IReadOnlyList<string>? tenantScopes = null, bool withRules = true) {
     List<CheckpointBucket> buckets = [];
     if (!emptyBuckets && tenantScopes is not null) {
       // Pendings are keyed by (tenant, event type), so a multi-tenant window is how the confirmed-gap
@@ -566,6 +587,7 @@ public class IntegrityCheckpointReceptorTests {
       FromCommitSequence = from,
       ToCommitSequence = to,
       Buckets = buckets,
+      RuleFingerprint = withRules ? IntegrityPairGuard.Fallback.Stamp(null) : null,
     };
   }
 

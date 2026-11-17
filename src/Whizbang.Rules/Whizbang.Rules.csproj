@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>The eligibility rules storage cleanup and stream integrity share: the per-type rule model, the rule fingerprint, the pair comparison and the SQL eligibility rule's source. Versioned on its own track, bumped only when the rules change, so two services compare integrity only while they run the same rules.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Foundation</WhizbangPackageTier>
+    <WhizbangPackageArea>Integrity rules</WhizbangPackageArea>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Whizbang.Rules</RootNamespace>
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <!-- #2343: the rules' own version track is rules-version.txt beside this file, bumped only when what the rules mean
+         changes (RuleSemanticsGoldenTests fails a change without a new version). The package still ships at the
+         release's one version until the release pipeline learns a second track (verify-packages, package-sbom, the
+         nuget.org floor check and a rules-v tag). -->
+  </PropertyGroup>
+
+</Project>

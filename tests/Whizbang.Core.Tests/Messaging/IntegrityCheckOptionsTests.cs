@@ -125,6 +125,16 @@ public class IntegrityCheckOptionsTests {
     await Assert.That(options.FullHistoryCompare.Schedule).IsEqualTo("30 2 * * 0");
   }
 
+  /// <summary>#2362: the pair guard's alert threshold binds under its own section.</summary>
+  [Test]
+  public async Task PairGuard_BindsFromConfigurationAsync() {
+    var options = _bound(new Dictionary<string, string?> {
+      ["Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter"] = "00:45:00",
+    });
+
+    await Assert.That(options.PairGuard.HaltedAlertAfter).IsEqualTo(TimeSpan.FromMinutes(45));
+  }
+
   // ── the old keys are aliases for one release ─────────────────────────────────────────────
 
   [Test]
@@ -200,6 +210,7 @@ public class IntegrityCheckOptionsTests {
   [Arguments("SealRecheck:RecheckEvery")]
   [Arguments("FullHistoryCompare:Lookback")]
   [Arguments("FullHistoryCompare:MaxPerRun")]
+  [Arguments("PairGuard:HaltedAlertAfter")]
   public async Task Validate_ALimitBelowItsFloor_FailsNamingTheKeyAsync(string key) {
     var options = new StreamIntegrityOptions();
     switch (key) {
@@ -209,6 +220,7 @@ public class IntegrityCheckOptionsTests {
       case "FullHistoryCompare:Lookback": options.FullHistoryCompare.Lookback = TimeSpan.Zero; break;
       case "FullHistoryCompare:MaxPerRun": options.FullHistoryCompare.MaxPerRun = 0; break;
       case "SealRecheck:Lookback": options.SealRecheck.Lookback = TimeSpan.Zero; break;
+      case "PairGuard:HaltedAlertAfter": options.PairGuard.HaltedAlertAfter = TimeSpan.Zero; break;
       default: options.SealRecheck.RecheckEvery = TimeSpan.Zero; break;
     }
 

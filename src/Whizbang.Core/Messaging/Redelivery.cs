@@ -217,6 +217,14 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
   /// earlier window is recognized and ignored (#2092).</summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   public long BackfillWindow { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
 }
 
 /// <summary>

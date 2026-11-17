@@ -358,6 +358,7 @@ public sealed partial class IntegrityAuditWorker(
     var eventNamespaces = absorbed.Count > 0 ? absorbed : null;
     var requested = 0;
     var skipped = 0;
+    var pairGuard = IntegrityPairGuard.Resolve(services);
     var auditClock = services.GetService<TimeProvider>() ?? TimeProvider.System;
     var maxSkip = TimeSpan.FromMinutes(Math.Max(0, _options.MaxAskSkipMinutes));
     // #2104: a restarted process asks the origins the store kept, not only those whose checkpoint arrived since.
@@ -415,6 +416,8 @@ public sealed partial class IntegrityAuditWorker(
           Windowed = true,
           SinceSequence = since,
           KnownOriginGeneration = knownGeneration,
+          // #2362: this service's rules for the types it asks about; the origin halts the pair when its own differ.
+          RuleFingerprint = pairGuard.Stamp(consumed),
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)

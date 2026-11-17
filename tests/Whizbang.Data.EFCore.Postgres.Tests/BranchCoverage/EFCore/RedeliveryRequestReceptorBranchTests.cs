@@ -83,6 +83,7 @@ public class RedeliveryRequestReceptorBranchTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       TenantScope = "tenant-a",
       EventTypes = ["Contracts.ProbeHappened"],
       StreamIds = [streamId],

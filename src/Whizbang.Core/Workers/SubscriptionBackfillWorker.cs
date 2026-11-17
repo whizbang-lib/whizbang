@@ -214,6 +214,7 @@ public sealed partial class SubscriptionBackfillWorker(
       MaxEvents = _options.BackfillWindowSize,
       BackfillId = backfill.BackfillId,
       BackfillWindow = number,
+      RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([backfill.EventType]),
     };
     // Recorded before it is sent: the owner's answer applies only to a window recorded as awaiting it, and the owner can
     // answer before the publish call returns (a fast owner, or this host's continuation delayed under load). Recorded
