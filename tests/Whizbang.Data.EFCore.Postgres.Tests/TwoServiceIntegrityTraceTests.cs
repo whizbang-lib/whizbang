@@ -72,13 +72,25 @@ public class TwoServiceIntegrityTraceTests : EFCoreTestBase {
     await Assert.That(described).Contains($"{IntegrityTracing.SPAN_ANSWER}:{IntegrityTracing.KIND_REDELIVERY}:{TwoServiceHarness.CONSUMER_NAME}");
     await Assert.That(described).Contains($"{IntegrityTracing.SPAN_REPAIR}:{IntegrityTracing.KIND_REDELIVERY}:{TwoServiceHarness.ORIGIN_NAME}");
 
-    // And each hop is the child of the one before it.
-    Activity One(string name, string kind) => trace.First(s => s.OperationName == name && (string?)s.GetTagItem(IntegrityTracing.ATTR_KIND) == kind);
-    var redeliveryAnswer = One(IntegrityTracing.SPAN_ANSWER, IntegrityTracing.KIND_REDELIVERY);
-    var repairRequest = One(IntegrityTracing.SPAN_REPAIR_REQUEST, IntegrityTracing.KIND_INLINE);
-    var audit = One(IntegrityTracing.SPAN_AUDIT, IntegrityTracing.KIND_MANIFEST);
-    await Assert.That(repair.ParentSpanId).IsEqualTo(redeliveryAnswer.SpanId);
-    await Assert.That(redeliveryAnswer.ParentSpanId).IsEqualTo(repairRequest.SpanId);
-    await Assert.That(repairRequest.ParentSpanId).IsEqualTo(audit.SpanId);
+    // And each hop is the child of the one before it, walked up from the repair: the audit that found the loss may be a
+    // drill-down below the first comparison, so the chain is followed by parent, never picked by name.
+    var bySpan = trace.ToDictionary(s => s.SpanId);
+    var redeliveryAnswer = bySpan[repair.ParentSpanId];
+    var repairRequest = bySpan[redeliveryAnswer.ParentSpanId];
+    var audit = bySpan[repairRequest.ParentSpanId];
+    await Assert.That(Describe(redeliveryAnswer))
+      .IsEqualTo($"{IntegrityTracing.SPAN_ANSWER}:{IntegrityTracing.KIND_REDELIVERY}:{TwoServiceHarness.CONSUMER_NAME}");
+    await Assert.That(Describe(repairRequest))
+      .IsEqualTo($"{IntegrityTracing.SPAN_REPAIR_REQUEST}:{IntegrityTracing.KIND_INLINE}:{TwoServiceHarness.ORIGIN_NAME}");
+    await Assert.That(Describe(audit))
+      .IsEqualTo($"{IntegrityTracing.SPAN_AUDIT}:{IntegrityTracing.KIND_MANIFEST}:{TwoServiceHarness.ORIGIN_NAME}");
+    await Assert.That(Describe(bySpan[audit.ParentSpanId]))
+      .IsEqualTo($"{IntegrityTracing.SPAN_ANSWER}:{IntegrityTracing.KIND_MANIFEST}:{TwoServiceHarness.CONSUMER_NAME}")
+      .Because("the comparison starts under the manifest answer it compares");
+    var root = audit;
+    while (bySpan.TryGetValue(root.ParentSpanId, out var parent)) {
+      root = parent;
+    }
+    await Assert.That(root.OperationName).IsEqualTo(IntegrityTracing.SPAN_AUDIT_CYCLE).Because("the trace starts at the audit cycle");
   }
 }
