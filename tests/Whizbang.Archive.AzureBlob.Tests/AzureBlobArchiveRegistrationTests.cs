@@ -340,7 +340,7 @@ public class AzureBlobArchiveRegistrationTests {
     await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetRequiredService<AzureBlobArchiveStore>().Clock).IsSameReferenceAs(clock);
-    await Assert.That(new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions()).Clock).IsSameReferenceAs(TimeProvider.System)
+    await Assert.That(new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions()).Clock).IsSameReferenceAs(TimeProvider.System) // review-checks:allow compares the default reference; reads no time
       .Because("without one, the system clock");
   }
 
