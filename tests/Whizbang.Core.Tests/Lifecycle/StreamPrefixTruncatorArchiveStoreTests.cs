@@ -84,7 +84,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
 
     await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services,
       new RecordingStore(_archived(3))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
-    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services)
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services, archiveStore: null)
       .TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
     await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services,
       new RecordingStore(new ArchiveWriteResult("blocked", 0, null, null, 4))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
