@@ -40,6 +40,19 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
     return messageId.Value;
   }
 
+  /// <summary>Writes the pointer row of an event the in-memory store holds, at its version, as the stream's own store would.</summary>
+  private async Task _mirrorPointersAsync(Guid streamId, Guid eventId, int version) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at) "
+      + "VALUES (@e, @s, @s, 'SplitClassSnapshot', 'SplitClassSnapshot.Event, Test', @v, NOW()) ON CONFLICT DO NOTHING", connection);
+    cmd.Parameters.AddWithValue("e", eventId);
+    cmd.Parameters.AddWithValue("s", streamId);
+    cmd.Parameters.AddWithValue("v", version);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
   private static SplitClassSnapshotPerspectiveRunner _runner(
       InMemoryEventStore eventStore, WorkCoordinationDbContext context, IPerspectiveSnapshotStore snapshotStore, int everyNEvents = 1) {
     var services = new ServiceCollection();
@@ -93,11 +106,23 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
 
     var snapshot = await snapshotStore.GetLatestSnapshotAsync(streamId, TABLE_NAME);
     await Assert.That(snapshot.HasValue).IsTrue();
+    // The snapshot store places a snapshot by the version wh_event_store records for its event (#2379: a rewind restores
+    // only a snapshot it can place), so the stream's pointer rows are mirrored there.
+    await _mirrorPointersAsync(streamId, snapshot!.Value.SnapshotEventId, version: 1);
     await Assert.That(snapshot!.Value.SnapshotData.RootElement.GetRawText()).Contains("active")
       .Because("the snapshot is the model as it was applied, not the copy the write stripped for the document");
 
     // A later event that leaves the promoted fields alone, then a rewind that replays it from that snapshot.
     var noteEventId = await _appendAsync(eventStore, streamId, new SplitClassSnapshotNoteChangedEvent { StreamId = streamId, Note = "second" });
+    await _mirrorPointersAsync(streamId, noteEventId, version: 2);
+    // The snapshot recorded its version when it was taken, before its pointer row existed: record it now.
+    await using (var connection = new NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var stamp = new NpgsqlCommand(
+        "UPDATE wh_perspective_snapshots SET snapshot_version = 1 WHERE stream_id = @s", connection);
+      stamp.Parameters.AddWithValue("s", streamId);
+      await stamp.ExecuteNonQueryAsync();
+    }
     await using (var context = CreateDbContext()) {
       await _runner(eventStore, context, snapshotStore).RunAsync(streamId, TABLE_NAME, null, CancellationToken.None);
     }

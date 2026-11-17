@@ -242,7 +242,7 @@ public class EvictedRowRebuildTests {
     var b4 = _envelope(new EvictionCappedAdded { StreamId = streamId, Delta = 4 });
     store.Stream.AddRange([b1, b2, b3, b4]);
     // The snapshot's total is deliberately not the fold of b1..b2, so the result shows where it came from.
-    var snapshots = new KeptSnapshotStore(b2.MessageId.Value, _snapshotOf(new EvictionCappedModel { Id = streamId, Total = 100 }));
+    var snapshots = new KeptSnapshotStore(b2.MessageId.Value, _snapshotOf(new EvictionCappedModel { Id = streamId, Total = 100 }), version: 2);
     var rows = new InMemoryRows<EvictionCappedModel>();
     var runner = _runner<EvictionCappedPerspective, EvictionCappedModel>(store, rows, snapshots, logs: null);
 
@@ -273,7 +273,8 @@ public class EvictedRowRebuildTests {
   [Test]
   public async Task EphemeralPerspective_EvictedRowWithSnapshot_RestoresTheSnapshotAndReplaysTheTailAsync() {
     var streamId = Guid.NewGuid();
-    var store = new HistoryEventStore { HandledHistory = true };
+    // b1 (version 1) is reaped, so the readable stream starts at version 2.
+    var store = new HistoryEventStore { HandledHistory = true, FirstVersion = 2 };
     var b1 = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 1 });
     var b2 = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 2 });
     var b3 = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 3 });
@@ -559,7 +560,7 @@ public class EvictedRowRebuildTests {
   }
 
   /// <summary>Holds at most one snapshot: the latest one an eviction keeps.</summary>
-  private sealed class KeptSnapshotStore(Guid? snapshotEventId, JsonDocument? data) : IPerspectiveSnapshotStore {
+  private sealed class KeptSnapshotStore(Guid? snapshotEventId, JsonDocument? data, int version = 1) : IPerspectiveSnapshotStore {
     public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default) =>
       Task.CompletedTask;
 
@@ -571,7 +572,7 @@ public class EvictedRowRebuildTests {
 
     public Task<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeEventInStreamOrderAsync(
         Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
-      Task.FromResult(snapshotEventId is Guid id ? ((Guid, int?, JsonDocument)?)(id, 1, data!) : null);
+      Task.FromResult(snapshotEventId is Guid id ? ((Guid, int?, JsonDocument)?)(id, version, data!) : null);
 
     public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
       Task.FromResult(snapshotEventId is not null);
@@ -602,10 +603,15 @@ public class EvictedRowRebuildTests {
     public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
       AsyncEnumerable.Empty<MessageEnvelope<TMessage>>();
 
+    /// <summary>The version of <see cref="Stream"/>'s first event: later than 1 when the bodies before it were reaped.</summary>
+    public int FirstVersion { get; init; } = 1;
+
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
       await Task.Yield();
       var start = fromEventId is null ? 0 : Stream.FindIndex(e => e.MessageId.Value == fromEventId.Value) + 1;
       for (var i = Math.Max(start, 0); i < Stream.Count; i++) {
+        // A store's read carries each event's version, which the rewind places a snapshot by (#2379).
+        Stream[i].LocalStreamVersion ??= FirstVersion + i;
         yield return Stream[i];
       }
     }
