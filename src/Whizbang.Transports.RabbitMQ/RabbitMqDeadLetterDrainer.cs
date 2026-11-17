@@ -176,8 +176,7 @@ public sealed class RabbitMqDeadLetterDrainer(
   private async Task _nackGuardedAsync(IChannel channel, ulong deliveryTag, CancellationToken ct) {
     try {
       await channel.BasicNackAsync(deliveryTag, multiple: false, requeue: true, ct).ConfigureAwait(false);
-    } catch (Exception nackEx) when (
-        nackEx is global::RabbitMQ.Client.Exceptions.AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception nackEx) when (RabbitMQChannelClosure.IsChannelGone(nackEx)) {
 #pragma warning disable CA1848, CA1873
       _logger.LogWarning(nackEx,
         "RMQ DLQ nack failed on a closed channel for {Dlq} — broker re-delivers naturally", _dlqName);

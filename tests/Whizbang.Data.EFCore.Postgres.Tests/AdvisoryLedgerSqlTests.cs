@@ -235,6 +235,28 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A data source in the wrong state degrades exactly as an unreachable database does: a disposed one
+  /// throws <see cref="ObjectDisposedException"/>, an <see cref="InvalidOperationException"/> rather than a
+  /// database error, and the consult still falls back instead of throwing.
+  /// </summary>
+  [Test]
+  public async Task ADisposedDataSourceDegradesToPerProcessSuppressionAsync() {
+    var disposed = NpgsqlDataSource.Create(ConnectionString);
+    await disposed.DisposeAsync();
+    var ledger = new PostgresAdvisoryLedger(disposed);
+    var key = _key();
+    var t0 = DateTimeOffset.UtcNow;
+
+    var first = await ledger.TryBeginReportAsync(key, "JobName", t0, _week);
+    var repeat = await ledger.TryBeginReportAsync(key, "JobName", t0.AddDays(1), _week);
+
+    await Assert.That(first).IsTrue()
+      .Because("a data source in the wrong state must not silence a real finding.");
+    await Assert.That(repeat).IsFalse()
+      .Because("and it degrades to the process-local ledger held for this instance, as a refused connection does.");
+  }
+
+  /// <summary>
   /// A schema whose function answers something other than yes or no degrades, rather than reading
   /// the non-answer as "already reported".
   /// </summary>

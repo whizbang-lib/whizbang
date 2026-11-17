@@ -169,4 +169,24 @@ public class TypeNameHandlingAnalyzerBranchTests {
 
     await Assert.That(ids).Contains("WHIZ163");
   }
+
+  /// <summary>
+  /// <c>IndexOf</c> and <c>LastIndexOf</c> on a type name are WHIZ161 for each separator the helpers
+  /// own (',' for the assembly, '+' for nesting, '`' for generic arity) and for no other character.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("IndexOf", "'+'", true)]
+  [Arguments("IndexOf", "','", true)]
+  [Arguments("LastIndexOf", "'`'", true)]
+  [Arguments("IndexOf", "'.'", false)]
+  public async Task IndexOf_OnATypeName_ReportsWhiz161OnlyForAHelperOwnedSeparatorAsync(string method, string separator, bool reported) {
+    var ids = await _idsAsync($$"""
+      public class Sample {
+        public int At(Type t) => t.FullName!.{{method}}({{separator}});
+      }
+      """);
+
+    await Assert.That(ids.Contains("WHIZ161")).IsEqualTo(reported);
+  }
 }
