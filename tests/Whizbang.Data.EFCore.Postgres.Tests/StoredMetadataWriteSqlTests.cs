@@ -240,8 +240,8 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     var staged = await _stagedAsync(conn, id);
     await Assert.That(staged.HasValue).IsTrue().Because("the Linked form stages the full form");
     await Assert.That(staged.GetValueOrDefault().RouteId).IsEqualTo(routeId);
-    await Assert.That(staged.Value.EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
-    await Assert.That(await _jsonEqualAsync(conn, staged.Value.Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
+    await Assert.That(staged.GetValueOrDefault().EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
+    await Assert.That(await _jsonEqualAsync(conn, staged.GetValueOrDefault().Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
       .Because("the staged form keeps every hop as written");
   }
 
