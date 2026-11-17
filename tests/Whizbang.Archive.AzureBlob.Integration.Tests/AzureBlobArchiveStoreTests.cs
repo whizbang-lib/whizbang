@@ -31,7 +31,7 @@ namespace Whizbang.Archive.AzureBlob.Integration.Tests;
 /// </summary>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
 [NotInParallel("PostgreSQL")]
-public class AzureBlobArchiveStoreTests {
+public partial class AzureBlobArchiveStoreTests {
   private const string LEDGER = "Whizbang.Tests.LedgerEntry";
 
   private PerTestDatabase _db;
