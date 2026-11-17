@@ -111,7 +111,9 @@ public class ToastAwareBloatEstimateSqlTests : EFCoreTestBase {
     await Assert.That(candidates.Any(c => c.TableName == TOASTED)).IsFalse();
     await Assert.That(estimate!.Value).IsLessThan(1.5)
       .Because("densely packed chunks occupy a quarter page each, so a live TOAST relation reads at or below one");
-    await Assert.That((decimal)estimate.Value).IsEqualTo(direct)
+    // Compared as the double the coordinator returns: from .NET 11 a double converted to decimal keeps every binary
+    // digit (1.06 becomes 1.0600000000000000532...), so the decimal side no longer rounds back to the scan's numeric.
+    await Assert.That(estimate.Value).IsEqualTo((double)direct)
       .Because("the re-measure after a rewrite is the scan's own estimate, so the two can be compared");
   }
 

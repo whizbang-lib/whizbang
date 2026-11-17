@@ -230,7 +230,7 @@ public partial class PerspectivePrepareCompleteIntegrationTests : EFCoreTestBase
     var snapshotA = await snapshots.GetLatestSnapshotAsync(streamA, "action_test");
     await Assert.That(snapshotA.HasValue).IsTrue()
       .Because("stream A has now folded its third event since its last snapshot");
-    await Assert.That(snapshotA.Value.SnapshotEventId).IsEqualTo(aThird.MessageId.Value);
+    await Assert.That(snapshotA.GetValueOrDefault().SnapshotEventId).IsEqualTo(aThird.MessageId.Value);
   }
 
   // ---------------------------------------------------------------------------------------------------------------

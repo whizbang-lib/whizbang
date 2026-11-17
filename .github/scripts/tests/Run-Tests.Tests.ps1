@@ -30,7 +30,8 @@ BeforeAll {
     # `dotnet build` writes A.Tests.dll under the configuration it was given (Debug when none, as the real
     # one does), unless FAKE_BUILD_NO_OUTPUT is set; `dotnet test` prints FAKE_TEST_OUTPUT and exits
     # FAKE_TEST_EXIT; `dotnet run` (the -Coverage path) does the same after writing a cobertura report under
-    # its configuration's TestResults; `dotnet tool list` reports reportgenerator installed; anything else
+    # its configuration's TestResults; `dotnet tool list` reports reportgenerator installed; `dotnet msbuild
+    # -getProperty:TargetFrameworks` answers net10.0, the one framework the fake builds; anything else
     # succeeds. The fake reportgenerator only records its call.
     Set-Content -LiteralPath (Join-Path $bin 'dotnet') -Value @'
 #!/bin/sh
@@ -57,6 +58,10 @@ case "$1" in
     exit "${FAKE_TEST_EXIT:-0}";;
   tool)
     echo "dotnet-reportgenerator-globaltool   5.4.0   reportgenerator"
+    exit 0;;
+  msbuild)
+    # The runner reads the frameworks to test from Directory.Build.props (#2135); this repository builds one.
+    case "$*" in *TargetFrameworks*) echo "net10.0";; esac
     exit 0;;
   *) exit 0;;
 esac

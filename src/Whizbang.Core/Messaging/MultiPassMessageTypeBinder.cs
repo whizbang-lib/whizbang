@@ -130,7 +130,7 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
   private static Type? _tryGetType(string assemblyQualifiedName) {
     try {
       return Type.GetType(assemblyQualifiedName, throwOnError: false);
-    } catch (Exception ex) when (ex is FileLoadException or BadImageFormatException or ArgumentException) {
+    } catch (Exception ex) when (IsUnresolvableName(ex)) {
       return null;
     }
   }
@@ -162,10 +162,21 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
   private static Type? _tryGetTypeFrom(Assembly assembly, string fullName) {
     try {
       return assembly.GetType(fullName, throwOnError: false, ignoreCase: false);
-    } catch (Exception ex) when (ex is FileLoadException or BadImageFormatException or ArgumentException) {
+    } catch (Exception ex) when (IsUnresolvableName(ex)) {
       return null;
     }
   }
+
+  /// <summary>
+  /// Whether <paramref name="ex"/> is one of the failures a type lookup raises for a name it cannot resolve
+  /// rather than for a lookup that went wrong: <see cref="FileLoadException"/> for a malformed or unloadable
+  /// assembly segment, <see cref="BadImageFormatException"/> for an assembly built for another architecture,
+  /// and <see cref="ArgumentException"/> for a name that parses but names nothing loadable. Both lookups use
+  /// it, so the binder's "no header can make it throw" contract has one definition.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MultiPassMessageTypeBinderCoverageTests.cs:IsUnresolvableName_EachLookupFailure_IsUnresolvableAsync</tests>
+  internal static bool IsUnresolvableName(Exception ex) =>
+    ex is FileLoadException or BadImageFormatException or ArgumentException;
 
   private static string? _extractTypeFullName(string assemblyQualifiedName) {
     // For "Namespace.Type, Assembly, Version=..." → "Namespace.Type"

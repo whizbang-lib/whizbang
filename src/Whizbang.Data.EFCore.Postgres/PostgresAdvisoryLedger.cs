@@ -78,7 +78,9 @@ public sealed partial class PostgresAdvisoryLedger(
         .ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
-    } catch (Exception ex) when (ex is NpgsqlException or System.Data.Common.DbException or InvalidOperationException) {
+    } catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException) {
+      // DbException covers every NpgsqlException (a refused connection, a server error); InvalidOperationException
+      // covers a data source or connection in the wrong state, ObjectDisposedException among them.
       // Logged, never silent. A ledger that has quietly stopped remembering anything looks exactly
       // like a deployment with no findings, which is the reading this whole table exists to
       // prevent being wrong about.

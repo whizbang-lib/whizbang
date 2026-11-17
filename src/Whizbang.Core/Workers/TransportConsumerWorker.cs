@@ -865,7 +865,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     try {
       var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
       return JsonSerializer.Serialize(envelope, options.GetTypeInfo(envelope.GetType()));
-    } catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or JsonException) {
+    } catch (Exception ex) when (Serialization.SerializationFailure.IsSerializationFailure(ex)) {
       using var buffer = new MemoryStream();
       using (var writer = new Utf8JsonWriter(buffer)) {
         writer.WriteStartObject();
