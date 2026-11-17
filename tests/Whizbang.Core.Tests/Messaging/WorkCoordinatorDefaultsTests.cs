@@ -445,6 +445,20 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task VerifyDigestTableSliceAsync_WithoutProviderSupport_IsACompletedPassWithNothingInItAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.VerifyDigestTableSliceAsync(
+      new FullHistoryCompareRequest(TimeSpan.Zero, TimeSpan.FromDays(1), 100));
+
+    await Assert.That(result.BucketsChecked).IsEqualTo(0);
+    await Assert.That(result.TotalDrift).IsEqualTo(0);
+    await Assert.That(result.StreamsChecked).IsEqualTo(0);
+    await Assert.That(result.PassCompleted).IsTrue()
+      .Because("a store with no compare has nothing left to walk, so each slice completes the pass and no cursor waits");
+  }
+
+  [Test]
   public async Task RewriteTableAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

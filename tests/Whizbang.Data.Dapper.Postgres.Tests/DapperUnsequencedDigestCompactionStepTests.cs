@@ -42,6 +42,19 @@ public class DapperUnsequencedDigestCompactionStepTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ARun_WithNoLogger_StillFoldsTheLogAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _seedHeldAsync(conn, TrackedGuid.New().Value, 30);
+    var step = new DapperUnsequencedDigestCompactionStep(ConnectionString);
+
+    await step.RunAsync(new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
+
+    await Assert.That(await _pendingAsync(conn)).IsEqualTo(0L)
+      .Because("a step registered without a logger folds and reports what it folded to nothing, never refusing to run");
+  }
+
+  [Test]
   public async Task TheStep_RefusesWhatItCannotRunAsync() {
     await Assert.That(() => new DapperUnsequencedDigestCompactionStep(" ")).Throws<ArgumentException>();
     await Assert.That(async () => await new DapperUnsequencedDigestCompactionStep(ConnectionString)

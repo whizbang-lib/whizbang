@@ -83,6 +83,30 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
+  public async Task RunSweepOnce_NoMetricsRegistered_ASliceThatCompletesThePass_StillVerifiesAndLogsAsync() {
+    var coordinator = new AuditCoordinator {
+      DigestResult = new DigestVerificationResult {
+        BucketsChecked = 5,
+        DriftUpdated = 0,
+        DriftRemoved = 0,
+        DriftAdded = 0,
+        PassCompleted = true,
+        PassRuns = 3,
+      },
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      _bothChecksOn(), logger: logger);
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(1)
+      .Because("a slice that completes the pass is counted only when something counts it; the compare runs either way");
+    await Assert.That(logger.Saw("verified")).IsTrue()
+      .Because("with nothing counting the completed pass, the cycle still reaches its log line");
+  }
+
+  [Test]
   public async Task RunAuditOnce_NoMetricsRegistered_StillRebuildsReportsAndRequestsManifestAsync() {
     var gapStream = TrackedGuid.New().Value;
     var coordinator = new AuditCoordinator {

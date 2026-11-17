@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
@@ -45,6 +46,27 @@ public class UnsequencedDigestCompactionStepTests : EFCoreTestBase {
     await Assert.That(() => step.RunAsync(null!, CancellationToken.None)).Throws<ArgumentNullException>();
     await Assert.That(() => new UnsequencedDigestCompactionStep(null!)).Throws<ArgumentNullException>();
   }
+
+  // A context that maps none of the framework's entities has no schema to read: the fold runs on the search path's tables.
+  [Test]
+  public async Task ARun_ThroughAContextThatMapsNoFrameworkEntity_FoldsTheDefaultSchemasLogAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _seedHeldAsync(conn, TrackedGuid.New().Value, 25);
+    var step = new UnsequencedDigestCompactionStep(typeof(BareContext));
+
+    var services = new ServiceCollection();
+    services.AddScoped(_ => new BareContext(new DbContextOptionsBuilder<BareContext>().UseNpgsql(ConnectionString).Options));
+    await using var provider = services.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+    await step.RunAsync(scope.ServiceProvider, CancellationToken.None);
+
+    await Assert.That(await _pendingAsync(conn)).IsEqualTo(0L)
+      .Because("with no mapped schema the step folds the log in the default schema rather than skipping it");
+  }
+
+  /// <summary>A DbContext that maps none of the framework's entities.</summary>
+  public sealed class BareContext(DbContextOptions<BareContext> options) : DbContext(options);
 
   private async Task _runAsync(UnsequencedDigestCompactionStep step) {
     var services = new ServiceCollection();

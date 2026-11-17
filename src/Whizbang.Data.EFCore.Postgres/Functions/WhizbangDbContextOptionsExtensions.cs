@@ -91,9 +91,10 @@ public static class WhizbangDbContextOptionsExtensions {
       .ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
 
     // Statement attribution: commands run inside a framework mechanism lead with its comment and are counted. Added
-    // once, however often this is called, so a statement is never counted twice.
+    // once, however often this is called, so a statement is never counted twice. The core extension is always there:
+    // the ReplaceService above adds it when nothing had.
     var coreOptionsBuilder = ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder;
-    var interceptors = coreOptionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors;
+    var interceptors = coreOptionsBuilder.Options.GetExtension<CoreOptionsExtension>().Interceptors;
     if (interceptors?.Contains(WhizbangCommandAttributionInterceptor.Instance) != true) {
       coreOptionsBuilder.AddInterceptors(WhizbangCommandAttributionInterceptor.Instance);
     }

@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tests.Observability;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -63,6 +64,28 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(warnings[0].Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(warnings[0].Message).Contains(streamId.ToString(), StringComparison.Ordinal);
     await Assert.That(warnings[0].Message).Contains(perspectiveName, StringComparison.Ordinal);
+  }
+
+  [Test]
+  public async Task Rewind_AskedAgainOnAnUnchangedStream_WithNoMetrics_IsStillSettledWithoutReplayingAsync() {
+    var (streamId, perspectiveName) = (TrackedGuid.New().Value, "Deep.RewindRepeatNoMetricsPerspective");
+    var runner = new RecordingRunner();
+    var (worker, harness, _) = _buildBranchWorker(_rewindCoordinator(streamId, perspectiveName, TrackedGuid.New().Value),
+      new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]),
+      new BranchSetup { EventStore = new SequencedEventStore { LastSequence = 4 } });
+
+    var settled = new List<PerspectiveWork>();
+    for (var lap = 0; lap < 2; lap++) {
+      var work = _branchWork(streamId, perspectiveName, PerspectiveProcessingStatus.RewindRequired);
+      settled.Add(work);
+      await worker.ProcessChannelBatchAsync([work], CancellationToken.None);
+    }
+    await worker.ProcessChannelBatchAsync([], CancellationToken.None);
+
+    await Assert.That(runner.RunCallCount).IsEqualTo(1)
+      .Because("the repeat is settled whether or not anything counts it");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(settled[^1].WorkId)
+      .Because("a settled repeat completes its rows with no metrics registered too");
   }
 
   [Test]

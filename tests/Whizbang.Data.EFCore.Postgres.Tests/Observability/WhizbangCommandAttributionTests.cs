@@ -177,6 +177,19 @@ public class WhizbangCommandAttributionTests : EFCoreTestBase {
       .IsEqualTo(1).Because("a second registration would count every statement twice");
   }
 
+  [Test]
+  public async Task UsingTheFrameworksFunctions_OnABuilderWithNoCoreOptionsYet_RegistersTheInterceptorAsync() {
+    var builder = new DbContextOptionsBuilder();
+    await Assert.That(builder.Options.FindExtension<CoreOptionsExtension>()).IsNull()
+      .Because("the builder starts with no core extension, the case the registration must not stumble on");
+
+    _ = new Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.NpgsqlDbContextOptionsBuilder(builder).UseWhizbangFunctions();
+
+    var interceptors = builder.Options.GetExtension<CoreOptionsExtension>().Interceptors!;
+    await Assert.That(interceptors.Count(i => ReferenceEquals(i, WhizbangCommandAttributionInterceptor.Instance)))
+      .IsEqualTo(1).Because("the registration adds the core extension itself, so the interceptor is always registered");
+  }
+
   private static IRelationalCommand _rawScalar(DbContext context, string sql = CURRENT_QUERY) =>
     context.GetService<IRawSqlCommandBuilder>().Build(sql);
 

@@ -54,13 +54,7 @@ public static partial class UnsequencedDigestCompaction {
     var function = PgIdentifier.QualifyPrefix(schema) + "wh_compact_unsequenced_digest_changes";
     var folded = 0L;
     for (var batch = 0; batch < maxBatches; batch++) {
-      await using var cmd = connection.CreateCoordinatorCommand();
-#pragma warning disable S2077 // the function name is the caller's own schema, quoted by PgIdentifier
-      cmd.CommandText = $"SELECT {function}(@limit)";
-#pragma warning restore S2077
-      cmd.Parameters.AddWithValue("limit", batchSize);
-      var changes = Convert.ToInt64(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
-        CultureInfo.InvariantCulture);
+      var changes = await _foldBatchAsync(connection, function, batchSize, cancellationToken).ConfigureAwait(false);
       folded += changes;
       if (changes < batchSize) {
         break;
@@ -70,6 +64,22 @@ public static partial class UnsequencedDigestCompaction {
       LogCompacted(logger ?? NullLogger.Instance, folded);
     }
     return folded;
+  }
+
+  /// <summary>One fold of at most <paramref name="batchSize"/> changes; returns how many it folded.</summary>
+  /// <remarks>
+  /// Its own method so the command's disposal is not part of the loop's exit: an <c>await using</c> inside the loop puts
+  /// the compiler's disposal branches on the <c>break</c>, where they read as conditions of the batch test.
+  /// </remarks>
+  private static async Task<long> _foldBatchAsync(
+      NpgsqlConnection connection, string function, int batchSize, CancellationToken cancellationToken) {
+    await using var cmd = connection.CreateCoordinatorCommand();
+#pragma warning disable S2077 // the function name is the caller's own schema, quoted by PgIdentifier
+    cmd.CommandText = $"SELECT {function}(@limit)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("limit", batchSize);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+      CultureInfo.InvariantCulture);
   }
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Folded {Count} held-without-sequence digest change(s) into their totals")]
