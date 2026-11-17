@@ -774,6 +774,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityRecordTraceAsync_WithoutProviderSupport_IsANoOpAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityRecordTraceAsync(Guid.Empty, [], default);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
   public async Task GetIntegritySealReadingAsync_WithoutProviderSupport_ReportsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

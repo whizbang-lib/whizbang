@@ -86,6 +86,17 @@ public sealed partial class RepairDrainWorker(
   }
 
   /// <summary>
+  /// One drain pass now (#2365): a tick with its token bucket full, so it claims and sends up to the burst cap without
+  /// waiting for tokens to accrue. For an operator's manual pass and for tests that drive the drain between other steps.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Whether the pass found work.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:DrainOnce_RunsOneTickWithAFullBucket_NowAsync</tests>
+#pragma warning disable RCS1163, IDE0060 // RED stub
+  public Task<bool> DrainOnceAsync(CancellationToken cancellationToken) => Task.FromResult(_tokens < 0);
+#pragma warning restore RCS1163, IDE0060
+
+  /// <summary>
   /// One pacing tick: refill tokens at the configured rate (burst cap 2×), then — if at least
   /// one whole token is available — claim up to min(⌊tokens⌋, batch size) eligible ledger rows
   /// and dispatch them grouped per (origin, tenant, type, window). Each claimed ROW costs one token

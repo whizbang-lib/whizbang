@@ -292,6 +292,37 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
     await ((IWorkCoordinator)_coordinator()).IntegrityRecordMissingEventsAsync(TrackedGuid.New().Value, [], []);
   }
 
+  // ===== #2365: a row keeps the trace of the comparison that recorded it =====
+
+  [Test]
+  public async Task RecordTrace_TheClaimCarriesEachRowsTrace_AndALaterComparisonReplacesItAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var (traced, untraced) = (_key(origin, TrackedGuid.New().Value), _key(origin, TrackedGuid.New().Value));
+    await _reportAsync(coordinator, traced, deficit: 1, at: _t0);
+    await _reportAsync(coordinator, untraced, deficit: 2, at: _t0);
+    var first = new IntegrityTraceLink(TrackedGuid.New().Value, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    var later = new IntegrityTraceLink(TrackedGuid.New().Value, "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+
+    await ((IWorkCoordinator)coordinator).IntegrityRecordTraceAsync(origin, [traced], first);
+    await ((IWorkCoordinator)coordinator).IntegrityRecordTraceAsync(origin, [traced], later);
+    var claimed = await coordinator.IntegrityClaimRepairDrainAsync([origin], _t0.AddSeconds(1), _backoff, maxAttempts: 8, limit: 10);
+
+    var row = claimed.Single(c => c.StreamId == traced.StreamId);
+    await Assert.That(row.TraceParent).IsEqualTo(later.TraceParent)
+      .Because("the latest comparison that found the deficit is the one whose trace the repair joins");
+    await Assert.That(row.TraceRequestId).IsEqualTo(later.RequestId);
+    var bare = claimed.Single(c => c.StreamId == untraced.StreamId);
+    await Assert.That(bare.TraceParent).IsNull();
+    await Assert.That(bare.TraceRequestId.HasValue).IsFalse();
+  }
+
+  [Test]
+  public async Task RecordTrace_NothingToRecord_IsHarmlessAsync() {
+    await ((IWorkCoordinator)_coordinator()).IntegrityRecordTraceAsync(
+      TrackedGuid.New().Value, [], new IntegrityTraceLink(null, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
+  }
+
   // ===== #2029: a real cap =====
 
   [Test]

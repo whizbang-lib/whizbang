@@ -96,7 +96,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   public static async Task<TwoServiceHarness> CreateAsync(
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
       Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null,
-      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null) {
+      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null, bool repairDrainEnabled = false) {
     var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
@@ -120,8 +120,10 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       RepairRequestBackoffSeconds = 0,
       MaxRepairAttemptsPerBucket = 1000,
       PublishReportEvents = true,
-      // The compare dispatches its repairs inline, so a cycle is one audit.
-      RepairDrainEnabled = false,
+      // The compare dispatches its repairs inline, so a cycle is one audit; with the drain on (the default in a real
+      // service), the audit records its deficits and RunConsumerDrainAsync sends them.
+      RepairDrainEnabled = repairDrainEnabled,
+      RepairDrainRatePerSecond = 1000,
     };
     h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null,
       rules: originRules);
@@ -313,6 +315,18 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     var worker = new IntegrityAuditWorker(
       _consumerProvider!.GetRequiredService<IServiceScopeFactory>(), Options.Create(options), NullLogger<IntegrityAuditWorker>.Instance);
     await worker.RunAuditOnceAsync(CancellationToken.None);
+    await _pumpUntilQuietAsync();
+  }
+
+  /// <summary>
+  /// One pass of the consumer's paced repair drain (#2365), pumped until both sides are quiet: the deficits an audit
+  /// recorded are requested of the origin, and its answers applied.
+  /// </summary>
+  public async Task RunConsumerDrainAsync() {
+    var worker = new RepairDrainWorker(
+      _consumerProvider!.GetRequiredService<IServiceScopeFactory>(),
+      _consumerProvider.GetRequiredService<IOptions<StreamIntegrityOptions>>(), NullLogger<RepairDrainWorker>.Instance);
+    await worker.DrainOnceAsync(CancellationToken.None);
     await _pumpUntilQuietAsync();
   }
 

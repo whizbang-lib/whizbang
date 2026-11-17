@@ -2353,6 +2353,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// #2365: records on the keyed ledger rows the trace of the comparison that recorded their deficit (its
+  /// <c>traceparent</c> and the manifest ask's id), so the paced repair drain starts its request in that trace and the
+  /// origin's answer and the repair join the audit that found the gap. A later comparison replaces it. No-op =
+  /// unsupported, and the drain's requests start traces of their own.
+  /// </summary>
+  /// <param name="originServiceId">The origin the keys belong to.</param>
+  /// <param name="keys">The deficit buckets this comparison recorded.</param>
+  /// <param name="trace">The comparison's trace link.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:RecordTrace_TheClaimCarriesEachRowsTrace_AndALaterComparisonReplacesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityRecordTraceAsync_WithoutProviderSupport_IsANoOpAsync</tests>
+  Task IntegrityRecordTraceAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, Observability.IntegrityTraceLink trace,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Stamps the compared window ([from, until] origin commit sequences) onto the keyed ledger
   /// rows — discovery-time context the paced repair drain later dispatches with, so a repair
   /// asks for exactly the slice that disagreed without the in-flight manifest. No-op = unsupported.

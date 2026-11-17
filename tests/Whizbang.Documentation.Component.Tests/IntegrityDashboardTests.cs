@@ -78,12 +78,18 @@ public partial class IntegrityDashboardTests {
     await Assert.That(alerts.Count).IsEqualTo(alerts.Distinct().Count()).Because("two rules with one name shadow each other");
   }
 
-  /// <summary>The halted-pair alert fires at the pair guard's own default, <c>PairGuard:HaltedAlertAfter</c> (owner decision Q5).</summary>
+  /// <summary>
+  /// The halted-pair alert fires on the pair guard's own alert counter (owner decision, #2365), so it follows
+  /// <c>PairGuard:HaltedAlertAfter</c> as configured: the rule writes no duration of its own.
+  /// </summary>
   [Test]
-  public async Task TheHaltedPairAlert_FiresAtTheGuardsDefaultThresholdAsync() {
-    var threshold = _threshold(await File.ReadAllTextAsync(_rulesPath()), "WhizbangIntegrityPairHalted");
+  public async Task TheHaltedPairAlert_FiresOnTheGuardsOwnAlertCounter_WithNoThresholdOfItsOwnAsync() {
+    var expr = _expression(await File.ReadAllTextAsync(_rulesPath()), "WhizbangIntegrityPairHalted");
 
-    await Assert.That(threshold).IsEqualTo(new IntegrityPairGuardOptions().HaltedAlertAfter.TotalSeconds);
+    await Assert.That(expr).Contains("whizbang_stream_integrity_pair_halt_alerts_total")
+      .Because("the guard counts a halt once it passes HaltedAlertAfter, whatever the service configured");
+    await Assert.That(expr).DoesNotContain("pair_halted_seconds")
+      .Because("a duration written into the rule drifts from the service's setting");
   }
 
   /// <summary>The retention alert fires at twice the default resting period, as the oldest-age gauge's description says.</summary>
@@ -111,9 +117,13 @@ public partial class IntegrityDashboardTests {
   }
 
   private static double _threshold(string rules, string alert) {
-    var at = rules.IndexOf($"- alert: {alert}", StringComparison.Ordinal);
-    var expr = rules[at..].Split('\n').First(l => l.TrimStart().StartsWith("expr:", StringComparison.Ordinal));
+    var expr = _expression(rules, alert);
     return double.Parse(expr[(expr.LastIndexOf(' ') + 1)..], CultureInfo.InvariantCulture);
+  }
+
+  private static string _expression(string rules, string alert) {
+    var at = rules.IndexOf($"- alert: {alert}", StringComparison.Ordinal);
+    return rules[at..].Split('\n').First(l => l.TrimStart().StartsWith("expr:", StringComparison.Ordinal));
   }
 
   private static HashSet<string> _metricsIn(IEnumerable<string> texts) =>

@@ -93,4 +93,57 @@ public class TwoServiceIntegrityTraceTests : EFCoreTestBase {
     }
     await Assert.That(root.OperationName).IsEqualTo(IntegrityTracing.SPAN_AUDIT_CYCLE).Because("the trace starts at the audit cycle");
   }
+
+  /// <summary>
+  /// #2365, with the paced repair drain on, the default: the audit records the deficit and its trace in the ledger, and
+  /// the drain's request starts in that trace later, so the audit, the origin's answer and the repair are still one trace.
+  /// </summary>
+  [Test]
+  public async Task WithTheDrainOn_TheAuditTheAnswerAndTheRepair_AreStillOneTraceAsync() {
+    var spans = new ConcurrentBag<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == IntegrityTracing.SOURCE_NAME,
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStopped = spans.Add,
+    };
+    ActivitySource.AddActivityListener(listener);
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, [], consumedEventTypes: [SHARED],
+      repairDrainEnabled: true);
+    var ids = await h.EmitAsync(
+      new TwoServiceEmit((Guid)TrackedGuid.New(), SHARED, 0, null, PAYLOAD),
+      new TwoServiceEmit((Guid)TrackedGuid.New(), SHARED, 0, null, PAYLOAD));
+    await h.DeliverAsync([ids[0]]);
+    var options = new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      AuditSettleWindowMinutes = 0,
+      RepairRequestBackoffSeconds = 0,
+      MaxAskSkipMinutes = 0,
+    };
+
+    await h.RunConsumerAuditAsync(options);
+    await Assert.That(h.RedeliveryRequests()).IsEmpty().Because("with the drain on, the audit only records the deficit");
+    await h.RunConsumerDrainAsync();
+
+    await Assert.That(await h.ConsumerHoldsAsync(ids[1])).IsTrue().Because("the drain asked, and the repair stored the loss");
+    var request = h.RedeliveryRequests().Single();
+    var repair = spans.Single(s => s.OperationName == IntegrityTracing.SPAN_REPAIR
+      && (string?)s.GetTagItem(IntegrityTracing.ATTR_REQUEST_ID) == request.RequestId.ToString());
+    var bySpan = spans.Where(s => s.TraceId == repair.TraceId).ToDictionary(s => s.SpanId);
+    string Describe(Activity s) => $"{s.OperationName}:{s.GetTagItem(IntegrityTracing.ATTR_KIND)}:{s.GetTagItem(IntegrityTracing.ATTR_PEER)}";
+    var redeliveryAnswer = bySpan[repair.ParentSpanId];
+    var drainRequest = bySpan[redeliveryAnswer.ParentSpanId];
+    var audit = bySpan[drainRequest.ParentSpanId];
+    await Assert.That(Describe(redeliveryAnswer))
+      .IsEqualTo($"{IntegrityTracing.SPAN_ANSWER}:{IntegrityTracing.KIND_REDELIVERY}:{TwoServiceHarness.CONSUMER_NAME}");
+    await Assert.That(Describe(drainRequest))
+      .IsEqualTo($"{IntegrityTracing.SPAN_REPAIR_REQUEST}:{IntegrityTracing.KIND_DRAIN}:{TwoServiceHarness.ORIGIN_NAME}");
+    await Assert.That(Describe(audit))
+      .IsEqualTo($"{IntegrityTracing.SPAN_AUDIT}:{IntegrityTracing.KIND_MANIFEST}:{TwoServiceHarness.ORIGIN_NAME}")
+      .Because("the drain's request starts in the trace of the audit that recorded the deficit");
+    var root = audit;
+    while (bySpan.TryGetValue(root.ParentSpanId, out var parent)) {
+      root = parent;
+    }
+    await Assert.That(root.OperationName).IsEqualTo(IntegrityTracing.SPAN_AUDIT_CYCLE);
+  }
 }
