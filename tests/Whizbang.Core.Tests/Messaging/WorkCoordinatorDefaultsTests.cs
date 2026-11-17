@@ -774,6 +774,17 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetIntegritySealReadingAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegritySealReadingAsync(TimeSpan.FromDays(30), TimeSpan.FromDays(7), DateTimeOffset.UnixEpoch);
+
+    await Assert.That(result.Reported).IsFalse()
+      .Because("an engine with no epochs has no seal to report, and a zero frontier would read as nothing sealed");
+    await Assert.That(result.Lanes).IsEmpty();
+  }
+
+  [Test]
   public async Task IntegrityRecordOriginCheckpointAsync_WithoutProviderSupport_KeepsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
