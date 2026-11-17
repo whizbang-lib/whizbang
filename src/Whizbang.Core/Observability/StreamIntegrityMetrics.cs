@@ -677,6 +677,9 @@ public sealed class StreamIntegrityMetrics {
       unit: "s",
       description: "Per lane, seconds since the epoch frontier last advanced; a value that keeps growing while events arrive means sealing has stopped; reported by the maintainer duty's holder only");
 
+    SealLowered = meter.CreatePassiveCounter<long>("whizbang.stream_integrity.seal_lowered");
+    CarriedCompactions = meter.CreatePassiveCounter<long>("whizbang.stream_integrity.carried_compactions");
+
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     LedgerBucketsOpened.Touch(HOW_TAG, _openedHows);
     LedgerBucketsClosed.Touch(HOW_TAG, _closedHows);
@@ -860,6 +863,26 @@ public sealed class StreamIntegrityMetrics {
 
   private static KeyValuePair<string, object?> _lane(LaneSeal lane) =>
     new("origin_service_id", lane.OriginServiceId.ToString());
+
+  /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin rewrote history this service had verified.</summary>
+  public const string SEAL_LOWERED_REWRITE = "rewrite";
+
+  /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the eligibility rules changed.</summary>
+  public const string SEAL_LOWERED_RULE_CHANGE = "rule_change";
+
+  /// <summary>Seals lowered (#2365), tagged by <c>reason</c>.</summary>
+  public PassiveCounter<long> SealLowered { get; private set; } = null!;
+
+  /// <summary>Cuts that carried their digest (#2365), tagged by <c>kind</c>.</summary>
+  public PassiveCounter<long> CarriedCompactions { get; private set; } = null!;
+
+#pragma warning disable RCS1163, IDE0060, S1186, CA1822 // RED stub
+  /// <summary>Counts a lowered seal.</summary>
+  public void RecordSealLowered(string reason) { }
+
+  /// <summary>Counts a cut that carried its digest.</summary>
+  public void RecordCarriedCompaction(bool archived) { }
+#pragma warning restore RCS1163, IDE0060, S1186, CA1822
 
   private volatile ChecksEnabled? _checksEnabled;
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _lastRuns = new(StringComparer.Ordinal);
@@ -1142,11 +1165,23 @@ public sealed record IntegritySealReading {
   /// <c>SealRecheck:RecheckEvery</c>; null when none was sealed within the lookback.
   /// </summary>
   public double? SealRecheckCoverageRatio { get; init; }
+
+  /// <summary>This service's origin generation; null when not read.</summary>
+  public long? OriginGeneration { get; init; }
+
+  /// <summary>Stream digest buckets carrying a cut's digest, counted up to a cap; null when not read.</summary>
+  public long? CarriedStreams { get; init; }
+
+  /// <summary>True when <see cref="CarriedStreams"/> stopped at its cap: there are at least that many.</summary>
+  public bool CarriedStreamsCapped { get; init; }
 }
 
 /// <summary>One lane's seal (#2365).</summary>
 /// <param name="OriginServiceId">The lane: the origin's id, or the empty id for the local lane.</param>
 /// <param name="SealedThrough">The sequence below which every epoch is sealed.</param>
 /// <param name="AgeSeconds">Seconds since the frontier last advanced.</param>
+/// <param name="OpenWindowEvents">Events of the lane above its frontier, counted up to a cap; null when not counted.</param>
+/// <param name="OpenWindowCapped">True when the count stopped at its cap.</param>
 /// <docs>resilience/stream-integrity#integrity-instruments</docs>
-public sealed record LaneSeal(Guid OriginServiceId, long SealedThrough, double AgeSeconds);
+public sealed record LaneSeal(
+  Guid OriginServiceId, long SealedThrough, double AgeSeconds, long? OpenWindowEvents = null, bool OpenWindowCapped = false);

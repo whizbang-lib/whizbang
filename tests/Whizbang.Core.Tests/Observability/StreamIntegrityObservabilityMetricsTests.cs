@@ -28,6 +28,11 @@ public class StreamIntegrityObservabilityMetricsTests {
   private const string COVERAGE = "whizbang.stream_integrity.recheck_coverage_ratio";
   private const string FRONTIER = "whizbang.stream_integrity.epoch_frontier";
   private const string SEAL_AGE = "whizbang.stream_integrity.seal_age_seconds";
+  private const string OPEN_WINDOW = "whizbang.stream_integrity.open_window_events";
+  private const string GENERATION = "whizbang.stream_integrity.origin_generation";
+  private const string CARRIED = "whizbang.stream_integrity.carried_streams";
+  private const string LOWERED = "whizbang.stream_integrity.seal_lowered";
+  private const string COMPACTIONS = "whizbang.stream_integrity.carried_compactions";
 
   private static WhizbangMetrics _root() =>
     new(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
@@ -113,6 +118,63 @@ public class StreamIntegrityObservabilityMetricsTests {
     await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), SEAL_AGE)).IsEmpty();
   }
 
+  [Test]
+  public async Task ASealReading_AlsoReportsEachLanesOpenWindow_TheGeneration_AndTheCarriedStreamsAsync() {
+    var metrics = new StreamIntegrityMetrics(_root());
+    var lane = (Guid)TrackedGuid.New();
+
+    metrics.UpdateSealReading(new IntegritySealReading {
+      Reported = true,
+      Lanes = [new LaneSeal(lane, 300, 1, OpenWindowEvents: 42), new LaneSeal(Guid.Empty, 100, 1, OpenWindowEvents: 9, OpenWindowCapped: true)],
+      OriginGeneration = 7,
+      CarriedStreams = 1500,
+      CarriedStreamsCapped = false,
+    });
+
+    var open = ProbeMeterReader.ReadSeries(_meterOf(metrics), OPEN_WINDOW)
+      .ToDictionary(s => (string)s.Tags["origin_service_id"]!, s => (s.Value, (bool)s.Tags["capped"]!));
+    await Assert.That(open[lane.ToString()]).IsEqualTo((42L, false));
+    await Assert.That(open[Guid.Empty.ToString()]).IsEqualTo((9L, true)).Because("a count that stopped at its cap says so");
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), GENERATION).Single().Value).IsEqualTo(7L);
+    var carried = ProbeMeterReader.ReadSeries(_meterOf(metrics), CARRIED).Single();
+    await Assert.That(carried.Value).IsEqualTo(1500L);
+    await Assert.That(carried.Tags["capped"]).IsEqualTo(false);
+  }
+
+  [Test]
+  public async Task AReadingWithoutTheNewParts_ReportsNoneOfThemAsync() {
+    var metrics = new StreamIntegrityMetrics(_root());
+
+    metrics.UpdateSealReading(new IntegritySealReading { Reported = true, Lanes = [new LaneSeal(Guid.Empty, 1, 1)] });
+
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), OPEN_WINDOW)).IsEmpty()
+      .Because("a lane whose open window was not counted reports nothing, not zero");
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), GENERATION)).IsEmpty();
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), CARRIED)).IsEmpty();
+  }
+
+  [Test]
+  public async Task SealLowered_AndCarriedCompactions_ExistAtZeroForEveryValue_AndCountByItAsync() {
+    var metrics = new StreamIntegrityMetrics(_root());
+
+    var lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
+    await Assert.That(lowered.Keys.Order().ToList()).IsEquivalentTo(["rewrite", "rule_change"]);
+    var compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+    await Assert.That(compactions.Keys.Order().ToList()).IsEquivalentTo(["archive", "truncate"]);
+    await Assert.That(lowered.Values.Sum() + compactions.Values.Sum()).IsEqualTo(0L);
+
+    metrics.RecordSealLowered(StreamIntegrityMetrics.SEAL_LOWERED_REWRITE);
+    metrics.RecordCarriedCompaction(archived: true);
+    metrics.RecordCarriedCompaction(archived: false);
+    metrics.RecordCarriedCompaction(archived: false);
+
+    lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
+    await Assert.That(lowered["rewrite"]).IsEqualTo(1L);
+    compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+    await Assert.That(compactions["archive"]).IsEqualTo(1L);
+    await Assert.That(compactions["truncate"]).IsEqualTo(2L);
+  }
+
   /// <summary>
   /// The design choice that integrity instruments carry no per-stream or per-tenant attribute (#2365): a series per
   /// stream or tenant grows with the data, not the fleet. Every attribute any integrity instrument reports, the pair
@@ -130,9 +192,13 @@ public class StreamIntegrityObservabilityMetricsTests {
     metrics.RecordCheckRan(StreamIntegrityMetrics.CHECK_FULL_HISTORY_COMPARE, DateTimeOffset.UnixEpoch);
     metrics.UpdateSealReading(new IntegritySealReading {
       Reported = true,
-      Lanes = [new LaneSeal(Guid.Empty, 1, 1)],
+      Lanes = [new LaneSeal(Guid.Empty, 1, 1, OpenWindowEvents: 1)],
       SealRecheckCoverageRatio = 1,
+      OriginGeneration = 1,
+      CarriedStreams = 1,
     });
+    metrics.RecordSealLowered(StreamIntegrityMetrics.SEAL_LOWERED_RULE_CHANGE);
+    metrics.RecordCarriedCompaction(archived: false);
     metrics.UpdateLedgerBacklog(new LedgerBacklogSnapshot { Reported = true, Buckets = [new LedgerBacklogCount("o", "open", 1)] });
 
     var keys = new Dictionary<string, HashSet<string>>();
@@ -160,7 +226,7 @@ public class StreamIntegrityObservabilityMetricsTests {
     string[] bounded = [
       "check", "origin_service_id", "origin", "peer", "side", "state", "reason", "fingerprint", "kind", "how", "role",
       "source", "level", "outcome", "delivery", "event_type", "perspective", "sweep", "windowed", "recompute", "type",
-      "domain",
+      "domain", "capped",
     ];
     var all = keys.SelectMany(k => k.Value.Select(v => $"{k.Key}:{v}")).ToList();
     await Assert.That(keys.Keys).Contains(FRONTIER).Because("positive control: the listener sees the new instruments");
@@ -172,5 +238,10 @@ public class StreamIntegrityObservabilityMetricsTests {
     foreach (var name in new[] { FRONTIER, SEAL_AGE }) {
       await Assert.That(keys[name]).IsEquivalentTo(["origin_service_id"]);
     }
+    await Assert.That(keys[OPEN_WINDOW]).IsEquivalentTo(["origin_service_id", "capped"]);
+    await Assert.That(keys[CARRIED]).IsEquivalentTo(["capped"]);
+    await Assert.That(keys[GENERATION]).IsEmpty().Because("one generation per service");
+    await Assert.That(keys[LOWERED]).IsEquivalentTo(["reason"]);
+    await Assert.That(keys[COMPACTIONS]).IsEquivalentTo(["kind"]);
   }
 }

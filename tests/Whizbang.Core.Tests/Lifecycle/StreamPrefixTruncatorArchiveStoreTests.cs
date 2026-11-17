@@ -73,6 +73,29 @@ public class StreamPrefixTruncatorArchiveStoreTests {
   private static ArchiveWriteResult _archived(long events) => new(
     ArchiveStatus.ARCHIVED, events, null, new ArchiveLocator("postgres-table", "wh_event_archive", ArchiveCompression.None), 4);
 
+  /// <summary>#2365: every cut that happened carries its digest, and is counted by kind; a refused one is not.</summary>
+  [Test]
+  public async Task ACutThatHappened_IsCountedAsACarriedCompaction_ByKind_AndARefusalIsNotAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider()
+        .GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var services = new ServiceCollection().AddSingleton(metrics).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    var coordinator = new CountingCoordinator();
+
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services,
+      new RecordingStore(_archived(3))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services)
+      .TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services,
+      new RecordingStore(new ArchiveWriteResult("blocked", 0, null, null, 4))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
+
+    var counted = Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadSeries(
+        metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.carried_compactions")
+      .ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+    await Assert.That(counted["archive"]).IsEqualTo(1L);
+    await Assert.That(counted["truncate"]).IsEqualTo(1L).Because("the refused archive cut nothing");
+  }
+
   [Test]
   public async Task ArchivingTruncate_WritesAPrefixBatchThroughTheStore_NotTheCoordinatorAsync() {
     var store = new RecordingStore(_archived(3));

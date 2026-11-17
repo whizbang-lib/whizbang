@@ -1531,6 +1531,38 @@ public partial class IntegrityManifestReceptorTests {
       .Because("and no divergence reports — deliberate change is not damage");
   }
 
+  /// <summary>#2365: the guard lowering the seal for a rewritten origin history is counted, as a rewrite.</summary>
+  [Test]
+  public async Task ManifestReceptor_GenerationChanged_CountsTheSealLoweredAsARewriteAsync() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var lowered = new List<string>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.SealLowered.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      foreach (var tag in tags) {
+        if (tag.Key == "reason" && value > 0) {
+          lowered.Add((string)tag.Value!);
+        }
+      }
+    });
+    listener.Start();
+    var coordinator = new AuditCoordinator { SealGenerationCoherent = false };
+    var sp = _provider(coordinator, new CaptureTransport(), metrics: metrics);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(TrackedGuid.New().Value, 11, 21, 2)]) with { OriginGeneration = 9 });
+    listener.RecordObservableInstruments();
+
+    await Assert.That(lowered).IsEquivalentTo([StreamIntegrityMetrics.SEAL_LOWERED_REWRITE]);
+  }
+
   [Test]
   public async Task ManifestReceptor_GenerationUnchanged_ComparesNormallyAsync() {
     var coordinator = new AuditCoordinator { SealGenerationCoherent = true };

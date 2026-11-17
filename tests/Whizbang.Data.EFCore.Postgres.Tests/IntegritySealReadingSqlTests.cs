@@ -88,4 +88,47 @@ public class IntegritySealReadingSqlTests : EFCoreTestBase {
     await Assert.That((await _readAsync()).SealRecheckCoverageRatio).IsEqualTo(1d)
       .Because("with no lane, the one row still carries the share");
   }
+
+  /// <summary>
+  /// #2365: the reading also counts each lane's events above its frontier, reads this service's origin generation, and
+  /// counts the stream buckets carrying a cut's digest.
+  /// </summary>
+  [Test]
+  public async Task TheReading_CountsEachLanesOpenWindow_ReadsTheGeneration_AndCountsCarriedBucketsAsync() {
+    var origin = TrackedGuid.New().Value;
+    await _executeAsync("DELETE FROM wh_digest_epoch_frontiers");
+    await _executeAsync("""
+      INSERT INTO wh_digest_epoch_frontiers (origin_service_id, closed_through_epoch, epoch_width, updated_at)
+      VALUES ('00000000-0000-0000-0000-000000000000', 0, 100, @now), (@origin, 1, 100, @now)
+      """, ("now", _now), ("origin", origin));
+    // Local lane sealed through 100: events at 50 (sealed), 150 and 160 (open). Origin lane sealed through 200: 150 sealed,
+    // 250 open. A received event never counts in the local lane.
+    foreach (var (seq, lane, laneSeq) in new (long, Guid?, long?)[] { (50, null, null), (150, null, null), (160, null, null),
+                                                                       (170, origin, 150), (180, origin, 250) }) {
+      await _executeAsync("""
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version,
+          commit_sequence, origin_service_id, origin_commit_sequence, flags, created_at)
+        VALUES (@e, @s, @s, 'T', 'Contracts.OpenWindowProbe', 'null'::jsonb, 1, @seq, @lane, @laneSeq, 0, NOW())
+        """, ("e", TrackedGuid.New().Value), ("s", TrackedGuid.New().Value), ("seq", seq),
+        ("lane", (object?)lane ?? DBNull.Value), ("laneSeq", (object?)laneSeq ?? DBNull.Value));
+    }
+    await _executeAsync("UPDATE wh_settings SET setting_value = '5' WHERE setting_key = 'integrity_origin_generation'");
+    await _executeAsync("""
+      INSERT INTO wh_stream_digests (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi,
+        event_count, carried_lo, carried_hi, carried_count, carried_at)
+      VALUES (@o, '', 'Contracts.OpenWindowProbe', @s1, 1, 1, 1, 1, 1, 1, @now),
+             (@o, '', 'Contracts.OpenWindowProbe', @s2, 1, 1, 1, NULL, NULL, NULL, NULL)
+      """, ("o", origin), ("s1", TrackedGuid.New().Value), ("s2", TrackedGuid.New().Value), ("now", _now));
+
+    var reading = await _readAsync();
+
+    var local = reading.Lanes.Single(l => l.OriginServiceId == Guid.Empty);
+    await Assert.That(local.OpenWindowEvents).IsEqualTo(2L).Because("150 and 160 are above the local frontier of 100");
+    await Assert.That(local.OpenWindowCapped).IsFalse();
+    await Assert.That(reading.Lanes.Single(l => l.OriginServiceId == origin).OpenWindowEvents).IsEqualTo(1L)
+      .Because("the origin lane counts by the origin's sequence: only 250 is above 200");
+    await Assert.That(reading.OriginGeneration).IsEqualTo(5L);
+    await Assert.That(reading.CarriedStreams).IsEqualTo(1L).Because("only a bucket still carrying a cut's detail counts");
+    await Assert.That(reading.CarriedStreamsCapped).IsFalse();
+  }
 }
