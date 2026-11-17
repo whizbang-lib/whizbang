@@ -62,6 +62,24 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <summary>The store name written in this store's locators.</summary>
   public const string STORE_NAME = "azure-blob";
 
+  /// <summary>
+  /// The name of the object that claims a container for one database (#2367): written create-only by the first write,
+  /// holding the database's <c>archive_database_id</c>, and never updated. Only the orphan sweep depends on it.
+  /// </summary>
+  public const string OWNER_MARKER_NAME = "whizbang-archive-owner";
+
+  /// <summary>Why an orphan sweep refused to run: the <c>reason</c> tag of the refusal metric and the log.</summary>
+  public static class SweepRefusal {
+    /// <summary>The database never wrote to the configured location, so it names nothing there.</summary>
+    public const string UNKNOWN_LOCATION = "unknown_location";
+
+    /// <summary>The container's owner marker names another database.</summary>
+    public const string FOREIGN_MARKER = "foreign_marker";
+
+    /// <summary>The container has no owner marker this database could claim, or its marker could not be read.</summary>
+    public const string MARKER_UNCLAIMABLE = "marker_unclaimable";
+  }
+
   // The emit chains', the direct append's and the table store's per-stream key (262), so nothing is appended to a
   // stream while its archive moves, and a restore or delete never interleaves with a write of the same stream.
   private const string STREAM_LOCK_PREFIX = "wh_event_store:";
@@ -103,7 +121,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       BlobContainerClient container,
       AzureBlobArchiveOptions options,
       ILogger<AzureBlobArchiveStore>? logger = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      ArchiveSweepMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(database);
     ArgumentNullException.ThrowIfNull(container);
     ArgumentNullException.ThrowIfNull(options);
@@ -135,6 +154,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _verifyLocation = options.VerifyLocation;
     _deleteAfter = options.DeleteAfter;
     _clock = timeProvider ?? TimeProvider.System;
+    Metrics = metrics;
     ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
   }
 
@@ -149,6 +169,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   /// <summary>The clock a deletion delay and the orphan sweep measure age on.</summary>
   internal TimeProvider Clock => _clock;
+
+  /// <summary>Where the sweep counts its refusals, when the host registers <c>WhizbangMetrics</c>.</summary>
+  internal ArchiveSweepMetrics? Metrics { get; }
 
   /// <summary>
   /// Acknowledges that the objects of a location now live where this store is configured (a database copied or

@@ -42,6 +42,22 @@ public sealed class ArchiveObjectCorruptedException : Exception {
     ActualSha256 = actualSha256;
   }
 
+  /// <summary>
+  /// The object a write found already holding its name is not the bytes the write encoded (#2367): an object is never
+  /// replaced, so the write is refused. The expected length and hash are the write's own, not a manifest row's.
+  /// </summary>
+  /// <param name="streamId">The stream being archived.</param>
+  /// <param name="locator">The object's path from the stream inside the configured location.</param>
+  /// <param name="expectedLength">The byte length the write encoded.</param>
+  /// <param name="actualLength">The byte length storage holds under the name.</param>
+  /// <param name="expectedSha256">The SHA-256 of the bytes the write encoded.</param>
+  /// <param name="actualSha256">The SHA-256 of the bytes storage holds.</param>
+  /// <returns>The exception.</returns>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveObjectCorruptedExceptionTests.cs:ForExistingObject_SaysTheExpectedBytesAreTheWritesOwn_NotTheManifestsAsync</tests>
+  public static ArchiveObjectCorruptedException ForExistingObject(
+      Guid streamId, string locator, long expectedLength, long actualLength, string expectedSha256, string actualSha256) =>
+    new(streamId, locator, expectedLength, actualLength, expectedSha256, actualSha256);
+
   /// <summary>The archived stream, when known.</summary>
   public Guid? StreamId { get; }
 

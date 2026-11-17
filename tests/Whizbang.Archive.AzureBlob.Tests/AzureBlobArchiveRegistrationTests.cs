@@ -13,6 +13,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
@@ -354,6 +355,31 @@ public class AzureBlobArchiveRegistrationTests {
   public async Task StreamOf_ReadsTheStreamOfANameThisStoreWrites_AndNothingElseAsync(string name, string? stream) {
     await Assert.That(AzureBlobArchiveStore.StreamOf(name)).IsEqualTo(stream is null ? null : Guid.Parse(stream))
       .Because("the orphan sweep only ever touches an object whose name is one this store writes");
+  }
+
+  [Test]
+  public async Task Registration_CountsSweepRefusals_WhenTheHostHasWhizbangMetrics_AndOtherwiseNotAsync() {
+    var withMetrics = new ServiceCollection();
+    _driver(withMetrics);
+    withMetrics.AddSingleton(new WhizbangMetrics(new ServiceCollection().AddMetrics().BuildServiceProvider()
+      .GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    withMetrics.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    var without = new ServiceCollection();
+    _driver(without);
+    without.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    await using var first = withMetrics.BuildServiceProvider();
+    await using var second = without.BuildServiceProvider();
+
+    await Assert.That(first.GetRequiredService<AzureBlobArchiveStore>().Metrics).IsNotNull();
+    await Assert.That(second.GetRequiredService<AzureBlobArchiveStore>().Metrics).IsNull()
+      .Because("a host without the metrics registration still runs the store; it counts nothing");
+  }
+
+  [Test]
+  public async Task ArchiveSweepMetrics_MeterIsListedInWhizbangMetersAsync() {
+    await Assert.That(WhizbangMeters.All).Contains(ArchiveSweepMetrics.METER_NAME)
+      .Because("the meter list carries this package's meter as a literal; this locks it to the constant");
+    await Assert.That(() => new ArchiveSweepMetrics(null!)).Throws<ArgumentNullException>();
   }
 
   private sealed class FixedClock : TimeProvider;

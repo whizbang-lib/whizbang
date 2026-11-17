@@ -97,8 +97,9 @@ public partial class AzureBlobArchiveStoreTests {
 
   // Events through the emit chain (versions 1, 2, 3...), with commit positions stamped, and a perspective cursor on the
   // last one.
-  private async Task<(Guid Stream, Guid[] Ids)> _seedAsync(int count) {
-    await using var connection = await _openAsync();
+  private async Task<(Guid Stream, Guid[] Ids)> _seedAsync(int count, string? connectionString = null) {
+    await using var connection = new NpgsqlConnection(connectionString ?? _db.ConnectionString);
+    await connection.OpenAsync();
     var stream = Guid.CreateVersion7();
     var ids = Enumerable.Range(0, count).Select(_ => Guid.CreateVersion7()).Order().ToArray();
     foreach (var id in ids) {
@@ -192,7 +193,10 @@ public partial class AzureBlobArchiveStoreTests {
       return names;
     }
     await foreach (var item in client.GetBlobsAsync()) {
-      names.Add(item.Name);
+      // The archive's objects: the container's owner marker (#2367) is not one.
+      if (item.Name != AzureBlobArchiveStore.OWNER_MARKER_NAME) {
+        names.Add(item.Name);
+      }
     }
     return names;
   }

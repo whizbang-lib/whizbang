@@ -280,7 +280,9 @@ public partial class AzureBlobArchiveStoreTests {
   private async Task<Dictionary<string, DateTimeOffset>> _createdAsync() {
     var created = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     await foreach (var item in _container().GetBlobsAsync()) {
-      created[item.Name] = item.Properties.CreatedOn!.Value;
+      if (item.Name != AzureBlobArchiveStore.OWNER_MARKER_NAME) {
+        created[item.Name] = item.Properties.CreatedOn!.Value;
+      }
     }
     return created;
   }

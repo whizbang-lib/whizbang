@@ -38,6 +38,7 @@ public partial class AzureBlobArchiveStoreTests {
       .Throws<ArchiveObjectCorruptedException>();
 
     await Assert.That(refused!.Locator).IsEqualTo(name);
+    await Assert.That(refused.Message).Contains("this write encoded").Because("the expected bytes came from the write, not a manifest row");
     await Assert.That(refused.ActualSha256).IsEqualTo(ArchiveChunk.Sha256(foreign.ToArray()))
       .Because("the write compared the object already under the name with the bytes it would have written");
     await Assert.That((await _container().GetBlobClient(name).DownloadContentAsync()).Value.Content.ToString())
