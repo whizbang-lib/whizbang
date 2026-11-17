@@ -372,6 +372,7 @@ public class IntegrityManifestReceptorBranchTests {
 
   private static IntegrityManifest _manifest(
       AuditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = coordinator.OriginId,
         OriginServiceId = coordinator.OriginId,
         OriginServiceName = "origin-svc",

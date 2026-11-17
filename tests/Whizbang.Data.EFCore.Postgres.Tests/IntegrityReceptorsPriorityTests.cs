@@ -124,6 +124,7 @@ public class IntegrityReceptorsPriorityTests {
   // ── helpers ─────────────────────────────────────────────────────────────
 
   private static IntegrityCheckpoint _checkpoint(Guid originId, long from, long to, int count, bool emptyBuckets = false) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     CheckpointStreamId = originId,
     OriginServiceId = originId,
     OriginServiceName = "origin-svc",
@@ -144,6 +145,7 @@ public class IntegrityReceptorsPriorityTests {
 
 
   private static IntegrityManifest _manifest(AuditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     ManifestStreamId = coordinator.OriginId,
     OriginServiceId = coordinator.OriginId,
     OriginServiceName = "origin-svc",

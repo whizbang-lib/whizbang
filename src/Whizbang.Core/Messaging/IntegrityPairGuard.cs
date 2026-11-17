@@ -134,7 +134,8 @@ public sealed partial class IntegrityPairGuard {
     if (verdict.IsAgreed) {
       _pairs[key] = new IntegrityPairState(peer, side, verdict, null, false);
       if (previous?.HaltedSince is { } since) {
-        LogPairResumed(_logger, peer, side, now - since);
+        var resumedAfter = now - since;
+        LogPairResumed(_logger, peer, side, resumedAfter);
       }
       return verdict;
     }
@@ -143,17 +144,20 @@ public sealed partial class IntegrityPairGuard {
       && previous.Verdict.DifferingTypes.SequenceEqual(verdict.DifferingTypes, StringComparer.Ordinal);
     var haltedSince = previous?.HaltedSince ?? now;
     var alerted = previous?.Alerted ?? false;
+    var reason = ReasonTag(verdict.Reason);
+    var sideTag = _sideTag(side);
     if (!sameHalt) {
-      _halts?.Add(1, new KeyValuePair<string, object?>("reason", ReasonTag(verdict.Reason)),
-        new KeyValuePair<string, object?>("side", _sideTag(side)));
-      LogPairHalted(_logger, peer, side, ReasonTag(verdict.Reason), mine.SemanticsVersion, mine.EligibilitySqlVersion,
-        mine.Fingerprint(), theirs?.SemanticsVersion, theirs?.EligibilitySqlVersion, peerRules?.Fingerprint,
-        string.Join(", ", verdict.DifferingTypes));
+      _halts?.Add(1, new KeyValuePair<string, object?>("reason", reason), new KeyValuePair<string, object?>("side", sideTag));
+      var localFingerprint = mine.Fingerprint();
+      var differing = string.Join(", ", verdict.DifferingTypes);
+      LogPairHalted(_logger, peer, side, reason, mine.SemanticsVersion, mine.EligibilitySqlVersion, localFingerprint,
+        theirs?.SemanticsVersion, theirs?.EligibilitySqlVersion, peerRules?.Fingerprint, differing);
     }
-    if (!alerted && now - haltedSince >= _options.HaltedAlertAfter) {
+    var haltedFor = now - haltedSince;
+    if (!alerted && haltedFor >= _options.HaltedAlertAfter) {
       alerted = true;
-      _alerts?.Add(1, new KeyValuePair<string, object?>("side", _sideTag(side)));
-      LogPairHaltAlert(_logger, peer, side, ReasonTag(verdict.Reason), now - haltedSince, _options.HaltedAlertAfter);
+      _alerts?.Add(1, new KeyValuePair<string, object?>("side", sideTag));
+      LogPairHaltAlert(_logger, peer, side, reason, haltedFor, _options.HaltedAlertAfter);
     }
     _pairs[key] = new IntegrityPairState(peer, side, verdict, haltedSince, alerted);
     return verdict;

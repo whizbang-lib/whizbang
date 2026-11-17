@@ -185,6 +185,7 @@ public class IntegrityCheckpointReceptorBranchTests {
   }
 
   private static IntegrityCheckpoint _checkpoint(Guid originId, long from, long to, int count, bool emptyBuckets) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     CheckpointStreamId = originId,
     OriginServiceId = originId,
     OriginServiceName = "origin-svc",

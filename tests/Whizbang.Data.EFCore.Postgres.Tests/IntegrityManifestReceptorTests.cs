@@ -603,6 +603,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     IntegrityManifest manifest(string tag) => new() {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.OriginId,
       OriginServiceId = coordinator.OriginId,
       OriginServiceName = "origin-svc",
@@ -1746,6 +1747,7 @@ public partial class IntegrityManifestReceptorTests {
   // ── #2107: one audit window is capped; the asker continues from where it stopped ───────────
 
   private static RequestIntegrityManifest _windowedAsk(long since, long? until = null, ManifestLevel level = ManifestLevel.Types) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     RequesterService = "auditor-svc",
     Topic = "inbox",
     EventTypes = ["Contracts.TypeX"],
@@ -2932,6 +2934,7 @@ public partial class IntegrityManifestReceptorTests {
   private static IntegrityManifest _manifest(
       AuditCoordinator coordinator, List<StreamDigest> digests,
       ManifestLevel level = ManifestLevel.Streams, bool recomputed = false) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = coordinator.OriginId,
         OriginServiceId = coordinator.OriginId,
         OriginServiceName = "origin-svc",

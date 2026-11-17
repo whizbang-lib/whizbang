@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Globalization;
+using System.Text;
 
 namespace Whizbang.Core.Rules;
 
@@ -20,7 +21,14 @@ public sealed record RuleSet(int SemanticsVersion, int EligibilitySqlVersion, IR
   /// name and hash, in ordinal type order. Equal rule sets have equal fingerprints whatever order they were built in.
   /// </summary>
   /// <returns>The fingerprint.</returns>
-  public string Fingerprint() => throw new NotImplementedException(TypeHashes.Count.ToString(CultureInfo.InvariantCulture));
+  public string Fingerprint() {
+    var text = new StringBuilder();
+    text.Append(CultureInfo.InvariantCulture, $"semantics={SemanticsVersion};sql={EligibilitySqlVersion}");
+    foreach (var (type, hash) in TypeHashes.OrderBy(t => t.Key, StringComparer.Ordinal)) {
+      text.Append(CultureInfo.InvariantCulture, $"\n{type}={hash}");
+    }
+    return RuleHashing.Short(text.ToString());
+  }
 
   /// <summary>
   /// Compares this service's rules with a peer's over the types the two share (#2362, owner decision Q3): only a type
@@ -29,7 +37,22 @@ public sealed record RuleSet(int SemanticsVersion, int EligibilitySqlVersion, IR
   /// </summary>
   /// <param name="peer">The peer's rules, or null when it sent none.</param>
   /// <returns>Whether the pair agrees and, when not, why and on which types.</returns>
-  public RulePairVerdict CompareWith(RuleSet? peer) => throw new NotImplementedException(peer?.ToString() ?? ToString());
+  public RulePairVerdict CompareWith(RuleSet? peer) {
+    if (peer is null) {
+      return new RulePairVerdict(RulePairHaltReason.NoFingerprint, []);
+    }
+    if (peer.SemanticsVersion != SemanticsVersion) {
+      return new RulePairVerdict(RulePairHaltReason.SemanticsVersion, []);
+    }
+    if (peer.EligibilitySqlVersion != EligibilitySqlVersion) {
+      return new RulePairVerdict(RulePairHaltReason.EligibilitySqlVersion, []);
+    }
+    List<string> differing = [.. TypeHashes
+      .Where(mine => peer.TypeHashes.TryGetValue(mine.Key, out var theirs) && !string.Equals(theirs, mine.Value, StringComparison.Ordinal))
+      .Select(mine => mine.Key)
+      .Order(StringComparer.Ordinal)];
+    return differing.Count == 0 ? RulePairVerdict.Agrees : new RulePairVerdict(RulePairHaltReason.TypeRules, differing);
+  }
 }
 
 /// <summary>Why a service pair's integrity is halted (#2362).</summary>

@@ -3,6 +3,8 @@
 
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.Workers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -208,6 +210,49 @@ public class IntegrityPairGuardTests {
       .IsEquivalentTo(["none", "no_fingerprint", "semantics_version", "eligibility_sql_version", "type_rules"]);
     await Assert.That(() => new IntegrityPairGuard(new Rules(), null!, NullLogger<IntegrityPairGuard>.Instance)).Throws<ArgumentNullException>();
     await Assert.That(() => guard.Admit(null!, IntegrityPairSide.Origin, null)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Admit_HaltedAgain_WithOtherDifferingTypes_IsReportedAgainAsync() {
+    var (guard, log, _, services) = _guard(new Rules((SHARED, "a"), ("Contracts.Other", "x")));
+    await using var owned = services;
+
+    _ = guard.Admit(PEER, IntegrityPairSide.Consumer, _peer((SHARED, "b"), ("Contracts.Other", "x")));
+    _ = guard.Admit(PEER, IntegrityPairSide.Consumer, _peer((SHARED, "b"), ("Contracts.Other", "y")));
+
+    await Assert.That(log.Entries.Count(e => e.Level == LogLevel.Error)).IsEqualTo(2)
+      .Because("the same reason with another set of differing types is news");
+    await Assert.That(guard.Pairs.Single().Verdict.DifferingTypes).IsEquivalentTo(["Contracts.Other", SHARED]);
+  }
+
+  /// <summary>#2362: the turnkey worker registration gives every service its catalog rules and a guard over them.</summary>
+  [Test]
+  public async Task TheWorkerRegistration_ProvidesTheRuleSourceAndTheGuardAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+      new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IRuleFingerprintSource>()).IsTypeOf<CatalogRuleFingerprintSource>();
+    var guard = provider.GetRequiredService<IntegrityPairGuard>();
+    await Assert.That(IntegrityPairGuard.Resolve(provider)).IsSameReferenceAs(guard);
+    await Assert.That(guard.Stamp(null).SemanticsVersion).IsEqualTo(RuleSemantics.VERSION);
+  }
+
+  /// <summary>Without a catalog registered at all, the source knows no type and still stamps both versions.</summary>
+  [Test]
+  public async Task TheWorkerRegistration_WithoutACatalog_StampsVersionsOnlyAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+      new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+    services.AddWhizbangWorkers();
+    services.RemoveAll<IMessageTypeCatalog>();
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IRuleFingerprintSource>().RulesFor(null).TypeHashes).IsEmpty();
   }
 
   [Test]

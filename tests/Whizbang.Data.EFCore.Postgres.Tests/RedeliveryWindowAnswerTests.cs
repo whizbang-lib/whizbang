@@ -340,6 +340,7 @@ public partial class RedeliveryWindowAnswerTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RequestRedeliveryCommand _window(Guid backfill, long window, long? from, int? max) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     EventTypes = ["Contracts.ProbeHappened"],
     RequesterService = "damaged-svc",
     Topic = "inbox.whizbang.service.damaged-svc",

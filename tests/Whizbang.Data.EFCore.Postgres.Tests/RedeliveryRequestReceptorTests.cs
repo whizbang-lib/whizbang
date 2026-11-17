@@ -305,6 +305,7 @@ public partial class RedeliveryRequestReceptorTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RequestRedeliveryCommand _request(Guid streamId) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     TenantScope = "tenant-a",
     EventTypes = ["Contracts.ProbeHappened"],
     StreamIds = [streamId],

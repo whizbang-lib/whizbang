@@ -347,6 +347,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   }
 
   private static RequestIntegrityManifest _typesAsk() => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     RequesterService = CONSUMER_NAME,
     Topic = "consumer.inbox",
     EventTypes = [TYPE],

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
+
 namespace Whizbang.Core.Rules;
 
 /// <summary>
@@ -40,9 +42,12 @@ public sealed record TypeRules(string TypeName) {
 
   /// <summary>The rules as one canonical line: every field, in a fixed order, so equal rules write equal text.</summary>
   /// <returns>The canonical text.</returns>
-  public string Canonical() => throw new NotImplementedException(TypeName);
+  public string Canonical() =>
+    string.Create(CultureInfo.InvariantCulture,
+      $"type={TypeName};ephemeral={Ephemeral};superseding={Superseding};group={SupersedingGroup};key={SupersedingKey};"
+      + $"terminal={Terminal};end_of_life={EndOfLife};digest_exempt={DigestExempt}");
 
   /// <summary>The rules' hash: the first 16 lowercase hex digits of the SHA-256 of <see cref="Canonical"/>.</summary>
   /// <returns>The hash.</returns>
-  public string Hash() => throw new NotImplementedException(TypeName);
+  public string Hash() => RuleHashing.Short(Canonical());
 }
