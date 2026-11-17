@@ -772,6 +772,12 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, stampKeys,
         deficitIndexes.ConvertAll(i => IntegrityDigestMath.SingleMissingEventId(divergent[i].Origin, divergent[i].Mine)),
         cancellationToken).ConfigureAwait(false);
+      // #2365: and the trace of this comparison, so the drain's request starts in it. Nothing to record with no span.
+      if (IntegrityTracing.CurrentTraceParent is { } traceParent) {
+        await coordinator.IntegrityRecordTraceAsync(
+          message.OriginServiceId, stampKeys, new IntegrityTraceLink(message.RequestId, traceParent), cancellationToken)
+          .ConfigureAwait(false);
+      }
     }
     // #2115: a re-check's answer is a compare, never a repair request.
     var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0

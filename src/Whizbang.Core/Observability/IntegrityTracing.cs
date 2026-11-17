@@ -147,7 +147,21 @@ public static class IntegrityTracing {
   /// <param name="requestId">The request's id.</param>
   /// <returns>The span, or null when nothing listens.</returns>
   public static Activity? StartRepairRequest(string kind, string? peer, Guid requestId) =>
-    _start(SPAN_REPAIR_REQUEST, ActivityKind.Producer, kind, peer, new IntegrityTraceLink(requestId, null));
+    StartRepairRequest(kind, peer, requestId, null);
+
+  /// <summary>
+  /// Starts the span of a repair request in a recorded trace (#2365): the paced drain sends it later than the audit
+  /// that found the deficit, so it starts under the trace the audit recorded on the ledger row, or under the ambient span
+  /// when none was recorded.
+  /// </summary>
+  /// <param name="kind"><see cref="KIND_DRAIN"/>, <see cref="KIND_INLINE"/> or <see cref="KIND_OPERATOR"/>.</param>
+  /// <param name="peer">The origin's name.</param>
+  /// <param name="requestId">The request's id.</param>
+  /// <param name="underTraceParent">The recorded <c>traceparent</c> to start under; null for the ambient span.</param>
+  /// <returns>The span, or null when nothing listens.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:DrainTick_ARequestStartsInTheTraceOfTheAuditThatRecordedItsRowAsync</tests>
+  public static Activity? StartRepairRequest(string kind, string? peer, Guid requestId, string? underTraceParent) =>
+    _start(SPAN_REPAIR_REQUEST, ActivityKind.Producer, kind, peer, new IntegrityTraceLink(requestId, underTraceParent));
 
   /// <summary>Starts the span of a consumer applying a redelivery bundle, in the trace the bundle carried.</summary>
   /// <param name="peer">The origin's name.</param>

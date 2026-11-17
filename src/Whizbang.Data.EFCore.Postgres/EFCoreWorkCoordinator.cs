@@ -1196,6 +1196,43 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task IntegrityRecordTraceAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      Whizbang.Core.Observability.IntegrityTraceLink trace, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    if (keys.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // One statement for the comparison's deficits, each row found by its primary key (491).
+      cmd.CommandText = $"""
+        UPDATE {schema}.wh_integrity_ledger l
+        SET trace_parent = @p_trace_parent, trace_request_id = @p_trace_request_id
+        FROM unnest(@p_tenants::text[], @p_types::text[], @p_streams::uuid[]) AS m(tenant_scope, event_type, stream_id)
+        WHERE l.origin_service_id = @p_origin AND l.tenant_scope = m.tenant_scope
+          AND l.event_type = m.event_type AND l.stream_id = m.stream_id
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = keys.Select(k => k.StreamId).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_trace_parent", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)trace.TraceParent ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_trace_request_id", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)trace.RequestId ?? DBNull.Value
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
       int limit, CancellationToken cancellationToken = default) {
@@ -1217,9 +1254,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
       cmd.Parameters.AddWithValue(P_LIMIT, limit);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      // #2103: each claimed row's recorded missing event rides along, read by primary key from the row the claim stamped.
+      // #2103: each claimed row's recorded missing event rides along, read by primary key from the row the claim stamped;
+      // #2365: and the trace of the comparison that recorded it.
       cmd.CommandText = $"""
-        SELECT c.origin_service_id, c.tenant_scope, c.event_type, c.stream_id, c.window_from, c.window_until, l.missing_event_id
+        SELECT c.origin_service_id, c.tenant_scope, c.event_type, c.stream_id, c.window_from, c.window_until, l.missing_event_id,
+               l.trace_parent, l.trace_request_id
         FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit) c
         LEFT JOIN {schema}.wh_integrity_ledger l
           ON l.origin_service_id = c.origin_service_id AND l.tenant_scope = c.tenant_scope
@@ -1236,7 +1275,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
           reader.GetGuid(3),
           await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
           await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
-          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6)));
+          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6),
+          // #2365: the trace of the comparison that recorded the row.
+          await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(7),
+          await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(8)));
       }
       return items;
     } catch (OperationCanceledException) {

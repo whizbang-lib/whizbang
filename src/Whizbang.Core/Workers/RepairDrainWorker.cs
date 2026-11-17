@@ -92,9 +92,9 @@ public sealed partial class RepairDrainWorker(
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>Whether the pass found work.</returns>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:DrainOnce_RunsOneTickWithAFullBucket_NowAsync</tests>
-#pragma warning disable RCS1163, IDE0060 // RED stub
-  public Task<bool> DrainOnceAsync(CancellationToken cancellationToken) => Task.FromResult(_tokens < 0);
-#pragma warning restore RCS1163, IDE0060
+  public Task<bool> DrainOnceAsync(CancellationToken cancellationToken) =>
+    // Two seconds of accrual fills the bucket from empty to its cap of twice the rate.
+    DrainTickAsync(2.0, _time.GetUtcNow(), cancellationToken);
 
   /// <summary>
   /// One pacing tick: refill tokens at the configured rate (burst cap 2×), then — if at least
@@ -205,7 +205,9 @@ public sealed partial class RepairDrainWorker(
       }
       // #2365: each request is a span of its own; the origin's answer and the repair join its trace.
       var requestId = (Guid)TrackedGuid.New();
-      using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_DRAIN, origin.OriginServiceName, requestId);
+      // #2365: in the trace of the comparison that recorded the group's first traced row, when one did.
+      using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_DRAIN, origin.OriginServiceName, requestId,
+        items.Find(i => i.TraceParent is not null).TraceParent);
       IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_STREAMS, items.Count);
       var link = IntegrityTracing.LinkFrom(span, requestId);
       var command = new RequestRedeliveryCommand {

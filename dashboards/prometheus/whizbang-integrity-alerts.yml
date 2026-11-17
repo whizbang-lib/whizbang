@@ -11,16 +11,17 @@
 groups:
   - name: whizbang-integrity
     rules:
-      # Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter, default 2 hours (7200 seconds). A pair is halted while the two
-      # services apply different eligibility rules to the event types they share; integrity does nothing for it meanwhile.
+      # The pair guard counts a halted pair once it has stayed halted past its own threshold,
+      # Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter (2 hours by default), so this rule follows the service's
+      # setting and writes no duration of its own. It fires for an hour after each such count; the dashboard's
+      # "How long each pair has been halted" panel says whether the pair is still halted.
       - alert: WhizbangIntegrityPairHalted
-        expr: max by (job, peer, side) (whizbang_stream_integrity_pair_halted_seconds) >= 7200
-        for: 5m
+        expr: sum by (job, side) (increase(whizbang_stream_integrity_pair_halt_alerts_total[1h])) > 0
         labels:
           severity: warning
         annotations:
-          summary: "{{ $labels.job }} has held its integrity pair with {{ $labels.peer }} halted for over 2 hours"
-          description: "The two services apply different eligibility rules to the event types they share, so no comparison, repair or redelivery runs for the pair. Finish the rollout so both run the same rules; the pair resumes on its own."
+          summary: "{{ $labels.job }} has held an integrity pair halted past PairGuard:HaltedAlertAfter ({{ $labels.side }} side)"
+          description: "The two services apply different eligibility rules to the event types they share, so no comparison, repair or redelivery runs for the pair. The service's error log names the peer and the differing types. Finish the rollout so both run the same rules; the pair resumes on its own."
 
       # Missing events that repair can still act on, standing for longer than repair normally takes.
       - alert: WhizbangIntegritySustainedDeficit
