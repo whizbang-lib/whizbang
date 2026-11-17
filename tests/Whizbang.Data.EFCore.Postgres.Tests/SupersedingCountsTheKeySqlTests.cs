@@ -160,7 +160,7 @@ public class SupersedingCountsTheKeySqlTests : EFCoreTestBase {
         INSERT INTO wh_outbox
           (message_id, destination, message_type, envelope_type, event_data, metadata, scope,
            status, attempts, instance_id, lease_expiry, partition_number, stream_id, is_event, flags, created_at)
-        VALUES (@id, 'slot-topic', @type, 'env', '{}'::jsonb,
+        VALUES (@id, 'slot-topic', @type, 'env', '{"p":{}}'::jsonb,
                 CASE WHEN @grp::text IS NULL THEN jsonb_build_object('sk', @key::text)
                      ELSE jsonb_build_object('sk', @key::text, 'sg', @grp::text) END,
                 NULL, 1, 0, @inst, NOW() + INTERVAL '5 minutes', 0, @sid, true, @flags, NOW() - INTERVAL '1 hour')

@@ -82,7 +82,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
     var through = await _versionOfAsync(conn, ids[1]);
     await _setAsync(conn, "integrity_cut_waits_for_seal", "true", "boolean");
 
-    await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo("awaiting_seal")
+    await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo(Whizbang.Core.Archival.ArchiveStatus.AWAITING_SEAL)
       .Because("nothing is sealed yet, and a cut removes only history this service has sealed");
     await Assert.That(await _countAsync(conn, stream)).IsEqualTo(5L).Because("a cut that waits removes nothing");
 
@@ -109,7 +109,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
       "INSERT INTO wh_integrity_seals (origin_service_id, sealed_through, updated_at) VALUES (@o, 1, NOW())", ("o", origin));
     var through = await _versionOfAsync(conn, ids[1]);
 
-    await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo("awaiting_seal")
+    await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo(Whizbang.Core.Archival.ArchiveStatus.AWAITING_SEAL)
       .Because("this service has verified the origin's history only through position 1, and the cut reaches 2");
 
     await _executeAsync(conn, "UPDATE wh_integrity_seals SET sealed_through = 3 WHERE origin_service_id = @o", ("o", origin));
@@ -129,7 +129,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
       "SELECT wh_record_consumer_seal('consumer-a', 1, NOW())");
     var through = await _versionOfAsync(conn, ids[1]);
 
-    await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo("awaiting_seal")
+    await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo(Whizbang.Core.Archival.ArchiveStatus.AWAITING_SEAL)
       .Because("a consumer has verified this history only through position 1, and the setting waits for it");
 
     await _executeAsync(conn, "SELECT wh_record_consumer_seal('consumer-a', 4, NOW())");
@@ -346,7 +346,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
         INSERT INTO wh_outbox
           (message_id, destination, message_type, envelope_type, event_data, metadata, scope,
            status, attempts, instance_id, lease_expiry, partition_number, stream_id, is_event, flags, created_at)
-        VALUES (@id, 'cut-topic', @type, 'env', '{}'::jsonb, '{}'::jsonb, NULL,
+        VALUES (@id, 'cut-topic', @type, 'env', '{"p":{}}'::jsonb, '{}'::jsonb, NULL,
                 1, 0, @inst, NOW() + INTERVAL '5 minutes', 0, @sid, true, 0, NOW() - INTERVAL '1 hour')
         """, ("id", id), ("type", TYPE), ("inst", instance), ("sid", stream));
     }
