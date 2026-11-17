@@ -385,7 +385,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
       SELECT * FROM store_inbox_messages(
         jsonb_build_array(jsonb_build_object(
           'MessageId', @id::text, 'HandlerName', 'CutHandler', 'MessageType', @type::text,
-          'Envelope', jsonb_build_object('MessageId', @id::text, 'Hops', '[]'::jsonb),
+          'Envelope', jsonb_build_object('MessageId', @id::text, 'Payload', '{}'::jsonb, 'Hops', '[]'::jsonb),
           'EnvelopeType', 'env', 'StreamId', @sid::text, 'IsEvent', true, 'Flags', 0,
           'Metadata', '{}'::jsonb, 'SourceServiceId', @o::text, 'SourceCommitSequence', @seq,
           'RestoreIfMissing', @restore)),

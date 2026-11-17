@@ -306,6 +306,11 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   public enum IntegrityMechanism {
     /// <summary>The steady-state audit: a windowed type-level manifest from the consumer's seal, drill-down and repair.</summary>
     AuditTypesWindowed,
+    /// <summary>
+    /// The steady-state audit with the paced repair drain on, as a service runs by default: the compare records its
+    /// deficits in the ledger, and one tick of the real drain sends the repair requests.
+    /// </summary>
+    AuditPacedDrain,
     /// <summary>The table-driven type-level manifest (no window), drill-down and repair.</summary>
     AuditTypesTable,
     /// <summary>A stream-level manifest straight away (the drill-down level), and repair.</summary>
@@ -593,7 +598,6 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     public Guid OriginId { get; private set; }
 
     public static async Task<Harness> CreateAsync(CleanupIntegrityMatrixTests test, MatrixCase pair) {
-      _ = pair;
       var h = new Harness();
       h.Origin = new Store("origin", test.ConnectionString, test.DbContextOptions);
       h._consumerDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("consumer")).Name;
@@ -614,8 +618,10 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
         RepairRequestBackoffSeconds = 0,
         MaxRepairAttemptsPerBucket = 1000,
         PublishReportEvents = true,
-        // The compare dispatches its repairs inline, so a cycle is one audit; the paced drain admits the same deficits.
-        RepairDrainEnabled = false,
+        // The compare dispatches its repairs inline, so a cycle is one audit; with the paced drain on, the compare only
+        // records its deficits and a drain tick in the cycle sends them.
+        RepairDrainEnabled = pair.Mechanism == IntegrityMechanism.AuditPacedDrain,
+        RepairDrainRatePerSecond = 1000,
       };
       h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null);
       var tracker = new IntegrityGapTracker();
@@ -769,12 +775,40 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
         EventTypes = [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, AT_MOST_ONCE,
           Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames[0] + ", Whizbang.Core"],
         Level = mechanism == IntegrityMechanism.AuditStreams ? ManifestLevel.Streams : ManifestLevel.Types,
-        Windowed = mechanism == IntegrityMechanism.AuditTypesWindowed,
+        Windowed = mechanism is IntegrityMechanism.AuditTypesWindowed or IntegrityMechanism.AuditPacedDrain,
         UseRecompute = mechanism == IntegrityMechanism.AuditSweep,
-        SinceSequence = mechanism == IntegrityMechanism.AuditTypesWindowed ? await _sealAsync() : 0,
+        SinceSequence = mechanism is IntegrityMechanism.AuditTypesWindowed or IntegrityMechanism.AuditPacedDrain
+          ? await _sealAsync() : 0,
       };
       await _originRequestReceptor.HandleAsync(ask);
       await _pumpUntilQuietAsync();
+      if (mechanism == IntegrityMechanism.AuditPacedDrain) {
+        await _drainOnceAsync();
+        await _pumpUntilQuietAsync();
+      }
+    }
+
+    /// <summary>
+    /// One tick of the consumer's real paced repair drain: it starts on a clock that signals each time the loop arms its
+    /// wait, runs exactly one tick, and stops once that tick is over. The clock is far past every ledger row, so each
+    /// recorded deficit is due.
+    /// </summary>
+    private async Task _drainOnceAsync() {
+      var clock = new ArmSignalingClock(new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero));
+      using var worker = new RepairDrainWorker(
+        _consumerProvider!.GetRequiredService<IServiceScopeFactory>(),
+        _consumerProvider!.GetRequiredService<IOptions<StreamIntegrityOptions>>(),
+        NullLogger<RepairDrainWorker>.Instance,
+        clock);
+      using var guard = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+      await worker.StartAsync(System.Threading.CancellationToken.None);
+      try {
+        await clock.Armed.WaitAsync(guard.Token);   // the loop waits out its first second
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await clock.Armed.WaitAsync(guard.Token);   // the tick is over and the loop waits again
+      } finally {
+        await worker.StopAsync(System.Threading.CancellationToken.None);
+      }
     }
 
     private async Task<long> _sealAsync() {
@@ -1164,6 +1198,23 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
         cmd.Parameters.AddWithValue(name, value);
       }
       return (Guid)(await cmd.ExecuteScalarAsync())!;
+    }
+  }
+
+  /// <summary>A fake clock that releases <see cref="Armed"/> each time a timer is created, which is each time the drain's
+  /// loop starts waiting out its interval.</summary>
+  private sealed class ArmSignalingClock(DateTimeOffset start) : TimeProvider {
+    private readonly Microsoft.Extensions.Time.Testing.FakeTimeProvider _inner = new(start);
+    public System.Threading.SemaphoreSlim Armed { get; } = new(0);
+    public void Advance(TimeSpan by) => _inner.Advance(by);
+    public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+    public override long GetTimestamp() => _inner.GetTimestamp();
+    public override long TimestampFrequency => _inner.TimestampFrequency;
+    public override TimeZoneInfo LocalTimeZone => _inner.LocalTimeZone;
+    public override System.Threading.ITimer CreateTimer(System.Threading.TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = _inner.CreateTimer(callback, state, dueTime, period);
+      Armed.Release();
+      return timer;
     }
   }
 

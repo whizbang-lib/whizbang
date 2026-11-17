@@ -106,6 +106,7 @@ public class CutsCarryTheirDigestCoordinatorTests : EFCoreTestBase {
     var stream = (Guid)TrackedGuid.New();
     var ids = await _receiveAsync(origin, stream, 4);
     var before = await coordinator.ComputeStreamDigestsForChunkAsync(origin, [stream], null, null, TimeSpan.Zero);
+    await Assert.That(before!.Single().EventCount).IsEqualTo(4).Because("precondition: the four received events are stored");
 
     await _carryAsync(stream, through: ids[1]);
 
@@ -179,14 +180,18 @@ public class CutsCarryTheirDigestCoordinatorTests : EFCoreTestBase {
         SELECT * FROM store_inbox_messages(
           jsonb_build_array(jsonb_build_object(
             'MessageId', @id::text, 'HandlerName', 'CutHandler', 'MessageType', @type::text,
-            'Envelope', jsonb_build_object('MessageId', @id::text, 'Hops', '[]'::jsonb),
+            'Envelope', jsonb_build_object('MessageId', @id::text, 'Payload', '{}'::jsonb, 'Hops', '[]'::jsonb),
             'EnvelopeType', 'env', 'StreamId', @sid::text, 'IsEvent', true, 'Flags', 0,
             'Metadata', '{}'::jsonb, 'SourceServiceId', @o::text, 'SourceCommitSequence', @seq)),
           @inst, NOW() + INTERVAL '5 minutes', NOW(), 100)
         """, ("id", ids[i]), ("type", TYPE), ("sid", stream), ("o", origin), ("seq", i + 1), ("inst", instance));
     }
+    await _executeAsync(
+      "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)",
+      ("inst", instance), ("ids", ids));
     await _executeAsync("SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW() - INTERVAL '1 hour', 4)",
       ("inst", instance));
+    await _executeAsync("SELECT stamp_pending_commit_sequences(1000)");
     await _executeAsync("UPDATE wh_event_store SET created_at = NOW() - INTERVAL '1 hour' WHERE event_id = ANY(@ids)", ("ids", ids));
     return ids;
   }
