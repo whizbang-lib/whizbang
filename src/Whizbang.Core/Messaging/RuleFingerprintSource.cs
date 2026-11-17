@@ -68,6 +68,7 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
   /// <returns>The rules of each event type.</returns>
   public static IReadOnlyDictionary<string, TypeRules> RulesOf(IMessageTypeCatalog catalog, StreamLifecycleOptions? lifecycle) {
     ArgumentNullException.ThrowIfNull(catalog);
+    // not the digest rule: the per-type DigestExempt field a fingerprint carries, read from the one exempt list
     var exempt = new HashSet<string>(DigestExemptTypes.TypeNames, StringComparer.Ordinal);
     var rules = new Dictionary<string, TypeRules>(StringComparer.Ordinal);
     foreach (var entry in catalog.GetAll().Where(e => e.Kind == EVENT_KIND)) {
