@@ -37,7 +37,6 @@ public static class MigrationSchemaQualifier {
     "wh_message_associations",
     "wh_request_response",
     "wh_service_instances",
-    "wh_partition_assignments",
     "wh_message_deduplication",
     "wh_sequences",
     "wh_active_streams",

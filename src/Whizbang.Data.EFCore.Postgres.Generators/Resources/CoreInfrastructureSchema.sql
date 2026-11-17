@@ -34,16 +34,6 @@ CREATE INDEX IF NOT EXISTS idx_active_streams_instance ON wh_active_streams (ass
 CREATE INDEX IF NOT EXISTS idx_active_streams_partition ON wh_active_streams (partition_number) WHERE assigned_instance_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_active_streams_lease_expiry ON wh_active_streams (lease_expiry) WHERE lease_expiry IS NOT NULL;
 
--- Partition Assignments - Distributed work coordination
-CREATE TABLE IF NOT EXISTS wh_partition_assignments (
-  partition_number INTEGER NOT NULL PRIMARY KEY,
-  instance_id UUID NOT NULL,
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_partition_assignments_instance ON wh_partition_assignments (instance_id, last_heartbeat);
-
 -- Message Deduplication - Permanent idempotency tracking
 CREATE TABLE IF NOT EXISTS wh_message_deduplication (
   message_id UUID NOT NULL PRIMARY KEY,

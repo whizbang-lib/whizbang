@@ -32,6 +32,11 @@
 --              held row of the band; keyed on the expiry they read only the leases that ran out, in the order the
 --              lanes take them. The table keeps its index count. Until it is built, the old index serves.
 --
+--              The claim also stops reading the receptor-processing table, which nothing writes: its empty-call probe,
+--              its acquisition guard and claim_orphaned_receptor_work call, and its re-offer query each found nothing on
+--              every poll they ran. The claim returns no 'receptor' rows (no coordinator read them). 476 removes the
+--              table's other readers.
+--
 --              Number 475: the range this bundle assigned (475 to 479).
 --
 -- Reversal: reversible (390's definition restores the function; a renewed lease is a lease like any other)
@@ -160,7 +165,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   -- is re-offered as before, and every other acquisition is untouched.
   p_acquire_inbox BOOLEAN DEFAULT TRUE
 ) RETURNS TABLE(
-  source VARCHAR(20),           -- __CATEGORY_OUTBOX__ | __CATEGORY_INBOX__ | 'receptor' | __CATEGORY_PERSPECTIVE__
+  source VARCHAR(20),           -- __CATEGORY_OUTBOX__ | __CATEGORY_INBOX__ | 'perspective_stream'
   work_id UUID,
   work_stream_id UUID,
   partition_number INTEGER,
@@ -194,14 +199,13 @@ BEGIN
   -- at each poll, never kept from a poll that found them empty.
   -- Empty-call short-circuit: cheap indexed EXISTS lookups on partial indexes.
   -- Each LIMIT 1 against an existing partial index is sub-millisecond when buffer-cached.
-  -- Note: wh_receptor_processing uses completed_at (not processed_at) for the "is done" semantic.
   -- 115: coalesce-pending rows are not claim-pump work, they wait for the coalesce worker.
 
 
   v_has_any_work := EXISTS (SELECT 1 FROM __SCHEMA__.wh_outbox WHERE processed_at IS NULL AND coalesce_group IS NULL LIMIT 1)
                  OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_inbox_state WHERE processed_at IS NULL LIMIT 1)
-                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NULL LIMIT 1)
-                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_receptor_processing WHERE completed_at IS NULL LIMIT 1);
+                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NULL LIMIT 1);
+  -- 475: no probe of the receptor-processing table. Nothing writes it, so the probe found nothing on every poll.
 
   IF NOT v_has_any_work THEN
     RETURN;  -- empty result set; orphan-claim sub-functions never invoked
@@ -214,7 +218,6 @@ BEGIN
   PERFORM __SCHEMA__.wh_refresh_stale_queue_statistics();
 
   -- Non-empty path: claim outbox work and return it.
-  -- Inbox / receptor / perspective claim + return land in subsequent TDD cycles.
   DECLARE
     v_now TIMESTAMPTZ := NOW();
     v_lease_expiry TIMESTAMPTZ := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
@@ -230,7 +233,6 @@ BEGIN
     -- can be derived from ROW_COUNT instead of four fresh COUNT(*) queries.
     v_outbox_rows INTEGER := 0;
     v_inbox_rows INTEGER := 0;
-    v_receptor_rows INTEGER := 0;
     v_perspective_rows INTEGER := 0;
     -- 171: the outbox acquisition's row bound and what it actually leased, for the full notice.
     v_outbox_bound INTEGER := COALESCE(p_max_outbox_rows, p_max_streams);
@@ -579,19 +581,6 @@ BEGIN
       ) a;
     END IF;
 
-    -- Claim orphaned receptor work, wh_receptor_processing uses completed_at
-    -- (not processed_at) for the "is done" semantic.
-    IF EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_receptor_processing
-      WHERE completed_at IS NULL
-        AND (instance_id IS NULL OR lease_expiry < v_now)
-      LIMIT 1
-    ) THEN
-      PERFORM __SCHEMA__.claim_orphaned_receptor_work(
-        p_instance_id, v_rank, v_count, v_lease_expiry, v_now
-      );
-    END IF;
-
     -- 202 (#1256): the stream ledger for every stream the acquisitions above leased work on, in ONE stream_id
     -- pass. Each acquisition used to write its own streams' rows before the next one ran, so a claim took its
     -- ledger rows in up to three ascending runs, and two claims could each hold a row the other's later
@@ -901,37 +890,6 @@ BEGIN
     -- v0.661: the category's row count feeds the drain-mode hint at the end.
     v_inbox_rows := GREATEST(p_max_streams, 0) - v_remaining;
 
-    -- Return receptor work owned by this instance.
-    -- Receptor work uses `id` as the work_id (not message_id) and `completed_at` as the "done" marker.
-    -- Most fields are NULL, receptors carry their state in dedicated columns the worker reads
-    -- directly via the work_id; the row here just signals "this receptor needs attention".
-    RETURN QUERY
-    SELECT
-      'receptor'::VARCHAR(20)       AS source,
-      rp.id                         AS work_id,
-      rp.stream_id                  AS work_stream_id,
-      rp.partition_number,
-      NULL::VARCHAR(200)            AS destination,
-      NULL::VARCHAR(500)            AS message_type,
-      NULL::VARCHAR(500)            AS envelope_type,
-      NULL::TEXT                    AS message_data,
-      NULL::JSONB                   AS metadata,
-      rp.status::INTEGER,
-      rp.attempts,
-      false                         AS is_newly_stored,
-      false                         AS is_orphaned,
-      NULL::VARCHAR(200)            AS perspective_name,
-      NULL::INTEGER                 AS priority,
-      NULL::TIMESTAMPTZ             AS received_at
-    FROM __SCHEMA__.wh_receptor_processing rp
-    WHERE rp.instance_id = p_instance_id
-      AND rp.lease_expiry > v_now
-      AND rp.completed_at IS NULL
-    LIMIT p_max_streams;
-
-    -- v0.661: see outbox block above.
-    GET DIAGNOSTICS v_receptor_rows = ROW_COUNT;
-
     -- Return perspective work as one row per distinct stream owned by this instance, most urgent
     -- bucket first, oldest event first within a bucket, a batch of streams.
     -- 158: the poll is priced by the batch, never by the holdings. The streams an instance holds are
@@ -1034,7 +992,7 @@ BEGIN
       SELECT k.kind
       FROM (VALUES (c_source_outbox), (c_source_inbox), (__CATEGORY_PERSPECTIVE__)) AS k(kind)
     WHERE (k.kind = c_source_outbox AND v_outbox_rows > 0)
-       OR (k.kind = c_source_inbox AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
+       OR (k.kind = c_source_inbox AND v_inbox_rows > 0)
        -- 133: the perspective watermark must reflect DRAINABLE progress, not merely a
        -- claimed Stored-but-fence-held row. claim_work returns a perspective_stream row for
        -- any leased unprocessed perspective_event, but a row whose underlying event is still
@@ -1101,7 +1059,6 @@ BEGIN
     -- LIMIT. ROW_COUNT after each RETURN QUERY gives us that for free.
     IF v_outbox_rows = p_max_streams
        OR v_inbox_rows = p_max_streams
-       OR v_receptor_rows = p_max_streams
        OR v_perspective_rows = p_max_streams THEN
       RAISE NOTICE 'whizbang.has_more=true';
     END IF;
@@ -1125,8 +1082,8 @@ END;
 -- inside the command timeout with the empty-table plans. Planning per call costs milliseconds.
 $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
 COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, INTEGER, BOOLEAN, INTEGER, BOOLEAN, INTERVAL, INTEGER, INTERVAL, INTEGER, INTEGER, BIGINT, BIGINT, BOOLEAN, TEXT, BOOLEAN) IS
-  'The claim poll: acquires orphaned and unowned work for an instance (outbox, inbox, perspective events, receptor '
-  'work) and returns what it holds. 196: never writes the caller''s registration. 202: the acquisitions defer the '
+  'The claim poll: acquires orphaned and unowned work for an instance (outbox, inbox, perspective events) and '
+  'returns what it holds. 196: never writes the caller''s registration. 202: the acquisitions defer the '
   'stream ledger, and it is written once for every stream they leased (wh_lease_claimed_streams), in one stream_id '
   'pass after the last queue row is locked. 203: a cached partition assignment (epoch, revision) that is still '
   'published and unexpired supplies the rank and member count; otherwise the claim ranks itself and raises '
@@ -1141,4 +1098,5 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, IN
   'p_acquire_inbox = FALSE leases no new inbox row on the poll (the caller''s inbox working set is at its byte '
   'budget); held inbox is re-offered as before. 475: the inbox rows this instance holds whose lease ran out, on '
   'streams it still owns (its live ledger lease, or its rank''s partition with no live peer holding the stream), are '
-  'renewed without an attempt, a claim window at a time, and offered again; their streams join the ledger pass.';
+  'renewed without an attempt, a claim window at a time, and offered again; their streams join the ledger pass. The '
+  'receptor-processing table, which nothing writes, is no longer read.';

@@ -4964,53 +4964,6 @@ public record InboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPriori
 }
 
 /// <summary>
-/// Represents a receptor processing completion.
-/// Indicates successful processing of an event by a receptor (event handler).
-/// </summary>
-public record ReceptorProcessingCompletion {
-  /// <summary>
-  /// Event ID that was processed.
-  /// </summary>
-  public required Guid EventId { get; init; }
-
-  /// <summary>
-  /// Name of the receptor that processed the event.
-  /// </summary>
-  public required string ReceptorName { get; init; }
-
-  /// <summary>
-  /// Processing status (e.g., Completed).
-  /// </summary>
-  public required ReceptorProcessingStatus Status { get; init; }
-}
-
-/// <summary>
-/// Represents a receptor processing failure.
-/// Indicates failed processing of an event by a receptor (event handler).
-/// </summary>
-public record ReceptorProcessingFailure {
-  /// <summary>
-  /// Event ID that failed to process.
-  /// </summary>
-  public required Guid EventId { get; init; }
-
-  /// <summary>
-  /// Name of the receptor that failed to process the event.
-  /// </summary>
-  public required string ReceptorName { get; init; }
-
-  /// <summary>
-  /// Processing status (e.g., Failed).
-  /// </summary>
-  public required ReceptorProcessingStatus Status { get; init; }
-
-  /// <summary>
-  /// Error message or exception details.
-  /// </summary>
-  public required string Error { get; init; }
-}
-
-/// <summary>
 /// Represents a perspective cursor completion.
 /// Indicates successful processing of an event by a perspective (read model projection).
 /// </summary>

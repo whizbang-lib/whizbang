@@ -41,7 +41,7 @@ public class StreamPurgeTests : EFCoreTestBase {
   /// <summary>Every table a stream owns rows in, as the purge reports it.</summary>
   private static readonly string[] _streamTables = [
     "wh_outbox", "wh_inbox_state", "wh_inbox", "wh_perspective_events", "wh_active_streams",
-    "wh_message_deduplication", "wh_receptor_processing", "wh_perspective_cursors", "wh_perspective_snapshots",
+    "wh_message_deduplication", "wh_perspective_cursors", "wh_perspective_snapshots",
     "wh_perspective_applied", PERSPECTIVE_TABLE, "wh_perspective_row_hold", "wh_row_eviction_journal",
     "wh_stream_digests", "wh_integrity_ledger", "wh_event_body", "wh_event_destruction_hold",
     "wh_lifecycle_completions", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store",
@@ -402,10 +402,6 @@ public class StreamPurgeTests : EFCoreTestBase {
     // Bookkeeping written by machinery outside this test's reach.
     await _executeAsync(conn, "INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING", eventId);
     await _executeAsync(conn, """
-      INSERT INTO wh_receptor_processing (id, event_id, receptor_name, stream_id, status, attempts, started_at)
-      VALUES (gen_random_uuid(), $1, 'Receptor', $2, 0, 0, NOW())
-      """, eventId, stream);
-    await _executeAsync(conn, """
       INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number)
       VALUES ($1, $2, $3, '{}'::jsonb, 1)
       """, stream, PERSPECTIVE, eventId);
@@ -452,7 +448,7 @@ public class StreamPurgeTests : EFCoreTestBase {
     const string BY_EVENT = "= ANY($1)";
     var counts = new Dictionary<string, long>(StringComparer.Ordinal);
     foreach (var table in new[] {
-        "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams", "wh_receptor_processing",
+        "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams",
         "wh_perspective_cursors", "wh_perspective_snapshots", "wh_perspective_applied", "wh_stream_digests",
         "wh_integrity_ledger", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store", "wh_stream_lifecycle" }) {
       counts[table] = await _scalarAsync<long>(conn, $"SELECT count(*) FROM {table} WHERE stream_id = $1", stream);

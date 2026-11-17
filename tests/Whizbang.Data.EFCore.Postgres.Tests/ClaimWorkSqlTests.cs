@@ -478,83 +478,6 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// claim_work must claim and return receptor work (wh_receptor_processing rows where
-  /// the calling instance owns the lease + completed_at IS NULL). Source returned as 'receptor';
-  /// work_id is the processing row's <c>id</c>, not a message_id.
-  /// </summary>
-  [Test]
-  public async Task ClaimWork_ReceptorHasUnprocessedWork_ReturnsThatWorkAsync() {
-    await using var dbContext = CreateDbContext();
-    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
-    if (connection.State != System.Data.ConnectionState.Open) {
-      await connection.OpenAsync();
-    }
-
-    var instanceId = Guid.NewGuid();
-    var processingId = Guid.NewGuid();
-    var streamId = Guid.NewGuid();
-    var eventId = Guid.NewGuid();
-
-    await using (var hb = connection.CreateCommand()) {
-      hb.CommandText = @"
-        INSERT INTO wh_service_instances
-          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
-        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
-      hb.Parameters.AddWithValue("id", instanceId);
-      await hb.ExecuteNonQueryAsync();
-    }
-
-    // Receptor row has FK to wh_event_store(event_id), so seed an event row first.
-    await using (var seedEvent = connection.CreateCommand()) {
-      seedEvent.CommandText = @"
-        INSERT INTO wh_event_store
-          (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
-        VALUES (@eid, @stream, @stream, 'Test', 'TestEvent', 1, NOW())";
-      seedEvent.Parameters.AddWithValue("eid", eventId);
-      seedEvent.Parameters.AddWithValue("stream", streamId);
-      await seedEvent.ExecuteNonQueryAsync();
-    }
-
-    // Insert a receptor row already leased to this instance with completed_at NULL.
-    await using (var ins = connection.CreateCommand()) {
-      ins.CommandText = @"
-        INSERT INTO wh_receptor_processing
-          (id, event_id, receptor_name, stream_id, partition_number, status, attempts,
-           instance_id, lease_expiry, started_at, claimed_at)
-        VALUES (@pid, @eid, 'TestReceptor', @stream, 0, 0, 0,
-                @inst, NOW() + INTERVAL '5 minutes', NOW(), NOW())";
-      ins.Parameters.AddWithValue("pid", processingId);
-      ins.Parameters.AddWithValue("eid", eventId);
-      ins.Parameters.AddWithValue("stream", streamId);
-      ins.Parameters.AddWithValue("inst", instanceId);
-      await ins.ExecuteNonQueryAsync();
-    }
-
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
-      SELECT source, work_id, work_stream_id FROM claim_work(
-        p_instance_id => @id,
-        p_service_name => 'test',
-        p_host_name => 'test-host',
-        p_process_id => 1,
-        p_max_streams => 100,
-        p_partition_count => 10000,
-        p_lease_seconds => 300
-      )";
-    cmd.Parameters.AddWithValue("id", instanceId);
-
-    var rows = new List<(string source, Guid workId, Guid streamId)>();
-    await using (var reader = await cmd.ExecuteReaderAsync()) {
-      while (await reader.ReadAsync()) {
-        rows.Add((reader.GetString(0), reader.GetGuid(1), reader.GetGuid(2)));
-      }
-    }
-
-    await Assert.That(rows.Any(r => r.source == "receptor" && r.workId == processingId && r.streamId == streamId)).IsTrue()
-      .Because("claim_work must return the receptor row owned by this instance");
-  }
-
-  /// <summary>
   /// When claim_work returns a full batch (rows == p_max_streams), it must RAISE NOTICE
   /// 'whizbang.has_more=true' so the C# claim worker can skip its wait and re-poll
   /// immediately. This is the in-band drain-mode signal — survives pgbouncer because
@@ -682,7 +605,6 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       WHERE funcname IN (
         'claim_orphaned_outbox',
         'claim_orphaned_inbox',
-        'claim_orphaned_receptor_work',
         'claim_orphaned_perspective_events'
       )
       GROUP BY funcname
@@ -795,7 +717,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
   [Test]
   public async Task ClaimWork_OnlyOutboxHasWork_SkipsOtherInnerFunctionsAsync() {
-    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 1, seedInbox: 0, seedPerspective: 0, seedReceptor: 0);
+    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 1, seedInbox: 0, seedPerspective: 0);
 
     await Assert.That(counts.OutboxCalls).IsEqualTo(1L)
       .Because("v0.683 outbox guard MUST fire — there's an unprocessed orphan outbox row.");
@@ -803,8 +725,6 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       .Because("v0.683 inbox guard MUST skip — no unprocessed orphan inbox rows.");
     await Assert.That(counts.PerspectiveCalls).IsEqualTo(0L)
       .Because("v0.683 perspective_events guard MUST skip — no unprocessed orphan perspective_event rows.");
-    await Assert.That(counts.ReceptorCalls).IsEqualTo(0L)
-      .Because("v0.683 receptor_work guard MUST skip — no uncompleted receptor_processing rows.");
     await Assert.That(counts.EmitChainCalls).IsEqualTo(0L)
       .Because("v0.683 emit_chain guard MUST skip — no unprocessed inbox event row with stream_id whose event_id is missing from wh_event_store.");
   }
@@ -817,7 +737,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
   [Test]
   public async Task ClaimWork_OnlyInboxHasWork_FiresInboxClaimAndEmitChainAsync() {
-    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 0, seedInbox: 1, seedPerspective: 0, seedReceptor: 0);
+    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 0, seedInbox: 1, seedPerspective: 0);
 
     await Assert.That(counts.InboxCalls).IsEqualTo(1L)
       .Because("v0.683 inbox guard MUST fire — there's an unprocessed orphan inbox row.");
@@ -827,8 +747,6 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       .Because("v0.683 outbox guard MUST skip — no unprocessed orphan outbox rows.");
     await Assert.That(counts.PerspectiveCalls).IsEqualTo(0L)
       .Because("v0.683 perspective_events guard MUST skip — no unprocessed orphan perspective_event rows.");
-    await Assert.That(counts.ReceptorCalls).IsEqualTo(0L)
-      .Because("v0.683 receptor_work guard MUST skip — no uncompleted receptor_processing rows.");
   }
 
   /// <summary>
@@ -839,13 +757,12 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
   [Test]
   public async Task ClaimWork_OnlyPerspectiveEventsHasWork_SkipsOtherInnerFunctionsAsync() {
-    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 0, seedInbox: 0, seedPerspective: 1, seedReceptor: 0);
+    var counts = await _runClaimWorkAndCountInnerCallsAsync(seedOutbox: 0, seedInbox: 0, seedPerspective: 1);
 
     await Assert.That(counts.PerspectiveCalls).IsEqualTo(1L)
       .Because("v0.683 perspective_events guard MUST fire — there's an unprocessed orphan perspective_event row.");
     await Assert.That(counts.OutboxCalls).IsEqualTo(0L);
     await Assert.That(counts.InboxCalls).IsEqualTo(0L);
-    await Assert.That(counts.ReceptorCalls).IsEqualTo(0L);
     await Assert.That(counts.EmitChainCalls).IsEqualTo(0L);
   }
 
@@ -967,7 +884,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   private async Task<InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
-      int seedOutbox, int seedInbox, int seedPerspective, int seedReceptor) {
+      int seedOutbox, int seedInbox, int seedPerspective) {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -1033,11 +950,6 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    // wh_receptor_processing seed is omitted — receptor work is fed via a
-    // separate pipeline not exercised here. seedReceptor stays at 0 in current
-    // tests; left as a parameter for future symmetry.
-    _ = seedReceptor;
-
     // track_functions defaults to 'none' in Postgres — pg_stat_user_functions is empty
     // unless tracking is enabled per session. SET on the same connection that runs
     // claim_work so the inner-function calls are recorded.
@@ -1078,7 +990,6 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       OutboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_outbox'"),
       InboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_inbox'"),
       PerspectiveCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_perspective_events'"),
-      ReceptorCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_receptor_work'"),
       EmitChainCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = '_emit_event_store_chain_for_inbox'"));
   }
 
@@ -1093,6 +1004,5 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     long OutboxCalls,
     long InboxCalls,
     long PerspectiveCalls,
-    long ReceptorCalls,
     long EmitChainCalls);
 }

@@ -1268,7 +1268,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Executes core infrastructure table DDL at runtime.
   /// Creates all Whizbang core tables: Inbox, Outbox, EventStore, ReceptorProcessing,
-  /// PerspectiveCursors, RequestResponse, ServiceInstances, PartitionAssignments,
+  /// PerspectiveCursors, RequestResponse, ServiceInstances,
   /// MessageDeduplication, Sequences, and EventSequence.
   /// SQL is generated at runtime using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
   /// AOT-compatible - no reflection or dynamic code generation, just string building.
