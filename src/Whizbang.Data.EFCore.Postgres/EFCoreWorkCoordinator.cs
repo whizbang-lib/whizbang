@@ -2147,7 +2147,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)lookback.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)recheckEvery.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_cap", SEAL_READING_COUNT_CAP));
+      // #2365: the most index entries one lane's open window, and the carried buckets, read; a count that reaches it is
+      // reported as at least that many (capped).
+      const int countCap = 100_000;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_cap", countCap));
       var lanes = new List<Whizbang.Core.Observability.LaneSeal>();
       double? coverage = null;
       long? generation = null;
@@ -2173,12 +2176,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
         CarriedStreamsCapped = carriedCapped,
       };
     }, cancellationToken);
-
-  /// <summary>
-  /// #2365: the most index entries the seal reading reads for one lane's open window, and for the carried buckets; a
-  /// count that reaches it is reported as at least that many (capped).
-  /// </summary>
-  internal const int SEAL_READING_COUNT_CAP = 100_000;
 
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
     cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, key.OriginServiceId);
