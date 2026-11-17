@@ -77,7 +77,7 @@ public class IntegrityPairGuardTests {
   }
 
   private static (IntegrityPairGuard Guard, CapturingLog Log, FakeTimeProvider Time, ServiceProvider Services) _guard(
-      IRuleFingerprintSource rules, TimeSpan? alertAfter = null) {
+      IRuleFingerprintSource rules, TimeSpan? alertAfter = null, bool withMetrics = true) {
     var services = new ServiceCollection().AddMetrics().AddSingleton<WhizbangMetrics>().BuildServiceProvider();
     var options = new StreamIntegrityOptions();
     if (alertAfter is { } after) {
@@ -85,7 +85,8 @@ public class IntegrityPairGuardTests {
     }
     var log = new CapturingLog();
     var time = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
-    return (new IntegrityPairGuard(rules, Options.Create(options), log, time, services.GetRequiredService<WhizbangMetrics>()),
+    var metrics = withMetrics ? services.GetRequiredService<WhizbangMetrics>() : null;
+    return (new IntegrityPairGuard(rules, Options.Create(options), log, time, metrics),
       log, time, services);
   }
 
@@ -169,6 +170,25 @@ public class IntegrityPairGuardTests {
     await Assert.That(log.Entries[^1].Level).IsEqualTo(LogLevel.Information);
     await Assert.That(log.Entries[^1].Message).Contains("resumed");
     await Assert.That(guard.Pairs.Single().HaltedSince).IsNull();
+  }
+
+  [Test]
+  public async Task Admit_StillHaltedPastTheThreshold_OnAHostWithoutMetrics_StillAlertsOnceInTheLogAsync() {
+    var (guard, log, time, services) = _guard(new Rules((SHARED, "a")), TimeSpan.FromMinutes(30), withMetrics: false);
+    await using var owned = services;
+    using var alerts = new Recorder<long>(services.GetRequiredService<IMeterFactory>(),
+      "whizbang.stream_integrity.pair_halt_alerts");
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, _peer((SHARED, "b")));
+
+    time.Advance(TimeSpan.FromMinutes(30));
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, _peer((SHARED, "b")));
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, _peer((SHARED, "b")));
+
+    var critical = log.Entries.Where(e => e.Level == LogLevel.Critical).ToList();
+    await Assert.That(critical.Count).IsEqualTo(1).Because("the alert does not depend on a meter being configured");
+    await Assert.That(critical[0].Message).Contains(PEER);
+    await Assert.That(alerts.GetMeasurementSnapshot()).IsEmpty().Because("a guard built without metrics records none");
+    await Assert.That(guard.Pairs.Single().Alerted).IsTrue();
   }
 
   [Test]
