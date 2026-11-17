@@ -1060,7 +1060,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SINCE, windowSince));
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = resumeAfterStreamId });
-        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
         return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       }, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
@@ -1541,7 +1541,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       cmd.CommandText = $"SELECT {schema}.wh_integrity_count_answer_pending(@p_now, @p_limit)";
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_limit", limit));
       return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
         System.Globalization.CultureInfo.InvariantCulture);
@@ -2990,7 +2990,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_integrity_decide_origin_ask")}(@p_origin, @p_now, @p_max_skip)";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_max_skip", NpgsqlTypes.NpgsqlDbType.Interval) { Value = maxSkip });
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       return (IntegrityAskDecision)Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
@@ -5393,25 +5393,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     await _executeCursorCompletionAsync(
-      completion.StreamId, completion.PerspectiveName,
-      completion.LastEventId, completion.ProcessedEventIds,
-      (short)completion.Status, null,
-      completion.ReplayedThroughCommitSequence,
+      new CursorCompletionWrite(
+        completion.StreamId, completion.PerspectiveName,
+        completion.LastEventId, completion.ProcessedEventIds,
+        (short)completion.Status, Error: null,
+        completion.ReplayedThroughCommitSequence),
       cancellationToken);
 
     await _logCheckpointDiagnosticAsync(completion.StreamId, completion.PerspectiveName, cancellationToken);
   }
 
   /// <summary>
+  /// The arguments of one complete_perspective_cursor_work call: a completion or a failure of one stream and perspective.
+  /// </summary>
+  private readonly record struct CursorCompletionWrite(
+    Guid StreamId, string PerspectiveName, Guid LastEventId,
+    Guid[] ProcessedEventIds,
+    short Status, string? Error,
+    long? ReplayedThroughCommitSequence);
+
+  /// <summary>
   /// Executes the complete_perspective_cursor_work SQL function within a managed transaction.
   /// Creates a new transaction if one does not already exist on the DbContext.
   /// </summary>
-  private async Task _executeCursorCompletionAsync(
-    Guid streamId, string perspectiveName, Guid lastEventId,
-    Guid[] processedEventIds,
-    short status, string? error,
-    long? replayedThroughCommitSequence,
-    CancellationToken cancellationToken) {
+  private async Task _executeCursorCompletionAsync(CursorCompletionWrite write, CancellationToken cancellationToken) {
+    var (streamId, perspectiveName, lastEventId, processedEventIds, status, error, replayedThroughCommitSequence) = write;
     var transaction = _dbContext.Database.CurrentTransaction;
     var needsCommit = transaction == null;
 
@@ -5531,10 +5537,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     await _executeCursorCompletionAsync(
-      failure.StreamId, failure.PerspectiveName,
-      failure.LastEventId, failure.ProcessedEventIds,
-      (short)failure.Status, failure.Error,
-      replayedThroughCommitSequence: null,
+      new CursorCompletionWrite(
+        failure.StreamId, failure.PerspectiveName,
+        failure.LastEventId, failure.ProcessedEventIds,
+        (short)failure.Status, failure.Error,
+        ReplayedThroughCommitSequence: null),
       cancellationToken);
   }
 
