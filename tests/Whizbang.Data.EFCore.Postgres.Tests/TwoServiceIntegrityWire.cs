@@ -83,7 +83,7 @@ internal sealed class IntegrityWireDispatcher : IDispatcher {
   public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
 
   private sealed class Receipt : IDeliveryReceipt {
-    public MessageId MessageId => MessageId.New();
+    public MessageId MessageId => Whizbang.Core.ValueObjects.MessageId.New();
     public CorrelationId? CorrelationId => null;
     public MessageId? CausationId => null;
     public DateTimeOffset Timestamp => DateTimeOffset.UnixEpoch;
