@@ -113,6 +113,36 @@ public class SupersedingCountsTheKeySqlTests : EFCoreTestBase {
     await Assert.That(await _healAsync(conn)).IsEqualTo(0L);
   }
 
+  [Test]
+  public async Task TheUpgrade_RecountsStoredDigestsAndSealsByTheKey_AndBumpsTheGenerationOnceAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await _emitAsync(conn, stream, (TYPE, "key-a", null), (TYPE, "key-b", null));
+    await _emitAsync(conn, stream, (TYPE, "key-a", null));
+    await _emitAsync(conn, (Guid)TrackedGuid.New(), (TYPE, "filler-1", null), (TYPE, "filler-2", null), (TYPE, "filler-3", null));
+    await _sealAsync(conn);
+    var bucket = await _bucketAsync(conn, stream, TYPE);
+    // As a release before slots stored them: every copy counted by its event id, in the bucket and in the seals.
+    await _executeAsync(conn, """
+      UPDATE wh_stream_digests d SET digest_lo = f.lo, digest_hi = f.hi, event_count = f.n
+      FROM (SELECT stream_id, bit_xor(hashtextextended(event_id::text, 0)) lo, bit_xor(hashtextextended(event_id::text, 1)) hi,
+                   COUNT(*)::int n
+            FROM wh_event_store WHERE stream_id = @s GROUP BY 1) f
+      WHERE d.stream_id = f.stream_id
+      """, ("s", stream));
+    await _executeAsync(conn, "UPDATE wh_digest_epochs SET digest_lo = digest_lo # 1");
+    var generation = await _generationAsync(conn);
+
+    var refolded = await _scalarAsync(conn, "SELECT wh_recompute_superseding_digests()");
+
+    await Assert.That(refolded).IsGreaterThan(0L).Because("every sealed epoch holding a superseding row is refolded");
+    await Assert.That(await _bucketAsync(conn, stream, TYPE)).IsEqualTo(bucket)
+      .Because("the stored digest is recounted by the key, as a fold now counts it");
+    await Assert.That(await _generationAsync(conn)).IsEqualTo(generation + 1)
+      .Because("this service's own seals moved, so consumers re-verify once, from the epochs");
+    await Assert.That(await _healAsync(conn)).IsEqualTo(0L);
+  }
+
   // ===== helpers =====
 
   private async Task<NpgsqlConnection> _openAsync() {
