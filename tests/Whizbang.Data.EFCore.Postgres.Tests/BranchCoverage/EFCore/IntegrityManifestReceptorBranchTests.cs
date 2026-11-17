@@ -51,7 +51,7 @@ public class IntegrityManifestReceptorBranchTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     await Assert.That(_deserialize<IntegrityManifest>(transport.Published[0].Envelope).OriginServiceName).IsEqualTo("auditor-svc")
@@ -70,7 +70,7 @@ public class IntegrityManifestReceptorBranchTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var manifest = _deserialize<IntegrityManifest>(transport.Published[0].Envelope);

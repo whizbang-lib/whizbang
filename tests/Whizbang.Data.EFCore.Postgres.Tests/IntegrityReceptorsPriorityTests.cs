@@ -87,7 +87,7 @@ public class IntegrityReceptorsPriorityTests {
     var sp = _manifestProvider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
     var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", EventTypes = ["Contracts.TypeX"] });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", EventTypes = ["Contracts.TypeX"] });
 
     await Assert.That(transport.Published.Count).IsEqualTo(2);
     foreach (var (envelope, _, _) in transport.Published) {

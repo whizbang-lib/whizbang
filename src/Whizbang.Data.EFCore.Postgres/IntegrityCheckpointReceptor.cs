@@ -80,6 +80,11 @@ public sealed partial class IntegrityCheckpointReceptor(
     // owned domains is no other origin's to count, even when the map is silent about it.
     var ownDomains = services.GetService<IOptions<Whizbang.Core.Routing.RoutingOptions>>()?.Value.OwnedDomains
       ?? (IReadOnlyCollection<string>)[];
+    // #2362: the origin stays known and its address and ownership are kept, but its counts are verified only while the
+    // two apply the same rules to the types it counted. A halted pair keeps its pending gaps as they were.
+    if (!IntegrityPairGuard.Resolve(services).Admit(message.OriginServiceName, IntegrityPairSide.Consumer, message.RuleFingerprint).IsAgreed) {
+      return;
+    }
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
 
     // MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch. Checkpoints fire every
@@ -356,6 +361,7 @@ public sealed partial class IntegrityCheckpointReceptor(
         RequesterService = requester,
         Topic = topic,
         AcceptsStreamSpanningBundles = true,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([pending.EventType]),
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), services.GetService<IServiceInstanceProvider>(), DateTimeOffset.UtcNow)

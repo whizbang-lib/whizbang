@@ -46,6 +46,7 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task StrictPolicy_ControlPlaneMessage_NoScope_EstablishesNoContextWithoutThrowingAsync() {
     var provider = _strictProvider();
     var envelope = _unscopedEnvelope(new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = TrackedGuid.New().Value,
       OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "origin-svc",
@@ -368,6 +369,7 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task StrictPolicy_DeeplyNestedEnvelopeCarryingControlPlaneMessage_EstablishesNoContextWithoutThrowingAsync() {
     var provider = _strictProvider();
     var innermost = _unscopedEnvelope(new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = TrackedGuid.New().Value,
       OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "origin-svc",

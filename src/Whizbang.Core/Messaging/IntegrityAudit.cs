@@ -112,6 +112,14 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
   public long? KnownOriginGeneration { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
 }
 
 /// <summary>
@@ -236,6 +244,22 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// </summary>
   /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
   public bool NothingSettledAbove { get; init; }
+
+  /// <summary>
+  /// #2362: true when the origin halted the pair because the requester's rules differ from its own (or the requester
+  /// sent none). The answer carries no digests, only the origin's <see cref="RuleFingerprint"/>, so the requester names
+  /// the same differing types and halts the pair too. False from an origin that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public bool PairHalted { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
 }
 
 /// <summary>

@@ -161,6 +161,7 @@ public sealed partial class StreamRedeliveryRequester(
         StateOnly = request.StateOnly,
         OperatorRequested = true,
         AcceptsStreamSpanningBundles = true,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp(request.EventTypes),
       };
       await RedeliveryRequestDispatch.PublishAsync(
         transport, serializer, instanceProvider, command, request.OriginService,

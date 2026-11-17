@@ -202,6 +202,7 @@ public class IntegrityCheckpointReceptorTests {
     fx.Coordinator.Counts = _ => [];
 
     var own = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = fx.Coordinator.LocalServiceId,
       OriginServiceId = fx.Coordinator.LocalServiceId,
       OriginServiceName = "consumer-svc",
@@ -223,6 +224,7 @@ public class IntegrityCheckpointReceptorTests {
     fx.Coordinator.Counts = _ => [];
 
     var checkpoint = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = fx.OriginId,
       OriginServiceId = fx.OriginId,
       OriginServiceName = "origin-svc",

@@ -362,6 +362,7 @@ Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers
 Whizbang:StreamIntegrity:MaxReattributionBatchesPerPass
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket
 Whizbang:StreamIntegrity:MaxRepairDrainBacklog
+Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter
 Whizbang:StreamIntegrity:PublishReportEvents
 Whizbang:StreamIntegrity:ReattributionBatchSize
 Whizbang:StreamIntegrity:ReattributionEnabled
