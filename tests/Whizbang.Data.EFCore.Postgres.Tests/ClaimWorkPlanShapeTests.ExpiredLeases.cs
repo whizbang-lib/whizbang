@@ -80,11 +80,17 @@ public partial class ClaimWorkPlanShapeTests {
 
     var plans = await _explainClaimAsync(connection, poller, BATCH);
 
-    var leasePlans = plans.Where(p => p.Contains($"using {LEASE_ORDER}", StringComparison.Ordinal)).ToList();
-    await Assert.That(leasePlans.Count).IsGreaterThan(0)
+    // The renewal: the statement that reads the expired leases and writes them. The fixture's table is small enough
+    // that a planner may scan it for other statements (the empty-call probe); this one must reach only the leases
+    // that ran out, by index, and write them by row address.
+    var renewal = plans.SingleOrDefault(p => p.Contains($"using {LEASE_ORDER}", StringComparison.Ordinal)
+                                             && p.Contains("Update on wh_inbox_state", StringComparison.Ordinal));
+    await Assert.That(renewal).IsNotNull()
       .Because("the leases that ran out are reached by the index keyed on lease expiry, not by reading every held row");
-    await Assert.That(plans.Any(p => p.Contains("Seq Scan on wh_inbox_state", StringComparison.Ordinal))).IsFalse()
-      .Because("no statement of the poll scans the work table whole");
+    await Assert.That(renewal).DoesNotContain("Seq Scan on wh_inbox_state")
+      .Because($"the renewal reads and writes only the rows its window found: {renewal}");
+    await Assert.That(renewal).Contains("Tid Scan on wh_inbox_state")
+      .Because("the lock and the write reach the window's rows by their address");
   }
 
   private static async Task<NpgsqlConnection> _openPlanConnectionAsync(DbContext dbContext, CancellationToken cancellationToken) {

@@ -498,7 +498,7 @@ BEGIN
       LIMIT 1
     ) THEN
       WITH expired AS (
-        SELECT i.message_id, i.stream_id, i.partition_number
+        SELECT i.ctid AS row_ctid, i.stream_id, i.partition_number
         FROM __SCHEMA__.wh_inbox_state i
         WHERE i.lease_expiry < v_now
           AND i.processed_at IS NULL
@@ -508,7 +508,7 @@ BEGIN
         LIMIT GREATEST(p_max_streams, COALESCE(p_max_rows, 0), 1) * 8
       ),
       owned AS (
-        SELECT e.message_id
+        SELECT e.row_ctid
         FROM expired e
         WHERE EXISTS (
                 SELECT 1 FROM __SCHEMA__.wh_active_streams ast
@@ -525,11 +525,14 @@ BEGIN
                    AND ast.lease_expiry > v_now
                    AND __SCHEMA__.wh_instance_liveness(si, si.instance_id IN (SELECT h.instance_id FROM __SCHEMA__.wh_direct_alive_lock_holders() h))))
       ),
+      -- By row address, so the lock and the write each reach exactly the rows the window read (a TID scan), never
+      -- the table. A row another session changed since this statement's snapshot no longer matches its address
+      -- under the lock and is skipped, as SKIP LOCKED skips one it holds: the next poll looks again.
       locked AS (
-        SELECT i.message_id
+        SELECT i.ctid AS row_ctid
         FROM __SCHEMA__.wh_inbox_state i
-        JOIN owned o ON o.message_id = i.message_id
-        WHERE i.instance_id = p_instance_id
+        WHERE i.ctid = ANY (ARRAY(SELECT o.row_ctid FROM owned o))
+          AND i.instance_id = p_instance_id
           AND i.processed_at IS NULL
           AND i.lease_expiry < v_now
         FOR UPDATE OF i SKIP LOCKED
@@ -537,8 +540,7 @@ BEGIN
       renewed AS (
         UPDATE __SCHEMA__.wh_inbox_state i
         SET lease_expiry = v_lease_expiry
-        FROM locked l
-        WHERE i.message_id = l.message_id
+        WHERE i.ctid = ANY (ARRAY(SELECT l.row_ctid FROM locked l))
         RETURNING i.stream_id AS r_stream_id, i.partition_number AS r_partition_number
       )
       SELECT v_ledger_streams || COALESCE(array_agg(r.r_stream_id), '{}'),
