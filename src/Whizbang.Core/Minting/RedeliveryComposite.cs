@@ -84,6 +84,13 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
   /// </summary>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
   RedeliveryAnswerWindow? AnsweredWindow => null;
+
+  /// <summary>
+  /// #2365: the request the bundle answers and the origin's answer span, which the receiver's repair starts under; the
+  /// default (neither) when the origin did not say.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  Whizbang.Core.Observability.IntegrityTraceLink TraceLink => default;
 }
 
 /// <summary>
@@ -187,6 +194,8 @@ public sealed class RedeliveryComposite
         Continues = AnswerContinues,
       }
       : null;
+
+  Whizbang.Core.Observability.IntegrityTraceLink IIdentityPreservingComposite.TraceLink => new(RequestId, TraceParent);
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 

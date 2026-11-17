@@ -2878,6 +2878,24 @@ public interface IWorkCoordinator {
     Task.FromResult(Observability.LedgerBacklogSnapshot.NotReported);
 
   /// <summary>
+  /// Reads the seal gauges' reading (#2365): per lane, the sequence below which every digest epoch is sealed and the
+  /// seconds since that frontier last advanced, and the share of the epochs sealed within <paramref name="lookback"/>
+  /// the seal re-check covered within <paramref name="recheckEvery"/>. Read by the maintainer duty's holder. Defaults to
+  /// <see cref="Observability.IntegritySealReading.NotReported"/> for engines with no epochs: no series, never a zero.
+  /// </summary>
+  /// <param name="lookback"><c>SealRecheck:Lookback</c>.</param>
+  /// <param name="recheckEvery"><c>SealRecheck:RecheckEvery</c>.</param>
+  /// <param name="now">The reading's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The reading, or the not-reported reading.</returns>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySealReadingSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegritySealReadingAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  Task<Observability.IntegritySealReading> GetIntegritySealReadingAsync(
+    TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.IntegritySealReading.NotReported);
+
+  /// <summary>
   /// Adds the ledger buckets one instance opened and closed to the service's shared per-minute tally (#2261), and prunes
   /// the minutes before <paramref name="keepSince"/> in the same call. Every instance writes its own counts, so the
   /// repair progress and ETA read from the tally are per service and outlive a restart. Defaults to false (not written)

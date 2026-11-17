@@ -97,6 +97,7 @@ public class IntegrityTracingTests {
 
     await Assert.That(IntegrityTracing.LinkFrom(null, requestId).TraceParent).IsNull()
       .Because("with no listener and no ambient activity there is no trace to carry");
+    await Assert.That(IntegrityTracing.CurrentTraceParent).IsNull();
 
     using var ambientSource = new ActivitySource("Whizbang.Integrity.Tests.Ambient");
     using var ambientListener = new ActivityListener {
@@ -106,6 +107,7 @@ public class IntegrityTracingTests {
     ActivitySource.AddActivityListener(ambientListener);
     using var ambient = ambientSource.StartActivity("ambient");
 
+    await Assert.That(IntegrityTracing.CurrentTraceParent).IsEqualTo(ambient!.Id);
     var link = IntegrityTracing.LinkFrom(null, requestId);
     await Assert.That(link.TraceParent).IsEqualTo(ambient!.Id).Because("an unsampled integrity span still links the caller's trace");
     await Assert.That(link.RequestId).IsEqualTo(requestId);
@@ -193,7 +195,7 @@ public class IntegrityTracingTests {
       IntegrityTracing.StartRecheck(StreamIntegrityMetrics.CHECK_SEAL_RECHECK),
     ];
     foreach (var span in spans) {
-      foreach (var count in new[] { IntegrityTracing.ATTR_EVENT_TYPES, IntegrityTracing.ATTR_STREAMS, IntegrityTracing.ATTR_EVENTS }) {
+      foreach (var count in new[] { IntegrityTracing.ATTR_EVENT_TYPES, IntegrityTracing.ATTR_STREAMS, IntegrityTracing.ATTR_EVENTS, IntegrityTracing.ATTR_EPOCHS }) {
         IntegrityTracing.SetCount(span, count, 1);
       }
       IntegrityTracing.SetOutcome(span, IntegrityTracing.OUTCOME_CLEAN);

@@ -2092,6 +2092,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
   }
 
+  /// <inheritdoc />
+  /// <remarks>A failure propagates: the maintenance tick withdraws the reading and logs it.</remarks>
+  public Task<Whizbang.Core.Observability.IntegritySealReading> GetIntegritySealReadingAsync(
+      TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT origin_service_id, sealed_through, age_seconds, recheck_coverage FROM {BuildSchemaQualifiedName(schema, "wh_integrity_seal_reading")}(@p_lookback, @p_every, @p_now)";
+      cmd.Parameters.AddWithValue("p_lookback", (long)lookback.TotalSeconds);
+      cmd.Parameters.AddWithValue("p_every", (long)recheckEvery.TotalSeconds);
+      cmd.Parameters.AddWithValue(P_NOW, now);
+      var lanes = new List<Whizbang.Core.Observability.LaneSeal>();
+      double? coverage = null;
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        coverage = await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetDouble(3);
+        if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
+          lanes.Add(new Whizbang.Core.Observability.LaneSeal(reader.GetGuid(0), reader.GetInt64(1), reader.GetDouble(2)));
+        }
+      }
+      return new Whizbang.Core.Observability.IntegritySealReading {
+        Reported = true,
+        Lanes = lanes,
+        SealRecheckCoverageRatio = coverage,
+      };
+    }, cancellationToken);
+
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
     cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, key.OriginServiceId);
     cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);

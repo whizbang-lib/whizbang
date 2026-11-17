@@ -192,6 +192,11 @@ public sealed partial class RepairDrainWorker(
         fromSeq = from > 0 ? from - 1 : null;
         toSeq = until - 1;
       }
+      // #2365: each request is a span of its own; the origin's answer and the repair join its trace.
+      var requestId = (Guid)TrackedGuid.New();
+      using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_DRAIN, origin.OriginServiceName, requestId);
+      IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_STREAMS, items.Count);
+      var link = IntegrityTracing.LinkFrom(span, requestId);
       var command = new RequestRedeliveryCommand {
         TenantScope = string.IsNullOrEmpty(group.Key.TenantScope) ? null : group.Key.TenantScope,
         EventTypes = [group.Key.EventType],
@@ -204,6 +209,8 @@ public sealed partial class RepairDrainWorker(
         AcceptsStreamSpanningBundles = true,
         // #2362: the origin refuses a repair while the pair's rules differ.
         RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([group.Key.EventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       };
       // #2029, #2223: recorded as awaiting its answer before it is sent. An answer clears the wait, and the origin can
       // answer before the publish call returns (a fast origin, or this host's continuation delayed under load); recorded

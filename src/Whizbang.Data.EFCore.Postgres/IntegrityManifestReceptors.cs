@@ -136,6 +136,9 @@ public sealed partial class IntegrityManifestRequestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestIntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    // #2365: the answer joins the asker's trace; every chunk carries this span back, with the ask's id.
+    using var span = IntegrityTracing.StartAnswer(IntegrityTracing.KIND_MANIFEST, message.RequesterService,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
     await _answerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
@@ -301,6 +304,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
           RequestedEventTypes = message.Level == ManifestLevel.Streams ? eventTypes : null,
           NothingSettledAbove = nothingSettledAbove,
           RuleFingerprint = rules,
+          RequestId = message.RequestId,
+          TraceParent = IntegrityTracing.CurrentTraceParent,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -348,6 +353,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
         Recheck = message.Recheck,
         PairHalted = true,
         RuleFingerprint = rules,
+        RequestId = message.RequestId,
+        TraceParent = IntegrityTracing.CurrentTraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -442,6 +449,10 @@ public sealed partial class IntegrityManifestReceptor(
         new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;
     }
+    // #2365: the comparison joins the trace the origin's answer carried; a repair it requests runs under it.
+    using var span = IntegrityTracing.StartAudit(IntegrityTracing.KIND_MANIFEST, message.OriginServiceName,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
+    IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_STREAMS, message.Digests.Count);
     var compareTimer = System.Diagnostics.Stopwatch.StartNew();
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
@@ -1093,6 +1104,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         EventTypes = types,
@@ -1352,6 +1366,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         EventTypes = drillDown,
@@ -1451,6 +1468,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         // The same ask the scheduled audit makes, from the new seal: the whole consumed surface, type level.
@@ -1523,6 +1543,10 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    // #2365: the request's span, a child of this comparison; the origin's answer and the repair join it.
+    var requestId = (Guid)TrackedGuid.New();
+    using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_INLINE, manifest.OriginServiceName, requestId);
+    var link = IntegrityTracing.LinkFrom(span, requestId);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1541,6 +1565,8 @@ public sealed partial class IntegrityManifestReceptor(
         StateOnly = true,
         AcceptsStreamSpanningBundles = true,
         RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([eventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1580,6 +1606,10 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    // #2365: the request's span, a child of this comparison; the origin's answer and the repair join it.
+    var requestId = (Guid)TrackedGuid.New();
+    using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_INLINE, manifest.OriginServiceName, requestId);
+    var link = IntegrityTracing.LinkFrom(span, requestId);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1598,6 +1628,8 @@ public sealed partial class IntegrityManifestReceptor(
         ToCommitSequence = toSequence,
         AcceptsStreamSpanningBundles = true,
         RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([eventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)

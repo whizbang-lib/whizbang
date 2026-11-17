@@ -40,6 +40,9 @@ public sealed partial class RedeliveryRequestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestRedeliveryCommand message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    // #2365: the answer joins the requester's trace; every bundle carries this span back, with the request's id.
+    using var span = IntegrityTracing.StartAnswer(IntegrityTracing.KIND_REDELIVERY, message.RequesterService,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -70,6 +73,7 @@ public sealed partial class RedeliveryRequestReceptor(
     var integrity = services.GetService<Microsoft.Extensions.Options.IOptions<StreamIntegrityOptions>>()?.Value;
     if (!message.OperatorRequested && !RepairTraffic.IsRepairEnabled(integrity)) {
       metrics?.RepairTrafficDiscarded.Add(1, new KeyValuePair<string, object?>("role", "origin_request"));
+      IntegrityTracing.SetOutcome(span, IntegrityTracing.OUTCOME_DECLINED);
       LogRepairRequestDeclined(logger, message.RequesterService, message.Topic);
       return;
     }
@@ -79,6 +83,7 @@ public sealed partial class RedeliveryRequestReceptor(
     if (!message.OperatorRequested && message.BackfillId is null
         && !IntegrityPairGuard.Resolve(services).Admit(message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint).IsAgreed) {
       metrics?.RedeliveryRequestsIgnored.Add(1, new KeyValuePair<string, object?>("reason", "pair_halted"));
+      IntegrityTracing.SetOutcome(span, IntegrityTracing.OUTCOME_PAIR_HALTED);
       return;
     }
     var buildTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -110,6 +115,9 @@ public sealed partial class RedeliveryRequestReceptor(
         BundleStreamId = message.BackfillId,
         // #2268: a requester that files each child under its own stream is answered across streams by scope.
         BundleAcrossStreams = message.AcceptsStreamSpanningBundles,
+        // #2365: every bundle names the request it answers and carries the answer span's trace link.
+        RequestId = message.RequestId,
+        TraceParent = IntegrityTracing.CurrentTraceParent,
       };
 
       // #2008: only events of types this service owns are its own; the rest were received from their authors.
@@ -127,6 +135,7 @@ public sealed partial class RedeliveryRequestReceptor(
         return;
       }
       metrics?.RedeliveryEventsShipped.Add(totalShipped);
+      IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_EVENTS, totalShipped);
       metrics?.RedeliveryBuildDuration.Record(buildTimer.Elapsed.TotalSeconds);
       LogRedeliveryPublished(logger, totalShipped, totalComposites, message.RequesterService, message.Topic);
     } finally {

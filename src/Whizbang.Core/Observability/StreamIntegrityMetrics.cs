@@ -651,6 +651,32 @@ public sealed class StreamIntegrityMetrics {
       unit: "s",
       description: "Derived (#2261): repairable open buckets over the window's net close rate; no measurement while the backlog is flat or growing; reported by the maintainer duty's holder only");
 
+    // #2365: the rest of section 2.7. Each reports nothing until it has a reading, never a zero that reads as a value.
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.recheck_enabled",
+      () => _enabledMeasurements(_checksEnabled),
+      description: "1 when the opt-in check is turned on, 0 when off; tagged by check (seal_recheck | full_history_compare)");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.recheck_last_run_timestamp",
+      () => _lastRuns.Select(r => new Measurement<double>(r.Value, new KeyValuePair<string, object?>(CHECK_TAG, r.Key))),
+      unit: "s",
+      description: "Unix time the opt-in check last ran in this process; tagged by check. No series until it has run");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.recheck_coverage_ratio",
+      () => _seals.SealRecheckCoverageRatio is { } ratio
+        ? [new Measurement<double>(ratio, new KeyValuePair<string, object?>(CHECK_TAG, CHECK_SEAL_RECHECK))]
+        : (Measurement<double>[])[],
+      description: "Share of the epochs sealed within SealRecheck:Lookback that were re-checked within SealRecheck:RecheckEvery; tagged by check; reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.epoch_frontier",
+      () => _seals.Lanes.Select(l => new Measurement<long>(l.SealedThrough, _lane(l))),
+      description: "Per lane, the sequence below which every digest epoch is sealed (the empty origin_service_id is the local lane); reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.seal_age_seconds",
+      () => _seals.Lanes.Select(l => new Measurement<double>(l.AgeSeconds, _lane(l))),
+      unit: "s",
+      description: "Per lane, seconds since the epoch frontier last advanced; a value that keeps growing while events arrive means sealing has stopped; reported by the maintainer duty's holder only");
+
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     LedgerBucketsOpened.Touch(HOW_TAG, _openedHows);
     LedgerBucketsClosed.Touch(HOW_TAG, _closedHows);
@@ -821,6 +847,49 @@ public sealed class StreamIntegrityMetrics {
     _ = Interlocked.Add(ref _talliedOpened, opened);
     _ = Interlocked.Add(ref _talliedClosed, closed);
   }
+
+  private static Measurement<long>[] _enabledMeasurements(ChecksEnabled? enabled) {
+    if (enabled is null) {
+      return [];
+    }
+    return [_checkOn(enabled.SealRecheck, CHECK_SEAL_RECHECK), _checkOn(enabled.FullHistoryCompare, CHECK_FULL_HISTORY_COMPARE)];
+  }
+
+  private static Measurement<long> _checkOn(bool on, string check) =>
+    new(on ? 1 : 0, new KeyValuePair<string, object?>(CHECK_TAG, check));
+
+  private static KeyValuePair<string, object?> _lane(LaneSeal lane) =>
+    new("origin_service_id", lane.OriginServiceId.ToString());
+
+  private volatile ChecksEnabled? _checksEnabled;
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _lastRuns = new(StringComparer.Ordinal);
+  private volatile IntegritySealReading _seals = IntegritySealReading.NotReported;
+
+  private sealed record ChecksEnabled(bool SealRecheck, bool FullHistoryCompare);
+
+  /// <summary>Publishes whether each opt-in check is turned on (#2365).</summary>
+  /// <param name="sealRecheck"><c>SealRecheck:Enabled</c>.</param>
+  /// <param name="fullHistoryCompare"><c>FullHistoryCompare:Enabled</c>.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:WhetherEachCheckIsOn_IsOneSeriesPerCheckAsync</tests>
+  public void UpdateChecksEnabled(bool sealRecheck, bool fullHistoryCompare) =>
+    _checksEnabled = new ChecksEnabled(sealRecheck, fullHistoryCompare);
+
+  /// <summary>Records that an opt-in check ran (#2365).</summary>
+  /// <param name="check"><see cref="CHECK_SEAL_RECHECK"/> or <see cref="CHECK_FULL_HISTORY_COMPARE"/>.</param>
+  /// <param name="at">When it ran.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:WhenACheckLastRan_IsItsUnixTime_PerCheckAsync</tests>
+  public void RecordCheckRan(string check, DateTimeOffset at) => _lastRuns[check] = at.ToUnixTimeSeconds();
+
+  /// <summary>
+  /// Publishes the seal reading (#2365): each lane's epoch frontier and its age, and the seal re-check's coverage; null
+  /// withdraws it, so an instance without the maintainer duty reports no series.
+  /// </summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:ASealReading_IsTheFrontierAndAgePerLane_AndTheRecheckCoverageAsync</tests>
+  public void UpdateSealReading(IntegritySealReading? reading) => _seals = reading ?? IntegritySealReading.NotReported;
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
@@ -1052,3 +1121,32 @@ public sealed record RepairProgressReading {
   /// flat or growing, when the backlog was not read, or switched off.</summary>
   public double? EtaSeconds { get; init; }
 }
+
+/// <summary>
+/// The seal reading (#2365): per lane, how far digest epochs are sealed and how long ago the frontier last moved, and the
+/// share of recently sealed epochs the seal re-check covered.
+/// </summary>
+/// <docs>resilience/stream-integrity#integrity-instruments</docs>
+public sealed record IntegritySealReading {
+  /// <summary>No reading: the gauges report no series.</summary>
+  public static IntegritySealReading NotReported { get; } = new();
+
+  /// <summary>True when the reading was taken.</summary>
+  public bool Reported { get; init; }
+
+  /// <summary>Each lane with a frontier.</summary>
+  public IReadOnlyList<LaneSeal> Lanes { get; init; } = [];
+
+  /// <summary>
+  /// The share of the epochs sealed within <c>SealRecheck:Lookback</c> that were re-checked within
+  /// <c>SealRecheck:RecheckEvery</c>; null when none was sealed within the lookback.
+  /// </summary>
+  public double? SealRecheckCoverageRatio { get; init; }
+}
+
+/// <summary>One lane's seal (#2365).</summary>
+/// <param name="OriginServiceId">The lane: the origin's id, or the empty id for the local lane.</param>
+/// <param name="SealedThrough">The sequence below which every epoch is sealed.</param>
+/// <param name="AgeSeconds">Seconds since the frontier last advanced.</param>
+/// <docs>resilience/stream-integrity#integrity-instruments</docs>
+public sealed record LaneSeal(Guid OriginServiceId, long SealedThrough, double AgeSeconds);

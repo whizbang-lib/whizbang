@@ -165,6 +165,9 @@ public static partial class RedeliveryReconciler {
     if (origin == Guid.Empty || children.Count == 0) {
       return RedeliveryReconciliation.None;
     }
+    // #2365: the repair joins the trace the origin's answer carried, and names the request it answers.
+    using var span = Observability.IntegrityTracing.StartRepair(originServiceName, composite.TraceLink);
+    Observability.IntegrityTracing.SetCount(span, Observability.IntegrityTracing.ATTR_EVENTS, children.Count);
     var coordinator = services.GetService<IWorkCoordinator>();
     if (coordinator is null) {
       return RedeliveryReconciliation.None;

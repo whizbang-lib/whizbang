@@ -122,6 +122,9 @@ public sealed partial class IntegrityLedgerRecheckWorker(
       return;   // no row is older than the threshold: the re-check has caught up.
     }
 
+    // #2365: the re-check's span; each ask carries its trace link, so the answers join it.
+    using var span = IntegrityTracing.StartRecheck(IntegrityTracing.CHECK_LEDGER_RECHECK);
+    IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_STREAMS, claimed.Count);
     var metrics = services.GetService<StreamIntegrityMetrics>();
     var byOrigin = origins.ToDictionary(o => o.OriginServiceId, o => (o.OriginServiceName, o.RequestTopic!));
     // One stream-level answer covers every tenant and stream of a type over a window, so rows that share them share one ask.
@@ -155,6 +158,8 @@ public sealed partial class IntegrityLedgerRecheckWorker(
           Recheck = true,
           KnownOriginGeneration = knownGeneration,
           RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([group.Key.EventType]),
+          RequestId = TrackedGuid.New(),
+          TraceParent = IntegrityTracing.CurrentTraceParent,
         },
         Hops = [ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },

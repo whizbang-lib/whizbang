@@ -66,6 +66,9 @@ public static class IntegrityTracing {
   /// <summary>How many events the span covered.</summary>
   public const string ATTR_EVENTS = "whizbang.integrity.events";
 
+  /// <summary>How many sealed epochs a re-check covered.</summary>
+  public const string ATTR_EPOCHS = "whizbang.integrity.epochs";
+
   /// <summary>How the span ended.</summary>
   public const string ATTR_OUTCOME = "whizbang.integrity.outcome";
 
@@ -87,11 +90,17 @@ public static class IntegrityTracing {
   /// <summary><see cref="ATTR_KIND"/>: a repair request an operator made.</summary>
   public const string KIND_OPERATOR = "operator";
 
+  /// <summary><see cref="ATTR_CHECK"/>: the idle ledger re-check, which asks origins to answer open ledger rows again.</summary>
+  public const string CHECK_LEDGER_RECHECK = "ledger_recheck";
+
   /// <summary><see cref="ATTR_OUTCOME"/>: nothing differed.</summary>
   public const string OUTCOME_CLEAN = "clean";
 
   /// <summary><see cref="ATTR_OUTCOME"/>: a difference was found and a repair requested or recorded.</summary>
   public const string OUTCOME_REPAIR_REQUESTED = "repair_requested";
+
+  /// <summary><see cref="ATTR_OUTCOME"/>: a re-check found drift.</summary>
+  public const string OUTCOME_DRIFT = "drift";
 
   /// <summary><see cref="ATTR_OUTCOME"/>: the pair guard halted the pair.</summary>
   public const string OUTCOME_PAIR_HALTED = "pair_halted";
@@ -107,7 +116,7 @@ public static class IntegrityTracing {
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/IntegrityTracingTests.cs:EverySpanAttribute_IsOnTheBoundedList_AndNoneNamesAStreamOrATenantAsync</tests>
   public static IReadOnlyList<string> Attributes { get; } = [
-    ATTR_KIND, ATTR_PEER, ATTR_REQUEST_ID, ATTR_CHECK, ATTR_EVENT_TYPES, ATTR_STREAMS, ATTR_EVENTS, ATTR_OUTCOME,
+    ATTR_KIND, ATTR_PEER, ATTR_REQUEST_ID, ATTR_CHECK, ATTR_EVENT_TYPES, ATTR_STREAMS, ATTR_EVENTS, ATTR_EPOCHS, ATTR_OUTCOME,
   ];
 
   private static ActivitySource _source => WhizbangActivitySource.Integrity;
@@ -165,6 +174,12 @@ public static class IntegrityTracing {
   /// <returns>The link.</returns>
   public static IntegrityTraceLink LinkFrom(Activity? span, Guid requestId) =>
     new(requestId, (span ?? Activity.Current)?.Id);
+
+  /// <summary>
+  /// The W3C <c>traceparent</c> of the ambient span, which an answer carries back so the receiver's work joins the
+  /// trace; null when there is none.
+  /// </summary>
+  public static string? CurrentTraceParent => Activity.Current?.Id;
 
   /// <summary>Records a count on the span; nothing when there is no span.</summary>
   /// <param name="span">The span, or null.</param>
