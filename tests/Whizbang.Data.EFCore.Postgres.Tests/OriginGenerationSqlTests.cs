@@ -99,11 +99,9 @@ public class OriginGenerationSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task CloseStream_BumpsTheGeneration_AndRefoldsTheAffectedSealedEpochAsync() {
-    // A close is a LEGITIMATE truncation of sealed history. The sealed epoch must reflect the
-    // post-close world immediately — an origin serving stale seals until the next nightly sweep
-    // would report divergence against its own recompute all day — and the generation must move,
-    // or every consumer's seal would silently disagree forever.
+  public async Task CloseStream_CarriesTheTruncatedHistory_LeavingTheGenerationAndTheSealAloneAsync() {
+    // #2363: a close is a cut, and a cut carries its digest. The sealed epoch keeps the truncated events in its seal and
+    // records them as removed, so it answers what it answered before, and no consumer has anything to re-verify.
     await using var conn = await _openAsync();
     await _setWidthAsync(conn, 100);
     var stream = Guid.NewGuid();
@@ -123,10 +121,10 @@ public class OriginGenerationSqlTests : EFCoreTestBase {
       await Assert.That((string)(await close.ExecuteScalarAsync())!).IsEqualTo("truncated");
     }
 
-    await Assert.That(await _generationAsync(conn)).IsGreaterThan(generationBefore)
-      .Because("truncating folded history without moving the generation would turn every consumer's next sweep into a false alarm");
-    await Assert.That(await _epochCountForAsync(conn, TYPE, 0)).IsNull()
-      .Because("the sealed epoch refolds INLINE to the post-close world (both folded events truncated → empty bucket)");
+    await Assert.That(await _generationAsync(conn)).IsEqualTo(generationBefore)
+      .Because("the truncated history is carried, so nothing a consumer verified changed");
+    await Assert.That(await _epochCountForAsync(conn, TYPE, 0)).IsEqualTo(2)
+      .Because("the sealed epoch keeps the two truncated events in its seal");
   }
 
   [Test]
