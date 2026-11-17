@@ -245,7 +245,7 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
     await disposed.DisposeAsync();
     var ledger = new PostgresAdvisoryLedger(disposed);
     var key = _key();
-    var t0 = DateTimeOffset.UtcNow;
+    var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     var first = await ledger.TryBeginReportAsync(key, "JobName", t0, _week);
     var repeat = await ledger.TryBeginReportAsync(key, "JobName", t0.AddDays(1), _week);
