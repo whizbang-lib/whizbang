@@ -28,8 +28,6 @@ public partial class PerspectiveRewindLoopTests {
   /// <summary>Runner rewinds tolerated before the RED run is called a loop: a converging stream needs one.</summary>
   private const int LOOP_REWINDS = 5;
 
-  private static RewindCountingLogger? _workerLog;
-
   private static readonly Guid _specimenOrigin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-000000002379");
 
   /// <summary>
@@ -42,7 +40,6 @@ public partial class PerspectiveRewindLoopTests {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
     var workerLog = new RewindCountingLogger();
-    _workerLog = workerLog;
     await using var pipeline = _composePipeline(workerLog, snapshots: true);
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
@@ -54,7 +51,7 @@ public partial class PerspectiveRewindLoopTests {
     await Assert.That(await _scalarAsync<int>(conn, "SELECT wh_queue_unreachable_rewinds()", streamId, ct)).IsEqualTo(0)
       .Because("a looping stream with pending work needs no repair: its next claim settles it");
 
-    await _convergesAfterOneRewindAsync(pipeline, conn, streamId, specimen, workIds, ct);
+    await _convergesAfterOneRewindAsync(pipeline, workerLog, conn, streamId, specimen, workIds, ct);
   }
 
   /// <summary>
@@ -66,7 +63,6 @@ public partial class PerspectiveRewindLoopTests {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
     var workerLog = new RewindCountingLogger();
-    _workerLog = workerLog;
     await using var pipeline = _composePipeline(workerLog, snapshots: true);
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
@@ -80,7 +76,7 @@ public partial class PerspectiveRewindLoopTests {
     var workIds = await _workIdsAsync(conn, streamId, ct);
     await Assert.That(workIds.Count).IsEqualTo(1).Because("the flag's trigger is queued, unleased");
 
-    await _convergesAfterOneRewindAsync(pipeline, conn, streamId, specimen, workIds, ct);
+    await _convergesAfterOneRewindAsync(pipeline, workerLog, conn, streamId, specimen, workIds, ct);
   }
 
   /// <summary>
@@ -96,7 +92,6 @@ public partial class PerspectiveRewindLoopTests {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
     var workerLog = new RewindCountingLogger();
-    _workerLog = workerLog;
     await using var pipeline = _composePipeline(workerLog, snapshots: true);
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
@@ -110,12 +105,11 @@ public partial class PerspectiveRewindLoopTests {
     var completedPayload = JsonSerializer.Serialize(new ItemProgressCompletedEvent { StreamId = streamId },
       options.GetTypeInfo(typeof(ItemProgressCompletedEvent)));
 
-    var ids = await h.EmitAsync([
+    var ids = await h.EmitAsync(
       new TwoServiceEmit(streamId, started, 0, null, startedPayload),
       new TwoServiceEmit(streamId, started, 0, null, startedPayload),
       new TwoServiceEmit(streamId, started, 0, null, startedPayload),
-      new TwoServiceEmit(streamId, completed, 0, null, completedPayload),
-    ]);
+      new TwoServiceEmit(streamId, completed, 0, null, completedPayload));
     await Assert.That((await h.DeliverAsync([ids[3]])).Count).IsEqualTo(1);
     await Assert.That((await h.DeliverAsync(ids[..3])).Count).IsEqualTo(3);
     var specimen = new FirstEventHasTheHighestId(Version1: ids[3], Version2: ids[0], Version3: ids[1], Version4: ids[2]);
@@ -123,7 +117,7 @@ public partial class PerspectiveRewindLoopTests {
     var workIds = await _releasedWorkIdsAsync(conn, streamId, pipeline.InstanceProvider.InstanceId, ct);
     await Assert.That(workIds.Count).IsEqualTo(2).Because("versions 3 and 4 are pending on the consumer");
 
-    await _convergesAfterOneRewindAsync(pipeline, conn, streamId, specimen, workIds, ct);
+    await _convergesAfterOneRewindAsync(pipeline, workerLog, conn, streamId, specimen, workIds, ct);
     var held = await TwoServiceHarness.FingerprintAsync(h.Consumer, [streamId]);
 
     for (var cycle = 1; cycle <= 3; cycle++) {
@@ -144,13 +138,14 @@ public partial class PerspectiveRewindLoopTests {
   /// claims it again, and the row keeps its Completed state.
   /// </summary>
   private static async Task _convergesAfterOneRewindAsync(
-      Pipeline pipeline, NpgsqlConnection conn, Guid streamId, FirstEventHasTheHighestId specimen, List<Guid> workIds,
+      Pipeline pipeline, RewindCountingLogger workerLog, NpgsqlConnection conn, Guid streamId,
+      FirstEventHasTheHighestId specimen, List<Guid> workIds,
       CancellationToken ct) {
     var settled = Task.WhenAll(workIds.Select(pipeline.CompletionOf));
     try {
       await pipeline.StartAsync(ct);
     } catch (TimeoutException) {
-      Console.WriteLine($"DIAG start: runner rewinds={pipeline.RunnerRewinds.Count} {await _cursorAsync(conn, streamId, ct)}\nDIAG rows: {await _scalarAsync<string>(conn, "SELECT string_agg(format('%s %s st%s inst %s lease %s', perspective_name, event_id, status, instance_id, lease_expiry), ' | ') FROM wh_perspective_events WHERE stream_id = @id", streamId, ct)}\nDIAG active: {await _scalarAsync<object>(conn, "SELECT string_agg(format('%s %s', assigned_instance_id, lease_expiry), ' | ') FROM wh_active_streams WHERE stream_id = @id", streamId, ct)} me {pipeline.InstanceProvider.InstanceId}\nDIAG logs:\n{pipeline.RunnerRewinds.Warnings}\nDIAG worker:\n{string.Join("\n", _workerLog?.All.TakeLast(40) ?? [])}");
+      Console.WriteLine($"DIAG start: runner rewinds={pipeline.RunnerRewinds.Count} {await _cursorAsync(conn, streamId, ct)}\nDIAG rows: {await _scalarAsync<string>(conn, "SELECT string_agg(format('%s %s st%s inst %s lease %s', perspective_name, event_id, status, instance_id, lease_expiry), ' | ') FROM wh_perspective_events WHERE stream_id = @id", streamId, ct)}\nDIAG active: {await _scalarAsync<object>(conn, "SELECT string_agg(format('%s %s', assigned_instance_id, lease_expiry), ' | ') FROM wh_active_streams WHERE stream_id = @id", streamId, ct)} me {pipeline.InstanceProvider.InstanceId}\nDIAG logs:\n{pipeline.RunnerRewinds.Warnings}\nDIAG worker:\n{string.Join("\n", workerLog.All.TakeLast(40))}");
       throw;
     }
     var looping = pipeline.RunnerRewinds.Reached(LOOP_REWINDS);
