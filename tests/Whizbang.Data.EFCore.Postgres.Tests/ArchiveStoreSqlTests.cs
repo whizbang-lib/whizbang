@@ -709,11 +709,12 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
 
     var restored = await store.RestoreAsync(stream);
 
-    await Assert.That(restored).IsEqualTo(new ArchiveRestoreResult(ArchiveStatus.RESTORED, 5, archived.OriginGeneration + 1));
+    await Assert.That(restored).IsEqualTo(new ArchiveRestoreResult(ArchiveStatus.RESTORED, 5, archived.OriginGeneration))
+      .Because("#2363: the restore takes its events back out of what the archive carried, so nothing a consumer verified changed");
     await Assert.That(await _fullHotRowsAsync(connection, stream)).IsEquivalentTo(rows, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("every event returns at its version and commit position with its body, so nothing reads it as new");
     await Assert.That(await _digestRowsAsync(connection, stream)).IsEquivalentTo(digests, TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the refold adds back exactly what the chain folded: not the at-most-once event, not the audit record");
+      .Because("the digests are what they were before the archive: not the at-most-once event, not the audit record");
     // #2106: the refold restores every lane, the id lanes included.
     await StoredDigestInvariant.AssertAgreeAsync(connection, stream);
     await Assert.That(await _cursorRowAsync(connection, stream)).IsEqualTo(cursor).Because("the parked cursor returns as it was");
