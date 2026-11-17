@@ -10,7 +10,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -470,7 +470,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
   private static async Task<(long Lo, long Hi)> _foldAsync(NpgsqlConnection conn, params Guid[] ids) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT bit_xor(hashtextextended(x::text, 0)), bit_xor(hashtextextended(x::text, 1)) FROM unnest(@ids::uuid[]) x";
-    cmd.Parameters.AddWithValue("ids", ids);
+    cmd.Parameters.AddWithValue(nameof(ids), ids);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
     return (reader.GetInt64(0), reader.GetInt64(1));
