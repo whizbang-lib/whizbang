@@ -52,6 +52,15 @@ public class StreamIdPrimaryKeySqlTests {
     public string Title { get; init; } = string.Empty;
   }
 
+  /// <summary>A model whose stream id is nullable, so a document can hold none.</summary>
+  [SuppressIndexAdvisory("this model exists to compile queries, never to run them")]
+  public class DraftModel {
+    [StreamId]
+    public Guid? DraftId { get; init; }
+
+    public string Title { get; init; } = string.Empty;
+  }
+
   private sealed class OrderDbContext(DbContextOptions<OrderDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<PerspectiveRow<OrderModel>>(entity => {
@@ -59,6 +68,7 @@ public class StreamIdPrimaryKeySqlTests {
         entity.Property<decimal>("price").HasColumnName("price");
       });
       modelBuilder.Entity<PerspectiveRow<UnregisteredModel>>(entity => _mapRow(entity, "wh_per_unregistered"));
+      modelBuilder.Entity<PerspectiveRow<DraftModel>>(entity => _mapRow(entity, "wh_per_draft"));
     }
 
     private static void _mapRow<TModel>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<PerspectiveRow<TModel>> entity, string table)
@@ -91,7 +101,13 @@ public class StreamIdPrimaryKeySqlTests {
   private static OrderDbContext _newContext() {
     PhysicalFieldRegistry.Register<OrderModel>("Price", "price");
     StreamIdRegistry.Register<OrderModel>("OrderId");
+    StreamIdRegistry.Register<DraftModel>("DraftId");
     return new OrderDbContext(_options);
+  }
+
+  private static string _draftSql(Func<IQueryable<DraftModel>, IQueryable<DraftModel>> shape) {
+    using var db = _newContext();
+    return shape(db.Set<PerspectiveRow<DraftModel>>().Select(r => r.Data)).ToQueryString();
   }
 
   private static string _rowSql(Func<IQueryable<PerspectiveRow<OrderModel>>, IQueryable<PerspectiveRow<OrderModel>>> shape) {
@@ -304,6 +320,48 @@ public class StreamIdPrimaryKeySqlTests {
     var sql = _projectedSql(models => models.OrderBy(x => x.Title).Skip(5).Where(x => x.OrderId == id));
 
     await Assert.That(sql).DoesNotContain("w.id = @");
+  }
+
+  // ========================================
+  // A null value never reaches the primary key
+  // ========================================
+
+  /// <summary>A nullable stream id compared with a value that is not null is answered by the primary key.</summary>
+  [Test]
+  public async Task NullableStreamId_EqualsAValue_AddsPrimaryKeyAsync() {
+    Guid? id = _probeId;
+    var sql = _draftSql(models => models.Where(x => x.DraftId == id));
+
+    await Assert.That(sql).Contains("w.id = @");
+  }
+
+  /// <summary>
+  /// The primary key is never null, so a comparison with null keeps finding the documents with no stream id.
+  /// This is the shape a GraphQL <c>eq: null</c> filter produces.
+  /// </summary>
+  [Test]
+  public async Task NullableStreamId_EqualsNull_IsLeftAloneAsync() {
+    var sql = _draftSql(models => models.Where(x => x.DraftId == null));
+
+    await Assert.That(sql).DoesNotContain("w.id");
+  }
+
+  /// <summary>A captured value that happens to be null is settled from the parameter, and the key is dropped.</summary>
+  [Test]
+  public async Task NullableStreamId_EqualsANullVariable_IsLeftAloneAsync() {
+    Guid? id = null;
+    var sql = _draftSql(models => models.Where(x => x.DraftId == id));
+
+    await Assert.That(sql).DoesNotContain("w.id");
+  }
+
+  /// <summary>A set of nullable ids can hold null, so it stays a document search.</summary>
+  [Test]
+  public async Task NullableStreamId_InASetThatCanHoldNull_IsLeftAloneAsync() {
+    var ids = new List<Guid?> { _probeId, null };
+    var sql = _draftSql(models => models.Where(x => ids.Contains(x.DraftId)));
+
+    await Assert.That(sql).DoesNotContain("w.id");
   }
 
   /// <summary>A model whose stream id is not registered compiles exactly as before.</summary>

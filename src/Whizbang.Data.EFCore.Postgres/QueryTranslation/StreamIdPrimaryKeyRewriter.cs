@@ -34,7 +34,8 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// before. For a model that keeps the <c>[StreamId]</c> contract the two values are equal and the result is
 /// the same; a row whose property was set to something other than its stream id is no longer found by that
 /// property. A conjunct under <c>OR</c> or <c>NOT</c> is left alone, because it does not narrow the result
-/// to those rows.
+/// to those rows. The primary key is never null, so a comparison with a null value, or a set that can hold
+/// null, is not answered by it: those keep finding the rows whose document has no stream id.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#stream-id-filters</docs>
@@ -175,11 +176,17 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
 
         // An equality is rebuilt with the row's id on the left, whichever side the property was on, so the
         // SQL always reads id = @value; a set test keeps its own shape with the id in place of the property.
+        // The primary key is never null, while a null comparison matches a document with no stream id. So
+        // an equality with a value that can be null adds the key only when the value is not null (EF Core
+        // settles that from the parameter's value), and a set that can hold null stays a document search.
         if (conjunct is BinaryExpression) {
-          return Expression.Equal(_as(id, other.Type), other);
+          var key = Expression.Equal(_as(id, other.Type), other);
+          return _canBeNull(other.Type)
+            ? Expression.OrElse(Expression.Equal(other, Expression.Constant(null, other.Type)), key)
+            : key;
         }
 
-        return new NodeReplacer(member, _as(id, member.Type)).Visit(conjunct);
+        return _canBeNull(candidate.Type) ? null : new NodeReplacer(member, _as(id, member.Type)).Visit(conjunct);
       }
     }
 
@@ -189,6 +196,8 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
   /// <summary>The expression converted to <paramref name="type"/> when it is not already of it (Guid to Guid?).</summary>
   private static Expression _as(Expression expression, Type type) =>
     expression.Type == type ? expression : Expression.Convert(expression, type);
+
+  private static bool _canBeNull(Type type) => Nullable.GetUnderlyingType(type) is not null;
 
   /// <summary>The item and the collection of a <c>Contains</c> call, whether it is an instance or an extension method.</summary>
   private static (Expression Item, Expression Collection) _itemAndCollection(MethodCallExpression contains) =>

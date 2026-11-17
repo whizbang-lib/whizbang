@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
   private const string TABLE = "wh_per_stream_id_pk_test";
+  private const string DRAFT_TABLE = "wh_per_stream_id_pk_draft_test";
 
   private static readonly Guid _matchingId = new("018f2a6e-0000-7000-8000-000000000001");
   private static readonly Guid _otherRowId = new("018f2a6e-0000-7000-8000-000000000002");
@@ -45,19 +46,32 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
     public string Title { get; init; } = string.Empty;
   }
 
+  /// <summary>A model whose registered stream id is nullable, so a document can hold none.</summary>
+  [SuppressIndexAdvisory("test fixture; its table is created by the test")]
+  public class DraftModel {
+    [StreamId]
+    public Guid? DraftId { get; init; }
+
+    public string Title { get; init; } = string.Empty;
+  }
+
   private sealed class OrderDbContext(DbContextOptions<OrderDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
-      modelBuilder.Entity<PerspectiveRow<OrderModel>>(entity => {
-        entity.ToTable(TABLE);
-        entity.HasKey(e => e.Id);
-        entity.Property(e => e.Id).HasColumnName("id");
-        entity.Property(e => e.CreatedAt).HasColumnName("created_at");
-        entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
-        entity.Property(e => e.Version).HasColumnName("version");
-        entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
-        entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
-        entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
-      });
+      modelBuilder.Entity<PerspectiveRow<OrderModel>>(entity => _mapRow(entity, TABLE));
+      modelBuilder.Entity<PerspectiveRow<DraftModel>>(entity => _mapRow(entity, DRAFT_TABLE));
+    }
+
+    private static void _mapRow<TModel>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<PerspectiveRow<TModel>> entity, string table)
+        where TModel : class {
+      entity.ToTable(table);
+      entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).HasColumnName("id");
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+      entity.Property(e => e.Version).HasColumnName("version");
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
     }
   }
 
@@ -78,6 +92,7 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
 
     // This class's own model only: the registry is keyed by model type, so this touches nothing another test reads.
     StreamIdRegistry.Register<OrderModel>(nameof(OrderModel.OrderId));
+    StreamIdRegistry.Register<DraftModel>(nameof(DraftModel.DraftId));
 
     _context = new OrderDbContext(new DbContextOptionsBuilder<OrderDbContext>()
       .UseNpgsql(_dataSource)
@@ -87,8 +102,22 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
 
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync();
+    foreach (var table in new[] { TABLE, DRAFT_TABLE }) {
+      await _createTableAsync(connection, table);
+    }
+
+    // One row that keeps the [StreamId] contract, and one whose document names a different id than its row.
+    await _seedAsync(TABLE, _matchingId, new OrderModel { OrderId = _matchingId, Title = "matching" });
+    await _seedAsync(TABLE, _otherRowId, new OrderModel { OrderId = _otherDocumentId, Title = "mismatched" });
+
+    // One draft with a stream id, and one whose document holds none.
+    await _seedAsync(DRAFT_TABLE, _matchingId, new DraftModel { DraftId = _matchingId, Title = "assigned" });
+    await _seedAsync(DRAFT_TABLE, _otherRowId, new DraftModel { DraftId = null, Title = "unassigned" });
+  }
+
+  private static async Task _createTableAsync(NpgsqlConnection connection, string table) =>
     await connection.ExecuteAsync($"""
-      CREATE TABLE {TABLE} (
+      CREATE TABLE {table} (
         id UUID PRIMARY KEY,
         data JSONB NOT NULL,
         metadata JSONB NOT NULL,
@@ -101,15 +130,10 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
       );
       """);
 
-    // One row that keeps the [StreamId] contract, and one whose document names a different id than its row.
-    await _seedAsync(_matchingId, new OrderModel { OrderId = _matchingId, Title = "matching" });
-    await _seedAsync(_otherRowId, new OrderModel { OrderId = _otherDocumentId, Title = "mismatched" });
-  }
-
-  private async Task _seedAsync(Guid rowId, OrderModel model) {
+  private async Task _seedAsync<TModel>(string table, Guid rowId, TModel model) where TModel : class {
     var metadata = new PerspectiveMetadata { EventType = "OrderCreated", EventId = rowId.ToString(), Timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc) };
     await new PostgresUpsertStrategy().UpsertPerspectiveRowWithPhysicalFieldsAsync(
-      _context!, TABLE, rowId, model, metadata, new PerspectiveScope(), new Dictionary<string, object?>());
+      _context!, table, rowId, model, metadata, new PerspectiveScope(), new Dictionary<string, object?>());
   }
 
   [After(Test)]
@@ -154,6 +178,28 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
 
     await Assert.That(found.Count).IsEqualTo(1);
     await Assert.That(found[0].Title).IsEqualTo("matching");
+  }
+
+  /// <summary>
+  /// The primary key is never null, so a null comparison, whether written as null or held in a variable or a
+  /// set, still finds the document with no stream id, as it did before the key was added.
+  /// </summary>
+  [Test]
+  public async Task NullComparison_StillFindsTheDocumentWithNoStreamIdAsync() {
+    Guid? nothing = null;
+    var withNull = new List<Guid?> { null };
+    var drafts = _context!.Set<PerspectiveRow<DraftModel>>().Select(r => r.Data);
+
+    var byLiteral = await drafts.Where(x => x.DraftId == null).ToListAsync();
+    var byVariable = await drafts.Where(x => x.DraftId == nothing).ToListAsync();
+    var bySet = await drafts.Where(x => withNull.Contains(x.DraftId)).ToListAsync();
+    Guid? assigned = _matchingId;
+    var byValue = await drafts.Where(x => x.DraftId == assigned).ToListAsync();
+
+    await Assert.That(byLiteral.Select(d => d.Title)).IsEquivalentTo(["unassigned"]);
+    await Assert.That(byVariable.Select(d => d.Title)).IsEquivalentTo(["unassigned"]);
+    await Assert.That(bySet.Select(d => d.Title)).IsEquivalentTo(["unassigned"]);
+    await Assert.That(byValue.Select(d => d.Title)).IsEquivalentTo(["assigned"]);
   }
 
   /// <summary>
