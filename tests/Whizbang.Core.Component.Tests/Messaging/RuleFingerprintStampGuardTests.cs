@@ -1,7 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.IO;
 using System.Text.RegularExpressions;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -9,7 +12,8 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <summary>
 /// #2362: every integrity message the framework builds carries its sender's rules. A receiver halts the pair on a
 /// message without them, so a send site that forgot the fingerprint would halt every pair it talks to. This guard reads
-/// every source file and fails on a construction of the four carriers whose initializer does not set it.
+/// every source file and fails on a construction of the four carriers whose initializer does not set it. It reads the
+/// source tree, so it lives with the other source guards in the component project, not with the unit tests (#1264).
 /// </summary>
 [Category("Messaging")]
 public partial class RuleFingerprintStampGuardTests {

@@ -19,9 +19,10 @@ namespace Whizbang.Core.Tests.Rules;
 public class RuleSemanticsGoldenTests {
   [Test]
   public async Task TheRulesSemantics_MatchTheGoldenLineOfTheCurrentRulesVersionAsync() {
-    var root = _repositoryRoot();
-    var version = (await File.ReadAllTextAsync(Path.Combine(root, "src", "Whizbang.Rules", "rules-version.txt"))).Trim();
-    var golden = (await File.ReadAllLinesAsync(Path.Combine(root, "src", "Whizbang.Rules", "rule-semantics.golden.txt")))
+    var version = (await _resourceAsync("rules-version.txt")).Trim();
+    var golden = (await _resourceAsync("rule-semantics.golden.txt"))
+      .Split('\n')
+      .Select(l => l.TrimEnd('\r'))
       .Where(l => l.Length > 0 && !l.StartsWith('#'))
       .Select(l => l.Split(' ', 2))
       .ToList();
@@ -62,12 +63,10 @@ public class RuleSemanticsGoldenTests {
     return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
   }
 
-  private static string _repositoryRoot() {
-    var dir = new DirectoryInfo(AppContext.BaseDirectory);
-    while (dir is not null
-        && !(Directory.Exists(Path.Combine(dir.FullName, "src")) && Directory.Exists(Path.Combine(dir.FullName, "tests")))) {
-      dir = dir.Parent;
-    }
-    return dir?.FullName ?? throw new InvalidOperationException("the repository root was not found above the test binaries");
+  /// <summary>One of the rules' files, embedded from <c>src/Whizbang.Rules</c> (the test project's csproj).</summary>
+  private static async Task<string> _resourceAsync(string name) {
+    await using var stream = typeof(RuleSemanticsGoldenTests).Assembly.GetManifestResourceStream($"WhizbangRules/{name}")!;
+    using var reader = new StreamReader(stream);
+    return await reader.ReadToEndAsync();
   }
 }

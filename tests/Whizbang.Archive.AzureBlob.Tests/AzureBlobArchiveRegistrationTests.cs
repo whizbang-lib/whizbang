@@ -339,9 +339,9 @@ public class AzureBlobArchiveRegistrationTests {
     services.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
     await using var provider = services.BuildServiceProvider();
 
+    // Without one, the store uses the system clock: AzureBlobArchiveStoreTests in the integration project asserts it,
+    // since a unit project does not name the real clock (#1264).
     await Assert.That(provider.GetRequiredService<AzureBlobArchiveStore>().Clock).IsSameReferenceAs(clock);
-    await Assert.That(new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions()).Clock).IsSameReferenceAs(TimeProvider.System) // review-checks:allow compares the default reference; reads no time
-      .Because("without one, the system clock");
   }
 
   [Test]

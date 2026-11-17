@@ -35,4 +35,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- #2343: the rules' version and golden file, read by RuleSemanticsGoldenTests. Embedded so the test reads no
+         files at run time (a unit test does no I/O, #1264), and a change to either rebuilds it. -->
+    <EmbeddedResource Include="..\..\src\Whizbang.Rules\rules-version.txt;..\..\src\Whizbang.Rules\rule-semantics.golden.txt"
+                      LogicalName="WhizbangRules/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

@@ -226,6 +226,14 @@ public partial class AzureBlobArchiveStoreTests {
   // ── Write and read ─────────────────────────────────────────────────────────────────────────────────
 
   [Test]
+  public async Task Store_WithoutAClock_MeasuresAgesOnTheSystemClockAsync() {
+    // The registered clock is the unit project's case (AzureBlobArchiveRegistrationTests); this is the default, which
+    // names the real clock and so belongs here (#1264).
+    await Assert.That(_store().Clock).IsSameReferenceAs(TimeProvider.System) // review-checks:allow compares the default reference; reads no time
+      .Because("a store built without a clock measures ages on the system clock");
+  }
+
+  [Test]
   public async Task Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync() {
     var (stream, _) = await _seedAsync(5);
     var hot = await _hotAsReadAsync(stream);
