@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres;
 
@@ -34,11 +35,7 @@ namespace Whizbang.Data.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
-internal sealed class RebuildCommandReceptorRegistrar(
-    IServiceProvider services,
-    IServiceScopeFactory scopeFactory,
-    ILogger<RebuildPerspectiveCommandReceptor> receptorLogger) : IHostedService {
+internal sealed class RebuildCommandReceptorRegistrar(IServiceProvider services) : IHostedService {
 
   public Task StartAsync(CancellationToken cancellationToken) {
     // Receptor registry is optional — hosts that wire the Postgres driver without a dispatcher
@@ -51,7 +48,9 @@ internal sealed class RebuildCommandReceptorRegistrar(
       return Task.CompletedTask;
     }
 
-    var receptor = new RebuildPerspectiveCommandReceptor(scopeFactory, receptorLogger);
+    // The same handling the integrity audit runs a repair through (#2344): one instance, one behavior. Resolved only
+    // once there is a registry to register into, so a host without receptors needs none of the rebuild services.
+    var receptor = new RebuildPerspectiveCommandReceptor(services.GetRequiredService<PerspectiveRebuildRequestHandler>());
     // LocalImmediateInline: the sender's own copy, run by local dispatch. PreOutboxInline: an
     // outbox row nothing dispatched locally. PostInboxInline: every other service's copy.
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.LocalImmediateInline);
@@ -80,11 +79,15 @@ internal static class RebuildCommandRegistration {
   /// <returns>The service collection.</returns>
   internal static IServiceCollection AddRebuildCommandHandling(this IServiceCollection services) {
     // Factories, not types: naming the constructors keeps activation free of reflection.
+    // #2344: one rebuild handling, run by the receptor for a command that reached this service and by the integrity
+    // audit, in-process, for a coverage gap in this service's own perspective. Its entries log under the receptor's
+    // category, where they always have.
+    services.TryAddSingleton(sp => new PerspectiveRebuildRequestHandler(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<ILogger<RebuildPerspectiveCommandReceptor>>()));
+    services.TryAddSingleton<IPerspectiveRebuildRequestHandler>(sp => sp.GetRequiredService<PerspectiveRebuildRequestHandler>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, RebuildCommandReceptorRegistrar>(sp =>
-      new RebuildCommandReceptorRegistrar(
-        sp,
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<RebuildPerspectiveCommandReceptor>>())));
+      new RebuildCommandReceptorRegistrar(sp)));
     // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
     services.TryAddSingleton(_ => new RebuildBackgroundQueue());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, RebuildBackgroundWorker>(sp =>

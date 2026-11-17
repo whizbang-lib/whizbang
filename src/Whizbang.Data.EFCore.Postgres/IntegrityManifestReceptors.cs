@@ -166,6 +166,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     Guid? resumeAfter = null;
     var answeredWindowed = false;
     var windowCapped = false;
+    var nothingSettledAbove = false;
 
     if (message.Windowed) {
       // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
@@ -181,10 +182,19 @@ public sealed partial class IntegrityManifestRequestReceptor(
             null, eventTypes, message.SinceSequence, until,
             message.ResumeAfterStreamId, message.MaxDigests ?? options.MaxDigestsPerManifest, settle,
             cancellationToken).ConfigureAwait(false);
-      if (windowed is not null) {
-        if (windowed.Digests.Count == 0 && windowed.ComputedThrough <= message.SinceSequence) {
-          return;   // nothing settled beyond the asker's watermark — no progress to report.
+      if (windowed is { Digests.Count: 0 } && windowed.ComputedThrough <= message.SinceSequence) {
+        // #2349: nothing settled at or above the asker's start. The engine folds nothing for such a window (it reads the
+        // settled head first and returns before the fold), and a type-level ask is answered with exactly that, so the
+        // asker can tell an unchanged origin from a lost answer and stop asking it until something moves. A drill-down
+        // page or a ledger re-check has no use for the reply, and stays silent as before.
+        services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestAnswersUnchanged.Add(1,
+          new KeyValuePair<string, object?>("level", message.Level.ToString()));
+        if (message.Level != ManifestLevel.Types || message.Recheck) {
+          return;
         }
+        nothingSettledAbove = true;
+      }
+      if (windowed is not null) {
         digests = windowed.Digests;
         computedThrough = windowed.ComputedThrough;
         // #2107: the answer stopped at the cap, not at the settled head: more settled history follows.
@@ -271,6 +281,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           Recheck = message.Recheck,
           // #2225: the walk's types, so each follow-up page asks for all of them, not only those this page held.
           RequestedEventTypes = message.Level == ManifestLevel.Streams ? eventTypes : null,
+          NothingSettledAbove = nothingSettledAbove,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1084,6 +1095,15 @@ public sealed partial class IntegrityManifestReceptor(
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
     var coordinator = services.GetRequiredService<IWorkCoordinator>();
     var windowed = message.ComputedThrough is not null;
+    if (message.NothingSettledAbove) {
+      // #2349: the origin had nothing settled at or above the window's start, so there is nothing to fold or compare. When
+      // the window started at or below the seal, the whole window above the seal matched: remember it, so the next audit
+      // skips the ask while nothing moves.
+      if ((message.SinceSequence ?? 0) <= await coordinator.GetIntegritySealAsync(message.OriginServiceId, cancellationToken).ConfigureAwait(false)) {
+        await coordinator.IntegrityRecordCompareOutcomeAsync(message.OriginServiceId, fullMatch: true, cancellationToken).ConfigureAwait(false);
+      }
+      return true;
+    }
     IReadOnlyList<StreamDigest> local;
     if (message.ComputedThrough is long windowEnd) {
       // #80-B/C: the local fold covers the manifest's EXACT window — anything else compares
@@ -1151,9 +1171,17 @@ public sealed partial class IntegrityManifestReceptor(
           && (message.SinceSequence ?? 0) <= await coordinator.GetIntegritySealAsync(message.OriginServiceId, cancellationToken).ConfigureAwait(false)) {
         await coordinator.AdvanceIntegritySealAsync(message.OriginServiceId, through, cancellationToken)
           .ConfigureAwait(false);
+        // #2349: the window above the seal matched in full; the next audit skips the ask while nothing moves.
+        await coordinator.IntegrityRecordCompareOutcomeAsync(message.OriginServiceId, fullMatch: true, cancellationToken)
+          .ConfigureAwait(false);
         LogSealAdvanced(logger, message.OriginServiceName, through);
       }
       return true;   // every type roll-up matches: the whole subscribed surface is provably complete.
+    }
+    if (windowed) {
+      // #2349: a window that disagrees is under repair; forgetting the last match makes the next audit ask again.
+      await coordinator.IntegrityRecordCompareOutcomeAsync(message.OriginServiceId, fullMatch: false, cancellationToken)
+        .ConfigureAwait(false);
     }
 
     var transport = services.GetService<ITransport>();

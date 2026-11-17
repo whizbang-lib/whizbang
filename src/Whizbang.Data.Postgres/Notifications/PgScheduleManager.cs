@@ -63,7 +63,7 @@ public sealed class PgScheduleManager(
     }
 
     await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("No database connection available to create a schedule.");
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = @"
       SELECT o_schedule_id, o_next_fire_at, o_was_created FROM wh_create_schedule(
         p_schedule_id => @id, p_schedule_key => @key, p_stream_id => @stream, p_partition_number => @part,
@@ -133,7 +133,7 @@ public sealed class PgScheduleManager(
     if (conn is null) {
       return null;
     }
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = "SELECT o_triggered, o_occurrence_id FROM wh_trigger_schedule_now(@id, @i, @lease, @pc)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("i", NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
@@ -169,7 +169,7 @@ public sealed class PgScheduleManager(
     if (conn is null) {
       return null;
     }
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = @"
       SELECT o_updated, o_next_fire_at, o_version FROM wh_update_schedule(
         @id, @ver, @kind, @interval, @cron, @tz, @start, @until, @maxocc, @misfire, @delivery, @edata, @scope,
@@ -212,7 +212,7 @@ public sealed class PgScheduleManager(
     if (conn is null) {
       return false;
     }
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = "SELECT o_updated FROM wh_transition_schedule(@id, @target, @ver)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("target", NpgsqlDbType.Smallint) { Value = targetStatus });

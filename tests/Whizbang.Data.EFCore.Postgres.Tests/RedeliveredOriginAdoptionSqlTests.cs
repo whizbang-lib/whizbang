@@ -269,7 +269,7 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
       await off.ExecuteNonQueryAsync();
     }
     await using (var adopt = conn.CreateCommand()) {
-      adopt.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundle_by_first_hop($1, NULL, $2, $3)";
+      adopt.CommandText = "SELECT count(*) FROM wh_reconcile_redelivered_bundle_counting_satisfied($1, NULL, $2, $3)";
       adopt.Parameters.Add(new NpgsqlParameter { Value = origin });
       adopt.Parameters.Add(new NpgsqlParameter { Value = new[] { received } });
       adopt.Parameters.Add(new NpgsqlParameter { Value = new long[] { 7 } });

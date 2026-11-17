@@ -28,6 +28,15 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 public class MessageTypeRegistryReconciliationHostedServiceTests {
 
   [Test]
+  public async Task DbMechanism_IsTheTypeRegistry_SoItsStatementsAreAttributedToItAsync() {
+    var sut = new MessageTypeRegistryReconciliationHostedService(
+      NullLogger<MessageTypeRegistryReconciliationHostedService>.Instance);
+
+    await Assert.That(sut.DbMechanism).IsEqualTo(Whizbang.Core.Observability.DbMechanism.TypeRegistry)
+      .Because("the reconciliation's statements are counted under the type registry, not left untagged");
+  }
+
+  [Test]
   public async Task StartAsync_CatalogAndPopulatorPresent_InvokesPopulateAsyncWithTokenAsync() {
     var catalog = new StubMessageTypeCatalog();
     var populator = new SpyPopulator();

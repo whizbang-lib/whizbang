@@ -38,11 +38,10 @@ public class RebuildCommandReceptorRegistrarTests {
     if (registry is not null) {
       services.AddSingleton(registry);
     }
+    services.AddSingleton(sp => new PerspectiveRebuildRequestHandler(
+      sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<RebuildPerspectiveCommandReceptor>>()));
     var provider = services.BuildServiceProvider();
-    return new RebuildCommandReceptorRegistrar(
-      provider,
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      provider.GetRequiredService<ILogger<RebuildPerspectiveCommandReceptor>>());
+    return new RebuildCommandReceptorRegistrar(provider);
   }
 
   [Test]

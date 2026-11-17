@@ -189,7 +189,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     _scopeFactory = scopeFactory;
     _tracingOptions = tracingOptions;
     // #2295: a perspective that keeps no rewind floor takes no snapshots and restores from none.
-    _snapshotStore = _keepsRewindFloor ? snapshotStore : null;
+    // The framework's null default (IsConfigured false) is no store: a rewind asking it for a floor threw, so a service
+    // with no snapshot store failed every rewind its drain path ran (#2366).
+    _snapshotStore = _keepsRewindFloor && snapshotStore is { IsConfigured: true } ? snapshotStore : null;
     _snapshotOptions = snapshotOptions;
     _applyCoordinator = applyCoordinator;
     _collectiveReplayApplier = collectiveReplayApplier;
@@ -2496,6 +2498,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // final event can carry a LOWER local stamp than a backfilled straggler it slotted.
     Guid? frontierEventId = null;
     long? frontierCommitSequence = null;
+    // #2366: the replayed event last in stream order (by version), the position the cursor reports.
+    var lastInStream = new LastInStream();
 
     // Slice 24c: intermediate-snapshot tracking. When the rewind interval is configured
     // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
@@ -2623,6 +2627,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         foreach (var skipped in events.Take(foldFrom)) {
           if (skipped.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
             (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, skipped);
+            lastInStream.Offer(skipped);
           }
           eventsProcessed++;
         }
@@ -2668,6 +2673,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
         (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
+        lastInStream.Offer(envelope);
         if (resurrection is null) {
           purgedEventsSkipped++;
           continue;
@@ -2723,6 +2729,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
       (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
+      lastInStream.Offer(envelope);
 
       // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
       // at THIS point in the stream's history so future rewinds for late events with
@@ -2793,6 +2800,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       PurgedEventsSkipped = purgedEventsSkipped,
       FrontierEventId = frontierEventId,
       FrontierCommitSequence = frontierCommitSequence,
+      LastInStream = lastInStream,
       ModelAtLastEvent = modelAtLastEvent,
       CollectivesHeldThrough = heldThrough.Mark,
       CollectivesSettled = heldThrough.Settled,
@@ -2926,15 +2934,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       StreamId = streamId,
       PerspectiveName = perspectiveName,
       PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
-      // The cursor tracks the stream FRONTIER — under origin-order replay the last-applied
-      // event need not carry the largest id, and a cursor behind the frontier would re-flag
-      // already-replayed events as stragglers on the next work item.
-      LastEventId = frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      // #2366: the cursor reports one position, in the stream's one order: the replayed event last by version. It used
+      // to report the largest id applied together with the largest commit sequence applied, a position no event has
+      // when ids and versions disagree (copies stored after a newer event), and the cursor was put back on that id.
+      // The id frontier stays the fallback when the store gives no versions.
+      LastEventId = outcome.LastInStream.Position ?? frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
       // Reported rather than left for the caller to rediscover. The caller used to look the id above
       // up among the rows its batch claimed, which a replay never applied, so the commit-sequence
       // cursor stayed behind while the event-id cursor moved and the inversion detector then
       // under-reported against the stale one (#1365).
       LastCommitSequence = frontierCommitSequence,
+      // #2366: a replay from the stream's start read every event stamped at or below its frontier (a stamp is assigned
+      // only after the event commits), so each is folded and the cursor stores the frontier. A replay from a snapshot
+      // reads only the events after the snapshot's id, which says nothing about a stamp below the frontier.
+      ReplayedThroughCommitSequence = eventsProcessed > 0 && replayFromEventId is null ? frontierCommitSequence : null,
       Status = resultStatus,
       RowChanged = rowChanged,
       UnchangedReason = unchangedReason,
@@ -2984,6 +2997,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         read.Offer(envelope);
         outcome.FirstStreamEvent ??= envelope;
         (outcome.FrontierEventId, outcome.FrontierCommitSequence) = _advanceFrontier(outcome.FrontierEventId, outcome.FrontierCommitSequence, envelope);
+        outcome.LastInStream.Offer(envelope);
         readUpTo = _laterId(readUpTo, envelope.MessageId.Value);
       }
       if (read.Count == 0) {
@@ -3029,6 +3043,30 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private static Guid _laterId(Guid? current, Guid candidate) =>
       current is { } held && string.CompareOrdinal(held.ToString("D"), candidate.ToString("D")) >= 0 ? held : candidate;
 
+  /// <summary>
+  /// The replayed event last in stream order (#2366): the highest version read. A replay of a stream whose ids disagree
+  /// with its versions (copies stored after a newer event) ends there, and the cursor reports it. Null when any event
+  /// read carried no version, so the order is not known.
+  /// </summary>
+  private sealed class LastInStream {
+    private Guid? _eventId;
+    private long? _version;
+    private bool _unversioned;
+
+    public Guid? Position => _unversioned ? null : _eventId;
+
+    public void Offer(MessageEnvelope<IEvent> envelope) {
+      if (envelope.LocalStreamVersion is not long version) {
+        _unversioned = true;
+        return;
+      }
+      if (_version is null || version > _version.Value) {
+        _version = version;
+        _eventId = envelope.MessageId.Value;
+      }
+    }
+  }
+
   /// <summary>What a replay folded, for the write that ends it (<see cref="_finishReplayAsync"/>).</summary>
   private sealed class ReplayOutcome {
     public Guid StreamId { get; set; }
@@ -3049,6 +3087,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public int PurgedEventsSkipped { get; set; }
     public Guid? FrontierEventId { get; set; }
     public long? FrontierCommitSequence { get; set; }
+    // #2366: the replayed event last in stream order, the position the cursor reports.
+    public LastInStream LastInStream { get; set; } = new();
     // The row at its last event, when collectives committed after that event folded into it (#1956).
     public JsonDocument? ModelAtLastEvent { get; set; }
     // How far the row held its collectives at its last event (#1963): the mark the replay's snapshot records.

@@ -71,32 +71,63 @@ public class RedeliveryReconcileEquivalenceSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task ReconcileBundleByFirstHop_GivesWhatTheWorkTableVersionGaveAsync() {
-    await _assertEquivalentAsync("wh_reconcile_redelivered_bundle_by_first_hop", (fixture, random, trial) => {
-      var bundle = _bundle(fixture, random, trial);
-      return ("{0}($1, $2, $3, $4)",
-        [_uuid(bundle.Origin), _text(bundle.Name), _uuids(bundle.Ids), _longs(bundle.Sequences)]);
-    }, reportsRefusals: true);
+    await _assertEquivalentAsync("wh_reconcile_redelivered_bundle_by_first_hop", _oneBundleCall, reportsRefusals: true);
+  }
+
+  [Test]
+  public async Task ReconcileBundleCountingSatisfied_GivesWhatTheWorkTableVersionGave_WithNothingSatisfiedAsync() {
+    await _assertEquivalentAsync(new Reconcile("wh_reconcile_redelivered_bundle_by_first_hop", "wh_reconcile_redelivered_bundle_counting_satisfied",
+      "(r.stream_id, r.tenant_scope, r.event_type, r.present_count, r.adopted_count, r.refused_truncated_count, r.refused_foreign_origin_count)"),
+      _oneBundleCall, reportsRefusals: true);
   }
 
   [Test]
   public async Task ReconcileBundles_GivesWhatTheWorkTableVersionGaveAsync() {
-    await _assertEquivalentAsync("wh_reconcile_redelivered_bundles", (fixture, random, trial) => {
-      var bundles = Enumerable.Range(0, random.Next(1, 5)).Select(i => _bundle(fixture, random, trial + i)).ToList();
-      var positions = bundles.SelectMany((b, i) => b.Ids.Select(_ => i + 1)).ToArray();
-      return ("{0}($1, $2, $3, $4, $5)", [
-        _uuids([.. bundles.Select(b => b.Origin)]),
-        new NpgsqlParameter { Value = bundles.Select(b => (object?)b.Name ?? DBNull.Value).ToArray(), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text },
-        new NpgsqlParameter { Value = positions, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer },
-        _uuids([.. bundles.SelectMany(b => b.Ids)]),
-        _longs([.. bundles.SelectMany(b => b.Sequences)]),
-      ]);
-    }, reportsRefusals: true);
+    await _assertEquivalentAsync("wh_reconcile_redelivered_bundles", _bundlesCall, reportsRefusals: true);
   }
+
+  [Test]
+  public async Task ReconcileBundlesCountingSatisfied_GivesWhatTheWorkTableVersionGave_WithNothingSatisfiedAsync() {
+    await _assertEquivalentAsync(new Reconcile("wh_reconcile_redelivered_bundles", "wh_reconcile_redelivered_bundles_counting_satisfied",
+      "(r.bundle, r.stream_id, r.tenant_scope, r.event_type, r.present_count, r.adopted_count, r.origins_filled_count, "
+      + "r.refused_truncated_count, r.refused_foreign_origin_count)"),
+      _bundlesCall, reportsRefusals: true);
+  }
+
+  private static (string Call, NpgsqlParameter[] Args) _oneBundleCall(Fixture fixture, Random random, int trial) {
+    var bundle = _bundle(fixture, random, trial);
+    return ("{0}($1, $2, $3, $4)",
+      [_uuid(bundle.Origin), _text(bundle.Name), _uuids(bundle.Ids), _longs(bundle.Sequences)]);
+  }
+
+  private static (string Call, NpgsqlParameter[] Args) _bundlesCall(Fixture fixture, Random random, int trial) {
+    var bundles = Enumerable.Range(0, random.Next(1, 5)).Select(i => _bundle(fixture, random, trial + i)).ToList();
+    var positions = bundles.SelectMany((b, i) => b.Ids.Select(_ => i + 1)).ToArray();
+    return ("{0}($1, $2, $3, $4, $5)", [
+      _uuids([.. bundles.Select(b => b.Origin)]),
+      new NpgsqlParameter { Value = bundles.Select(b => (object?)b.Name ?? DBNull.Value).ToArray(), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text },
+      new NpgsqlParameter { Value = positions, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer },
+      _uuids([.. bundles.SelectMany(b => b.Ids)]),
+      _longs([.. bundles.SelectMany(b => b.Sequences)]),
+    ]);
+  }
+
+  /// <summary>
+  /// A function compared with 336's definition of <paramref name="Legacy"/>, by the row <paramref name="Row"/> selects
+  /// from its result <c>r</c>. The counting reconciles (454, #2350) add superseded_satisfied_count, which 336 has not,
+  /// so their row leaves it out; the fixture holds no child settled as satisfied.
+  /// </summary>
+  private sealed record Reconcile(string Legacy, string Current, string Row);
 
   // ─── The comparison ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+  private Task _assertEquivalentAsync(
+      string function, Func<Fixture, Random, int, (string Call, NpgsqlParameter[] Args)> nextCall, bool reportsRefusals) =>
+    _assertEquivalentAsync(new Reconcile(function, function, "r"), nextCall, reportsRefusals);
+
   private async Task _assertEquivalentAsync(
-      string function, Func<Fixture, Random, int, (string Call, NpgsqlParameter[] Args)> nextCall, bool reportsRefusals) {
+      Reconcile reconcile, Func<Fixture, Random, int, (string Call, NpgsqlParameter[] Args)> nextCall, bool reportsRefusals) {
+    var function = reconcile.Legacy;
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await _installLegacyAsync(conn, function);
@@ -111,8 +142,8 @@ public class RedeliveryReconcileEquivalenceSqlTests : EFCoreTestBase {
       var counts = function == "wh_adopt_redelivered_origin"
         ? "r.adopted_count, 0, 0"
         : "r.adopted_count, r.refused_foreign_origin_count, r.refused_truncated_count";
-      var legacy = await _runAsync(conn, _format(call, LEGACY_PREFIX + function), counts, args);
-      var current = await _runAsync(conn, _format(call, function), counts, args);
+      var legacy = await _runAsync(conn, _format(call, LEGACY_PREFIX + function), "r", counts, args);
+      var current = await _runAsync(conn, _format(call, reconcile.Current), reconcile.Row, counts, args);
       if (legacy.Text != current.Text) {
         mismatches.Add($"trial {trial}:\n  336:     {legacy.Text}\n  current: {current.Text}");
       }
@@ -141,12 +172,12 @@ public class RedeliveryReconcileEquivalenceSqlTests : EFCoreTestBase {
     string.Format(System.Globalization.CultureInfo.InvariantCulture, call, function);
 
   /// <summary>One call under a savepoint: what it returned and the state it left, as text, then rolled back.</summary>
-  private static async Task<Outcome> _runAsync(NpgsqlConnection conn, string call, string counts, NpgsqlParameter[] args) {
+  private static async Task<Outcome> _runAsync(NpgsqlConnection conn, string call, string row, string counts, NpgsqlParameter[] args) {
     await _execAsync(conn, "SAVEPOINT trial");
     var returned = new StringBuilder();
     long adopted = 0, foreign = 0, truncated = 0;
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = $"SELECT r::text, {counts} FROM {call} r";
+      cmd.CommandText = $"SELECT {row}::text, {counts} FROM {call} r";
       foreach (var arg in args) {
         cmd.Parameters.Add(arg.Clone());
       }

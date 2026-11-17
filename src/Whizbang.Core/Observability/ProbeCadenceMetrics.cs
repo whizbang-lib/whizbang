@@ -40,6 +40,12 @@ public sealed class ProbeCadenceMetrics {
 
   /// <summary>Probe name for the backlog-age duty.</summary>
   public const string PROBE_BACKLOG_AGE = "backlog-age";
+
+  /// <summary>The paced repair drain's tick (#2346).</summary>
+  public const string PROBE_REPAIR_DRAIN = "repair-drain";
+
+  /// <summary>The subscription backfill's tick (#2346).</summary>
+  public const string PROBE_SUBSCRIPTION_BACKFILL = "subscription-backfill";
 #pragma warning restore CA1707
 
   private static readonly string[] _knownProbes = [PROBE_DURABLE_SIGNAL_TAIL, PROBE_INSTANCE_LIFECYCLE, PROBE_BACKLOG_AGE];

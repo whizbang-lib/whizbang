@@ -250,6 +250,15 @@ public sealed record DigestVerificationResult {
 
   /// <summary>Total drifted buckets — zero means the incremental maintenance is provably clean.</summary>
   public int TotalDrift => DriftUpdated + DriftRemoved + DriftAdded;
+
+  /// <summary>Streams a slice of the full-history compare took (#2361); zero for the whole-store heal.</summary>
+  public int StreamsChecked { get; init; }
+
+  /// <summary>Whether this slice reached the last stream, completing a pass over the store (#2361).</summary>
+  public bool PassCompleted { get; init; }
+
+  /// <summary>The runs the pass took, when <see cref="PassCompleted"/>; otherwise the runs so far (#2361).</summary>
+  public int PassRuns { get; init; }
 }
 
 /// <summary>
@@ -306,6 +315,16 @@ public sealed class StreamIntegrityOptions {
 
   /// <summary>Checkpoint cadence in seconds (default 60).</summary>
   public int CheckpointIntervalSeconds { get; set; } = 60;
+
+  /// <summary>
+  /// The longest an origin goes without sending a checkpoint, in minutes (default 15, #2348). A checkpoint goes out on the
+  /// first cycle after the origin's settled position moved; while it does not move, only this heartbeat goes out, so a
+  /// consumer can still tell an idle origin from a lost one. A consumer calls an origin stale once this heartbeat plus two
+  /// checkpoint intervals have passed without one. 0 or less sends every cycle, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs:RunCheckpointOnce_AnUnmovedWindow_WaitsForTheHeartbeat_AndAMovedOneGoesAtOnceAsync</tests>
+  public int CheckpointHeartbeatMinutes { get; set; } = 15;
 
   /// <summary>Verify received counts against other origins' checkpoints (default true).</summary>
   public bool GapDetectionEnabled { get; set; } = true;
@@ -381,6 +400,17 @@ public sealed class StreamIntegrityOptions {
 
   /// <summary>Phase A/L: audit cadence in minutes (default 1440 — daily).</summary>
   public int AuditIntervalMinutes { get; set; } = 1440;
+
+  /// <summary>
+  /// The longest an audit goes without asking an origin whose state has not moved, in minutes (default 60, #2349). After
+  /// a window above the seal matched in full, the audit remembers, per origin, the seal, the origin's generation, the
+  /// origin's last checkpoint position and the highest position this service holds from it; while all four are unchanged
+  /// the window above the seal cannot have changed, so the audit skips the ask. It still asks at least once per this
+  /// many minutes, so a loss on this side with nothing else moving is found. 0 or less asks every cycle, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerAskSkipTests.cs:Options_MaxAskSkipMinutes_DefaultsToOneHourAsync</tests>
+  public int MaxAskSkipMinutes { get; set; } = 60;
 
   /// <summary>
   /// Run the FIRST deep audit shortly after startup (default true) instead of waiting a full
@@ -689,6 +719,16 @@ public sealed class StreamIntegrityOptions {
   /// </summary>
   /// <docs>proposals/paced-repair-drain</docs>
   public bool RepairDrainEnabled { get; set; } = true;
+
+  /// <summary>
+  /// The longest wait, in seconds, of an integrity poller that keeps finding nothing (default 60, #2346): the paced repair
+  /// drain and the subscription backfill double their one-second wait on each idle tick up to this ceiling, and return to
+  /// one second on the first tick that finds work. A new deficit or backfill therefore waits at most this long to start.
+  /// 1 or less keeps the one-second tick, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:ExecuteAsync_AnIdleLedger_WaitsLongerUpToTheCeiling_AndAClaimReturnsItToOneSecondAsync</tests>
+  public int IdlePollCeilingSeconds { get; set; } = 60;
 
   /// <summary>
   /// Steady-state repair dispatch rate in ledger rows per second (default 5). The drain's token

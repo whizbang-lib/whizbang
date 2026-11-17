@@ -73,7 +73,7 @@ public class PerspectiveCursorCacheReplayedThroughTests {
 
   [Test]
   public async Task AnIdleStream_IsEvicted_WithItsReplayedEventsAsync() {
-    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var options = new PerspectiveStreamAffinityOptions { IdleEvictionWindow = TimeSpan.FromMinutes(15) };
     var cache = new PerspectiveCursorCache(options, clock);
     var stream = Guid.CreateVersion7();
@@ -85,5 +85,72 @@ public class PerspectiveCursorCacheReplayedThroughTests {
 
     await Assert.That(evicted).Contains(stream);
     await Assert.That(cache.WasReplayed(stream, PERSPECTIVE, e)).IsFalse();
+  }
+  [Test]
+  public async Task WasReplayedThrough_CoversEveryStampAtOrBelowTheHighestFrontier_OnThatPairOnlyAsync() {
+    // #2366: a replay reads every event stamped at or below its frontier, so each is applied, whichever row brings it back.
+    var cache = new PerspectiveCursorCache();
+    var stream = Guid.CreateVersion7();
+    cache.RecordReplayedThrough(stream, PERSPECTIVE, 40);
+    cache.RecordReplayedThrough(stream, PERSPECTIVE, 25);
+
+    await Assert.That(cache.WasReplayedThrough(stream, PERSPECTIVE, 40)).IsTrue();
+    await Assert.That(cache.WasReplayedThrough(stream, PERSPECTIVE, 3)).IsTrue();
+    await Assert.That(cache.WasReplayedThrough(stream, PERSPECTIVE, 41)).IsFalse()
+      .Because("an event stamped past the frontier was not read by the replay");
+    await Assert.That(cache.WasReplayedThrough(stream, PERSPECTIVE, null)).IsFalse()
+      .Because("an unstamped event cannot be placed below any frontier");
+    await Assert.That(cache.WasReplayedThrough(stream, "Other.Perspective", 3)).IsFalse();
+    await Assert.That(cache.WasReplayedThrough(Guid.CreateVersion7(), PERSPECTIVE, 3)).IsFalse();
+  }
+
+  [Test]
+  public async Task TheRewindRequest_IsHeldUntilCleared_OrUntilTheRewindInvalidatesThePairAsync() {
+    var cache = new PerspectiveCursorCache();
+    var stream = Guid.CreateVersion7();
+    var trigger = Guid.CreateVersion7();
+
+    await Assert.That(cache.TryGetRewindRequest(stream, PERSPECTIVE, out _)).IsFalse();
+    cache.SetRewindRequest(stream, PERSPECTIVE, trigger);
+    await Assert.That(cache.TryGetRewindRequest(stream, PERSPECTIVE, out var held)).IsTrue();
+    await Assert.That(held).IsEqualTo(trigger);
+
+    cache.SetRewindRequest(stream, PERSPECTIVE, null);
+    await Assert.That(cache.TryGetRewindRequest(stream, PERSPECTIVE, out _)).IsFalse()
+      .Because("a cursor read without the flag asks for no rewind");
+
+    cache.SetRewindRequest(stream, PERSPECTIVE, trigger);
+    cache.RecordReplayedThrough(stream, PERSPECTIVE, 9);
+    cache.Invalidate(stream, PERSPECTIVE);
+    await Assert.That(cache.TryGetRewindRequest(stream, PERSPECTIVE, out _)).IsFalse()
+      .Because("the rewind that invalidates the pair is the one the flag asked for");
+    await Assert.That(cache.WasReplayedThrough(stream, PERSPECTIVE, 9)).IsTrue()
+      .Because("what earlier replays read stays read");
+  }
+
+  [Test]
+  public async Task InvalidateStreamClearAndEviction_ForgetTheFrontierAndTheRequestAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var cache = new PerspectiveCursorCache(new PerspectiveStreamAffinityOptions { IdleEvictionWindow = TimeSpan.FromMinutes(15) }, clock);
+    var (a, b, c) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+    foreach (var stream in new[] { a, b, c }) {
+      cache.RecordReplayedThrough(stream, PERSPECTIVE, 5);
+      cache.SetRewindRequest(stream, PERSPECTIVE, Guid.CreateVersion7());
+    }
+
+    cache.InvalidateStream(a);
+    await Assert.That(cache.WasReplayedThrough(a, PERSPECTIVE, 5)).IsFalse();
+    await Assert.That(cache.TryGetRewindRequest(a, PERSPECTIVE, out _)).IsFalse();
+
+    clock.Advance(TimeSpan.FromMinutes(16));
+    await Assert.That(cache.RunSweepNowForTests()).Contains(b);
+    await Assert.That(cache.WasReplayedThrough(b, PERSPECTIVE, 5)).IsFalse();
+    await Assert.That(cache.TryGetRewindRequest(b, PERSPECTIVE, out _)).IsFalse();
+
+    cache.RecordReplayedThrough(c, PERSPECTIVE, 5);
+    cache.SetRewindRequest(c, PERSPECTIVE, Guid.CreateVersion7());
+    cache.Clear();
+    await Assert.That(cache.WasReplayedThrough(c, PERSPECTIVE, 5)).IsFalse();
+    await Assert.That(cache.TryGetRewindRequest(c, PERSPECTIVE, out _)).IsFalse();
   }
 }

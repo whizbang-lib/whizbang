@@ -226,7 +226,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     if (grant is not Handle handle) {
       return;
     }
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_assert_role_epoch(@role, @id, @epoch)";
     cmd.Parameters.AddWithValue("role", handle.Tenure.Role);
     cmd.Parameters.AddWithValue("id", handle.Tenure.InstanceId);
@@ -239,13 +239,13 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     // exist: the migrator marks its backend before running the migrations that create it. Probing
     // first, rather than catching the error, keeps a failed statement from aborting the caller's
     // transaction.
-    await using (var probe = connection.CreateCommand()) {
+    await using (var probe = connection.CreateWhizbangCommand()) {
       probe.CommandText = "SELECT to_regprocedure('wh_mark_role_duty_backend(text, uuid, bigint, boolean)') IS NOT NULL";
       if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
         return false;
       }
     }
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_mark_role_duty_backend(@role, @id, @epoch, @mark)";
     cmd.Parameters.AddWithValue("role", tenure.Role);
     cmd.Parameters.AddWithValue("id", tenure.InstanceId);
@@ -313,7 +313,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     var snapshots = new List<RoleAssignmentSnapshot>();
     var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT role, state, holder_instance_id, epoch, assigned_at, renewed_at, lease_remaining, election_count, "
         + "void_reason, last_holder_instance_id, last_vacated_at, last_vacated_reason, pending_work, drain_requested_at, duty_backend_active "
         + "FROM wh_role_assignment_status()";
@@ -424,7 +424,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
       var votes = new Dictionary<string, Vote>(StringComparer.Ordinal);
       var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
       await using (connection.ConfigureAwait(false)) {
-        await using var cmd = connection.CreateCommand();
+        await using var cmd = connection.CreateWhizbangCommand();
         cmd.CommandText = "SELECT role, outcome, holder_instance_id, epoch, lease_remaining, previous_holder_instance_id, void_reason "
           + "FROM wh_vote_roles(@roles, @leases, @id, @cooldown, NULL, @version)";
         cmd.Parameters.AddWithValue(nameof(roles), roles);
@@ -472,7 +472,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     Vote vote;
     var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT outcome, holder_instance_id, epoch, lease_remaining, previous_holder_instance_id, void_reason "
         + "FROM wh_vote_role(@role, @id, @lease, @cooldown, NULL, @version, NULL)";
       cmd.Parameters.AddWithValue(nameof(role), role);
@@ -500,7 +500,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     object? answered;
     var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = commandText;
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("id", instanceId);
@@ -564,7 +564,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
       try {
         var connection = await plan.OpenAsync(CancellationToken.None).ConfigureAwait(false);
         await using (connection.ConfigureAwait(false)) {
-          await using var cmd = connection.CreateCommand();
+          await using var cmd = connection.CreateWhizbangCommand();
           cmd.CommandText = "SELECT wh_declare_role_progress_window(@role, @id, @epoch, @window)";
           cmd.Parameters.AddWithValue(nameof(role), role);
           cmd.Parameters.AddWithValue("id", InstanceId);

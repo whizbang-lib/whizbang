@@ -38,9 +38,9 @@ public class RedeliveryBundleCatalogChurnSqlTests : EFCoreTestBase {
   private const string RECORD_ANSWER =
     "SELECT count(*) FROM wh_integrity_record_bundle_answer($1, $2, $3, $4)";
   private const string RECONCILE =
-    "SELECT count(*) FROM wh_reconcile_redelivered_bundle_by_first_hop($1, $2, $3, $4)";
+    "SELECT count(*) FROM wh_reconcile_redelivered_bundle_counting_satisfied($1, $2, $3, $4)";
   private const string RECONCILE_BATCH =
-    "SELECT count(*) FROM wh_reconcile_redelivered_bundles($1, $2, $3, $4, $5)";
+    "SELECT count(*) FROM wh_reconcile_redelivered_bundles_counting_satisfied($1, $2, $3, $4, $5)";
   private const string ADOPT =
     "SELECT count(*) FROM wh_adopt_redelivered_origin($1, $2, $3)";
 

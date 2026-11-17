@@ -51,6 +51,14 @@ public class PerspectiveRewindOptions {
   public TimeSpan DebounceWindow { get; set; } = TimeSpan.FromSeconds(5);
 
   /// <summary>
+  /// How many times a rewind may be asked for again with the same trigger on an unchanged stream before the worker logs
+  /// a warning naming the perspective and the stream (#2366). Each repeat is settled without running either way, and
+  /// counted on <c>whizbang.perspective.rewind_repeats</c>; the warning is written once per stream and trigger.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#a-repeated-rewind-is-settled</docs>
+  public int RepeatWarningThreshold { get; set; } = 10;
+
+  /// <summary>
   /// Hard cap on debounce duration. Forces rewind after this time even if
   /// new late events keep arriving (sliding window still active).
   /// Set equal to DebounceWindow for fixed-window behavior.

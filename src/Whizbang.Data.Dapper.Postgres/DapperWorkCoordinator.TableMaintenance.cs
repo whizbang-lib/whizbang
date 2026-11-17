@@ -110,7 +110,7 @@ public partial class DapperWorkCoordinator {
       if (method == BloatMeasurementMethod.Estimate) {
         return await TableMaintenanceSql.MeasureRatioAsync(connection, tableName, _schema, cancellationToken).ConfigureAwait(false);
       }
-      await using var cmd = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
+      await using var cmd = CoordinatorCommandTimeout.Apply(connection.CreateWhizbangCommand());
       return await TableMaintenanceSql.MeasureApproxAsync(cmd, prefix, tableName, cancellationToken).ConfigureAwait(false);
     }, cancellationToken).ConfigureAwait(false);
   }

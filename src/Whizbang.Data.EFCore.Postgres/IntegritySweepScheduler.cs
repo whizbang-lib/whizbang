@@ -42,7 +42,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 public sealed partial class IntegritySweepScheduler(
     IServiceProvider services,
     IOptions<StreamIntegrityOptions> options,
-    ILogger<IntegritySweepScheduler> logger) : IHostedService {
+    ILogger<IntegritySweepScheduler> logger) : IHostedService, Whizbang.Core.Observability.IDbMechanismOwner {
+  /// <inheritdoc />
+  public Whizbang.Core.Observability.DbMechanism DbMechanism => Whizbang.Core.Observability.DbMechanism.IntegrityAudit;
+
 
   /// <summary>The idempotent create-or-update key of the full-history compare's schedule (the key the sweep always had).</summary>
   private const string SCHEDULE_KEY = "wh-integrity-sweep";

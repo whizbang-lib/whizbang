@@ -88,8 +88,7 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   [Test]
   public async Task RebuildCommand_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
-    var registrar = new RebuildCommandReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RebuildPerspectiveCommandReceptor>.Instance);
+    var registrar = new RebuildCommandReceptorRegistrar(sp);
 
     await registrar.StartAsync(CancellationToken.None);
   }

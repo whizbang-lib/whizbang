@@ -183,12 +183,19 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     var clean = await _measureAsync(conn, recorder, _batchOver(untouched));
     await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
       .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
+    // A vacuum marks a page all-visible only if no snapshot open in this database could still see an older version of a
+    // row on it. The test runs alone (keyless NotInParallel) in a database of its own, and its own connections hold no
+    // snapshot here, so the one other backend that can enter is an autovacuum worker, whose ANALYZE holds a snapshot for
+    // as long as it reads a table: one started on a table the chain writes, but this test did not measure, left a page
+    // unmarked once. Autovacuum is therefore off on every table of the database (see _disableAutovacuumAsync), so no
+    // worker has anything to do here, and one vacuum is the transition itself.
     await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
     var (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
     await Assert.That(vacuumedPages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
     await Assert.That(vacuumedPagesNotAllVisible).IsEqualTo(0L)
       .Because($"precondition: the vacuum marked every page holding the streams' rows all-visible ({vacuumedPages} pages), "
-        + "or the update below has no visibility-map read to show");
+        + "or the update below has no visibility-map read to show. Backends of this database holding a snapshot: "
+        + await _snapshotHoldersAsync(conn));
     var afterVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedBefore));
     var ledgerPages = await _scalarAsync(conn, "SELECT pg_relation_size('wh_stream_lifecycle') / current_setting('block_size')::bigint");
     var duringVacuum = await _measureAsync(conn, recorder, _batchOver(vacuumedDuring), duringTheWindow: async () => {
@@ -200,6 +207,7 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
       // window: the flush completes before the reply.
       await _executeAsync(other, "SELECT pg_stat_force_next_flush()");
     });
+    Console.WriteLine("autovacuum workers' passes over this database's tables: " + await _autovacuumPassesAsync(conn));
     Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
       $"ledger blocks: {shallow.KeyLevels}-level key {shallow.LedgerBlocks}; {clean.KeyLevels}-level key {clean.LedgerBlocks}, " +
       $"vacuumed before {afterVacuum.LedgerBlocks}, vacuum in the window {duringVacuum.LedgerBlocks} ({ledgerPages} heap pages)"));
@@ -360,11 +368,43 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     return sql[start..end];
   }
 
-  /// <summary>Keeps autovacuum off every measured table, so no vacuum runs inside a window or between rounds.</summary>
-  private static async Task _disableAutovacuumAsync(NpgsqlConnection conn) {
-    foreach (var table in _tables) {
-      await _executeAsync(conn, $"ALTER TABLE {table} SET (autovacuum_enabled = false, toast.autovacuum_enabled = false)");
-    }
+  /// <summary>
+  /// Keeps autovacuum off every table of the test's database, so no vacuum runs inside a window or between rounds, and no
+  /// autovacuum worker's ANALYZE of any table holds a snapshot when the scenario's own vacuum runs: the measured tables
+  /// alone left the chain's other tables to autovacuum, and one worker's snapshot kept a page from being marked
+  /// all-visible.
+  /// </summary>
+  private static Task _disableAutovacuumAsync(NpgsqlConnection conn) => _executeAsync(conn, """
+    DO $$
+    DECLARE t regclass;
+    BEGIN
+      FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE c.relkind = 'r' AND n.nspname = current_schema() LOOP
+        EXECUTE format('ALTER TABLE %s SET (autovacuum_enabled = false, toast.autovacuum_enabled = false)', t);
+      END LOOP;
+    END $$
+    """);
+
+  /// <summary>Every table of this database an autovacuum worker vacuumed or analyzed, catalogs included.</summary>
+  private static async Task<string> _autovacuumPassesAsync(NpgsqlConnection conn) {
+    await _executeAsync(conn, "SELECT pg_stat_force_next_flush()");
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT COALESCE(string_agg(schemaname || '.' || relname || ' ' || autovacuum_count || '/' || autoanalyze_count, ', '), 'none')
+      FROM pg_stat_all_tables WHERE autovacuum_count + autoanalyze_count > 0
+      """;
+    return (string)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>The other backends of this database holding a snapshot, for a precondition's failure message.</summary>
+  private static async Task<string> _snapshotHoldersAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT COALESCE(string_agg(backend_type || ' (xmin ' || backend_xmin || '): ' || left(query, 80), '; '), 'none')
+      FROM pg_stat_activity
+      WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_xmin IS NOT NULL
+      """;
+    return (string)(await cmd.ExecuteScalarAsync())!;
   }
 
   /// <summary>The levels of the ledger's key: one when its root is its only leaf.</summary>

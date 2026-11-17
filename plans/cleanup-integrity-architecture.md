@@ -325,6 +325,17 @@ These become follow-up cases as their phases land.
 
 Phases 1 and 2 can run in parallel. 3 comes before 4 and 5. 6 rides along incrementally, with the dashboard and alerts last. 7 can follow 3 at any time.
 
+## 6b. Bundles (agreed with the owner, 2026-11-15: three pull requests in all)
+Each bundle is one pull request (plus its docs pull request), closing every issue it lists.
+
+| Bundle | Phases | Issues |
+|---|---|---|
+| 1. Settings and retention | 2, 2b | #2353 sealing and re-check configuration, #2354 operational retention |
+| 2. Cost and correctness groundwork | 1, 1b, follow-ups | #2351 held-without-sequence fold cost, #2352 one counting rule, #2350 redelivered copies keep their key, #2344 to #2349 idle cost, #2359 unbounded tables, #2361 full-history compare limits, #2360 question 2 once decided |
+| 3. One system | 3, 4, 5, 0, 6, 7 | #2362 pair guard, #2363 cuts carry, #2364 superseding key slot, #2342 the matrix fully green, #2365 traces, dashboard and alerts, #2343 rules library and version track |
+
+Bundle 3 changes what a digest means, so within it the pair guard must treat a peer with no fingerprint (a service on an older release) as a mismatch: a rolling deploy then halts mixed pairs instead of comparing digests computed two ways. Bundle 3 starts once bundle 2's shared counting rule (#2352) is on its branch base. Each bundle records its dev before-and-after numbers (section 2.10) in its pull request.
+
 ## 7. Risks
 - **Slot-identity detection gap** (2.4): an older copy remaining while the newest is lost goes undetected after the window. Mitigation: checkpoints cover the window, and the window is longer than redelivery.
 - **Carried digests cannot be re-verified,** because their events are gone. They are trusted like sealed epochs, by design.

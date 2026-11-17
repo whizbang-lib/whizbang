@@ -387,6 +387,72 @@ public class SubscriptionBackfillWorkerTests {
     await Assert.That(transport.Published).IsEmpty();
   }
 
+  /// <summary>
+  /// #2346: with no backfill running the tick only reads an empty list, so the loop waits longer each time, doubling from
+  /// one second up to <see cref="StreamIntegrityOptions.IdlePollCeilingSeconds"/>; the first tick that finds a running
+  /// backfill returns it to one second, where the window pacing needs it. Read from the periods the loop sets on its timer.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
+  [Test]
+  [Timeout(30_000)]
+  public async Task ExecuteAsync_WithNothingRunning_WaitsLongerUpToTheCeiling_AndARunningBackfillReturnsItToOneSecondAsync(
+      CancellationToken testToken) {
+    var clock = new PeriodRecordingClock(_now);
+    var options = _options();
+    options.IdlePollCeilingSeconds = 8;
+    using var meters = new ProbeTickMeters();
+    var (worker, coordinator, _) = _build(options, [], clock: clock,
+      probes: new ProbeCadenceMetrics(new WhizbangMetrics(meters)));
+
+    await worker.StartAsync(testToken);
+    try {
+      var wait = TimeSpan.FromSeconds(1);
+      for (var tick = 0; tick < 4; tick++) {
+        clock.Advance(wait);
+        await clock.Changed.WaitAsync(testToken);
+        wait = clock.Periods.Last();
+      }
+      coordinator.Cursors.Add(_cursor(_orders, "orders-svc", PLACED));
+      clock.Advance(wait);
+      await clock.Changed.WaitAsync(testToken);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    await Assert.That(clock.Periods.Select(p => p.TotalSeconds).ToList())
+      .IsEquivalentTo(new List<double> { 2, 4, 8, 8, 1 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("idle ticks double the wait up to the ceiling, and a running backfill returns it to one second");
+    await Assert.That(coordinator.Reads).IsEqualTo(5);
+    var (idle, work) = meters.Read(ProbeCadenceMetrics.PROBE_SUBSCRIPTION_BACKFILL);
+    await Assert.That(idle).IsEqualTo(4L);
+    await Assert.That(work).IsEqualTo(1L);
+  }
+
+  /// <summary>A fake clock whose timers record every period the worker sets, and signal each change.</summary>
+  private sealed class PeriodRecordingClock(DateTimeOffset start) : TimeProvider {
+    private readonly FakeTimeProvider _inner = new(start);
+    public System.Collections.Concurrent.ConcurrentQueue<TimeSpan> Periods { get; } = new();
+    public SemaphoreSlim Changed { get; } = new(0);
+    public void Advance(TimeSpan by) => _inner.Advance(by);
+    public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+    public override long GetTimestamp() => _inner.GetTimestamp();
+    public override long TimestampFrequency => _inner.TimestampFrequency;
+    public override TimeZoneInfo LocalTimeZone => _inner.LocalTimeZone;
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+      new RecordingTimer(_inner.CreateTimer(callback, state, dueTime, period), this);
+
+    private sealed class RecordingTimer(ITimer inner, PeriodRecordingClock clock) : ITimer {
+      public bool Change(TimeSpan dueTime, TimeSpan period) {
+        var changed = inner.Change(dueTime, period);
+        clock.Periods.Enqueue(period);
+        clock.Changed.Release();
+        return changed;
+      }
+      public void Dispose() => inner.Dispose();
+      public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+  }
+
   [Test]
   [Timeout(30_000)]
   public async Task ExecuteAsync_TicksOnTheClock_AndRequestsAWindowAsync(CancellationToken testToken) {
@@ -568,7 +634,8 @@ public class SubscriptionBackfillWorkerTests {
       StreamIntegrityOptions options, IReadOnlyList<SubscriptionBackfillCursor> cursors,
       IReadOnlyList<IntegrityDomainClaim>? claims = null, string? controlInbox = null,
       StreamIntegrityMetrics? metrics = null, WhizbangRunPermit? permit = null, HousekeepingCoordinator? housekeeping = null,
-      bool withTransport = true, bool withCoordinator = true, TimeProvider? clock = null, bool withIdentity = true) {
+      bool withTransport = true, bool withCoordinator = true, TimeProvider? clock = null, bool withIdentity = true,
+      ProbeCadenceMetrics? probes = null) {
     var coordinator = new BackfillCoordinator {
       Cursors = [.. cursors],
       Claims = claims ?? [
@@ -590,6 +657,9 @@ public class SubscriptionBackfillWorkerTests {
     }
     if (metrics is not null) {
       services.AddSingleton(metrics);
+    }
+    if (probes is not null) {
+      services.AddSingleton(probes);
     }
     if (permit is not null) {
       services.AddSingleton(permit);

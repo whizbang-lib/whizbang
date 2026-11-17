@@ -435,7 +435,12 @@ if (Test-Path $constantsPath) {
     if (-not $t -or $t.StartsWith('#')) { continue }
     $eq = $t.IndexOf('=')
     if ($eq -lt 1) { continue }
-    $constants[$t.Substring(0, $eq).Trim()] = $t.Substring($eq + 1).Trim()
+    # A constant with an argument (__T__(p) = value) is listed by its token; its value names the argument, so it is
+    # never written raw and is not checked for that.
+    $key = $t.Substring(0, $eq).Trim()
+    $open = $key.IndexOf('(')
+    if ($open -ge 0) { $constants[$key.Substring(0, $open)] = $null; continue }
+    $constants[$key] = $t.Substring($eq + 1).Trim()
   }
 }
 $ruleTwelve = [System.Collections.Generic.List[string]]::new()
@@ -446,7 +451,7 @@ foreach ($f in Get-ChildItem -Path $MigrationsPath -Filter '*.sql' | Sort-Object
     $lineNo++
     if ($line.TrimStart().StartsWith('--')) { continue }
     foreach ($entry in $constants.GetEnumerator()) {
-      if ($line.Contains($entry.Value)) {
+      if ($null -ne $entry.Value -and $line.Contains($entry.Value)) {
         $ruleTwelve.Add(("  {0}:{1}  raw {2}  ->  write {3}" -f $f.Name, $lineNo, $entry.Value, $entry.Key))
       }
     }

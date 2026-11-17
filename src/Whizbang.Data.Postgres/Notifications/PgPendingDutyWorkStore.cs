@@ -65,7 +65,7 @@ public sealed class PgPendingDutyWorkStore : IPendingDutyWorkStore {
     }
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT wh_owe_role_work(@role, @key)";
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("key", workKey);
@@ -79,7 +79,7 @@ public sealed class PgPendingDutyWorkStore : IPendingDutyWorkStore {
     var owed = new List<PendingDutyWork>();
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT work_key, first_owed_at, last_owed_at, attempts, last_error, due FROM wh_owed_role_work(@role, @base)";
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("base", _roleOptions.OwedWorkRetryBase);
@@ -137,7 +137,7 @@ public sealed class PgPendingDutyWorkStore : IPendingDutyWorkStore {
     object? answer;
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = sql;
       cmd.Parameters.AddWithValue("role", work.Role);
       cmd.Parameters.AddWithValue("key", work.WorkKey);

@@ -45,8 +45,8 @@ public sealed class TableStatisticsOptions {
   /// <summary>The default for <see cref="PendingReclamationSampleInterval"/>: five minutes.</summary>
   public static readonly TimeSpan DefaultPendingReclamationSampleInterval = TimeSpan.FromMinutes(5);
 
-  /// <summary>The default for <see cref="CollectionInterval"/>: thirty seconds.</summary>
-  public static readonly TimeSpan DefaultCollectionInterval = TimeSpan.FromSeconds(30);
+  /// <summary>The default for <see cref="CollectionInterval"/>: five minutes (#2349; thirty seconds before).</summary>
+  public static readonly TimeSpan DefaultCollectionInterval = TimeSpan.FromMinutes(5);
 
   /// <summary>The default for <see cref="EventTypeSampleInterval"/>: fifteen minutes.</summary>
   public static readonly TimeSpan DefaultEventTypeSampleInterval = TimeSpan.FromMinutes(15);
@@ -58,12 +58,21 @@ public sealed class TableStatisticsOptions {
   /// </summary>
   /// <remarks>
   /// Configuration key <c>Whizbang:TableStatistics:CollectionInterval</c>, environment variable
-  /// <c>Whizbang__TableStatistics__CollectionInterval</c>. Default <c>00:00:30</c>.
+  /// <c>Whizbang__TableStatistics__CollectionInterval</c>. Default <c>00:05:00</c>: sizes and bloat move over minutes.
   /// </remarks>
   /// <docs>operations/configuration/configuration-reference#tablestatisticsoptions</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:TheCollectionInterval_BindsFromTheTableStatisticsSectionAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs:TheConfiguredInterval_IsTheWaitBetweenCyclesAsync</tests>
   public TimeSpan CollectionInterval { get; set; } = DefaultCollectionInterval;
+
+  /// <summary>
+  /// How much each wait between collections is lengthened at random, as a fraction of <see cref="CollectionInterval"/>
+  /// (#2349), so instances started together do not read the catalog together. Default 0.2; 0 gives a fixed interval, and
+  /// a value outside 0 to 1 is held to that range.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics-refresh</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs:TwoCollectors_WaitDifferentTimes_SoTheirReadsSpreadAsync</tests>
+  public double CollectionJitter { get; set; } = 0.2;
 
   /// <summary>
   /// The most tables reported by name. Past this, the smallest tables are summed under

@@ -144,10 +144,10 @@ public partial class DapperWorkCoordinator {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;
     await using var __scope = await CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-    var connection = __scope.Connection;
+    var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     return await CoordinatorRetentionSql.CleanupLifecycleCompletionsAsync(
-      () => CoordinatorCommandTimeout.Apply(connection.CreateCommand()), prefix, cutoff, cancellationToken).ConfigureAwait(false);
+      () => CoordinatorCommandTimeout.Apply(__scope.Connection.CreateWhizbangCommand()), prefix, cutoff, cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
@@ -171,7 +171,7 @@ public partial class DapperWorkCoordinator {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken, caller).ConfigureAwait(false);
     await using var __scope = await CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
-    await using var command = CoordinatorCommandTimeout.Apply(__scope.Connection.CreateCommand());
+    await using var command = CoordinatorCommandTimeout.Apply(__scope.Connection.CreateWhizbangCommand());
     return await operation(command, prefix).ConfigureAwait(false);
   }
 }
