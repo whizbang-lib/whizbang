@@ -1,7 +1,8 @@
 <Project>
   <!-- Target frameworks (#2135): develop on .NET 11, release for .NET 10 and .NET 11.
-       Day to day (local builds, PRs into develop, develop itself) every project targets net11.0 only.
-       A release build targets both. It is detected from the branch CI runs on, so no workflow has to
+       Day to day (local builds, PRs into develop, develop itself) tests, samples and tools target net11.0 only;
+       the library projects always target both (src/Directory.Build.props), so every package, alphas included,
+       carries net10.0. A release build targets both everywhere. It is detected from the branch CI runs on, so no workflow has to
        remember to ask for it: a push to main or release/*, a v* tag, or a pull request into main or
        release/*. Set WhizbangReleaseBuild=true (or false) to override, e.g. to reproduce a release
        build locally. Projects never name a framework themselves; source generators and analyzers,

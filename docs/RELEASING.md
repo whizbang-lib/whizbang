@@ -987,10 +987,13 @@ success. CI always starts clean.
 
 ## Target frameworks
 
-W! is developed on .NET 11 and released for .NET 10 and .NET 11 (#2134, #2135). One place decides,
-`Directory.Build.props`, from the branch CI runs on:
+W! is developed on .NET 11 and released for .NET 10 and .NET 11 (#2134, #2135). Every package, alphas
+included, carries both: the library projects under `src/` always build `net10.0;net11.0`
+(`src/Directory.Build.props`), so a consumer still on .NET 10 can take any alpha. What changes with the
+branch is how the tests, samples and tools build, decided in `Directory.Build.props` from the branch CI
+runs on:
 
-| Build | Frameworks | When |
+| Build | Tests, samples and tools | When |
 |---|---|---|
 | Development | `net11.0` | local builds, pull requests into develop, the merge queue, develop pushes and alphas |
 | Release | `net10.0;net11.0` | pushes to `release/*` and `main`, `v*` tags, pull requests into `release/*` or `main` |
@@ -1002,5 +1005,6 @@ test module built for a targeted framework, so a release run tests both; `setup-
 the .NET 10 runtime beside the SDK whenever the build targets `net10.0`. A pull request into develop
 also compiles `net10.0` (`Build · Compile net10.0`, no tests), so a .NET 11-only API is caught there
 rather than on release day. Projects never name a framework; source generators and analyzers stay
-`netstandard2.0` as Roslyn requires.
+`netstandard2.0` as Roslyn requires. The libraries build both frameworks even day to day because pack
+does not rebuild: it packs the tested build, so whatever develop builds is what its alpha ships.
 

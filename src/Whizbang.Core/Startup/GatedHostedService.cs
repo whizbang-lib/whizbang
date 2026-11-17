@@ -55,12 +55,19 @@ public abstract class GatedHostedService : BackgroundService {
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
-    await Service.StartAsync(stoppingToken).ConfigureAwait(false);
-    _started.TrySetResult();
-    if (Service is BackgroundService background) {
-      // Set by StartAsync, which has returned.
-      await background.ExecuteTask!.WaitAsync(stoppingToken).ConfigureAwait(false);
+    try {
+      await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
+      await Service.StartAsync(stoppingToken).ConfigureAwait(false);
+      _started.TrySetResult();
+      if (Service is BackgroundService background) {
+        // Set by StartAsync, which has returned.
+        await background.ExecuteTask!.WaitAsync(stoppingToken).ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+      // Stopping ends the wrapper normally, not canceled (#2135). The token is also canceled with the host's start, so a
+      // start abandoned before the start point ends here before the host is stopping, and a host counts a canceled
+      // service as a failed one unless it is already stopping: it logs it at Error and, from .NET 11, rethrows it from
+      // its stop. What happens to the service is settled in StopAsync.
     }
   }
 

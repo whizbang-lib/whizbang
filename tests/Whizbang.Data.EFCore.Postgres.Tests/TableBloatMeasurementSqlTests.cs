@@ -230,10 +230,12 @@ public class TableBloatMeasurementSqlTests : EFCoreTestBase {
       .Because("the boot step takes the queue in the order the coordinator returns it");
     await Assert.That(queue[0].RewriteThreshold).IsEqualTo(0.0);
 
+    // PostgreSQL stores a double as numeric to 15 significant digits, so the expectation is written the same way. A
+    // decimal conversion no longer does that from .NET 11, where it keeps every binary digit.
     var row = await _scalarAsync<string>(
       $"SELECT method || ':' || bloat_ratio || ':' || estimated_ratio FROM wh_table_rewrite_measurements WHERE table_name = '{measured.TableName}'",
       cancellationToken);
-    await Assert.That(row).IsEqualTo(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"approx:999.5:{(decimal)measured.BloatRatio}"))
+    await Assert.That(row).IsEqualTo(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"approx:999.5:{measured.BloatRatio:G15}"))
       .Because("the queue row records the measurement, its method and the estimate it confirmed");
 
     await coordinator.ClearTableRewriteRequestAsync(measured.TableName, cancellationToken);
