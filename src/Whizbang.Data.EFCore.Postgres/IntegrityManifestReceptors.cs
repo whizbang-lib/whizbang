@@ -265,6 +265,10 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var rewrite = message.KnownOriginGeneration is long knownGeneration
       ? await coordinator.GetIntegrityHistoryRewriteAsync(knownGeneration, cancellationToken).ConfigureAwait(false)
       : null;
+    // #2365: this origin's rules noted beside its generation, so the answer says why history moved since the asker's.
+    var rulesChangedAt = await coordinator.IntegrityNoteRulesAsync(pairGuard.ServiceFingerprint, originGeneration, cancellationToken)
+      .ConfigureAwait(false);
+    var historyMovedReason = IntegrityHistoryMoved.Reason(message.KnownOriginGeneration, originGeneration, rulesChangedAt);
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -297,6 +301,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
           RewrittenSinceGeneration = rewrite?.SinceGeneration,
           RewrittenFrom = rewrite?.RewrittenFrom,
+          HistoryMovedReason = historyMovedReason,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
@@ -545,8 +550,8 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
-        // #2365: the guard lowered the seal because the origin rewrote history this service had verified.
-        services.GetService<StreamIntegrityMetrics>()?.RecordSealLowered(StreamIntegrityMetrics.SEAL_LOWERED_REWRITE);
+        // #2365: the guard lowered the seal because the origin's history moved, for the reason its answer gives.
+        services.GetService<StreamIntegrityMetrics>()?.RecordSealLowered(IntegrityHistoryMoved.Counted(message.HistoryMovedReason));
         return;
       }
     }
@@ -749,6 +754,19 @@ public sealed partial class IntegrityManifestReceptor(
     var reportFlags = divergent.Count > 0
       ? await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false)
       : [];
+    // #2365: the deficits a redelivery answer had filled, short again: one turn of the resync loop each, counted once per
+    // answer by the ledger.
+    var shortAgainKeys = new List<IntegrityRepairLedger.DivergenceKey>();
+    for (var i = 0; i < divergent.Count; i++) {
+      if (divergent[i].IsDeficit) {
+        shortAgainKeys.Add(observations[i].Key);
+      }
+    }
+    if (shortAgainKeys.Count > 0) {
+      metrics?.RedeliveredThenReaped.Add(
+        await coordinator.IntegrityCountShortAfterAnswerAsync(message.OriginServiceId, shortAgainKeys, now, cancellationToken)
+          .ConfigureAwait(false));
+    }
     // Repair eligibility batches only the DEFICITS, in manifest order, with the budget enforced
     // INSIDE the batch — past the cap keys are not consulted, so no attempt budget is burned on
     // grants that would be discarded.

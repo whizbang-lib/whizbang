@@ -679,8 +679,11 @@ public sealed class StreamIntegrityMetrics {
 
     SealLowered = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.seal_lowered",
-      description: "Seals this service lowered for an origin; tagged by reason (rewrite | rule_change)");
-    SealLowered.Touch(REASON_TAG, [SEAL_LOWERED_REWRITE, SEAL_LOWERED_RULE_CHANGE]);
+      description: "Seals this service lowered for an origin; tagged by reason (rewrite | rule_change | unknown)");
+    SealLowered.Touch(REASON_TAG, [SEAL_LOWERED_REWRITE, SEAL_LOWERED_RULE_CHANGE, SEAL_LOWERED_UNKNOWN]);
+    RedeliveredThenReaped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivered_then_reaped",
+      description: "Deficit buckets a redelivery answer filled that a later comparison found short again, once per answer: the resync loop. Target 0");
     CarriedCompactions = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.carried_compactions",
       description: "Cuts (a prefix truncate or an archive) that removed events and carried their digest; tagged by kind (truncate | archive)");
@@ -886,16 +889,21 @@ public sealed class StreamIntegrityMetrics {
     new("origin_service_id", lane.OriginServiceId.ToString());
 
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin rewrote history this service had verified.</summary>
-  public const string SEAL_LOWERED_REWRITE = "rewrite";
+  public const string SEAL_LOWERED_REWRITE = Whizbang.Core.Messaging.IntegrityHistoryMoved.REWRITE;
 
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the eligibility rules changed.</summary>
-  public const string SEAL_LOWERED_RULE_CHANGE = "rule_change";
+  public const string SEAL_LOWERED_RULE_CHANGE = Whizbang.Core.Messaging.IntegrityHistoryMoved.RULE_CHANGE;
 
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin said no reason it knows (an older release).</summary>
-  public const string SEAL_LOWERED_UNKNOWN = "unknown";
+  public const string SEAL_LOWERED_UNKNOWN = Whizbang.Core.Messaging.IntegrityHistoryMoved.UNKNOWN;
 
-  /// <summary>RED stub (#2365): the counter is created by the implementation that follows.</summary>
-  public PassiveCounter<long> RedeliveredThenReaped => CarriedCompactions;
+  /// <summary>
+  /// Deficit buckets a redelivery answer filled that a later comparison found short again (#2365, owner decision): one
+  /// turn of the resync loop, where what repair delivered is lost again, usually to this service's own cleanup. Counted
+  /// once per answer, from the ledger. Target 0. Untagged.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public PassiveCounter<long> RedeliveredThenReaped { get; }
 
   /// <summary>
   /// Seals this service lowered for an origin (#2365), tagged by <c>reason</c>: <c>rewrite</c> when the origin's history

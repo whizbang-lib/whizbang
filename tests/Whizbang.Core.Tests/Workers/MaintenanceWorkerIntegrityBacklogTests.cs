@@ -269,12 +269,16 @@ public class MaintenanceWorkerIntegrityBacklogTests {
       .IsEmpty().Because("a lane's seal is reported by the holder alone");
 
     var failing = new BacklogCoordinator();
-    var (failingWorker, failingMetrics) = _build(failing);
+    var maintenance = new MaintenanceMetrics(
+      new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var (failingWorker, failingMetrics) = _build(failing, maintenance: maintenance);
     await failingWorker.RunMaintenanceOnceAsync(CancellationToken.None);
     failing.Throw = new InvalidOperationException("ledger unavailable");
     await failingWorker.RunMaintenanceOnceAsync(CancellationToken.None);
     await Assert.That(ProbeMeterReader.ReadSeries(failingMetrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier"))
       .IsEmpty().Because("a reading that can no longer be refreshed is stale");
+    await Assert.That(ProbeMeterReader.ReadSeries(maintenance.RowsAffected.Meter, "whizbang.maintenance.eligible_not_yet_deleted"))
+      .IsEmpty().Because("and so is the count of the cuts the seal holds");
   }
 
   /// <summary>#2365: the holder reads the streams the seal gate holds, and an instance that loses its turn withdraws them.</summary>
