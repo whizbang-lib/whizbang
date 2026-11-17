@@ -26,6 +26,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Rules;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -151,13 +152,22 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   /// control stream must be repaired in the first cycle; nothing else may be asked for, reported or stored again.
   /// </summary>
   private static async Task _assertAuditConvergesAsync(Harness h, MatrixCase pair, Scenario scenario, Guid control) {
+    if (h.RulesDiffer) {
+      await _assertHaltedUntilTheRulesMatchAsync(h, pair, scenario, control);
+      return;
+    }
+    await _assertAuditConvergesAsync(h, pair, scenario, control, pair.Side);
+  }
+
+  private static async Task _assertAuditConvergesAsync(
+      Harness h, MatrixCase pair, Scenario scenario, Guid control, CleanupSide cleanedSide) {
     var perCycle = new List<CycleTally>();
     for (var cycle = 1; cycle <= 3; cycle++) {
       var before = h.Tally(control);
       await h.AuditAsync(pair.Mechanism);
       perCycle.Add(h.Tally(control) - before);
       // Maintenance runs again between audits: whatever a redelivery stored, the cleanup meets again.
-      await scenario.CleanAsync(h, pair.Side);
+      await scenario.CleanAsync(h, cleanedSide);
     }
 
     await Assert.That(await h.ConsumerHoldsAsync(control)).IsTrue()
@@ -169,6 +179,41 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       .Because($"[{pair}] outside the control stream the cleanup must be invisible to the audit: no repair request, "
              + "no divergence report and no redelivered event stored again, in any cycle");
     await h.AssertDigestsFollowEligibilityAsync(pair);
+  }
+
+  /// <summary>
+  /// A one-sided rule change (#2362): a type declared ephemeral on one side only means the two sides count it two ways,
+  /// so the pair guard halts the pair. While halted, nothing is compared, reported, requested or redelivered, not even
+  /// the control loss, and both guards name the type. Once the other side runs the same rule (the rollout finished), the
+  /// pair resumes on its own and the case is an ordinary both-sides one: the cleanup is invisible and the control repaired.
+  /// </summary>
+  private static async Task _assertHaltedUntilTheRulesMatchAsync(Harness h, MatrixCase pair, Scenario scenario, Guid control) {
+    var perCycle = new List<CycleTally>();
+    for (var cycle = 1; cycle <= 2; cycle++) {
+      var before = h.Tally(control);
+      await h.AuditAsync(pair.Mechanism);
+      perCycle.Add(h.Tally(control) - before);
+      await scenario.CleanAsync(h, pair.Side);
+    }
+
+    await Assert.That(string.Join(" ", perCycle.Select((c, i) => $"c{i + 1}{c}")))
+      .IsEqualTo(string.Join(" ", perCycle.Select((_, i) => $"c{i + 1}{CycleTally.Quiet}")))
+      .Because($"[{pair}] a pair whose rules differ compares, reports, requests and redelivers nothing");
+    await Assert.That(await h.ConsumerHoldsAsync(control)).IsFalse()
+      .Because($"[{pair}] a halted pair leaves even a genuine loss alone until the rules match");
+    var origin = h.OriginGuard.Pairs.Single(p => p.Peer == CONSUMER_NAME);
+    await Assert.That(origin.Verdict.Reason).IsEqualTo(RulePairHaltReason.TypeRules)
+      .Because($"[{pair}] the origin halts the pair for the type whose rules differ");
+    await Assert.That(origin.Verdict.DifferingTypes).IsEquivalentTo([RuleTypeName.Of(LATER_EPHEMERAL)]);
+    await Assert.That(h.ConsumerGuard.Pairs.Single(p => p.Peer == ORIGIN_NAME).HaltedSince.HasValue).IsTrue()
+      .Because($"[{pair}] the origin answers a halted pair with its own rules, so the consumer halts too");
+
+    // The rollout finished: the other side declares the same rule and reconciles its history.
+    await scenario.CleanAsync(h, CleanupSide.Both);
+    await Assert.That(h.RulesDiffer).IsFalse();
+    await _assertAuditConvergesAsync(h, pair, scenario, control, CleanupSide.Both);
+    await Assert.That(h.OriginGuard.Pairs.Single(p => p.Peer == CONSUMER_NAME).HaltedSince.HasValue).IsFalse()
+      .Because($"[{pair}] the pair resumed on its own");
   }
 
   /// <summary>The stored-digest heal and verification sweep finds nothing on either side, then finds the planted drift.</summary>
@@ -455,8 +500,11 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       await h.DeliverAsync(ids);
     }
 
-    protected override Task CleanOnAsync(Harness h, Store store) =>
-      Harness.ExecuteAsync(store, "SELECT * FROM reclassify_events_ephemeral(@t)", ("t", new[] { LATER_EPHEMERAL }));
+    protected override Task CleanOnAsync(Harness h, Store store) {
+      // A reclassification is a rule change: the side declares the type ephemeral, then reconciles its stored history.
+      h.RulesOf(store).DeclareEphemeral(LATER_EPHEMERAL);
+      return Harness.ExecuteAsync(store, "SELECT * FROM reclassify_events_ephemeral(@t)", ("t", new[] { LATER_EPHEMERAL }));
+    }
   }
 
   private sealed class RewindBookkeepingScenario : Scenario {
@@ -582,6 +630,8 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     private readonly IntegrityWireTransport _originTransport = new();
     private readonly IntegrityWireTransport _consumerTransport = new();
     private readonly IntegrityWireDispatcher _consumerDispatcher = new();
+    private readonly MatrixRules _originRules = new();
+    private readonly MatrixRules _consumerRules = new();
     private readonly List<Guid> _restored = [];
     private readonly List<Guid> _redelivered = [];
     private readonly Dictionary<Guid, (Guid Stream, string Type, int Flags, string? Key, long Seq)> _emitted = [];
@@ -599,6 +649,18 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     public Store Origin { get; private set; } = null!;
     public Store Consumer { get; private set; } = null!;
     public Guid OriginId { get; private set; }
+
+    /// <summary>The eligibility rules the side behind <paramref name="store"/> declares (#2362).</summary>
+    public MatrixRules RulesOf(Store store) => store == Origin ? _originRules : _consumerRules;
+
+    /// <summary>Whether the two sides declare different rules for a type the audit covers.</summary>
+    public bool RulesDiffer => !_originRules.RulesFor(_auditedTypes).CompareWith(_consumerRules.RulesFor(_auditedTypes)).IsAgreed;
+
+    /// <summary>The origin's pair guard (#2362).</summary>
+    public IntegrityPairGuard OriginGuard => _originProvider!.GetRequiredService<IntegrityPairGuard>();
+
+    /// <summary>The consumer's pair guard.</summary>
+    public IntegrityPairGuard ConsumerGuard => _consumerProvider!.GetRequiredService<IntegrityPairGuard>();
 
     public static async Task<Harness> CreateAsync(CleanupIntegrityMatrixTests test, MatrixCase pair) {
       var h = new Harness {
@@ -627,10 +689,12 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
         RepairDrainEnabled = pair.Mechanism == IntegrityMechanism.AuditPacedDrain,
         RepairDrainRatePerSecond = 1000,
       };
-      h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null);
+      h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null,
+        h._originRules);
       var tracker = new IntegrityGapTracker();
       tracker.RecordCheckpoint(h.OriginId, ORIGIN_NAME, DateTimeOffset.UnixEpoch, ORIGIN_REQUEST_TOPIC);
-      h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker);
+      h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
+        h._consumerRules);
       h._originRequestReceptor = new IntegrityManifestRequestReceptor(
         h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
       h._originRedeliveryReceptor = new RedeliveryRequestReceptor(
@@ -771,13 +835,17 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
 
     // ----- the audit -----
 
+    /// <summary>Every type the consumer's audit asks about.</summary>
+    private static readonly string[] _auditedTypes = [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, AT_MOST_ONCE,
+      Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames[0] + ", Whizbang.Core"];
+
     /// <summary>One audit cycle of the given kind, pumped until both sides are quiet.</summary>
     public async Task AuditAsync(IntegrityMechanism mechanism) {
       var ask = new RequestIntegrityManifest {
+        RuleFingerprint = ConsumerGuard.Stamp(_auditedTypes),
         RequesterService = CONSUMER_NAME,
         Topic = CONSUMER_TOPIC,
-        EventTypes = [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, AT_MOST_ONCE,
-          Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames[0] + ", Whizbang.Core"],
+        EventTypes = _auditedTypes,
         Level = mechanism == IntegrityMechanism.AuditStreams ? ManifestLevel.Streams : ManifestLevel.Types,
         Windowed = mechanism is IntegrityMechanism.AuditTypesWindowed or IntegrityMechanism.AuditPacedDrain,
         UseRecompute = mechanism == IntegrityMechanism.AuditSweep,
@@ -827,6 +895,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     /// <summary>An operator's redelivery request for whole streams.</summary>
     public async Task OperatorRedeliverAsync(IReadOnlyList<Guid> streams, string[] types) {
       await _originRedeliveryReceptor.HandleAsync(new RequestRedeliveryCommand {
+        RuleFingerprint = ConsumerGuard.Stamp(types),
         RequesterService = CONSUMER_NAME,
         Topic = CONSUMER_TOPIC,
         StreamIds = streams,
@@ -1146,8 +1215,12 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
 
     private ServiceProvider _buildProvider(
         Store store, IntegrityWireTransport transport, IntegrityWireDispatcher dispatcher, string serviceName,
-        StreamIntegrityOptions options, IntegrityGapTracker? tracker) {
+        StreamIntegrityOptions options, IntegrityGapTracker? tracker, MatrixRules rules) {
       var services = new ServiceCollection();
+      // The pair guard over this side's declared rules (#2362), as the turnkey registration wires it.
+      services.AddSingleton<IRuleFingerprintSource>(rules);
+      services.AddSingleton(sp => new IntegrityPairGuard(sp.GetRequiredService<IRuleFingerprintSource>(), Options.Create(options),
+        NullLogger<IntegrityPairGuard>.Instance));
       services.AddScoped<IWorkCoordinator>(_ =>
         new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(store.Options), _json));
       services.AddSingleton<ITransport>(transport);
@@ -1223,6 +1296,26 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   }
 
   /// <summary>The flags the matrix's types declare, by CLR name, as a generated catalog would answer.</summary>
+  /// <summary>
+  /// One side's declared eligibility rules (#2362): every matrix type with its default rules, except a type the side has
+  /// declared ephemeral since (a reclassification).
+  /// </summary>
+  internal sealed class MatrixRules : IRuleFingerprintSource {
+    private const string EPHEMERAL_MODE = "WhenConsumed;PersistedRow";
+    private readonly HashSet<string> _declaredEphemeral = new(StringComparer.Ordinal) { RuleTypeName.Of(EPHEMERAL) };
+
+    /// <summary>Declares <paramref name="eventType"/> ephemeral on this side.</summary>
+    public void DeclareEphemeral(string eventType) => _declaredEphemeral.Add(RuleTypeName.Of(eventType));
+
+    public RuleSet RulesFor(IEnumerable<string>? eventTypes) {
+      var covered = new Dictionary<string, string>(StringComparer.Ordinal);
+      foreach (var name in (eventTypes ?? [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, FILLER, AT_MOST_ONCE]).Select(RuleTypeName.Of)) {
+        covered[name] = new TypeRules(name) { Ephemeral = _declaredEphemeral.Contains(name) ? EPHEMERAL_MODE : null }.Hash();
+      }
+      return new RuleSet(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION, covered);
+    }
+  }
+
   private sealed class MatrixMarkers : IEventMarkerResolver {
     public EventFlags? Resolve(string clrTypeName) => clrTypeName switch {
       _ when clrTypeName == typeof(SupersedingProbeEmbedded).FullName => EventFlags.Superseding,
