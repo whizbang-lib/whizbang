@@ -113,6 +113,25 @@ public class MessageJsonContextMemberInitializerTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task Generator_APositionalRecordWithARequiredMember_PassesBothToTheCreatorAsync() {
+    var objectInfo = _objectInfoOf(_generated("""
+      using System;
+      using Whizbang.Core;
+      namespace TestApp;
+      public sealed record Quoted([property: StreamId] Guid OrderId) : IEvent {
+        public required string Currency { get; init; }
+        public int Decimals { get; init; } = 2;
+      }
+      """), "global::TestApp.Quoted");
+
+    await Assert.That(objectInfo).Contains(
+      "static args => new global::TestApp.Quoted( (global::System.Guid)args[0] ) { Currency = (string)args[1] }")
+      .Because("the constructor takes the positional member and the initializer sets the required one after it");
+    await Assert.That(objectInfo).DoesNotContain("Decimals");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Generator_AnInitOnlyMemberOfAGenericBase_StaysInTheInitializerAsync() {
     var code = _generated("""
       using System;
@@ -145,6 +164,10 @@ public class MessageJsonContextMemberInitializerTests {
       public sealed class Rename : ICommand {
         public required string Name { get; init; }
         public int Attempts { get; init; } = 3;
+      }
+      public sealed record Quoted([property: StreamId] Guid QuoteId) : IEvent {
+        public required string Currency { get; init; }
+        public int Decimals { get; init; } = 2;
       }
       """);
 
