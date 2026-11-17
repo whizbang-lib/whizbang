@@ -122,9 +122,9 @@ public class IntegrityPairGuardTests {
 
     await Assert.That(verdict.Reason).IsEqualTo(RulePairHaltReason.TypeRules);
     await Assert.That(verdict.DifferingTypes).IsEquivalentTo([SHARED]);
-    var error = log.Entries.Single();
-    await Assert.That(error.Level).IsEqualTo(LogLevel.Error).Because("a halt is reported once, not per message");
-    await Assert.That(error.Message).Contains(PEER).And.Contains(SHARED).And.Contains("type_rules")
+    var (level, message) = log.Entries.Single();
+    await Assert.That(level).IsEqualTo(LogLevel.Error).Because("a halt is reported once, not per message");
+    await Assert.That(message).Contains(PEER).And.Contains(SHARED).And.Contains("type_rules")
       .And.Contains(peer.Fingerprint).And.Contains(guard.Stamp([SHARED]).Fingerprint);
     var halts = collector.GetMeasurementSnapshot();
     await Assert.That(halts.Count).IsEqualTo(1);
