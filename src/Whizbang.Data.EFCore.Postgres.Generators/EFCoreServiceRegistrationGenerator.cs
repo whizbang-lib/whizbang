@@ -2336,6 +2336,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine("      // This connection's own timeout key wins (Whizbang:Postgres:<name>:CommandTimeoutSeconds).");
       sb.AppendLine("      global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
+      sb.AppendLine("      // #2347: a connection behind a transaction-mode pooler stops sending DISCARD ALL on every return.");
+      sb.AppendLine("      global::Whizbang.Data.Postgres.PostgresTransactionPooler.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
       sb.AppendLine("      connectionString = connStringBuilder.ToString();");
       sb.AppendLine();
       sb.AppendLine("      var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
@@ -2476,6 +2478,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("        // This connection's own timeout key wins (Whizbang:Postgres:<name>:CommandTimeoutSeconds).");
     sb.AppendLine("        global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
+    sb.AppendLine("        // #2347: a connection behind a transaction-mode pooler stops sending DISCARD ALL on every return.");
+    sb.AppendLine("        global::Whizbang.Data.Postgres.PostgresTransactionPooler.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
     sb.AppendLine("        connectionString = connStringBuilder.ToString();");
     sb.AppendLine();
     sb.AppendLine("        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");

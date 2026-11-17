@@ -201,6 +201,8 @@ public class ConfigurationKeyManifestTests {
     // Each connection's timeout key (PostgresCommandTimeouts), read where the connection is built: the
     // generated pool, the notification connection, the pinned pool and schema initialization.
     "Whizbang:Postgres:*:CommandTimeoutSeconds",
+    // Each connection's transaction-pooler switch (PostgresTransactionPooler, #2347), read by the generated pools.
+    "Whizbang:Postgres:*:TransactionPooler",
     // The reconcile's per-kind drop switches and configured pins, read as children of their sections, so a
     // configuration with none records only the section.
     "Whizbang:Schema:Reconcile:Drop:*",

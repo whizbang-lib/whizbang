@@ -35,6 +35,8 @@ public partial class PerspectiveWorker {
     public List<MessageEnvelope<IEvent>> FilteredEvents { get; set; } = [];
     public int CooledCount { get; set; }
     public Guid? InversionAnchor { get; set; }
+    // #2366: the anchor is the stored cursor's RewindRequired trigger, not an inversion the detector found.
+    public bool RewindFlagged { get; set; }
     public long StartTicks { get; set; }
 
     /// <summary>The pair this drain pair applies in a set-based batch.</summary>
@@ -215,41 +217,8 @@ public partial class PerspectiveWorker {
       }
       pair.Runner = runner;
 
-      // Cold-cache fix: when the cursor cache is cold (process start,
-      // post-rewind invalidate, eviction), TryGet returns false and the
-      // inversion detector below sees null cursors. Late events would then slip
-      // past detection into the runner's forward-apply path, where the runner's
-      // own idempotency filter (which DOES see the persisted metadata.EventId)
-      // silently drops them, the "5 lost events, 0 rewinds" symptom seen in a consumer deployment.
-      //
-      // Cold-cache fallback: read persisted wh_perspective_cursors via the
-      // already-scoped IWorkCoordinator and warm the cache. Subsequent
-      // in-process readers (incl. PerspectiveCursorCache.TryGet callers
-      // elsewhere) now see the same truth source the runner filter uses.
-      // Contract is also locked at PerspectiveCursorResolver for any other
-      // component that needs the same cold-fallback semantics.
-      var eventIdInCache = _cursorCache.TryGet(streamId, perspectiveName, out var cachedEventId);
-      var commitSeqInCache = _cursorCache.TryGetCommitSequence(streamId, perspectiveName, out var cachedCommitSeq);
-      if (eventIdInCache && commitSeqInCache) {
-        pair.LastProcessedEventId = cachedEventId;
-        pair.LastProcessedCommitSequence = cachedCommitSeq;
-      } else if (!eventIdInCache && batchContext.CursorsReadFor.Contains(streamId)) {
-        // The batch read this stream's cursors and found none for the pair: a new pair has no cursor to read (#2246).
-        pair.LastProcessedEventId = null;
-        pair.LastProcessedCommitSequence = null;
-      } else {
-        var persisted = await pair.WorkCoordinator
-          .GetPerspectiveCursorAsync(streamId, perspectiveName, ct)
-          .ConfigureAwait(false);
-        pair.LastProcessedEventId = persisted?.LastEventId;
-        pair.LastProcessedCommitSequence = persisted?.LastCommitSequence;
-        if (persisted is not null) {
-          // Warm the cache so subsequent calls in this and other code paths see
-          // the same cursor without paying for another round-trip.
-          _cursorCache.Set(streamId, perspectiveName, persisted.LastEventId);
-          _cursorCache.SetCommitSequence(streamId, perspectiveName, persisted.LastCommitSequence);
-        }
-      }
+      // Cold-cache fix: the pair's cursor from the cache, else the stored one (see _resolveDrainCursorAsync).
+      await _resolveDrainCursorAsync(pair, ct).ConfigureAwait(false);
 
       // Slice 26.15: partition cooled vs fresh BEFORE the inversion check. The cursor-flush
       // race between drain finish and PerspectiveCompletionFlushWorker DELETE produces a
@@ -291,7 +260,7 @@ public partial class PerspectiveWorker {
       // rewind's own rows still pending before the completion flush deletes them, or the same event delivered again
       // under a new work row. Neither is a new inversion. Their rows are completed, with nothing applied; rewinding again
       // would replay the whole stream once per lap of the drain loop.
-      var coveredEvents = _takeReplayedEvents(freshEvents, streamId, perspectiveName);
+      var coveredEvents = _takeReplayedEvents(freshEvents, batchContext.RawByEventId, streamId, perspectiveName);
       if (coveredEvents.Count > 0) {
         _signalCooldownSkippedEvents(
           coveredEvents, perspectiveName, streamId,
@@ -306,10 +275,17 @@ public partial class PerspectiveWorker {
         return null;
       }
 
-      // Phase H step 6 slice 4: cursor-inversion detector, now scoped to the fresh remainder
-      // so cursor-flush-race events don't masquerade as real inversions.
-      pair.InversionAnchor = _resolveInversionAnchor(
-        freshEvents, batchContext.RawByEventId, pair.LastProcessedEventId, pair.LastProcessedCommitSequence);
+      // #2366: a cursor flagged RewindRequired is resolved by a rewind, never by applying its pending events live and
+      // clearing the flag: a live apply never replays the trigger the flag names. Covered events were completed above.
+      if (_cursorCache.TryGetRewindRequest(streamId, perspectiveName, out var flaggedTrigger)) {
+        pair.InversionAnchor = flaggedTrigger;
+        pair.RewindFlagged = true;
+      } else {
+        // Phase H step 6 slice 4: cursor-inversion detector, now scoped to the fresh remainder
+        // so cursor-flush-race events don't masquerade as real inversions.
+        pair.InversionAnchor = _resolveInversionAnchor(
+          freshEvents, batchContext.RawByEventId, pair.LastProcessedEventId, pair.LastProcessedCommitSequence);
+      }
 
       // freshEvents is what we'll apply (or rewind around).
       pair.FilteredEvents = freshEvents;
@@ -318,6 +294,51 @@ public partial class PerspectiveWorker {
     } finally {
       if (!begun) {
         await groupScopeLifetime.DisposeAsync().ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Sets a drain pair's last processed event and commit sequence: from the cursor cache when it holds both, as none
+  /// when this batch read the stream's cursors and found none for the pair, else from the stored cursor, which then
+  /// warms the cache.
+  /// </summary>
+  private async Task _resolveDrainCursorAsync(DrainPair pair, CancellationToken ct) {
+    var (streamId, perspectiveName, batchContext) = (pair.StreamId, pair.PerspectiveName, pair.BatchContext);
+    // Cold-cache fix: when the cursor cache is cold (process start,
+    // post-rewind invalidate, eviction), TryGet returns false and the
+    // inversion detector below sees null cursors. Late events would then slip
+    // past detection into the runner's forward-apply path, where the runner's
+    // own idempotency filter (which DOES see the persisted metadata.EventId)
+    // silently drops them, the "5 lost events, 0 rewinds" symptom seen in a consumer deployment.
+    //
+    // Cold-cache fallback: read persisted wh_perspective_cursors via the
+    // already-scoped IWorkCoordinator and warm the cache. Subsequent
+    // in-process readers (incl. PerspectiveCursorCache.TryGet callers
+    // elsewhere) now see the same truth source the runner filter uses.
+    // Contract is also locked at PerspectiveCursorResolver for any other
+    // component that needs the same cold-fallback semantics.
+    var eventIdInCache = _cursorCache.TryGet(streamId, perspectiveName, out var cachedEventId);
+    var commitSeqInCache = _cursorCache.TryGetCommitSequence(streamId, perspectiveName, out var cachedCommitSeq);
+    if (eventIdInCache && commitSeqInCache) {
+      pair.LastProcessedEventId = cachedEventId;
+      pair.LastProcessedCommitSequence = cachedCommitSeq;
+    } else if (!eventIdInCache && batchContext.CursorsReadFor.Contains(streamId)) {
+      // The batch read this stream's cursors and found none for the pair: a new pair has no cursor to read (#2246).
+      pair.LastProcessedEventId = null;
+      pair.LastProcessedCommitSequence = null;
+    } else {
+      var persisted = await pair.WorkCoordinator
+        .GetPerspectiveCursorAsync(streamId, perspectiveName, ct)
+        .ConfigureAwait(false);
+      pair.LastProcessedEventId = persisted?.LastEventId;
+      pair.LastProcessedCommitSequence = persisted?.LastCommitSequence;
+      if (persisted is not null) {
+        // Warm the cache so subsequent calls in this and other code paths see
+        // the same cursor without paying for another round-trip.
+        _cursorCache.Set(streamId, perspectiveName, persisted.LastEventId);
+        _cursorCache.SetCommitSequence(streamId, perspectiveName, persisted.LastCommitSequence);
+        _hydrateReplayState(_cursorCache, persisted);
       }
     }
   }
@@ -349,13 +370,18 @@ public partial class PerspectiveWorker {
       pair.LastProcessedCommitSequence ?? -1,
       pair.CooledCount,
       pair.FilteredEvents.Count);
-    LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor, pair.LastProcessedEventId ?? Guid.Empty);
+    if (pair.RewindFlagged) {
+      LogFlaggedRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor, pair.FilteredEvents.Count);
+    } else {
+      LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor, pair.LastProcessedEventId ?? Guid.Empty);
+    }
     // Through the same helper the rewind work-item path uses, so this rewind is counted and
     // traced like any other. It used to call the runner directly, which is why the rewind
     // meters read zero while these rewinds ran (#1362).
     var result = await _rewindAndCountAsync(
       pair.Runner,
-      new RewindRequest(streamId, perspectiveName, inversionAnchor, anchorCommitSequence, EventsBehind: null),
+      new RewindRequest(streamId, perspectiveName, inversionAnchor, anchorCommitSequence, EventsBehind: null,
+        pair.Scope.ServiceProvider.GetService<IEventStore>()),
       _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives),
       leaseCt).ConfigureAwait(false);
     // #1361: the rewind applied this batch's events. A later lap or batch that brings any of them back is

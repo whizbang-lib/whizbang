@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Hosting;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Startup;
 
@@ -57,7 +58,11 @@ public abstract class GatedHostedService : BackgroundService {
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     try {
       await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
-      await Service.StartAsync(stoppingToken).ConfigureAwait(false);
+      // A worker that names its mechanism is started inside it, so its loop, and every task the loop starts, carries
+      // the name to each statement it runs. The scope closes here; the loop keeps the copy it captured.
+      using (Service is IDbMechanismOwner owner ? DbMechanismScope.Begin(owner.DbMechanism) : null) {
+        await Service.StartAsync(stoppingToken).ConfigureAwait(false);
+      }
       _started.TrySetResult();
       if (Service is BackgroundService background) {
         // Set by StartAsync, which has returned.

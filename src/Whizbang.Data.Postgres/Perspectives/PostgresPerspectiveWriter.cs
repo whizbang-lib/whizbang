@@ -173,7 +173,7 @@ internal static class PostgresPerspectiveWriter {
 
   private static async Task<HashSet<Guid>> _executeAsync(
       WriteContext context, PerspectiveWriteShape shape, List<int> rows, CancellationToken cancellationToken) {
-    await using var command = context.Connection.CreateCommand();
+    await using var command = context.Connection.CreateWhizbangCommand();
     command.Transaction = context.Transaction;
     var written = new HashSet<Guid>();
     if (shape.Operation == PerspectiveWriteOperation.Purge) {
@@ -227,7 +227,7 @@ internal static class PostgresPerspectiveWriter {
   private static async Task _explainAsync(
       WriteContext context, PerspectiveWriteShape shape, List<int> rows, CancellationToken cancellationToken) {
     var actual = new Dictionary<Guid, PerspectiveRowVersion>();
-    await using (var command = context.Connection.CreateCommand()) {
+    await using (var command = context.Connection.CreateWhizbangCommand()) {
       command.Transaction = context.Transaction;
       command.CommandText = PerspectiveWriteSql.VersionsStatement(shape.Table);
       command.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {

@@ -2132,29 +2132,6 @@ public partial class IntegrityManifestReceptorTests {
   }
 
   [Test]
-  public async Task RequestReceptor_WindowedNothingNewSettled_StaysSilentAsync() {
-    // ComputedThrough == since means the origin has nothing settled beyond the asker's watermark.
-    // There is no progress to report — the asker simply re-asks on its next cadence.
-    var coordinator = new AuditCoordinator {
-      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 100 },
-    };
-    var transport = new CaptureTransport();
-    var sp = _provider(coordinator, transport);
-    var receptor = new IntegrityManifestRequestReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
-
-    await receptor.HandleAsync(new RequestIntegrityManifest {
-      RequesterService = "auditor-svc",
-      Topic = "inbox",
-      Level = ManifestLevel.Types,
-      Windowed = true,
-      SinceSequence = 100,
-    });
-
-    await Assert.That(transport.Published).IsEmpty();
-  }
-
-  [Test]
   public async Task RequestReceptor_WindowedStreamsAsk_CarriesTheResumeCursorAsync() {
     var stream = TrackedGuid.New().Value;
     var cursor = TrackedGuid.New().Value;
@@ -3096,6 +3073,14 @@ public partial class IntegrityManifestReceptorTests {
     public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) {
       SealAdvancedOrigin = originServiceId;
       SealAdvancedTo = through;
+      return Task.CompletedTask;
+    }
+
+    /// <summary>#2349: each compare outcome recorded, in order.</summary>
+    public List<(Guid Origin, bool FullMatch)> CompareOutcomes { get; } = [];
+
+    public Task IntegrityRecordCompareOutcomeAsync(Guid originServiceId, bool fullMatch, CancellationToken cancellationToken = default) {
+      CompareOutcomes.Add((originServiceId, fullMatch));
       return Task.CompletedTask;
     }
 

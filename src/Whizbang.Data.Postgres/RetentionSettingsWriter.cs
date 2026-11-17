@@ -57,7 +57,7 @@ public static class RetentionSettingsWriter {
       return;
     }
 
-    await using var cmd = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
+    await using var cmd = CoordinatorCommandTimeout.Apply(connection.CreateWhizbangCommand());
 #pragma warning disable S2077 // the table name is the framework's own, schema-qualified by the caller; every value is a parameter
     cmd.CommandText = UpsertSql(settingsTable);
 #pragma warning restore S2077

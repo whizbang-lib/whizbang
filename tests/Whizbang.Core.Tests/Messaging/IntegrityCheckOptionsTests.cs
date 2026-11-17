@@ -68,6 +68,30 @@ public class IntegrityCheckOptionsTests {
     await Assert.That(compare.Enabled).IsFalse()
       .Because("the whole-store heal and the full-history ask grow with history; the routine windowed audit does not");
     await Assert.That(compare.Schedule).IsEqualTo("0 3 * * *");
+    await Assert.That(compare.Lookback).IsEqualTo(TimeSpan.FromDays(90))
+      .Because("the compare covers recent history; older history is the sealed epochs' and the re-check's (#2361)");
+    await Assert.That(compare.MaxPerRun).IsEqualTo(10_000)
+      .Because("one run heals one slice of streams and the next resumes after it, so a run fits the idle budget (#2361)");
+  }
+
+  [Test]
+  public async Task FullHistoryCompare_LookbackAndMaxPerRun_BindFromConfigurationAsync() {
+    var options = _bound(new Dictionary<string, string?> {
+      ["Whizbang:StreamIntegrity:FullHistoryCompare:Lookback"] = "14.00:00:00",
+      ["Whizbang:StreamIntegrity:FullHistoryCompare:MaxPerRun"] = "250",
+    });
+
+    await Assert.That(options.FullHistoryCompare.Lookback).IsEqualTo(TimeSpan.FromDays(14));
+    await Assert.That(options.FullHistoryCompare.MaxPerRun).IsEqualTo(250);
+  }
+
+  [Test]
+  public async Task FullHistoryCompareRequest_From_CarriesTheConfiguredLimitsAsync() {
+    var request = FullHistoryCompareRequest.From(
+      new FullHistoryCompareOptions { Lookback = TimeSpan.FromDays(3), MaxPerRun = 7 }, TimeSpan.FromMinutes(5));
+
+    await Assert.That(request).IsEqualTo(new FullHistoryCompareRequest(TimeSpan.FromMinutes(5), TimeSpan.FromDays(3), 7));
+    await Assert.That(() => FullHistoryCompareRequest.From(null!, TimeSpan.Zero)).Throws<ArgumentNullException>();
   }
 
   // ── binding ──────────────────────────────────────────────────────────────────────────────
@@ -174,12 +198,16 @@ public class IntegrityCheckOptionsTests {
   [Arguments("SealRecheck:MaxEpochsPerRun")]
   [Arguments("SealRecheck:Lookback")]
   [Arguments("SealRecheck:RecheckEvery")]
+  [Arguments("FullHistoryCompare:Lookback")]
+  [Arguments("FullHistoryCompare:MaxPerRun")]
   public async Task Validate_ALimitBelowItsFloor_FailsNamingTheKeyAsync(string key) {
     var options = new StreamIntegrityOptions();
     switch (key) {
       case "Sealing:EpochWidth": options.Sealing.EpochWidth = 0; break;
       case "Sealing:MaxClosuresPerCycle": options.Sealing.MaxClosuresPerCycle = 0; break;
       case "SealRecheck:MaxEpochsPerRun": options.SealRecheck.MaxEpochsPerRun = 0; break;
+      case "FullHistoryCompare:Lookback": options.FullHistoryCompare.Lookback = TimeSpan.Zero; break;
+      case "FullHistoryCompare:MaxPerRun": options.FullHistoryCompare.MaxPerRun = 0; break;
       case "SealRecheck:Lookback": options.SealRecheck.Lookback = TimeSpan.Zero; break;
       default: options.SealRecheck.RecheckEvery = TimeSpan.Zero; break;
     }

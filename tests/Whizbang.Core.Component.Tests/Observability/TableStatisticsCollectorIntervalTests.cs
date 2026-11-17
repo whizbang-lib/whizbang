@@ -31,7 +31,8 @@ public class TableStatisticsCollectorIntervalTests {
   public async Task TheConfiguredInterval_IsTheWaitBetweenCyclesAsync() {
     var clock = new ArmedTimerClock();
     var interval = TimeSpan.FromMinutes(2);
-    await using var host = new CollectorHost(Options.Create(new TableStatisticsOptions { CollectionInterval = interval }), clock);
+    await using var host = new CollectorHost(
+      Options.Create(new TableStatisticsOptions { CollectionInterval = interval, CollectionJitter = 0 }), clock);
 
     var first = host.NextCycle();
     await host.StartAsync();
@@ -45,28 +46,58 @@ public class TableStatisticsCollectorIntervalTests {
       .Because("the collector waits the configured interval after a cycle, and reads again when it has passed");
   }
 
+  /// <summary>
+  /// #2349: the probe runs on a cadence of minutes, not seconds. Without settings each wait is five minutes plus up to a
+  /// fifth of that again, drawn from the collector's random source, so a fleet started together does not read the
+  /// statistics catalog together. Reproducible: the same seed gives the same wait.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics-refresh</docs>
   [Test]
-  public async Task WithoutSettings_TheWaitIsThirtySecondsAsync() {
+  public async Task WithoutSettings_TheWaitIsFiveMinutesPlusItsJitterAsync() {
     var clock = new ArmedTimerClock();
-    await using var host = new CollectorHost(Options.Create(new TableStatisticsOptions()), clock);
+    var expected = TimeSpan.FromMinutes(5) + TimeSpan.FromMilliseconds(Math.Floor(300_000 * 0.2 * new Random(7).NextDouble()));
+    await using var host = new CollectorHost(Options.Create(new TableStatisticsOptions()), clock, new Random(7));
 
     var first = host.NextCycle();
     await host.StartAsync();
     await first.WaitAsync(_wait);
-    await clock.WaitForArmedAsync(TimeSpan.FromSeconds(30), _wait);
+    await clock.WaitForArmedAsync(expected, _wait);
 
-    await Assert.That(host.Provider.Reads).IsEqualTo(1)
-      .Because("thirty seconds is the interval the collector always used, so a host that sets nothing sees no change");
+    await Assert.That(host.Provider.Reads).IsEqualTo(1);
+    await Assert.That(new TableStatisticsOptions().CollectionInterval).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(new TableStatisticsOptions().CollectionJitter).IsEqualTo(0.2);
   }
 
-  /// <summary>A collector on a fake clock over a provider that counts its reads.</summary>
+  /// <summary>#2349: two collectors with different random sources wait different times, so their reads spread out.</summary>
+  /// <docs>operations/observability/metrics#table-statistics-refresh</docs>
+  [Test]
+  public async Task TwoCollectors_WaitDifferentTimes_SoTheirReadsSpreadAsync() {
+    var interval = TimeSpan.FromMinutes(2);
+    var options = Options.Create(new TableStatisticsOptions { CollectionInterval = interval, CollectionJitter = 0.5 });
+    var waits = new List<TimeSpan>();
+    foreach (var seed in new[] { 1, 2 }) {
+      var clock = new ArmedTimerClock();
+      var expected = interval + TimeSpan.FromMilliseconds(Math.Floor(interval.TotalMilliseconds * 0.5 * new Random(seed).NextDouble()));
+      await using var host = new CollectorHost(options, clock, new Random(seed));
+      var first = host.NextCycle();
+      await host.StartAsync();
+      await first.WaitAsync(_wait);
+      await clock.WaitForArmedAsync(expected, _wait);
+      waits.Add(expected);
+    }
+
+    await Assert.That(waits[0]).IsNotEqualTo(waits[1]);
+    await Assert.That(waits.All(w => w >= interval && w <= interval * 1.5)).IsTrue()
+      .Because("the jitter only ever lengthens the wait, by at most its fraction of the interval");
+  }
+
   private sealed class CollectorHost : IAsyncDisposable {
     private readonly ServiceProvider _container;
     private readonly CancellationTokenSource _stopping = new();
     private readonly TestMeterFactory _meters = new();
     private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public CollectorHost(IOptions<TableStatisticsOptions> options, TimeProvider clock) {
+    public CollectorHost(IOptions<TableStatisticsOptions> options, TimeProvider clock, Random? random = null) {
       var services = new ServiceCollection();
       services.AddSingleton<ITableStatisticsProvider>(Provider);
       _container = services.BuildServiceProvider();
@@ -75,7 +106,8 @@ public class TableStatisticsCollectorIntervalTests {
         new TableStatisticsMetrics(new WhizbangMetrics(_meters)),
         NullLogger<TableStatisticsCollector>.Instance,
         options,
-        clock);
+        clock,
+        random);
       Collector.CycleCompleted += () => Volatile.Read(ref _next).TrySetResult();
     }
 

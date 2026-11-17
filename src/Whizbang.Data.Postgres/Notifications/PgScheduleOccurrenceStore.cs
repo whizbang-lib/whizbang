@@ -34,7 +34,7 @@ public sealed class PgScheduleOccurrenceStore(
     if (conn is null) {
       return;
     }
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_defer_occurrence(@id, @until)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = occurrenceId });
     cmd.Parameters.Add(new NpgsqlParameter(nameof(until), NpgsqlDbType.TimestampTz) { Value = until });
@@ -48,7 +48,7 @@ public sealed class PgScheduleOccurrenceStore(
     if (conn is null) {
       return;
     }
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_log_schedule_run(@sid, @oid, @status, @note)";
     cmd.Parameters.Add(new NpgsqlParameter("sid", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("oid", NpgsqlDbType.Uuid) { Value = occurrenceId });
@@ -65,7 +65,7 @@ public sealed class PgScheduleOccurrenceStore(
     if (conn is null) {
       return;
     }
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_refresh_schedule_authority(@sid, @claims)";
     cmd.Parameters.Add(new NpgsqlParameter("sid", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("claims", NpgsqlDbType.Jsonb) { Value = claimsJson });

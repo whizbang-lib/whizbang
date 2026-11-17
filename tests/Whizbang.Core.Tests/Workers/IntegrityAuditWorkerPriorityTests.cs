@@ -36,8 +36,10 @@ public class IntegrityAuditWorkerPriorityTests {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var dispatcher = new CaptureDispatcher();
+    var rebuilds = new CaptureRebuildHandler();
     var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 });
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 },
+      rebuilds: rebuilds);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -45,7 +47,7 @@ public class IntegrityAuditWorkerPriorityTests {
     await Assert.That(report).IsTypeOf<PerspectiveCoverageGapDetected>();
     await Assert.That(reportParent).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a gap report is bookkeeping; dispatched from a worker with no ambient parent it would be declared interactive by the default hook");
-    var (rebuild, rebuildParent) = dispatcher.Sent.Single();
+    var (rebuild, rebuildParent) = rebuilds.Requests.Single();
     await Assert.That(rebuild).IsTypeOf<RebuildPerspectiveCommand>();
     await Assert.That(rebuildParent).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a rebuild replays history behind live projections; everything its handler emits inherits this number");
@@ -78,8 +80,12 @@ public class IntegrityAuditWorkerPriorityTests {
 
   private static IntegrityAuditWorker _buildWorker(
       AuditCoordinator coordinator, CaptureDispatcher dispatcher, CaptureTransport transport,
-      StreamIntegrityOptions options, IntegrityGapTracker? tracker = null) {
+      StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
+      Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler? rebuilds = null) {
     var services = new ServiceCollection();
+    if (rebuilds is not null) {
+      services.AddSingleton(rebuilds);
+    }
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
@@ -131,6 +137,15 @@ public class IntegrityAuditWorkerPriorityTests {
       Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([.. Gaps.Take(maxGaps)]);
     public Task<DigestVerificationResult> VerifyDigestTableAsync(TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
       Task.FromResult(new DigestVerificationResult { BucketsChecked = 0, DriftUpdated = 0, DriftRemoved = 0, DriftAdded = 0 });
+  }
+
+  /// <summary>Records each in-process rebuild request with the ambient parent its handling inherits.</summary>
+  private sealed class CaptureRebuildHandler : Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler {
+    public List<(RebuildPerspectiveCommand Request, int AmbientParent)> Requests { get; } = [];
+    public ValueTask HandleAsync(RebuildPerspectiveCommand message, CancellationToken cancellationToken = default) {
+      Requests.Add((message, PriorityContext.CurrentParent));
+      return ValueTask.CompletedTask;
+    }
   }
 
   /// <summary>Records each dispatch with the ambient parent the producer hooks would inherit from.</summary>

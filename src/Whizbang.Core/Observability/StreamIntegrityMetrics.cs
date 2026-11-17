@@ -70,7 +70,8 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>LOCAL rebuilds dispatched for coverage gaps. Tagged by perspective.</summary>
   public PassiveCounter<long> RebuildsRequested { get; }
 
-  /// <summary>Manifest requests sent to origins by the audit worker. Tagged by origin + sweep.</summary>
+  /// <summary>Manifest requests sent to origins by the audit worker. Tagged by origin, sweep and reason (#2349:
+  /// nothing_remembered, moved, bound_reached, every_cycle or sweep).</summary>
   public PassiveCounter<long> ManifestsRequested { get; }
 
   /// <summary>Manifest chunks answered as an origin. Tagged by level.</summary>
@@ -183,6 +184,13 @@ public sealed class StreamIntegrityMetrics {
   /// stops once that history has been redelivered once.</summary>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   public PassiveCounter<long> OriginsAdopted { get; }
+
+  /// <summary>Redelivered copies of a superseding key the store did not store again because it already holds a newer
+  /// copy of that key (#2350): each is satisfied, so it is neither stored above the newest nor read as missing. Growth
+  /// means consumers reap superseded copies before their origins do.</summary>
+  /// <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
+  public PassiveCounter<long> RedeliveredCopiesSuperseded { get; }
 
   /// <summary>Stored events without an origin that a redelivery named an origin for but did not adopt, because the
   /// event's first hop names another service: an event this service authored, or one received from a third service,
@@ -310,6 +318,36 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
   public PassiveCounter<long> CheckDriftFound { get; }
 
+  /// <summary>Streams the full-history compare's slices took: the history it covered (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> CompareStreamsCovered { get; }
+
+  /// <summary>Slices of the full-history compare run (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> CompareSlices { get; }
+
+  /// <summary>Passes of the full-history compare completed: a slice reached the last stream (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public PassiveCounter<long> ComparePassesCompleted { get; }
+
+  /// <summary>Asks the audit skipped because nothing about the origin moved since the last full match (#2349); tagged by
+  /// origin. Beside <see cref="ManifestsRequested"/>, whose <c>reason</c> tag says why each ask was made.</summary>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  public PassiveCounter<long> ManifestAsksSkipped { get; }
+
+  /// <summary>Windowed asks this origin answered without folding, because nothing had settled at or above the ask's start
+  /// (#2349); tagged by level. A type-level one is answered <c>NothingSettledAbove</c>; a stream-level page or a ledger
+  /// re-check stays silent.</summary>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  public PassiveCounter<long> ManifestAnswersUnchanged { get; }
+
+  /// <summary>The <c>reason</c> tag of <see cref="ManifestsRequested"/>: why the audit asked (#2349).</summary>
+  public const string ASK_REASON_TAG = "reason";
+
+  /// <summary>The runs one completed pass of the full-history compare took (#2361).</summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public Histogram<long> ComparePassRuns { get; }
+
   /// <summary>How long one run of an opt-in check took, in seconds; tagged by check (#2353).</summary>
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
   public Histogram<double> CheckDuration { get; }
@@ -336,6 +374,24 @@ public sealed class StreamIntegrityMetrics {
     CheckDuration = meter.CreateHistogram<double>(
       "whizbang.stream_integrity.check_duration", unit: "s",
       description: "One run of an opt-in integrity check, end to end; tagged by check");
+    CompareStreamsCovered = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.compare_streams_covered",
+      description: "Streams the full-history compare's slices took: the history it covered");
+    ManifestAsksSkipped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.manifest_asks_skipped",
+      description: "Asks the audit skipped because the seal, the origin generation, the origin's checkpoint position and the highest position held from it are unchanged since the last full match; tagged by origin");
+    ManifestAnswersUnchanged = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.manifest_answers_unchanged",
+      description: "Windowed asks this origin answered without folding because nothing had settled at or above the window start; tagged by level");
+    CompareSlices = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.compare_slices",
+      description: "Slices of the full-history compare run; each heals at most MaxPerRun streams");
+    ComparePassesCompleted = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.compare_passes_completed",
+      description: "Passes of the full-history compare completed over the streams written within its lookback");
+    ComparePassRuns = meter.CreateHistogram<long>(
+      "whizbang.stream_integrity.compare_pass_runs",
+      description: "The runs one completed pass of the full-history compare took");
 
     CheckpointsPublished = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.checkpoints_published",
@@ -360,7 +416,7 @@ public sealed class StreamIntegrityMetrics {
       description: "LOCAL rebuilds dispatched for coverage gaps; tagged by perspective");
     ManifestsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifests_requested",
-      description: "Manifest requests sent to origins; tagged by origin + sweep");
+      description: "Manifest requests sent to origins; tagged by origin, sweep and reason (why the audit asked)");
     ManifestChunksSent = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifest_chunks_sent",
       description: "Manifest chunks answered as an origin; tagged by level");
@@ -419,6 +475,9 @@ public sealed class StreamIntegrityMetrics {
     OriginsAdopted = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_adopted",
       description: "Stored events whose empty origin columns a redelivery filled (history received before origins were recorded)");
+    RedeliveredCopiesSuperseded = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivered_copies_superseded",
+      description: "Redelivered copies of a superseding key not stored again because a newer copy of the key is held");
     OriginsRefused = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_refused",
       description: "Stored events without an origin that a redelivery did not adopt because their first hop names another service");

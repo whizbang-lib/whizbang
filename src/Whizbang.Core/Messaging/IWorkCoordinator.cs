@@ -1876,6 +1876,47 @@ public interface IWorkCoordinator {
       DriftRemoved = 0,
       DriftAdded = 0,
     });
+
+  /// <summary>
+  /// #2361: one slice of the full-history compare's heal. Takes the next <see cref="FullHistoryCompareRequest.MaxPerRun"/>
+  /// streams in key order after the cursor the last slice stored (the streams the lifecycle ledger records and the
+  /// streams the digest table holds, so a phantom bucket is in a slice too), heals those last written within
+  /// <see cref="FullHistoryCompareRequest.Lookback"/> (and those the ledger cannot date) as
+  /// <see cref="VerifyDigestTableAsync"/> heals the whole store, and stores where it stopped. A slice that reaches the end
+  /// completes the pass, and the next slice starts again from the first stream. Default: zeros, a pass with nothing in it.
+  /// </summary>
+  /// <param name="request">The settle window, the lookback and the streams per slice.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Checked/healed bucket counts, the streams taken, and whether the pass completed.</returns>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs</tests>
+  Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+    FullHistoryCompareRequest request,
+    CancellationToken cancellationToken = default) => Task.FromResult(new DigestVerificationResult {
+      BucketsChecked = 0,
+      DriftUpdated = 0,
+      DriftRemoved = 0,
+      DriftAdded = 0,
+      PassCompleted = true,
+    });
+
+  /// <summary>
+  /// #2361: where the full-history compare's ask to <paramref name="originServiceId"/> starts: the first sequence of the
+  /// oldest epoch of that origin's lane sealed within <paramref name="lookback"/>, never above
+  /// <paramref name="seal"/> (so the answer can still advance the seal). With no epoch sealed within the lookback it is
+  /// the seal itself. Default: zero, the whole history.
+  /// </summary>
+  /// <param name="originServiceId">The origin asked.</param>
+  /// <param name="lookback">How far back, by seal time, the ask reaches.</param>
+  /// <param name="epochWidth">Sequence positions per epoch.</param>
+  /// <param name="seal">The origin's current seal.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The sequence the ask starts from.</returns>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs:TheAsksStart_IsTheOldestEpochSealedWithinTheLookback_NeverAboveTheSealAsync</tests>
+  Task<long> GetFullHistoryCompareStartAsync(
+    Guid originServiceId, TimeSpan lookback, long epochWidth, long seal,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
   /// <summary>
   /// Tables whose heap is disproportionate to their live rows, re-measured at call time.
   /// </summary>
@@ -3055,6 +3096,37 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// #2349: records how a type-level compare of an origin's window above the seal ended. A full match (the seal advanced
+  /// over it, or the origin had nothing settled above it) remembers the seal, the origin generation recorded beside it,
+  /// the origin's last checkpoint position and the highest position this store holds from the origin, so a later audit
+  /// can skip the ask while none of them moves. The memo is kept only while everything held from the origin lies below
+  /// the seal. A mismatch forgets the memo, so the next audit asks again. Default no-op (no memo store).
+  /// </summary>
+  /// <param name="originServiceId">The origin the compare was against.</param>
+  /// <param name="fullMatch">True when the window matched in full; false when a type disagreed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAskMemoSqlTests.cs</tests>
+  Task IntegrityRecordCompareOutcomeAsync(Guid originServiceId, bool fullMatch, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2349: whether the audit asks an origin this cycle. <see cref="IntegrityAskDecision.Skip"/> when a full match is
+  /// remembered, none of its four values moved, and the last ask is younger than <paramref name="maxSkip"/>; any other
+  /// answer asks and records <paramref name="now"/> as the last ask. Default
+  /// <see cref="IntegrityAskDecision.NothingRemembered"/>: an engine without the memo asks every cycle, as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="now">The audit's clock.</param>
+  /// <param name="maxSkip">The longest an unchanged origin goes unasked.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAskMemoSqlTests.cs</tests>
+  Task<IntegrityAskDecision> IntegrityDecideOriginAskAsync(
+    Guid originServiceId, DateTimeOffset now, TimeSpan maxSkip, CancellationToken cancellationToken = default) =>
+    Task.FromResult(IntegrityAskDecision.NothingRemembered);
+
+  /// <summary>
   /// #80-D: the sweep's SEAL backstop — recomputes each closed digest epoch from the store,
   /// compares bucket-for-bucket, and refolds on drift. Epochs holding an unsettled arrival are
   /// skipped whole (verifying now would fold an in-flight delivery into a seal). Default: nothing
@@ -4173,6 +4245,14 @@ public record PerspectiveCursorInfo {
   /// NULL when no rewind is needed.
   /// </summary>
   public Guid? RewindTriggerEventId { get; init; }
+
+  /// <summary>
+  /// The commit-sequence frontier the last completed replay of this pair read through
+  /// (<see cref="PerspectiveCursorCompletion.ReplayedThroughCommitSequence"/>); null when no replay recorded one. A work
+  /// row for an event stamped at or below it is already applied (#2366).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  public long? ReplayedThroughCommitSequence { get; init; }
 }
 
 /// <summary>
@@ -4976,6 +5056,19 @@ public record PerspectiveCursorCompletion {
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? LastCommitSequence { get; init; }
+
+  /// <summary>
+  /// The commit-sequence frontier a completed replay (a rewind or a rebuild) read through: every event of the stream
+  /// stamped at or below it was folded into the row. Null for a live apply, which reads only the events it was given.
+  /// </summary>
+  /// <remarks>
+  /// The cursor stores it (<c>wh_perspective_cursors.replayed_through_commit_sequence</c>, never lowered), so a work row
+  /// for an event at or below it is known to be applied whichever instance takes it, after a restart too: a copy of an
+  /// event a rewind already read, queued again under a new work row, is completed without a second rewind (#2366).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:AStuckCursorOnTheHighestIdAtTheLowestVersion_ConvergesAfterOneRewind_AndARequeuedCopyIsNotRewoundAsync</tests>
+  public long? ReplayedThroughCommitSequence { get; init; }
 
   /// <summary>
   /// Whether this batch actually changed the row: it was written, or it was purged.

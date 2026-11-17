@@ -321,7 +321,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
   // The call's connection and its command, given back together.
   private async ValueTask<Call> _callAsync(string sql, CancellationToken ct) {
     var connection = await _open(ct).ConfigureAwait(false);
-    var command = connection.CreateCommand();
+    var command = connection.CreateWhizbangCommand();
     command.CommandText = sql;
     return new Call(connection, command, _ownsConnection);
   }

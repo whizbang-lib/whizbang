@@ -51,7 +51,7 @@ public static partial class DoorbellRinger {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(qualifiedFunctionName);
     try {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       // The function name is the schema-qualified constant the caller built from its validated schema
       // (or the bare framework name on the Dapper side); it is never user input, and a function name
       // cannot be a bind parameter. Same pattern as the coordinators' schema-qualified calls.

@@ -114,7 +114,7 @@ public static class StoredFormSettlement {
       }
     }
     foreach (var table in unrecorded) {
-      await using var rows = connection.CreateCommand();
+      await using var rows = connection.CreateWhizbangCommand();
 #pragma warning disable S2077 // the schema and the table are quoted by PgIdentifier
       rows.CommandText = $"SELECT EXISTS (SELECT 1 FROM {prefix}{PgIdentifier.Quote(table)})";
 #pragma warning restore S2077
@@ -133,7 +133,7 @@ public static class StoredFormSettlement {
   }
 
   private static NpgsqlCommand _command(NpgsqlConnection connection, string sql, string schema, string[] names, string[] tables) {
-    var command = connection.CreateCommand();
+    var command = connection.CreateWhizbangCommand();
 #pragma warning disable S2077 // the schema is quoted by PgIdentifier; every value is bound
     command.CommandText = sql;
 #pragma warning restore S2077

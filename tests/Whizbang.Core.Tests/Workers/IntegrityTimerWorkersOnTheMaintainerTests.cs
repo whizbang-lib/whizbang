@@ -301,17 +301,18 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
     // A received checkpoint waits in the integrity delivery queue while the idle gate defers the drain, so on a busy
     // consumer a live origin's checkpoints arrive late by as long as the deferral. The liveness check widens its bound
     // by that time rather than reporting a live origin as silent.
-    // One clock for the whole scene: the drain deferred fifteen minutes ago, the origin last checkpointed ten minutes ago,
-    // and the checkpoint worker reads "now" from the same clock, so nothing depends on how fast the test runs.
+    // One clock for the whole scene: the drain deferred twenty-five minutes ago, the origin last checkpointed twenty
+    // minutes ago (past the heartbeat plus two intervals, 17 minutes by default, #2348), and the checkpoint worker reads
+    // "now" from the same clock, so nothing depends on how fast the test runs.
     var now = _origin;
-    var deliveryClock = new FakeTimeProvider(now - TimeSpan.FromMinutes(15));
+    var deliveryClock = new FakeTimeProvider(now - TimeSpan.FromMinutes(25));
     IntegrityDeliveryWorker? drain = null;
     await using var host = await _hostAsync(maintainer: true, services =>
       services.AddSingleton(sp => drain ??= new IntegrityDeliveryWorker(
         sp.GetRequiredService<IServiceScopeFactory>(), Options.Create(new StreamIntegrityOptions()),
         new IntegrityDeliveryRegistry(), NullLogger<IntegrityDeliveryWorker>.Instance, deliveryClock)));
     var origin = TrackedGuid.New().Value;
-    host.Tracker.RecordCheckpoint(origin, "quiet-origin", now - TimeSpan.FromMinutes(10));
+    host.Tracker.RecordCheckpoint(origin, "quiet-origin", now - TimeSpan.FromMinutes(20));
     if (drainDeferred) {
       host.Coordinator.Backlog = _busy;
       var pass = await host.Services.GetRequiredService<IntegrityDeliveryWorker>().RunPassAsync(CancellationToken.None);
@@ -324,8 +325,8 @@ public class IntegrityTimerWorkersOnTheMaintainerTests {
 
     await Assert.That(logger.StaleOriginWarnings).IsEqualTo(drainDeferred ? 0 : 1)
       .Because(drainDeferred
-        ? "ten minutes of silence inside a fifteen-minute deferral is the queue, not the origin"
-        : "with the drain admitted, ten minutes of silence is more than three checkpoint intervals");
+        ? "twenty minutes of silence inside a twenty-five-minute deferral is the queue, not the origin"
+        : "with the drain admitted, twenty minutes of silence is more than the heartbeat plus two intervals");
   }
 
   private sealed class StaleOriginLogger : ILogger<IntegrityCheckpointWorker> {

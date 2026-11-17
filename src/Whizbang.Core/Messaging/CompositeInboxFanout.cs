@@ -160,7 +160,8 @@ public static partial class CompositeInboxFanout {
     // no typed payloads exist on either side, so they expand through the raw path. A replacement
     // set (pre-fanout directive) is typed and takes the typed path as before.
     if (replacementInner is null && composite is IRawInnerComposite rawComposite) {
-      return _expandRaw(rawComposite, compositeTypeName, source, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor, hasConsumer, ownerOf);
+      return _expandRaw(rawComposite, compositeTypeName, source, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor, hasConsumer, ownerOf,
+        scope.GetService<JsonSerializerOptions>());
     }
 
     // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
@@ -300,7 +301,7 @@ public static partial class CompositeInboxFanout {
   /// count desync between payloads, type names, ids, or sequences fails the whole expansion.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The raw path re-checks every guard the typed path checks, because a raw bundle is machine-built and any count desync between payloads, type names, ids and sequences fails the whole expansion. The guards sit in one place so the two paths can be compared line by line.")]
-  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The raw path takes exactly what the typed path takes: the composite, its name, the source envelope, the three resolvers, and the two routing questions (who consumes a type, who owns it). Grouping them would hide which resolver each guard uses.")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The raw path takes exactly what the typed path takes: the composite, its name, the source envelope, the three resolvers, the two routing questions (who consumes a type, who owns it) and the options a superseding child's key is read with. Grouping them would hide which resolver each guard uses.")]
   private static FanoutResult _expandRaw(
       IRawInnerComposite composite,
       string compositeTypeName,
@@ -309,7 +310,8 @@ public static partial class CompositeInboxFanout {
       IEphemeralModeResolver? ephemeralModeResolver,
       IStreamIdExtractor? streamIdExtractor,
       Func<string, bool>? hasConsumer,
-      Func<string, Guid?>? ownerOf) {
+      Func<string, Guid?>? ownerOf,
+      JsonSerializerOptions? jsonOptions) {
     var payloads = composite.InnerPayloads;
     var typeNames = composite.InnerTypeNames;
     var identityComposite = composite as IIdentityPreservingComposite;
@@ -425,6 +427,11 @@ public static partial class CompositeInboxFanout {
           MessageId = childEnvelope.MessageId,
           Hops = childEnvelope.Hops,
           DispatchContext = childEnvelope.DispatchContext,
+          // #2350: a superseding child keeps the key and group its origin stored it with, read from the carried payload
+          // as the live receive path reads it (ReceivedInboxMessageBuilder). Without them a restored older copy was
+          // stored unkeyed, never reaped again, and the newest of its key by version.
+          SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payloads[i], wireTypeName, jsonOptions),
+          SupersedingGroup = Lifecycle.SupersedingEvents.GroupOf(payloads[i], wireTypeName),
         },
         MessageType = wireTypeName,
         SourceServiceId = sourceServiceId,
@@ -532,6 +539,9 @@ public static partial class CompositeInboxFanout {
         MessageId = childEnvelope.MessageId,
         Hops = childEnvelope.Hops,
         DispatchContext = childEnvelope.DispatchContext,
+        // #2350: a superseding child keeps its key and group, as the dispatch path stamps them on a direct delivery.
+        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(inner),
+        SupersedingGroup = Lifecycle.SupersedingEvents.GroupOf(inner),
       },
       MessageType = messageTypeName,
       SourceServiceId = sourceServiceId,

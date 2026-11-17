@@ -49,7 +49,7 @@ public sealed class HandledReceptorTypeSnapshot {
   Justification = "Startup-once path with infrequent log calls; LoggerMessage overhead not justified.")]
 [SuppressMessage("Usage", "CA1873:Evaluation may be expensive",
   Justification = "Startup-once path; argument evaluation cost is negligible.")]
-public sealed class OrphanInboxJanitor : BackgroundService {
+public sealed partial class OrphanInboxJanitor : BackgroundService {
   private readonly IServiceProvider _services;
   private readonly HandledReceptorTypeSnapshot _receptorSnapshot;
   private readonly ILogger<OrphanInboxJanitor> _logger;

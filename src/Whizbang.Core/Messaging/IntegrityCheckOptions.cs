@@ -146,6 +146,42 @@ public sealed class FullHistoryCompareOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
   public string? Schedule { get; set; } = "0 3 * * *";
+
+  /// <summary>
+  /// How far back the compare reaches (<c>Whizbang:StreamIntegrity:FullHistoryCompare:Lookback</c>, default 90 days). The
+  /// heal covers streams last written within it, and the ask starts from the oldest epoch sealed within it; older history
+  /// is the sealed epochs', which the sealed-history re-check covers. Must be positive (#2361).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public TimeSpan Lookback { get; set; } = TimeSpan.FromDays(90);
+
+  /// <summary>
+  /// Streams one run heals (<c>Whizbang:StreamIntegrity:FullHistoryCompare:MaxPerRun</c>, default 10,000). The heal takes
+  /// the next this many streams in key order after a stored cursor, and the next run resumes after the last of them, so
+  /// one run stays within the idle maintenance budget however large the store is. Must be at least 1 (#2361).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public int MaxPerRun { get; set; } = 10_000;
+}
+
+/// <summary>
+/// One run of the full-history compare's heal (<see cref="IWorkCoordinator.VerifyDigestTableSliceAsync"/>, #2361).
+/// </summary>
+/// <param name="SettleWindow">Buckets and events younger than this are left out of the comparison.</param>
+/// <param name="Lookback">Only streams last written within this are healed.</param>
+/// <param name="MaxPerRun">Streams the run takes after the stored cursor.</param>
+/// <docs>resilience/stream-integrity#full-history-compare</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs:ASlice_HealsAtMostMaxPerRunStreams_AndTheNextResumesAfterItAsync</tests>
+public sealed record FullHistoryCompareRequest(TimeSpan SettleWindow, TimeSpan Lookback, int MaxPerRun) {
+  /// <summary>The request the configured <see cref="FullHistoryCompareOptions"/> describe.</summary>
+  /// <param name="options">The compare's options.</param>
+  /// <param name="settleWindow">The audit's settle window.</param>
+  /// <returns>The request.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompareRequest_From_CarriesTheConfiguredLimitsAsync</tests>
+  public static FullHistoryCompareRequest From(FullHistoryCompareOptions options, TimeSpan settleWindow) {
+    ArgumentNullException.ThrowIfNull(options);
+    return new(settleWindow, options.Lookback, options.MaxPerRun);
+  }
 }
 
 /// <summary>

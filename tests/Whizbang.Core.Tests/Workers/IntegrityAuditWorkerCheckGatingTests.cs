@@ -30,11 +30,11 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
   private static IntegrityAuditWorker _workerAskingOneOrigin(
       AuditCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions options,
       StreamIntegrityMetrics? metrics = null, FakeTimeProvider? clock = null,
-      IntegritySweepScheduleState? scheduleState = null) {
+      IntegritySweepScheduleState? scheduleState = null, Microsoft.Extensions.Logging.ILogger<IntegrityAuditWorker>? logger = null) {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock?.GetUtcNow() ?? _auditNow, "origin-a.requests");
     return _buildWorker(coordinator, new CaptureDispatcher(), transport, options, tracker,
-      metrics: metrics, clock: clock, scheduleState: scheduleState);
+      metrics: metrics, logger: logger, clock: clock, scheduleState: scheduleState);
   }
 
   private static RequestIntegrityManifest _onlyRequest(CaptureTransport transport) =>
@@ -59,7 +59,7 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
-  public async Task ACounterCycle_WithTheFullHistoryCompareOn_HealsAndAsksForTheWholeHistoryAsync() {
+  public async Task ACounterCycle_WithTheFullHistoryCompareOn_HealsASliceAndAsksFromTheLookbackAsync() {
     var coordinator = new AuditCoordinator();
     var transport = new CaptureTransport();
     var worker = _workerAskingOneOrigin(coordinator, transport, new StreamIntegrityOptions {
@@ -72,9 +72,9 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
     await Assert.That(coordinator.VerifyCalls).IsEqualTo(1);
     await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(0).Because("the re-check has its own switch");
     var request = _onlyRequest(transport);
-    await Assert.That(request.Windowed).IsFalse();
+    await Assert.That(request.Windowed).IsTrue().Because("the compare asks from its lookback, windowed (#2361)");
     await Assert.That(request.UseRecompute).IsTrue();
-    await Assert.That(request.SinceSequence).IsEqualTo(0L);
+    await Assert.That(request.SinceSequence).IsEqualTo(0L).Because("nothing is sealed, so the lookback reaches the start");
   }
 
   [Test]
@@ -145,7 +145,7 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
-  public async Task RunCheckOnce_TheFullHistoryCompare_HealsAndAsksFullAsync() {
+  public async Task RunCheckOnce_TheFullHistoryCompare_HealsASliceAndAsksFromTheLookbackAsync() {
     var coordinator = new AuditCoordinator();
     var transport = new CaptureTransport();
     var worker = _workerAskingOneOrigin(coordinator, transport, _bothChecksOn());
@@ -154,7 +154,7 @@ public partial class IntegrityAuditWorkerBranchCoverageTests {
 
     await Assert.That(coordinator.VerifyCalls).IsEqualTo(1);
     await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(0);
-    await Assert.That(_onlyRequest(transport).Windowed).IsFalse();
+    await Assert.That(_onlyRequest(transport).Windowed).IsTrue();
   }
 
   [Test]

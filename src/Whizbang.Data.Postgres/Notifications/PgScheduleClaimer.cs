@@ -54,7 +54,7 @@ public sealed partial class PgScheduleClaimer(
     }
 
     await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     // p_now omitted => the function uses NOW() (DB-clock authority). p_lease_expiry is the outbox
     // publish lease for the spawned occurrences.
     cmd.CommandText = @"
@@ -88,7 +88,7 @@ public sealed partial class PgScheduleClaimer(
     }
 
     await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
-    await using var cmd = conn.CreateCommand();
+    await using var cmd = conn.CreateWhizbangCommand();
     cmd.CommandText = @"
       SELECT MIN(sc.next_fire_at)
       FROM wh_schedules sc

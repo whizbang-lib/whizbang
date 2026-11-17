@@ -422,6 +422,9 @@ public partial class PerspectiveWorker(
   // initialization order between _cursorCache and _streamAffinityGates.
   private readonly PerspectiveCursorCache _cursorCache = new(streamAffinityOptions.Value);
 
+  // #2366: a rewind asked for again on an unchanged stream is settled with the last one's completion.
+  private readonly RewindRepeatGuard _rewindRepeats = new();
+
   /// <summary>
   /// Per-batch accumulators + lookups that drain-mode helpers thread through together.
   /// Groups the shared batch state (raw rows, type-name cache, processed-event and
@@ -2325,6 +2328,19 @@ public partial class PerspectiveWorker(
     if (cursor.LastCommitSequence.HasValue) {
       cache.SetCommitSequence(cursor.StreamId, cursor.PerspectiveName, cursor.LastCommitSequence.Value);
     }
+    _hydrateReplayState(cache, cursor);
+  }
+
+  /// <summary>
+  /// #2366: what the stored cursor says about rewinds: the frontier a completed replay read through, and the rewind it
+  /// asks for (RewindRequired with a trigger), so the drain path honors the flag and covers what a replay already read.
+  /// </summary>
+  internal static void _hydrateReplayState(PerspectiveCursorCache cache, PerspectiveCursorInfo cursor) {
+    if (cursor.ReplayedThroughCommitSequence is long replayedThrough) {
+      cache.RecordReplayedThrough(cursor.StreamId, cursor.PerspectiveName, replayedThrough);
+    }
+    cache.SetRewindRequest(cursor.StreamId, cursor.PerspectiveName,
+      cursor.Status.HasFlag(PerspectiveProcessingStatus.RewindRequired) ? cursor.RewindTriggerEventId : null);
   }
 
   /// <summary>
@@ -2766,6 +2782,10 @@ public partial class PerspectiveWorker(
     Message = "Cursor inversion detected: pending event {AnchorEventId} ≤ cached cursor {CachedCursor} for stream {StreamId} / perspective {PerspectiveName}; triggering rewind")]
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
 
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Cursor for stream {StreamId} / perspective {PerspectiveName} is flagged for a rewind (trigger {TriggerEventId}); triggering rewind instead of applying its {PendingCount} pending event(s) live")]
+  private static partial void LogFlaggedRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid triggerEventId, int pendingCount);
+
   [LoggerMessage(Level = LogLevel.Information,
     Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already handled by an earlier rewind (replayed, or dropped as a straggler it could not replay); their rows are completed without a new rewind (#1361)")]
   private static partial void LogEventsCoveredByRewind(ILogger logger, Guid streamId, string perspectiveName, int count);
@@ -2998,17 +3018,29 @@ public partial class PerspectiveWorker(
   /// </summary>
   private List<MessageEnvelope<IEvent>> _takeReplayedEvents(
       List<MessageEnvelope<IEvent>> freshEvents,
+      ILookup<Guid, StreamEventData> rawByEventId,
       Guid streamId,
       string perspectiveName) {
     var covered = new List<MessageEnvelope<IEvent>>();
     for (var i = freshEvents.Count - 1; i >= 0; i--) {
-      if (_cursorCache.WasReplayed(streamId, perspectiveName, freshEvents[i].MessageId.Value)) {
+      var eventId = freshEvents[i].MessageId.Value;
+      // #2366: or stamped at or below the frontier a completed replay read through, which the cursor stores, so the
+      // copy is covered after a restart and after another path's rewind too.
+      if (_cursorCache.WasReplayed(streamId, perspectiveName, eventId)
+          || _cursorCache.WasReplayedThrough(streamId, perspectiveName, _commitSequenceOf(rawByEventId, eventId, perspectiveName))) {
         covered.Insert(0, freshEvents[i]);
         freshEvents.RemoveAt(i);
       }
     }
     return covered;
   }
+
+  /// <summary>The commit sequence of an event's work row for the perspective, or null when its event is not stamped.</summary>
+  private static long? _commitSequenceOf(ILookup<Guid, StreamEventData> rawByEventId, Guid eventId, string perspectiveName) =>
+    rawByEventId[eventId]
+      .Where(raw => raw.PerspectiveName is null || string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal))
+      .Select(raw => raw.CommitSequence)
+      .FirstOrDefault(seq => seq.HasValue);
 
   /// <summary>
   /// Marks every event_work_id for these envelopes (filtered by <paramref name="perspectiveName"/>
@@ -4226,8 +4258,7 @@ public partial class PerspectiveWorker(
         new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, streamCtx.PerspectiveName));
 
       var (result, lockSkipped) = await _executeRewindPathAsync(
-        runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
-        eventsBehind, enablePerspectiveSpans, cancellationToken);
+        runner, streamCtx, rewindTriggerEventId.Value, eventsBehind, enablePerspectiveSpans, cancellationToken);
       if (result.DroppedStragglers.Length == 0) {
         return (result, ProcessingMode.Replay, lockSkipped);
       }
@@ -4256,12 +4287,12 @@ public partial class PerspectiveWorker(
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.RewindFailure.cs:Rewind_ThatThrows_LogsTheAttemptAtWarningWithItsExceptionAsync</tests>
   private async Task<(PerspectiveCursorCompletion Result, bool LockSkipped)> _executeRewindPathAsync(
       IPerspectiveRunner runner,
-      Guid streamId,
-      string perspectiveName,
+      PerspectiveStreamContext streamCtx,
       Guid rewindTriggerEventId,
       int eventsBehind,
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
+    var (streamId, perspectiveName) = (streamCtx.StreamId, streamCtx.PerspectiveName);
 
     PerspectiveCursorCompletion result;
     var lockAcquired = false;
@@ -4290,7 +4321,8 @@ public partial class PerspectiveWorker(
       try {
         result = await _rewindAndCountAsync(
           runner,
-          new RewindRequest(streamId, perspectiveName, rewindTriggerEventId, TriggerCommitSequence: null, eventsBehind),
+          new RewindRequest(streamId, perspectiveName, rewindTriggerEventId, TriggerCommitSequence: null, eventsBehind,
+            streamCtx.ScopedProvider.GetService<IEventStore>()),
           enablePerspectiveSpans, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // #1983: the group's failure handler fails the work rows, so they are retried with backoff and dead-lettered
@@ -4328,7 +4360,8 @@ public partial class PerspectiveWorker(
       string PerspectiveName,
       Guid TriggerEventId,
       long? TriggerCommitSequence,
-      int? EventsBehind);
+      int? EventsBehind,
+      IEventStore? EventStore);
 
   /// <summary>
   /// Invokes a rewind and records it. Every rewind the worker performs goes through here, whichever
@@ -4354,7 +4387,19 @@ public partial class PerspectiveWorker(
       RewindRequest request,
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
-    var (streamId, perspectiveName, rewindTriggerEventId, rewindTriggerCommitSequence, eventsBehind) = request;
+    var (streamId, perspectiveName, rewindTriggerEventId, rewindTriggerCommitSequence, eventsBehind, eventStore) = request;
+
+    // #2366: the same trigger on a stream with no event stored since the last rewind replays the same input to the same
+    // state. Settled with the last rewind's completion, never run again.
+    var streamVersion = eventStore is null ? -1 : await eventStore.GetLastSequenceAsync(streamId, cancellationToken).ConfigureAwait(false);
+    if (streamVersion >= 0
+        && _rewindRepeats.Repeat(streamId, perspectiveName, rewindTriggerEventId, streamVersion) is { } repeat) {
+      _metrics?.RewindRepeats.Add(1, new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
+      if (repeat.Repeats == _rewindOptions.RepeatWarningThreshold) {
+        LogRewindRepeating(_logger, perspectiveName, streamId, rewindTriggerEventId, repeat.Repeats);
+      }
+      return repeat.Completion with { RowChanged = false, EventsProcessed = 0 };
+    }
 
     using var activity = enablePerspectiveSpans
       ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal)
@@ -4385,6 +4430,15 @@ public partial class PerspectiveWorker(
       // Leaves flight whether it completed, threw or was cancelled. A gauge released only on the
       // success path reports phantom rewinds running forever.
       _metrics?.RewindFinished();
+    }
+
+    if (streamVersion >= 0 && result.Status == PerspectiveProcessingStatus.Completed) {
+      _rewindRepeats.Remember(streamId, perspectiveName, rewindTriggerEventId, streamVersion, result);
+    }
+    // #2366: every event at or below the replay's frontier is applied. Held here for both paths that rewind (the drain's
+    // and the claimed one), and stored on the cursor by the completion, so a copy queued again is not rewound for.
+    if (result.Status == PerspectiveProcessingStatus.Completed && result.ReplayedThroughCommitSequence is long replayedThrough) {
+      _cursorCache.RecordReplayedThrough(streamId, perspectiveName, replayedThrough);
     }
 
     var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
@@ -5715,6 +5769,13 @@ public partial class PerspectiveWorker(
     Level = LogLevel.Debug,
     Message = "Collective sink stream {StreamId} is waiting for collective {HeadEventId}, which is ahead of it in commit order and not held by this run")]
   static partial void LogCollectiveSinkWaitingItsTurn(ILogger logger, Guid streamId, Guid headEventId);
+
+  [LoggerMessage(
+    EventId = 83,
+    Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} was asked to rewind stream {StreamId} again for trigger {TriggerEventId} with nothing stored since ({Repeats} repeats); each repeat is settled without replaying. Something keeps flagging this stream"
+  )]
+  static partial void LogRewindRepeating(ILogger logger, string perspectiveName, Guid streamId, Guid triggerEventId, int repeats);
 
   [LoggerMessage(
     EventId = 52,

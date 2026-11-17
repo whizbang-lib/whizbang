@@ -87,7 +87,7 @@ public class TableStatisticsCollectorBranchTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
       logger: NullLogger<TableStatisticsCollector>.Instance,
-      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()),
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions { CollectionInterval = TimeSpan.FromSeconds(30), CollectionJitter = 0 }),
       timeProvider: clock);
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.CycleCompleted += () => cycled.TrySetResult();
@@ -122,7 +122,7 @@ public class TableStatisticsCollectorBranchTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
       logger: NullLogger<TableStatisticsCollector>.Instance,
-      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()),
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions { CollectionInterval = TimeSpan.FromSeconds(30), CollectionJitter = 0 }),
       timeProvider: clock);
     var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.CycleCompleted += () => recovered.TrySetResult();
