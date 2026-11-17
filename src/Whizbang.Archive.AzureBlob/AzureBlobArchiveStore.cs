@@ -341,16 +341,25 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     var bytes = ArchiveChunk.Encode(chunk, ArchiveCompression.Brotli, _quality);
     var sha256 = ArchiveChunk.Sha256(bytes);
     var name = ArchiveChunk.ObjectName(streamId, chunk[0].Version, chunk[^1].Version, sha256, ArchiveCompression.Brotli);
-    // Overwrites an object of the same name: the name carries the content hash, so it can only be these same bytes,
-    // left by an earlier attempt whose transaction never committed.
+    var row = new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, name, bytes.LongLength, sha256, LocationId: null, Recorded: null);
+    // #2367: create only. An archived object is written once and never updated, so a database and its storage can be
+    // restored to the same point in time: the write is refused by storage when any object already holds the name.
     var upload = new BlobUploadOptions {
       // The service checks the request's bytes against this hash, so an object is stored exactly as it was sent.
       TransferValidation = new UploadTransferValidationOptions { ChecksumAlgorithm = StorageChecksumAlgorithm.MD5 },
-      // #1897: the configured tier, or none (the account's default).
+      // #1897: the configured tier, or none (the account's default). Set here, at creation, and never changed after.
       AccessTier = _accessTier,
+      Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
     };
-    _ = await _container.GetBlobClient(name).UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
-    return new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, name, bytes.LongLength, sha256, LocationId: null, Recorded: null);
+    try {
+      _ = await _container.GetBlobClient(name).UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
+    } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
+      // The name carries the content hash, so the object already there is these bytes, left by an earlier attempt whose
+      // transaction never committed, or by the same events archived before a restore whose delete has not run. It is
+      // kept as it is, and checked like a read checks it: anything else under the name refuses the write.
+      _ = await _downloadAsync(streamId, row, cancellationToken).ConfigureAwait(false);
+    }
+    return row;
   }
 
   // One row per object: its location and its path from the stream (353), never a locator naming a container.
