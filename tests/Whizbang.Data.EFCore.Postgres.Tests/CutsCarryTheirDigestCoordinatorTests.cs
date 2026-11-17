@@ -120,7 +120,7 @@ public class CutsCarryTheirDigestCoordinatorTests : EFCoreTestBase {
 
   [Test]
   public async Task AWindowedTypeAsk_RecordsTheConsumersSeal_OnTheOriginAsync() {
-    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, new Dictionary<string, EventFlags>());
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, []);
     var stream = (Guid)TrackedGuid.New();
     var ids = await h.EmitAsync(new TwoServiceEmit(stream, TYPE, 0, null, """{"k":"v"}"""),
       new TwoServiceEmit(stream, TYPE, 0, null, """{"k":"v"}"""));
