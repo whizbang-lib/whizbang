@@ -163,6 +163,17 @@ public sealed class RedeliveryComposite
   /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
   public bool AnswerContinues { get; init; }
 
+  /// <summary>#2365: the id of the request this answers, echoed from it; null when the request named none.</summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the origin's answer span, itself in the request's trace. The receiver's work on
+  /// this answer starts under it. Null from an origin with no span, or one that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
 
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;

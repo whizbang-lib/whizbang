@@ -418,6 +418,16 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     return new TwoServiceTally(repairs, reports, _redelivered.Count, _restored.Count);
   }
 
+  /// <summary>The redelivery requests the consumer has sent so far (#2365).</summary>
+  public List<RequestRedeliveryCommand> RedeliveryRequests() => [.. _consumerTransport.Published
+    .Where(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand", StringComparison.Ordinal) == true)
+    .Select(p => _payload<RequestRedeliveryCommand>(p.Envelope))];
+
+  /// <summary>The redelivery bundles the origin has sent so far (#2365).</summary>
+  public List<RedeliveryComposite> RedeliveryBundles() => [.. _originTransport.Published
+    .Where(p => p.EnvelopeType?.Contains("RedeliveryComposite", StringComparison.Ordinal) == true)
+    .Select(p => _payload<RedeliveryComposite>(p.Envelope))];
+
   /// <summary>The events redelivered so far, in order.</summary>
   public IReadOnlyList<Guid> Redelivered => _redelivered;
 

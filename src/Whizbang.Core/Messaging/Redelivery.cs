@@ -225,6 +225,20 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
   /// </summary>
   /// <docs>resilience/stream-integrity#the-pair-guard</docs>
   public RuleFingerprint? RuleFingerprint { get; init; }
+
+  /// <summary>
+  /// #2365: this request's id, echoed on every answer to it, so a trace or a log line ties an answer to its request.
+  /// Null from a sender on a release that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the span that sent this request. The origin's answer starts under it, so the
+  /// answer joins the requester's trace across services. Null when the sender had no span, or predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
 }
 
 /// <summary>
