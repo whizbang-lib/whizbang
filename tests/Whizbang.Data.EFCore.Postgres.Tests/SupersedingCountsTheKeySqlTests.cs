@@ -38,8 +38,8 @@ public class SupersedingCountsTheKeySqlTests : EFCoreTestBase {
     await _emitAsync(conn, stream, (TYPE, "key-a", null));
 
     var bucket = await _bucketAsync(conn, stream, TYPE);
-    var expected = await _slotFoldAsync(conn, (stream, TYPE, "key-a"), (stream, TYPE, "key-b"));
-    await Assert.That(bucket).IsEqualTo((expected.Lo, expected.Hi, 2))
+    var (expectedLo, expectedHi) = await _slotFoldAsync(conn, (stream, TYPE, "key-a"), (stream, TYPE, "key-b"));
+    await Assert.That(bucket).IsEqualTo((expectedLo, expectedHi, 2))
       .Because("three copies of key-a and one of key-b are two keys: each slot once, whatever its copies");
   }
 

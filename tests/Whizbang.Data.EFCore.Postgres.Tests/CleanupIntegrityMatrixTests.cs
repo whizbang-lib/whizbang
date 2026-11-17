@@ -194,17 +194,17 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   private static async Task _assertEpochsConvergeAsync(Harness h, MatrixCase pair, Scenario scenario) {
     await Harness.CloseEpochsAsync(h.Origin);
     await Harness.CloseEpochsAsync(h.Consumer);
-    var origin = await Harness.VerifyEpochsAsync(h.Origin);
-    var consumer = await Harness.VerifyEpochsAsync(h.Consumer);
-    await Assert.That(origin.Checked).IsGreaterThan(0)
+    var (originChecked, originDrifted) = await Harness.VerifyEpochsAsync(h.Origin);
+    var (_, consumerDrifted) = await Harness.VerifyEpochsAsync(h.Consumer);
+    await Assert.That(originChecked).IsGreaterThan(0)
       .Because($"[{pair}] precondition: the origin has sealed epochs to verify");
-    await Assert.That((origin.Drifted, consumer.Drifted)).IsEqualTo((0, 0))
+    await Assert.That((originDrifted, consumerDrifted)).IsEqualTo((0, 0))
       .Because($"[{pair}] a cleanup never moves a seal: what a cut removed still counts in the epoch it sat in (#2363)");
 
     // Positive control: a damaged seal is found.
     await Harness.CorruptOneEpochAsync(h.Origin, scenario.ControlType);
-    var planted = await Harness.VerifyEpochsAsync(h.Origin);
-    await Assert.That(planted.Drifted).IsEqualTo(1)
+    var (_, plantedDrifted) = await Harness.VerifyEpochsAsync(h.Origin);
+    await Assert.That(plantedDrifted).IsEqualTo(1)
       .Because($"[{pair}] positive control: the verification must find the one seal planted wrong");
   }
 
@@ -601,9 +601,10 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     public Guid OriginId { get; private set; }
 
     public static async Task<Harness> CreateAsync(CleanupIntegrityMatrixTests test, MatrixCase pair) {
-      var h = new Harness();
-      h.Origin = new Store("origin", test.ConnectionString, test.DbContextOptions);
-      h._consumerDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("consumer")).Name;
+      var h = new Harness {
+        Origin = new Store("origin", test.ConnectionString, test.DbContextOptions),
+        _consumerDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("consumer")).Name,
+      };
       var cs = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
         Database = h._consumerDbName,
         Timezone = "UTC",

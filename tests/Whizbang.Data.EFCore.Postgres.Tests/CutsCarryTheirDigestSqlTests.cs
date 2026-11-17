@@ -47,14 +47,14 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
     var after = await _bucketAsync(conn, stream);
     await Assert.That((after.Lo, after.Hi, after.Count)).IsEqualTo((before.Lo, before.Hi, before.Count))
       .Because("the comparable digest is the live part plus the carried part, which is what it was before the cut");
-    var removed = await _foldAsync(conn, ids[0], ids[1]);
-    await Assert.That((after.CarriedLo, after.CarriedHi, after.CarriedCount)).IsEqualTo((removed.Lo, removed.Hi, 2))
+    var (removedLo, removedHi) = await _foldAsync(conn, ids[0], ids[1]);
+    await Assert.That((after.CarriedLo, after.CarriedHi, after.CarriedCount)).IsEqualTo((removedLo, removedHi, 2))
       .Because("the two removed events are carried by the stream's bucket");
     await Assert.That(await _epochsAsync(conn)).IsEqualTo(epochsBefore)
       .Because("no sealed epoch is refolded by a cut");
     await Assert.That(await _generationAsync(conn)).IsEqualTo(generation)
       .Because("a cut rewrites nothing a consumer verified, so the origin generation does not move");
-    await Assert.That(await _removedAsync(conn)).IsEqualTo((removed.Lo, removed.Hi, 2L))
+    await Assert.That(await _removedAsync(conn)).IsEqualTo((removedLo, removedHi, 2L))
       .Because("the sealed epochs the removed events sat in record them as removed, beside their seal");
   }
 
