@@ -39,6 +39,12 @@ namespace Whizbang.Core.Perspectives;
 /// pure local order.
 /// </para>
 /// <para>
+/// An event of an origin that carries no origin position (a redelivery that lost it) is still that origin's event: it is
+/// dealt into the origin's slots too, placed among the positioned events by its id, which the origin minted in the order
+/// it produced its events (#2379). Kept in its arrival slot instead, an older event redelivered late replayed after the
+/// newer one it preceded.
+/// </para>
+/// <para>
 /// Ties break on the id's canonical text, so the order is total and the same on every run.
 /// </para>
 /// </remarks>
@@ -62,20 +68,21 @@ public static class ReplayEventOrder {
 
   private static MessageEnvelope<IEvent>[] _localOrder(IReadOnlyList<MessageEnvelope<IEvent>> events) {
     if (events.All(e => e.LocalStreamVersion.HasValue)) {
-      return [.. events.OrderBy(e => e.LocalStreamVersion!.Value).ThenBy(_tieBreak, StringComparer.Ordinal)];
+      return [.. events.OrderBy(e => e.LocalStreamVersion!.Value).ThenBy(TieBreak, StringComparer.Ordinal)];
     }
     if (events.All(e => e.LocalCommitSequence.HasValue)) {
-      return [.. events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(_tieBreak, StringComparer.Ordinal)];
+      return [.. events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(TieBreak, StringComparer.Ordinal)];
     }
     return [.. events.OrderByMessageId()];
   }
 
-  // #2257: each origin's events dealt, in origin order, into the places that origin holds in the local order.
+  // #2257: each origin's events dealt, in origin order, into the places that origin holds in the local order. #2379: an
+  // event of the origin with no origin position takes its place among them by its id, which the origin minted in order.
   private static MessageEnvelope<IEvent>[] _inOriginOrderWithinTheirSlots(MessageEnvelope<IEvent>[] local) {
     var slotsByOrigin = new Dictionary<Guid, List<int>>();
     for (var i = 0; i < local.Length; i++) {
       var origin = local[i].SourceServiceId;
-      if (origin == Guid.Empty || local[i].SourceCommitSequence <= 0) {
+      if (origin == Guid.Empty) {
         continue;
       }
       if (!slotsByOrigin.TryGetValue(origin, out var slots)) {
@@ -86,8 +93,7 @@ public static class ReplayEventOrder {
     var ordered = local;
     foreach (var slots in slotsByOrigin.Values.Where(s => s.Count > 1)) {
       // Read before any write: each origin's slots are its own, so dealing one origin never moves another's events.
-      var inOriginOrder = slots.Select(i => local[i])
-        .OrderBy(e => e.SourceCommitSequence).ThenBy(_tieBreak, StringComparer.Ordinal).ToList();
+      var inOriginOrder = _inOriginOrder(slots.Select(i => local[i]));
       for (var k = 0; k < slots.Count; k++) {
         ordered[slots[k]] = inOriginOrder[k];
       }
@@ -95,5 +101,34 @@ public static class ReplayEventOrder {
     return ordered;
   }
 
-  private static string _tieBreak(MessageEnvelope<IEvent> envelope) => envelope.MessageId.Value.ToString("D");
+  /// <summary>
+  /// One origin's events in the origin's order (#2257, #2379): those with an origin position by it, ties broken on the
+  /// id's canonical text; those without one (a redelivery that lost it) placed among them by their ids, which the origin
+  /// minted in the order it produced them. The two are merged on the id: an event without a position goes before the
+  /// first positioned event whose id sorts after its own.
+  /// </summary>
+  /// <param name="events">The events of one origin.</param>
+  /// <returns>The same events in the origin's order.</returns>
+  private static List<MessageEnvelope<IEvent>> _inOriginOrder(IEnumerable<MessageEnvelope<IEvent>> events) {
+    var positioned = new List<MessageEnvelope<IEvent>>();
+    var unpositioned = new List<MessageEnvelope<IEvent>>();
+    foreach (var envelope in events) {
+      (envelope.SourceCommitSequence > 0 ? positioned : unpositioned).Add(envelope);
+    }
+    var byPosition = positioned.OrderBy(e => e.SourceCommitSequence).ThenBy(TieBreak, StringComparer.Ordinal).ToList();
+    var byId = unpositioned.OrderBy(TieBreak, StringComparer.Ordinal).ToList();
+    var merged = new List<MessageEnvelope<IEvent>>(byPosition.Count + byId.Count);
+    int p = 0, u = 0;
+    while (p < byPosition.Count || u < byId.Count) {
+      var takeUnpositioned = p == byPosition.Count
+        || (u < byId.Count && string.CompareOrdinal(TieBreak(byId[u]), TieBreak(byPosition[p])) < 0);
+      merged.Add(takeUnpositioned ? byId[u++] : byPosition[p++]);
+    }
+    return merged;
+  }
+
+  /// <summary>The id's canonical text: the tie-break of every ordering here, and the order of an origin's unpositioned events.</summary>
+  /// <param name="envelope">The event.</param>
+  /// <returns>The event id as lowercase canonical text.</returns>
+  internal static string TieBreak(MessageEnvelope<IEvent> envelope) => envelope.MessageId.Value.ToString("D");
 }
