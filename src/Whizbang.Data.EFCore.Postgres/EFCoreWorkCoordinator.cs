@@ -2098,9 +2098,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
       cmd.CommandText = $"SELECT origin_service_id, sealed_through, age_seconds, recheck_coverage FROM {BuildSchemaQualifiedName(schema, "wh_integrity_seal_reading")}(@p_lookback, @p_every, @p_now)";
-      cmd.Parameters.AddWithValue("p_lookback", (long)lookback.TotalSeconds);
-      cmd.Parameters.AddWithValue("p_every", (long)recheckEvery.TotalSeconds);
-      cmd.Parameters.AddWithValue(P_NOW, now);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)recheckEvery.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
       var lanes = new List<Whizbang.Core.Observability.LaneSeal>();
       double? coverage = null;
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);

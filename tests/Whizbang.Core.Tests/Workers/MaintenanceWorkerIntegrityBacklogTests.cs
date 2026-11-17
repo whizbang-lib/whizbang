@@ -48,7 +48,9 @@ public class MaintenanceWorkerIntegrityBacklogTests {
     }
 
     public IntegritySealReading Seals { get; set; } = new() {
-      Reported = true, Lanes = [new LaneSeal(Guid.Empty, 300, 12)], SealRecheckCoverageRatio = 0.5,
+      Reported = true,
+      Lanes = [new LaneSeal(Guid.Empty, 300, 12)],
+      SealRecheckCoverageRatio = 0.5,
     };
     public (TimeSpan Lookback, TimeSpan Every, DateTimeOffset Now)? SealReadArgs { get; private set; }
 

@@ -174,6 +174,7 @@ public class IntegrityTracingTests {
     // No listener on the source: every start returns null, which the callers pass on unchanged.
     await Assert.That(IntegrityTracing.StartAuditCycle()).IsNull();
     await Assert.That(IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_DRAIN, "o", Guid.Empty)).IsNull();
+    await Assert.That(IntegrityTracing.StartRecheck(IntegrityTracing.CHECK_LEDGER_RECHECK)).IsNull();
   }
 
   /// <summary>

@@ -129,7 +129,9 @@ public class StreamIntegrityObservabilityMetricsTests {
     metrics.UpdateChecksEnabled(sealRecheck: true, fullHistoryCompare: true);
     metrics.RecordCheckRan(StreamIntegrityMetrics.CHECK_FULL_HISTORY_COMPARE, DateTimeOffset.UnixEpoch);
     metrics.UpdateSealReading(new IntegritySealReading {
-      Reported = true, Lanes = [new LaneSeal(Guid.Empty, 1, 1)], SealRecheckCoverageRatio = 1,
+      Reported = true,
+      Lanes = [new LaneSeal(Guid.Empty, 1, 1)],
+      SealRecheckCoverageRatio = 1,
     });
     metrics.UpdateLedgerBacklog(new LedgerBacklogSnapshot { Reported = true, Buckets = [new LedgerBacklogCount("o", "open", 1)] });
 
@@ -142,7 +144,10 @@ public class StreamIntegrityObservabilityMetricsTests {
       },
     };
     void Record(Instrument instrument, ReadOnlySpan<KeyValuePair<string, object?>> tags) {
-      var set = keys.TryGetValue(instrument.Name, out var known) ? known : keys[instrument.Name] = [];
+      if (!keys.TryGetValue(instrument.Name, out var set)) {
+        set = [];
+        keys[instrument.Name] = set;
+      }
       foreach (var tag in tags) {
         set.Add(tag.Key);
       }
