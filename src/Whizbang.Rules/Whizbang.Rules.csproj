@@ -12,6 +12,10 @@
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <!-- No stable release on nuget.org yet, so package validation has no baseline to download (on CI a restore would
+         otherwise look for SoftwareExtravaganza.Whizbang.Rules 0.2626.0 and fail with NU1101). Delete this after the
+         package's first stable release, when the baseline moves (docs/RELEASING.md, "Public API baseline"). -->
+    <WhizbangUnreleasedPackage>true</WhizbangUnreleasedPackage>
     <!-- #2343: the rules' own version track is rules-version.txt beside this file, bumped only when what the rules mean
          changes (RuleSemanticsGoldenTests fails a change without a new version). The package still ships at the
          release's one version until the release pipeline learns a second track (verify-packages, package-sbom, the
