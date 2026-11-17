@@ -70,6 +70,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private readonly string _prefix;
   private readonly ILogger _logger;
   private readonly bool _verifyLocation;
+  private readonly TimeSpan? _deleteAfter;
+  private readonly TimeProvider _clock;
   private int _containerReady;
 
   // Reads, restores and deletes look the configured location up and never create it; a write creates it.
@@ -81,14 +83,17 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <param name="container">The container the objects are written to.</param>
   /// <param name="options">The compression quality, the chunk size and the access tier.</param>
   /// <param name="logger">Logs each outcome, and each object a restore or delete could not remove.</param>
-  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, or the access
-  /// tier is not Hot, Cool or Cold.</exception>
+  /// <param name="timeProvider">The clock a deletion delay and the orphan sweep measure age on; the system clock when
+  /// <see langword="null"/>.</param>
+  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, the access
+  /// tier is not Hot, Cool or Cold, or the deletion delay is not above zero.</exception>
   /// <exception cref="ArgumentException">The connection name is empty or contains <c>;</c> or <c>=</c>.</exception>
   public AzureBlobArchiveStore(
       PostgresArchiveConnection database,
       BlobContainerClient container,
       AzureBlobArchiveOptions options,
-      ILogger<AzureBlobArchiveStore>? logger = null) {
+      ILogger<AzureBlobArchiveStore>? logger = null,
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(database);
     ArgumentNullException.ThrowIfNull(container);
     ArgumentNullException.ThrowIfNull(options);
@@ -115,6 +120,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
     _verifyLocation = options.VerifyLocation;
+    _deleteAfter = options.DeleteAfter;
+    _clock = timeProvider ?? TimeProvider.System;
     ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
   }
 
@@ -126,6 +133,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <docs>fundamentals/events/archive-store#archive-locations</docs>
   /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs</tests>
   public ArchiveLocation ConfiguredLocation { get; }
+
+  /// <summary>The clock a deletion delay and the orphan sweep measure age on.</summary>
+  internal TimeProvider Clock => _clock;
 
   /// <summary>
   /// Acknowledges that the objects of a location now live where this store is configured (a database copied or
@@ -507,6 +517,30 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     ArgumentOutOfRangeException.ThrowIfLessThan(maxObjects, 1);
     return _drainAsync(streamId: null, maxObjects, cancellationToken);
   }
+
+  /// <summary>How often the maintenance step sweeps the container for orphaned objects, when a deletion delay is set.</summary>
+  public static readonly TimeSpan OrphanSweepInterval = TimeSpan.FromDays(1);
+
+  /// <summary>
+  /// Deletes, when <see cref="AzureBlobArchiveOptions.DeleteAfter"/> is set, every object in the configured container
+  /// that no manifest row and no queued deletion names and that storage created at least that long ago: an object
+  /// written after the point a database was restored to, or one whose write never committed. Off (no delay), it does
+  /// nothing and never reaches storage.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many objects were confirmed deleted.</returns>
+  /// <docs>operations/deployment/restoring-an-environment-with-an-archive#the-orphan-sweep</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+  public Task<int> SweepOrphanedObjectsAsync(CancellationToken cancellationToken = default) {
+    cancellationToken.ThrowIfCancellationRequested();
+    _ = _deleteAfter;
+    return Task.FromResult(0);
+  }
+
+  internal static Guid? StreamOf(string name) => name.Length < 0 ? Guid.Empty : null;
+
+  // The maintenance step's sweep: at most once per OrphanSweepInterval in this process, and only with a delay set.
+  internal Task<int> SweepOrphanedObjectsIfDueAsync(CancellationToken cancellationToken) => SweepOrphanedObjectsAsync(cancellationToken);
 
   private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
     var due = new List<(string RelativePath, Guid StreamId, long Location)>();

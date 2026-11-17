@@ -18,7 +18,7 @@ namespace Whizbang.Archive.AzureBlob.Integration.Tests;
 /// #2367: an archived object is written once and never updated, and the store never purges what the storage account
 /// keeps after a delete. Both are what let a database and its archive storage be restored to the same point in time.
 /// </summary>
-/// <docs>operations/restoring-an-environment-with-an-archive</docs>
+/// <docs>operations/deployment/restoring-an-environment-with-an-archive</docs>
 public partial class AzureBlobArchiveStoreTests {
   // ── Never updated ──────────────────────────────────────────────────────────────────────────────────
 
@@ -73,9 +73,18 @@ public partial class AzureBlobArchiveStoreTests {
     await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(retried)))).Throws<RequestFailedException>();
     crash.Armed = false;
     _ = await crashing.WriteAsync(ArchiveBatch.WholeStream(retried));
+    // With a deletion delay: the queue drained once the delay has passed, and the orphan sweep (the one listing).
+    var (orphan, _) = await _seedAsync(3);
+    crash.Armed = true;
+    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<RequestFailedException>();
+    var delayed = _recordedStore(recorder, options: new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, DeleteAfter = TimeSpan.FromDays(1) },
+      clock: new ManualClock(new DateTimeOffset(2999, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+    _ = await delayed.RestoreAsync(restored);
+    await new ArchiveObjectDeletionStep(delayed).RunAsync(_noServices, CancellationToken.None);
+    _ = await delayed.SweepOrphanedObjectsAsync();
 
     await Assert.That(recorder.Kinds).Contains(RecordRequests.CREATE_OBJECT).And.Contains(RecordRequests.READ_OBJECT)
-      .And.Contains(RecordRequests.DELETE_OBJECT).Because("a positive control: the recording saw every kind of request it judges");
+      .And.Contains(RecordRequests.DELETE_OBJECT).And.Contains(RecordRequests.LIST_OBJECTS).And.Contains(RecordRequests.CREATE_CONTAINER).Because("a positive control: the recording saw every kind of request it judges");
     await Assert.That(recorder.Violations).IsEmpty()
       .Because("an object is only created (If-None-Match: *), read, listed or plainly deleted: never overwritten, never "
         + "given another tier, metadata, properties or tags, never snapshotted or copied over, and a delete never purges "
@@ -83,7 +92,8 @@ public partial class AzureBlobArchiveStoreTests {
   }
 
   // A store whose every request passes the recorder, and optionally a fault after it.
-  private AzureBlobArchiveStore _recordedStore(RecordRequests recorder, HttpPipelinePolicy? fault = null, AzureBlobArchiveOptions? options = null) {
+  private AzureBlobArchiveStore _recordedStore(
+      RecordRequests recorder, HttpPipelinePolicy? fault = null, AzureBlobArchiveOptions? options = null, TimeProvider? clock = null) {
     var clientOptions = new BlobClientOptions();
     clientOptions.AddPolicy(recorder, HttpPipelinePosition.PerCall);
     if (fault is not null) {
@@ -92,7 +102,7 @@ public partial class AzureBlobArchiveStoreTests {
     var client = new BlobContainerClient(_azurite, _containerName, clientOptions);
     options ??= new AzureBlobArchiveOptions { MaxEventsPerChunk = 2 };
     options.ContainerName = client.Name;
-    return new AzureBlobArchiveStore(_database(), client, options, logger: null);
+    return new AzureBlobArchiveStore(_database(), client, options, logger: null, clock);
   }
 
   /// <summary>

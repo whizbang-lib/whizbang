@@ -94,6 +94,45 @@ public sealed class AzureBlobArchiveOptions {
   /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync</tests>
   public bool VerifyLocation { get; set; } = true;
 
+  /// <summary>
+  /// How long a queued object deletion waits before the object is deleted from storage, for storage that keeps nothing
+  /// after a delete (no soft delete, no versioning). <see langword="null"/> (the default) deletes at once, as before.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A restore, a delete and a purge stop naming an object in the same database transaction and queue it for deletion
+  /// (<c>wh_archive_object_deletions</c>). With a delay, the object is deleted no sooner than this long after it was
+  /// queued, so a database restored to any point within the delay still finds every object it names. Set it to at least
+  /// the database's point-in-time restore window. Azure Blob Storage with soft delete does not need it: the account keeps
+  /// a deleted object for its retention period instead.
+  /// </para>
+  /// <para>
+  /// With a delay, the maintenance step also sweeps the container once a day for objects no manifest row and no queued
+  /// deletion names that are older than the delay (an object written after the point a database was restored to, or an
+  /// upload whose transaction never committed), and deletes them. It is the only operation that lists the container, and
+  /// it assumes the container holds this database's archive alone. Data a purge removed stays in storage for the delay,
+  /// as it does in the database's own backups; crypto-shredding is the immediate erasure.
+  /// </para>
+  /// <para>
+  /// The age is measured on the service's clock (<see cref="TimeProvider"/>) against the time the database queued the
+  /// deletion and the time storage created the object; a delay of days makes any skew between them immaterial. Turning
+  /// the delay on applies to deletions already queued; turning it off lets every queued deletion run at once.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/deployment/restoring-an-environment-with-an-archive#a-deletion-delay</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Configuration_DeleteAfter_IsOffByDefault_AndBindsATimeSpanAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+  public TimeSpan? DeleteAfter { get; set; }
+
+  /// <summary>
+  /// Why the store cannot run with <paramref name="deleteAfter"/>, or <see langword="null"/> when it can: unset, or a time
+  /// span above zero.
+  /// </summary>
+  internal static string? RefusalForDeleteAfter(TimeSpan? deleteAfter) =>
+    deleteAfter is { } delay && delay <= TimeSpan.Zero
+      ? "DeleteAfter is a time span above zero, such as 35.00:00:00, or unset to delete at once."
+      : null;
+
   /// <summary>Whether <paramref name="name"/> can be a logical connection name: not empty, without <c>;</c> or <c>=</c>.</summary>
   internal static bool IsLogicalName(string? name) =>
     !string.IsNullOrEmpty(name) && name.IndexOfAny([';', '=']) < 0;
