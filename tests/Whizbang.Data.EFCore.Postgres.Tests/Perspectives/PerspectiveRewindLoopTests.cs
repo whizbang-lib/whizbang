@@ -560,6 +560,8 @@ public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
 
     public int Count => Volatile.Read(ref _count);
 
+    public ConcurrentQueue<string> All { get; } = new();
+
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning;
@@ -567,6 +569,7 @@ public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
     public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter) {
       var message = formatter(state, exception);
+      All.Enqueue($"{logLevel}: {message} {exception}");
       if (message.Contains("triggering rewind", StringComparison.Ordinal)
           || message.StartsWith("Perspective rewind required", StringComparison.Ordinal)) {
         Interlocked.Increment(ref _count);
@@ -593,9 +596,13 @@ public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
     EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
       services, typeof(WorkCoordinationDbContext), typeof(Order), "wh_per_order",
       new PostgresUpsertStrategy());
-    // #2379: the per-item model with the strict event-id ordering a fan-out's per-item rows opt into.
+    // #2379: the per-item models with the strict event-id ordering a fan-out's per-item rows opt into. Both fold the same
+    // event types, so a runner for each is resolved whichever one the test drives.
     EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
       services, typeof(WorkCoordinationDbContext), typeof(ItemProgress), "wh_per_item_progress",
+      new PostgresUpsertStrategy());
+    EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
+      services, typeof(WorkCoordinationDbContext), typeof(ItemTrail), "wh_per_item_trail",
       new PostgresUpsertStrategy());
     services.AddMetrics();
     if (snapshots) {

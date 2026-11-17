@@ -28,6 +28,8 @@ public partial class PerspectiveRewindLoopTests {
   /// <summary>Runner rewinds tolerated before the RED run is called a loop: a converging stream needs one.</summary>
   private const int LOOP_REWINDS = 5;
 
+  private static RewindCountingLogger? _workerLog;
+
   private static readonly Guid _specimenOrigin = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-000000002379");
 
   /// <summary>
@@ -39,10 +41,12 @@ public partial class PerspectiveRewindLoopTests {
   public async Task AStreamWhoseFirstEventHasTheHighestId_WithASnapshotThere_ConvergesAfterOneRewindAsync() {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
-    await using var pipeline = _composePipeline(new RewindCountingLogger(), snapshots: true);
+    var workerLog = new RewindCountingLogger();
+    _workerLog = workerLog;
+    await using var pipeline = _composePipeline(workerLog, snapshots: true);
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
-    await _registerItemProgressAsync(conn, ct);
+    await _registerItemTrailAsync(conn, ct);
 
     var specimen = await _seedFirstEventHasTheHighestIdAsync(pipeline, conn, streamId, ct);
     var workIds = await _workIdsAsync(conn, streamId, ct);
@@ -61,10 +65,12 @@ public partial class PerspectiveRewindLoopTests {
   public async Task AStreamWhoseFirstEventHasTheHighestId_WithItsWorkRetired_IsQueuedOnUpgrade_AndConvergesAfterOneRewindAsync() {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
-    await using var pipeline = _composePipeline(new RewindCountingLogger(), snapshots: true);
+    var workerLog = new RewindCountingLogger();
+    _workerLog = workerLog;
+    await using var pipeline = _composePipeline(workerLog, snapshots: true);
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
-    await _registerItemProgressAsync(conn, ct);
+    await _registerItemTrailAsync(conn, ct);
 
     var specimen = await _seedFirstEventHasTheHighestIdAsync(pipeline, conn, streamId, ct);
     await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE stream_id = @id", streamId, ct);
@@ -89,10 +95,12 @@ public partial class PerspectiveRewindLoopTests {
   public async Task TwoServices_AConsumerStreamWhoseFirstEventHasTheHighestId_ConvergesAfterOneRewind_AndAuditCyclesNeverRewindItAgainAsync() {
     var ct = CancellationToken.None;
     var streamId = (Guid)TrackedGuid.New();
-    await using var pipeline = _composePipeline(new RewindCountingLogger(), snapshots: true);
+    var workerLog = new RewindCountingLogger();
+    _workerLog = workerLog;
+    await using var pipeline = _composePipeline(workerLog, snapshots: true);
     await using var conn = await _openAsync(ct);
     await pipeline.RegisterAsync(conn, ct);
-    await _registerItemProgressAsync(conn, ct);
+    await _registerItemTrailAsync(conn, ct);
     await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, []);
     var started = TypeNameFormatter.Format(typeof(ItemProgressStartedEvent));
     var completed = TypeNameFormatter.Format(typeof(ItemProgressCompletedEvent));
@@ -138,10 +146,21 @@ public partial class PerspectiveRewindLoopTests {
   private static async Task _convergesAfterOneRewindAsync(
       Pipeline pipeline, NpgsqlConnection conn, Guid streamId, FirstEventHasTheHighestId specimen, List<Guid> workIds,
       CancellationToken ct) {
-    await pipeline.StartAsync(ct);
     var settled = Task.WhenAll(workIds.Select(pipeline.CompletionOf));
+    try {
+      await pipeline.StartAsync(ct);
+    } catch (TimeoutException) {
+      Console.WriteLine($"DIAG start: runner rewinds={pipeline.RunnerRewinds.Count} {await _cursorAsync(conn, streamId, ct)}\nDIAG rows: {await _scalarAsync<string>(conn, "SELECT string_agg(format('%s %s st%s inst %s lease %s', perspective_name, event_id, status, instance_id, lease_expiry), ' | ') FROM wh_perspective_events WHERE stream_id = @id", streamId, ct)}\nDIAG active: {await _scalarAsync<object>(conn, "SELECT string_agg(format('%s %s', assigned_instance_id, lease_expiry), ' | ') FROM wh_active_streams WHERE stream_id = @id", streamId, ct)} me {pipeline.InstanceProvider.InstanceId}\nDIAG logs:\n{pipeline.RunnerRewinds.Warnings}\nDIAG worker:\n{string.Join("\n", _workerLog?.All.TakeLast(40) ?? [])}");
+      throw;
+    }
     var looping = pipeline.RunnerRewinds.Reached(LOOP_REWINDS);
-    var first = await Task.WhenAny(settled, looping).WaitAsync(_signalDeadline, ct);
+    Task first;
+    try {
+      first = await Task.WhenAny(settled, looping).WaitAsync(_signalDeadline, ct);
+    } catch (TimeoutException) {
+      Console.WriteLine($"DIAG runner rewinds={pipeline.RunnerRewinds.Count} {await _cursorAsync(conn, streamId, ct)}\nDIAG warnings:\n{pipeline.RunnerRewinds.Warnings}");
+      throw;
+    }
     Console.WriteLine($"settled={first == settled} runner rewinds={pipeline.RunnerRewinds.Count} {await _cursorAsync(conn, streamId, ct)}");
     await Assert.That(first == looping).IsFalse()
       .Because($"the stream rewound {pipeline.RunnerRewinds.Count} times without completing its work: {pipeline.RunnerRewinds.Last}");
@@ -149,16 +168,19 @@ public partial class PerspectiveRewindLoopTests {
     var rewindsWhenSettled = pipeline.RunnerRewinds.Count;
 
     var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
-    var cursorEvent = await _scalarAsync<Guid>(conn,
-      "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct);
-    var flagged = await _scalarAsync<bool>(conn,
-      "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct);
-    var pending = await _scalarAsync<long>(conn,
-      "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id AND processed_at IS NULL", streamId, ct);
-    var completed = await _scalarAsync<bool>(conn,
-      "SELECT (data->>'Completed')::boolean FROM wh_per_item_progress WHERE id = @id", streamId, ct);
-    var attempts = await _scalarAsync<int>(conn,
-      "SELECT (data->>'Attempts')::int FROM wh_per_item_progress WHERE id = @id", streamId, ct);
+    var cursorEvent = await _trailScalarAsync<Guid>(conn,
+      "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @id AND perspective_name = @p", streamId, ct);
+    var flagged = await _trailScalarAsync<bool>(conn,
+      "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id AND perspective_name = @p",
+      streamId, ct);
+    var pending = await _trailScalarAsync<long>(conn,
+      "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id AND perspective_name = @p AND processed_at IS NULL", streamId, ct);
+    var row = await _scalarAsync<string>(conn,
+      "SELECT format('%s %s', data->>'State', data->>'Trail') FROM wh_per_item_trail WHERE id = @id", streamId, ct);
+    // The row the producer's order gives (three Started, then Completed), and the one the stored order gives: they
+    // differ, so the row says which order was folded.
+    var inProducerOrder = _fold(started: 3, startedFirst: true);
+    var inVersionOrder = _fold(started: 3, startedFirst: false);
 
     await Assert.That(rewindsWhenSettled).IsEqualTo(1).Because("one rewind settles the stream");
     await Assert.That(pipeline.RunnerRewinds.Count).IsEqualTo(rewindsWhenSettled).Because("nothing rewinds it again");
@@ -166,9 +188,27 @@ public partial class PerspectiveRewindLoopTests {
     await Assert.That(cursorEvent).IsEqualTo(specimen.Version4).Because("the cursor ends on the stream's last version");
     await Assert.That(flagged).IsFalse().Because("the completed rewind clears its flag");
     await Assert.That(pending).IsEqualTo(0L).Because("the pending work is completed");
-    await Assert.That(completed).IsTrue().Because("the row never loses the Completed state it holds");
-    await Assert.That(attempts).IsEqualTo(1)
-      .Because("the model orders on the event id, so the replayed Started events, all with lower ids than the Completed one, are refused, and the rewind still settles");
+    await Assert.That(inVersionOrder).IsNotEqualTo(inProducerOrder).Because("positive control: the two orders fold differently");
+    await Assert.That(row).IsEqualTo(inProducerOrder)
+      .Because("the row is the fold in the producer's order, whatever order the events arrived or were stored in");
+  }
+
+  /// <summary>The row <see cref="ItemTrailPerspective"/> folds from Started events and one Completed, in either order.</summary>
+  private static string _fold(int started, bool startedFirst) {
+    var perspective = new ItemTrailPerspective();
+    var id = Guid.Empty;
+    var row = new ItemTrail();
+    var completedEvent = new ItemProgressCompletedEvent { StreamId = id };
+    if (!startedFirst) {
+      row = perspective.Apply(row, completedEvent);
+    }
+    for (var i = 0; i < started; i++) {
+      row = perspective.Apply(row, new ItemProgressStartedEvent { StreamId = id });
+    }
+    if (startedFirst) {
+      row = perspective.Apply(row, completedEvent);
+    }
+    return $"{row.State} {row.Trail}";
   }
 
   /// <summary>The ids of the four events of the specimen, by version.</summary>
@@ -223,7 +263,9 @@ public partial class PerspectiveRewindLoopTests {
       Pipeline pipeline, NpgsqlConnection conn, Guid streamId, FirstEventHasTheHighestId specimen, CancellationToken ct) {
     await using (var shape = conn.CreateCommand()) {
       shape.CommandText = """
-        DELETE FROM wh_perspective_events WHERE stream_id = @stream AND event_id IN (@v1, @v2);
+        -- Only this perspective's work: another perspective the shared database associates with these types is not under test.
+        DELETE FROM wh_perspective_events
+        WHERE stream_id = @stream AND (event_id IN (@v1, @v2) OR perspective_name <> @perspective);
         UPDATE wh_perspective_events SET instance_id = NULL, lease_expiry = NULL WHERE stream_id = @stream;
         INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at,
                                             rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at)
@@ -231,9 +273,9 @@ public partial class PerspectiveRewindLoopTests {
         ON CONFLICT (stream_id, perspective_name) DO UPDATE
           SET last_event_id = EXCLUDED.last_event_id, status = EXCLUDED.status,
               rewind_trigger_event_id = EXCLUDED.rewind_trigger_event_id;
-        INSERT INTO wh_per_item_progress (id, data, metadata, scope, created_at, updated_at, version)
+        INSERT INTO wh_per_item_trail (id, data, metadata, scope, created_at, updated_at, version)
         VALUES (@stream,
-          jsonb_build_object('Id', @stream, 'Started', true, 'Attempts', 1, 'Completed', true),
+          jsonb_build_object('Id', @stream, 'State', 'Completed', 'Trail', 'SC'),
           jsonb_build_object('EventId', @v1::text, 'EventType', @completedType, 'Timestamp', NOW(),
             'CommitSequence', (SELECT commit_sequence FROM wh_event_store WHERE event_id = @v2)),
           '{}'::jsonb, NOW(), NOW(), 2)
@@ -242,20 +284,21 @@ public partial class PerspectiveRewindLoopTests {
       shape.Parameters.AddWithValue("v1", specimen.Version1);
       shape.Parameters.AddWithValue("v2", specimen.Version2);
       shape.Parameters.AddWithValue("stream", streamId);
-      shape.Parameters.AddWithValue("perspective", _itemProgressPerspective);
+      shape.Parameters.AddWithValue("perspective", _itemTrailPerspective);
       shape.Parameters.AddWithValue("completedType", typeof(ItemProgressCompletedEvent).FullName!);
       await shape.ExecuteNonQueryAsync(ct);
     }
 
     // The one snapshot, at version 1, in the format the runner writes.
-    var model = new ItemProgress { Id = streamId, Started = true, Attempts = 1, Completed = true };
+    // As the deployed snapshot held it: taken at version 1 after a replay that folded version 2 before it (origin order).
+    var model = new ItemTrail { Id = streamId, State = "Completed", Trail = "SC" };
     using (var modelDoc = JsonSerializer.SerializeToDocument(model,
-             JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(ItemProgress)))) {
+             JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(ItemTrail)))) {
       using var snapshot = SnapshotEnvelope.Wrap(modelDoc.RootElement, SerializationVersion.CURRENT);
       var version1Sequence = await _scalarAsync<long>(conn,
         "SELECT commit_sequence FROM wh_event_store WHERE event_id = @id", specimen.Version1, ct);
       await pipeline.Services.GetRequiredService<IPerspectiveSnapshotStore>().CreateSnapshotAsync(
-        streamId, _itemProgressPerspective, specimen.Version1, version1Sequence, snapshot, ct);
+        streamId, _itemTrailPerspective, specimen.Version1, version1Sequence, snapshot, ct);
     }
 
     var snapshotAt = await _scalarAsync<string>(conn, """
@@ -267,10 +310,19 @@ public partial class PerspectiveRewindLoopTests {
     await Assert.That(versionsByIdOrder).IsEqualTo("2,3,4,1").Because("version 1 has the highest id, version 2 the lowest");
   }
 
-  private static readonly string _itemProgressPerspective = TypeNameFormatter.GetPerspectiveName(typeof(ItemProgressPerspective));
+  private static readonly string _itemTrailPerspective = TypeNameFormatter.GetPerspectiveName(typeof(ItemTrailPerspective));
+
+  /// <summary>A scalar read of the stream (<c>@id</c>) for the perspective under test (<c>@p</c>).</summary>
+  private static async Task<T> _trailScalarAsync<T>(NpgsqlConnection conn, string sql, Guid streamId, CancellationToken ct) {
+    await using var command = conn.CreateCommand();
+    command.CommandText = sql;
+    command.Parameters.AddWithValue("id", streamId);
+    command.Parameters.AddWithValue("p", _itemTrailPerspective);
+    return (T)(await command.ExecuteScalarAsync(ct))!;
+  }
 
   /// <summary>Associates the per-item events with their perspective, so a commit queues their work.</summary>
-  private static async Task _registerItemProgressAsync(NpgsqlConnection conn, CancellationToken ct) {
+  private static async Task _registerItemTrailAsync(NpgsqlConnection conn, CancellationToken ct) {
     foreach (var eventType in new[] { typeof(ItemProgressStartedEvent), typeof(ItemProgressCompletedEvent) }) {
       await using var assoc = conn.CreateCommand();
       assoc.CommandText = """
@@ -280,7 +332,7 @@ public partial class PerspectiveRewindLoopTests {
         ON CONFLICT DO NOTHING
         """;
       assoc.Parameters.AddWithValue("eventType", TypeNameFormatter.Format(eventType));
-      assoc.Parameters.AddWithValue("target", _itemProgressPerspective);
+      assoc.Parameters.AddWithValue("target", _itemTrailPerspective);
       await assoc.ExecuteNonQueryAsync(ct);
     }
   }
@@ -297,6 +349,11 @@ public partial class PerspectiveRewindLoopTests {
     public int Count => Volatile.Read(ref _count);
 
     public string? Last { get; private set; }
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _warnings = new();
+
+    /// <summary>Every warning logged, for a failure's diagnosis.</summary>
+    public string Warnings => string.Join("\n", _warnings.TakeLast(80));
 
     public Task Reached(int count) {
       lock (_gate) {
@@ -320,8 +377,10 @@ public partial class PerspectiveRewindLoopTests {
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
       var message = formatter(state, exception);
-      if (!message.StartsWith("Restoring ", StringComparison.Ordinal)
-          && !message.Contains("performing full replay", StringComparison.Ordinal)) {
+      _warnings.Enqueue($"{logLevel}: {message} {exception?.GetType().Name} {exception?.Message}");
+      if ((!message.StartsWith("Restoring ", StringComparison.Ordinal)
+           && !message.Contains("performing full replay", StringComparison.Ordinal))
+          || !message.Contains(_itemTrailPerspective, StringComparison.Ordinal)) {
         return;
       }
       lock (_gate) {
