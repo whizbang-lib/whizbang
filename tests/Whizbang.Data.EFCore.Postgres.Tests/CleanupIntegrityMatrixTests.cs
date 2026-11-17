@@ -64,6 +64,8 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   internal const string EPHEMERAL = "Matrix.Contracts.CursorMoved, Matrix.Contracts";
   /// <summary>A durable type that is later declared ephemeral (reclassification).</summary>
   internal const string LATER_EPHEMERAL = "Matrix.Contracts.PresencePinged, Matrix.Contracts";
+  /// <summary>A durable type no cleanup touches: history that pushes the sealed frontier past what a cleanup removes.</summary>
+  internal const string FILLER = "Matrix.Contracts.LedgerNoted, Matrix.Contracts";
   /// <summary>A schedule occurrence type delivered at most once.</summary>
   internal const string AT_MOST_ONCE = "Matrix.Contracts.ReminderFired, Matrix.Contracts";
 
@@ -100,11 +102,9 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
 
     // Both sides hold the same history, delivered live.
     await scenario.SeedAsync(h);
-    if (pair.Mechanism == IntegrityMechanism.EpochSeal) {
-      // Seal the history first, so a cleanup that removes from it must refold the seals it touched.
-      await Harness.CloseEpochsAsync(h.Origin);
-      await Harness.CloseEpochsAsync(h.Consumer);
-    }
+    // #2363: a cut removes only history its service has sealed and verified (the cut gate is on, as the turnkey
+    // registration writes it while sealing runs), so the history is sealed on both sides and audited clean first.
+    await h.SealAndVerifyAsync();
 
     // The cleanup, on the side(s) under test. It must change the store it runs on, or every "nothing happened"
     // assertion below would pass for a cleanup that did nothing.
@@ -196,7 +196,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     await Assert.That(origin.Checked).IsGreaterThan(0)
       .Because($"[{pair}] precondition: the origin has sealed epochs to verify");
     await Assert.That((origin.Drifted, consumer.Drifted)).IsEqualTo((0, 0))
-      .Because($"[{pair}] a cleanup that removes sealed history must refold the seals it touched, on the side that ran it");
+      .Because($"[{pair}] a cleanup never moves a seal: what a cut removed still counts in the epoch it sat in (#2363)");
 
     // Positive control: a damaged seal is found.
     await Harness.CorruptOneEpochAsync(h.Origin, scenario.ControlType);
@@ -871,6 +871,22 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       return await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_event_store WHERE event_id = @id", ("id", eventId)) == 1;
     }
 
+    /// <summary>
+    /// Turns the cut gate on in both stores, pushes the history past an epoch boundary with a filler stream delivered
+    /// live, closes the epochs on both sides, and runs one clean windowed audit so the consumer's seal covers it.
+    /// </summary>
+    public async Task SealAndVerifyAsync() {
+      foreach (var store in new[] { Origin, Consumer }) {
+        await SetSettingAsync(store, "integrity_cut_waits_for_seal", "true", "boolean");
+      }
+      var filler = (Guid)TrackedGuid.New();
+      var ids = await EmitAsync([.. Enumerable.Range(0, 6).Select(_ => new Emit(filler, FILLER, 0, null))]);
+      await DeliverAsync(ids);
+      await CloseEpochsAsync(Origin);
+      await CloseEpochsAsync(Consumer);
+      await AuditAsync(IntegrityMechanism.AuditTypesWindowed);
+    }
+
     // ----- the per-store mechanisms -----
 
     public async Task<DigestVerificationResult> VerifyDigestTableAsync(Store store) {
@@ -951,9 +967,14 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
                   AND n.event_id > es.event_id))
             GROUP BY 1, 2, 3, 4
           ),
+          -- #2363: a bucket's digest is its live events plus what cuts carried; the live part is what must equal the fold.
           stored AS (
-            SELECT origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count
-            FROM wh_stream_digests)
+            SELECT origin_service_id, scope_tenant, event_type, stream_id,
+                   digest_lo # carried_lo AS digest_lo, digest_hi # carried_hi AS digest_hi,
+                   event_count - carried_count AS event_count
+            FROM wh_stream_digests
+            WHERE carried_lo IS NOT NULL
+              AND NOT (event_count - carried_count = 0 AND digest_lo # carried_lo = 0 AND digest_hi # carried_hi = 0))
           SELECT COUNT(*) FROM ((TABLE eligible EXCEPT TABLE stored) UNION ALL (TABLE stored EXCEPT TABLE eligible)) d
           """, ("exempt", Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()));
         await Assert.That(differing).IsEqualTo(0L)
