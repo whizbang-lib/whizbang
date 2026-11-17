@@ -58,8 +58,11 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
 
   /// <summary>A plain durable event type.</summary>
   internal const string DURABLE = "Matrix.Contracts.OrderPlaced, Matrix.Contracts";
-  /// <summary>A superseding (latest-wins) event type, keyed.</summary>
-  internal const string SUPERSEDING = "Matrix.Contracts.ProfileReplaced, Matrix.Contracts";
+  /// <summary>
+  /// A superseding (latest-wins) event type, keyed: a registered type, so a redelivered copy's key is read from its
+  /// payload by the generated accessor, as on a real consumer (#2350).
+  /// </summary>
+  internal static readonly string SUPERSEDING = Whizbang.Core.Serialization.TypeNameFormatter.Format(typeof(SupersedingProbeEmbedded));
   /// <summary>An ephemeral event type.</summary>
   internal const string EPHEMERAL = "Matrix.Contracts.CursorMoved, Matrix.Contracts";
   /// <summary>A durable type that is later declared ephemeral (reclassification).</summary>
@@ -667,7 +670,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
             (message_id, destination, message_type, envelope_type, event_data, metadata, scope,
              status, attempts, instance_id, lease_expiry, partition_number, stream_id, is_event, flags, created_at)
           VALUES
-            (@id, 'matrix-topic', @type, 'env', jsonb_build_object('p', jsonb_build_object('k', @key::text)),
+            (@id, 'matrix-topic', @type, 'env', jsonb_build_object('p', jsonb_build_object('k', @key::text, 'DocumentId', @sid::text, 'Model', @key::text)),
              CASE WHEN @key::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sk', @key::text) END, NULL,
              1, 0, @inst, @lease, 0, @sid, true, @flags, @now)
           """,
@@ -701,7 +704,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     private InboxMessage _inboxRow(Guid id, Guid stream, string type, EventFlags flags, string? key, long seq, bool restoreIfMissing) {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(id),
-        Payload = JsonSerializer.SerializeToElement(new Dictionary<string, string?> { ["k"] = key }, _json.GetTypeInfo(typeof(Dictionary<string, string?>))),
+        Payload = JsonSerializer.SerializeToElement(new Dictionary<string, string?> { ["k"] = key, ["DocumentId"] = stream.ToString(), ["Model"] = key }, _json.GetTypeInfo(typeof(Dictionary<string, string?>))),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         SourceServiceId = OriginId,
@@ -1221,7 +1224,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   /// <summary>The flags the matrix's types declare, by CLR name, as a generated catalog would answer.</summary>
   private sealed class MatrixMarkers : IEventMarkerResolver {
     public EventFlags? Resolve(string clrTypeName) => clrTypeName switch {
-      "Matrix.Contracts.ProfileReplaced" => EventFlags.Superseding,
+      _ when clrTypeName == typeof(SupersedingProbeEmbedded).FullName => EventFlags.Superseding,
       "Matrix.Contracts.CursorMoved" => EventFlags.Ephemeral,
       _ => null,
     };
