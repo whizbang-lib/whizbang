@@ -891,6 +891,12 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the eligibility rules changed.</summary>
   public const string SEAL_LOWERED_RULE_CHANGE = "rule_change";
 
+  /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin said no reason it knows (an older release).</summary>
+  public const string SEAL_LOWERED_UNKNOWN = "unknown";
+
+  /// <summary>RED stub (#2365): the counter is created by the implementation that follows.</summary>
+  public PassiveCounter<long> RedeliveredThenReaped => CarriedCompactions;
+
   /// <summary>
   /// Seals this service lowered for an origin (#2365), tagged by <c>reason</c>: <c>rewrite</c> when the origin's history
   /// generation moved, so history this service had verified was rewritten, and <c>rule_change</c> when the eligibility

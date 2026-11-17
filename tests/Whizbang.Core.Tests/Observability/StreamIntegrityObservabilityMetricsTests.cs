@@ -158,7 +158,8 @@ public class StreamIntegrityObservabilityMetricsTests {
     var metrics = new StreamIntegrityMetrics(_root());
 
     var lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).Where(s => s.Tags.ContainsKey("reason")).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
-    await Assert.That(lowered.Keys.Order().ToList()).IsEquivalentTo(["rewrite", "rule_change"]);
+    await Assert.That(lowered.Keys.Order().ToList()).IsEquivalentTo(["rewrite", "rule_change", "unknown"])
+      .Because("an origin on an older release says no reason, which is counted apart");
     var compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
     await Assert.That(compactions.Keys.Order().ToList()).IsEquivalentTo(["archive", "truncate"]);
     await Assert.That(lowered.Values.Sum() + compactions.Values.Sum()).IsEqualTo(0L);
@@ -173,6 +174,21 @@ public class StreamIntegrityObservabilityMetricsTests {
     compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
     await Assert.That(compactions["archive"]).IsEqualTo(1L);
     await Assert.That(compactions["truncate"]).IsEqualTo(2L);
+  }
+
+  /// <summary>#2365, owner decision (a): buckets a redelivery filled that a later comparison found short again.</summary>
+  [Test]
+  public async Task RedeliveredThenReaped_ExistsAtZero_AndCountsWhatItIsGivenAsync() {
+    var metrics = new StreamIntegrityMetrics(_root());
+    const string name = "whizbang.stream_integrity.redelivered_then_reaped";
+
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), name).Sum(s => s.Value)).IsEqualTo(0L);
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), name).Count).IsGreaterThan(0)
+      .Because("a rate over a series that does not exist yet reads as no data, and this one's target is zero");
+
+    metrics.RedeliveredThenReaped.Add(3);
+
+    await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), name).Sum(s => s.Value)).IsEqualTo(3L);
   }
 
   /// <summary>
@@ -199,6 +215,7 @@ public class StreamIntegrityObservabilityMetricsTests {
     });
     metrics.RecordSealLowered(StreamIntegrityMetrics.SEAL_LOWERED_RULE_CHANGE);
     metrics.RecordCarriedCompaction(archived: false);
+    metrics.RedeliveredThenReaped.Add(1);
     metrics.UpdateLedgerBacklog(new LedgerBacklogSnapshot { Reported = true, Buckets = [new LedgerBacklogCount("o", "open", 1)] });
 
     var keys = new Dictionary<string, HashSet<string>>();
@@ -243,5 +260,6 @@ public class StreamIntegrityObservabilityMetricsTests {
     await Assert.That(keys[GENERATION]).IsEmpty().Because("one generation per service");
     await Assert.That(keys[LOWERED]).IsEquivalentTo(["reason"]);
     await Assert.That(keys[COMPACTIONS]).IsEquivalentTo(["kind"]);
+    await Assert.That(keys["whizbang.stream_integrity.redelivered_then_reaped"]).IsEmpty();
   }
 }

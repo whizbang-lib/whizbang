@@ -124,6 +124,12 @@ public sealed class MaintenanceMetrics {
     Volatile.Write(ref _pending, reading);
   }
 
+#pragma warning disable IDE0060, RCS1163, CA1822, S1186, S2325 // RED stub (#2365)
+  /// <summary>Replaces the streams-the-seal-holds reading.</summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  public void UpdateCutsAwaitingSeal(CutsAwaitingSeal? reading) { }
+#pragma warning restore IDE0060, RCS1163, CA1822, S1186, S2325
+
   private const string CATEGORY_TAG = "category";
 
   /// <summary>Records the rows one retention batch removed from a category's table (#2354).</summary>

@@ -54,6 +54,12 @@ public class MaintenanceWorkerIntegrityBacklogTests {
     };
     public (TimeSpan Lookback, TimeSpan Every, DateTimeOffset Now)? SealReadArgs { get; private set; }
 
+    public Task<CutsAwaitingSeal> GetCutsAwaitingSealAsync(int cap, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new CutsAwaitingSeal {
+        Reported = true,
+        Tasks = new Dictionary<string, PendingRows>(StringComparer.Ordinal) { ["truncate"] = new(7, false) },
+      });
+
     public Task<IntegritySealReading> GetIntegritySealReadingAsync(
         TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) {
       SealReadArgs = (lookback, recheckEvery, now);
@@ -74,12 +80,15 @@ public class MaintenanceWorkerIntegrityBacklogTests {
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
       BacklogCoordinator coordinator, DutyHolderWorker? duty = null, WhizbangRunPermit? permit = null,
-      bool withIntegrity = true, bool withMetrics = true, TimeProvider? clock = null) {
+      bool withIntegrity = true, bool withMetrics = true, TimeProvider? clock = null, MaintenanceMetrics? maintenance = null) {
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     if (withMetrics) {
       services.AddSingleton(metrics);
+    }
+    if (maintenance is not null) {
+      services.AddSingleton(maintenance);
     }
     if (withIntegrity) {
       services.AddSingleton(Options.Create(new StreamIntegrityOptions {
@@ -266,5 +275,24 @@ public class MaintenanceWorkerIntegrityBacklogTests {
     await failingWorker.RunMaintenanceOnceAsync(CancellationToken.None);
     await Assert.That(ProbeMeterReader.ReadSeries(failingMetrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier"))
       .IsEmpty().Because("a reading that can no longer be refreshed is stale");
+  }
+
+  /// <summary>#2365: the holder reads the streams the seal gate holds, and an instance that loses its turn withdraws them.</summary>
+  [Test]
+  public async Task TheMaintainer_PublishesTheCutsTheSealHolds_AndAnInstanceThatLosesItsTurnWithdrawsThemAsync() {
+    var coordinator = new BacklogCoordinator();
+    var permit = new WhizbangRunPermit();
+    var maintenance = new MaintenanceMetrics(
+      new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var (worker, _) = _build(coordinator, permit: permit, maintenance: maintenance);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    var held = ProbeMeterReader.ReadSeries(maintenance.RowsAffected.Meter, "whizbang.maintenance.eligible_not_yet_deleted");
+    await Assert.That(held.Single().Value).IsEqualTo(7L);
+
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    await Assert.That(ProbeMeterReader.ReadSeries(maintenance.RowsAffected.Meter, "whizbang.maintenance.eligible_not_yet_deleted"))
+      .IsEmpty();
   }
 }

@@ -96,7 +96,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   public static async Task<TwoServiceHarness> CreateAsync(
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
       Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null,
-      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null, bool repairDrainEnabled = false) {
+      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null, bool repairDrainEnabled = false,
+      StreamIntegrityMetrics? consumerMetrics = null) {
     var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
@@ -130,7 +131,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(h.OriginId, ORIGIN_NAME, DateTimeOffset.UnixEpoch, ORIGIN_REQUEST_TOPIC);
     h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
-      consumedEventTypes, consumerClock, consumerRules);
+      consumedEventTypes, consumerClock, consumerRules, consumerMetrics);
     h._originRequestReceptor = new IntegrityManifestRequestReceptor(
       h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
     h._originRedeliveryReceptor = new RedeliveryRequestReceptor(
@@ -344,6 +345,14 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       .IntegrityRecordOriginCheckpointAsync(OriginId, ORIGIN_NAME, ORIGIN_REQUEST_TOPIC, _consumerClock?.GetUtcNow() ?? _clock, head);
   }
 
+  /// <summary>
+  /// The origin rewrites history a consumer verified (#2365): the rewrite is noted from position 0 and the generation
+  /// bumped, as a reclassification or a refold does.
+  /// </summary>
+  public Task RewriteOriginHistoryAsync() => ExecuteAsync(Origin, """
+    DO $$ BEGIN PERFORM _wh_note_origin_rewrite(0); PERFORM _wh_bump_origin_generation(); END $$
+    """);
+
   /// <summary>The origin's pair guard (#2362).</summary>
   public IntegrityPairGuard OriginGuard => _originProvider!.GetRequiredService<IntegrityPairGuard>();
 
@@ -495,8 +504,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   private ServiceProvider _buildProvider(
       TwoServiceStore store, IntegrityWireTransport transport, IntegrityWireDispatcher dispatcher, string serviceName,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker,
-      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null, IRuleFingerprintSource? rules = null) {
+      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null, IRuleFingerprintSource? rules = null,
+      StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     // #2362: each side's rules and its own pair guard, as the turnkey registration gives every service.
     services.AddSingleton(rules ?? CatalogRuleFingerprintSource.Empty);
     services.AddSingleton(sp => new IntegrityPairGuard(sp.GetRequiredService<IRuleFingerprintSource>(), Options.Create(options),

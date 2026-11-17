@@ -323,6 +323,53 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
       TrackedGuid.New().Value, [], new IntegrityTraceLink(null, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
   }
 
+  // ===== #2365: redelivered, then found short again =====
+
+  private async Task _answerAsync(IntegrityRepairLedger.DivergenceKey key, DateTimeOffset at, bool unhealable = false) {
+    await using var conn = await _openAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      UPDATE wh_integrity_ledger SET answered_at = @answered, unhealable_at = CASE WHEN @mark THEN @answered END
+      WHERE origin_service_id = @o AND tenant_scope = @t AND event_type = @e AND stream_id = @s
+      """;
+    cmd.Parameters.AddWithValue("answered", at);
+    cmd.Parameters.AddWithValue("mark", unhealable);
+    cmd.Parameters.AddWithValue("o", key.OriginServiceId);
+    cmd.Parameters.AddWithValue("t", key.TenantScope ?? string.Empty);
+    cmd.Parameters.AddWithValue("e", key.EventType);
+    cmd.Parameters.AddWithValue("s", key.StreamId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// #2365, owner decision (a): a bucket a redelivery answer filled and a later comparison finds short again counts once
+  /// per answer. A bucket the answer could not change (unhealable) or never answered does not count.
+  /// </summary>
+  [Test]
+  public async Task ShortAfterAnswer_CountsEachFilledBucketOncePerAnswer_AndNothingElseAsync() {
+    var ef = _coordinator();
+    IWorkCoordinator coordinator = ef;
+    var origin = TrackedGuid.New().Value;
+    var (filled, unchanged, unanswered) =
+      (_key(origin, TrackedGuid.New().Value), _key(origin, TrackedGuid.New().Value), _key(origin, TrackedGuid.New().Value));
+    foreach (var key in new[] { filled, unchanged, unanswered }) {
+      await _reportAsync(ef, key, deficit: 1, at: _t0);
+    }
+    await _answerAsync(filled, _t0.AddMinutes(1));
+    await _answerAsync(unchanged, _t0.AddMinutes(1), unhealable: true);
+    List<IntegrityRepairLedger.DivergenceKey> all = [filled, unchanged, unanswered];
+
+    var first = await coordinator.IntegrityCountShortAfterAnswerAsync(origin, all, _t0.AddMinutes(2));
+    var again = await coordinator.IntegrityCountShortAfterAnswerAsync(origin, all, _t0.AddMinutes(3));
+    await _answerAsync(filled, _t0.AddMinutes(4));
+    var afterANewAnswer = await coordinator.IntegrityCountShortAfterAnswerAsync(origin, all, _t0.AddMinutes(5));
+
+    await Assert.That(first).IsEqualTo(1).Because("only the answered bucket the answer could change is short again");
+    await Assert.That(again).IsEqualTo(0).Because("one answer is counted once, however many comparisons follow it");
+    await Assert.That(afterANewAnswer).IsEqualTo(1).Because("a later answer that is reaped again counts again");
+    await Assert.That(await coordinator.IntegrityCountShortAfterAnswerAsync(origin, [], _t0)).IsEqualTo(0);
+  }
+
   // ===== #2029: a real cap =====
 
   [Test]

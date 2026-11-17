@@ -50,11 +50,18 @@ public class StreamPrefixTruncatorArchiveStoreTests {
 
   private sealed class CountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<(Guid Stream, long Through, bool Archive)> Truncates { get; } = [];
+    public List<(Guid Stream, string? Task)> AwaitingSeal { get; } = [];
+    public string Status { get; set; } = "truncated";
+
+    Task IWorkCoordinator.RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken) {
+      AwaitingSeal.Add((streamId, task));
+      return Task.CompletedTask;
+    }
 
     Task<StreamTruncateResult> IWorkCoordinator.TruncateStreamPrefixAsync(
         Guid streamId, long throughVersion, bool archive, CancellationToken cancellationToken) {
       Truncates.Add((streamId, throughVersion, archive));
-      return Task.FromResult(new StreamTruncateResult("truncated", 5));
+      return Task.FromResult(new StreamTruncateResult(Status, Status == "truncated" ? 5 : 0));
     }
   }
 
@@ -94,6 +101,26 @@ public class StreamPrefixTruncatorArchiveStoreTests {
       .Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
     await Assert.That(counted["archive"]).IsEqualTo(1L);
     await Assert.That(counted["truncate"]).IsEqualTo(1L).Because("the refused archive cut nothing");
+  }
+
+  /// <summary>
+  /// #2365: a cut the seal gate holds records its stream as awaiting the seal, by task; a cut that answers otherwise
+  /// forgets it, so <c>eligible_not_yet_deleted</c> counts only streams the gate holds now.
+  /// </summary>
+  [Test]
+  public async Task ACutTheSealHolds_IsRecordedAsAwaitingIt_ByTask_AndAnyOtherAnswerForgetsItAsync() {
+    var coordinator = new CountingCoordinator { Status = "awaiting_seal" };
+
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices,
+      archiveStore: null).TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices,
+      new RecordingStore(new ArchiveWriteResult("awaiting_seal", 0, null, null, 4))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
+    coordinator.Status = "truncated";
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices,
+      archiveStore: null).TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
+
+    await Assert.That(coordinator.AwaitingSeal).IsEquivalentTo(
+      (List<(Guid, string?)>)[(_stream, "truncate"), (_stream, "archive"), (_stream, null)]);
   }
 
   [Test]

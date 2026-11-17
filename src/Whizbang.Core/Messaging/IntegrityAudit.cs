@@ -275,6 +275,15 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// <docs>resilience/stream-integrity#the-pair-guard</docs>
   public RuleFingerprint? RuleFingerprint { get; init; }
 
+  /// <summary>
+  /// #2365: why this origin's history moved since the generation the ask named (<see cref="RequestIntegrityManifest.KnownOriginGeneration"/>):
+  /// <c>rule_change</c> when its eligibility rules changed after that generation, <c>rewrite</c> otherwise. Null when the
+  /// ask named no generation or the generation has not moved, and from an origin on a release that predates the field,
+  /// which the receiver counts as <c>unknown</c>. An optional field: the rule semantics version does not change.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public string? HistoryMovedReason { get; init; }
+
   /// <summary>#2365: the id of the request this answers, echoed from it; null when the request named none.</summary>
   /// <docs>resilience/stream-integrity#integrity-traces</docs>
   public Guid? RequestId { get; init; }
