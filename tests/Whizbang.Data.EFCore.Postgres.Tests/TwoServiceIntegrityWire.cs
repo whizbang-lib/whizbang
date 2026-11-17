@@ -19,7 +19,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// The wire pieces two real Postgres stores and the real integrity receptors talk through in a test: a transport that
 /// captures what each side publishes, a dispatcher that captures the events a side raises (divergence reports among
-/// them), and the identity a side reports. <see cref="TwoServiceHarness"/> drives the integrity protocol over it.
+/// them), and the identity a side reports. <see cref="TwoServiceHarness"/> drives the integrity protocol over it, and
+/// <see cref="ReconcileConvergenceE2ETests"/> and <see cref="CleanupIntegrityMatrixTests"/> share the same wire.
 /// </summary>
 internal sealed class IntegrityWireTransport : ITransport {
   /// <summary>Everything this side published, in order.</summary>
