@@ -129,9 +129,11 @@ public sealed class AzureBlobArchiveOptions {
   /// span above zero.
   /// </summary>
   internal static string? RefusalForDeleteAfter(TimeSpan? deleteAfter) =>
-    deleteAfter is { } delay && delay <= TimeSpan.Zero
-      ? "DeleteAfter is a time span above zero, such as 35.00:00:00, or unset to delete at once."
-      : null;
+    deleteAfter is { } delay && delay <= TimeSpan.Zero ? DELETE_AFTER_REFUSAL : null;
+
+  /// <summary>Why a deletion delay of zero or less, or one that is not a time span, is refused.</summary>
+  internal const string DELETE_AFTER_REFUSAL =
+    "DeleteAfter is a time span above zero, such as 35.00:00:00, or unset to delete at once: a zero delay would look like protection and give none.";
 
   /// <summary>Whether <paramref name="name"/> can be a logical connection name: not empty, without <c>;</c> or <c>=</c>.</summary>
   internal static bool IsLogicalName(string? name) =>

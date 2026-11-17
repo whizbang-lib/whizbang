@@ -14,6 +14,7 @@ Whizbang:Archive:AzureBlob:CompressionLevel
 Whizbang:Archive:AzureBlob:ConnectionName
 Whizbang:Archive:AzureBlob:ConnectionString
 Whizbang:Archive:AzureBlob:ContainerName
+Whizbang:Archive:AzureBlob:DeleteAfter
 Whizbang:Archive:AzureBlob:MaxEventsPerChunk
 Whizbang:Archive:AzureBlob:ServiceUri
 Whizbang:Archive:AzureBlob:VerifyLocation

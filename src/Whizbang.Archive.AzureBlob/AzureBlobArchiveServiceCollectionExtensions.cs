@@ -52,7 +52,7 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   /// <summary>
   /// Registers the Azure Blob store as the <see cref="IArchiveStore"/>, with settings read from
   /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>, <c>ConnectionName</c>,
-  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>, <c>VerifyLocation</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
+  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>, <c>VerifyLocation</c>, <c>DeleteAfter</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="configuration">The application's configuration.</param>
@@ -95,6 +95,15 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
     }
     options.CompressionLevel = _int(section, nameof(AzureBlobArchiveOptions.CompressionLevel), options.CompressionLevel);
     options.MaxEventsPerChunk = _int(section, nameof(AzureBlobArchiveOptions.MaxEventsPerChunk), options.MaxEventsPerChunk);
+    var deleteAfter = section[nameof(AzureBlobArchiveOptions.DeleteAfter)];
+    if (!string.IsNullOrWhiteSpace(deleteAfter)) {
+      options.DeleteAfter = TimeSpan.TryParse(deleteAfter, CultureInfo.InvariantCulture, out var delay)
+        && AzureBlobArchiveOptions.RefusalForDeleteAfter(delay) is null
+        ? delay
+        : throw new InvalidOperationException(
+          $"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.DeleteAfter)} is '{deleteAfter}'. " +
+          AzureBlobArchiveOptions.DELETE_AFTER_REFUSAL);
+    }
     var accessTier = section[nameof(AzureBlobArchiveOptions.AccessTier)];
     if (!string.IsNullOrWhiteSpace(accessTier)) {
       // Hot, Cool or Cold in any case, kept in the SDK's spelling; anything else is refused with the reason.
@@ -109,10 +118,14 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   /// </summary>
   /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Startup_AnArchiveTierSetInCode_FailsTheHostAtStart_ACoolTierDoesNotAsync</tests>
   private sealed class AccessTierValidator : IValidateOptions<AzureBlobArchiveOptions> {
-    public ValidateOptionsResult Validate(string? name, AzureBlobArchiveOptions options) =>
-      AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal
-        ? ValidateOptionsResult.Fail(_tierRefused($"{options.AccessTier}", refusal).Message)
+    public ValidateOptionsResult Validate(string? name, AzureBlobArchiveOptions options) {
+      if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
+        return ValidateOptionsResult.Fail(_tierRefused($"{options.AccessTier}", refusal).Message);
+      }
+      return AzureBlobArchiveOptions.RefusalForDeleteAfter(options.DeleteAfter) is { } delayRefusal
+        ? ValidateOptionsResult.Fail($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.DeleteAfter)} is '{options.DeleteAfter}'. {delayRefusal}")
         : ValidateOptionsResult.Success;
+    }
   }
 
   private static InvalidOperationException _tierRefused(string value, string refusal) =>
@@ -154,7 +167,8 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
       database,
       CreateContainerClient(options, services.GetService<TokenCredential>()),
       options,
-      services.GetService<ILogger<AzureBlobArchiveStore>>());
+      services.GetService<ILogger<AzureBlobArchiveStore>>(),
+      services.GetService<TimeProvider>());
   }
 
   private static int _int(IConfiguration section, string key, int current) {
