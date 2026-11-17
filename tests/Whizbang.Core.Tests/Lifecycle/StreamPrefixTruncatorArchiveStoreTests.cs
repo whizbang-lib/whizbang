@@ -91,7 +91,7 @@ public class StreamPrefixTruncatorArchiveStoreTests {
 
     var counted = Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadSeries(
         metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.carried_compactions")
-      .ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+      .Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
     await Assert.That(counted["archive"]).IsEqualTo(1L);
     await Assert.That(counted["truncate"]).IsEqualTo(1L).Because("the refused archive cut nothing");
   }

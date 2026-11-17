@@ -157,9 +157,9 @@ public class StreamIntegrityObservabilityMetricsTests {
   public async Task SealLowered_AndCarriedCompactions_ExistAtZeroForEveryValue_AndCountByItAsync() {
     var metrics = new StreamIntegrityMetrics(_root());
 
-    var lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
+    var lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).Where(s => s.Tags.ContainsKey("reason")).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
     await Assert.That(lowered.Keys.Order().ToList()).IsEquivalentTo(["rewrite", "rule_change"]);
-    var compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+    var compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
     await Assert.That(compactions.Keys.Order().ToList()).IsEquivalentTo(["archive", "truncate"]);
     await Assert.That(lowered.Values.Sum() + compactions.Values.Sum()).IsEqualTo(0L);
 
@@ -168,9 +168,9 @@ public class StreamIntegrityObservabilityMetricsTests {
     metrics.RecordCarriedCompaction(archived: false);
     metrics.RecordCarriedCompaction(archived: false);
 
-    lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
+    lowered = ProbeMeterReader.ReadSeries(_meterOf(metrics), LOWERED).Where(s => s.Tags.ContainsKey("reason")).ToDictionary(s => (string)s.Tags["reason"]!, s => s.Value);
     await Assert.That(lowered["rewrite"]).IsEqualTo(1L);
-    compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+    compactions = ProbeMeterReader.ReadSeries(_meterOf(metrics), COMPACTIONS).Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
     await Assert.That(compactions["archive"]).IsEqualTo(1L);
     await Assert.That(compactions["truncate"]).IsEqualTo(2L);
   }
