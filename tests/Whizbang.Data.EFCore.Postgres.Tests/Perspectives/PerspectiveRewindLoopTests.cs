@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
-public class PerspectiveRewindLoopTests : EFCoreTestBase {
+public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
   // A fixed instant the event ids are minted from: only their order matters, never their distance from now.
   private static readonly DateTimeOffset _minted = new(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
@@ -579,7 +579,9 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
+    var runnerRewinds = new RunnerRewindTally();
     services.AddLogging();
+    services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(runnerRewinds);
     services.AddScoped(_ => CreateDbContext());
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
@@ -590,6 +592,10 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     services.AddPerspectiveRunners();
     EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
       services, typeof(WorkCoordinationDbContext), typeof(Order), "wh_per_order",
+      new PostgresUpsertStrategy());
+    // #2379: the per-item model with the strict event-id ordering a fan-out's per-item rows opt into.
+    EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
+      services, typeof(WorkCoordinationDbContext), typeof(ItemProgress), "wh_per_item_progress",
       new PostgresUpsertStrategy());
     services.AddMetrics();
     if (snapshots) {
@@ -663,6 +669,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
       ClaimWorker = claimWorker,
       PerspectiveWorker = perspectiveWorker,
       Completion = completion,
+      RunnerRewinds = runnerRewinds,
     };
   }
 
@@ -672,6 +679,8 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     public required ClaimWorker ClaimWorker { get; init; }
     public required PerspectiveWorker PerspectiveWorker { get; init; }
     public required SignalingCompletionChannel Completion { get; init; }
+    /// <summary>The rewinds the runners started (#2379): each restore or full replay they announce.</summary>
+    public required RunnerRewindTally RunnerRewinds { get; init; }
     private bool _started;
 
     public Task CompletionOf(Guid workId) => Completion.WaitForAsync(workId);
@@ -725,23 +734,28 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     /// Commits the events in one handler result, in the order given, each with its own id and amount, and stamps them as
     /// the commit-order stamper would: the first lands at the lowest version and commit sequence.
     /// </summary>
-    public async Task CommitAsync(NpgsqlConnection conn, Guid streamId, IReadOnlyList<(Guid EventId, decimal Amount)> events, CancellationToken ct) {
+    public Task CommitAsync(NpgsqlConnection conn, Guid streamId, IReadOnlyList<(Guid EventId, decimal Amount)> events, CancellationToken ct) =>
+      CommitEventsAsync(conn, streamId,
+        [.. events.Select(e => (e.EventId, (IEvent)new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = e.Amount }))],
+        ct);
+
+    /// <summary>Commits the events in one handler result, in the order given, each with its own id, and stamps them.</summary>
+    public async Task CommitEventsAsync(NpgsqlConnection conn, Guid streamId, IReadOnlyList<(Guid EventId, IEvent Payload)> events, CancellationToken ct) {
       var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
       var messages = new List<string>();
-      foreach (var (eventId, amount) in events) {
-        var payload = new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = amount };
+      foreach (var (eventId, payload) in events) {
         var envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(eventId),
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = [],
-          Payload = JsonSerializer.SerializeToElement(payload, jsonOptions.GetTypeInfo(typeof(SampleOrderCreatedEvent))),
+          Payload = JsonSerializer.SerializeToElement(payload, jsonOptions.GetTypeInfo(payload.GetType())),
         };
         var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
         messages.Add($$"""
           {
             "MessageId": "{{eventId}}",
             "Destination": "order-events",
-            "MessageType": "{{TypeNameFormatter.Format(typeof(SampleOrderCreatedEvent))}}",
+            "MessageType": "{{TypeNameFormatter.Format(payload.GetType())}}",
             "EnvelopeType": null,
             "Envelope": {{envelopeJson}},
             "Metadata": {},
