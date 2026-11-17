@@ -56,8 +56,10 @@ public class StartupStageGatedServiceTests {
     public Task Entered => _entered.Task;
 
     public async Task StartAsync(CancellationToken cancellationToken) {
+      var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      await using var registration = cancellationToken.Register(() => canceled.TrySetCanceled(cancellationToken));
       _entered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken);
+      await canceled.Task;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
