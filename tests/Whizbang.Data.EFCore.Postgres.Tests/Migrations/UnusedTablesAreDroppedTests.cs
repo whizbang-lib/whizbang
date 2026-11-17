@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Schema/PostgresSchemaBuilder.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard3")]
-public class UnusedTablesAreDroppedTests : EFCoreTestBase {
+public partial class UnusedTablesAreDroppedTests : EFCoreTestBase {
   private const string DROP_MIGRATION = "476_";
 
   [Test]
