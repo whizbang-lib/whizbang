@@ -2139,25 +2139,46 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public Task<Whizbang.Core.Observability.IntegritySealReading> GetIntegritySealReadingAsync(
       TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
-      cmd.CommandText = $"SELECT origin_service_id, sealed_through, age_seconds, recheck_coverage FROM {BuildSchemaQualifiedName(schema, "wh_integrity_seal_reading")}(@p_lookback, @p_every, @p_now)";
+      cmd.CommandText = $"""
+        SELECT origin_service_id, sealed_through, age_seconds, open_window_events, open_window_capped, recheck_coverage,
+               origin_generation, carried_streams, carried_capped
+        FROM {BuildSchemaQualifiedName(schema, "wh_integrity_seal_reading")}(@p_lookback, @p_every, @p_now, @p_cap)
+        """;
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)lookback.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)recheckEvery.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_cap", SEAL_READING_COUNT_CAP));
       var lanes = new List<Whizbang.Core.Observability.LaneSeal>();
       double? coverage = null;
+      long? generation = null;
+      long carried = 0;
+      var carriedCapped = false;
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        coverage = await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetDouble(3);
+        coverage = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetDouble(5);
+        generation = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(6);
+        carried = reader.GetInt64(7);
+        carriedCapped = reader.GetBoolean(8);
         if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
-          lanes.Add(new Whizbang.Core.Observability.LaneSeal(reader.GetGuid(0), reader.GetInt64(1), reader.GetDouble(2)));
+          lanes.Add(new Whizbang.Core.Observability.LaneSeal(
+            reader.GetGuid(0), reader.GetInt64(1), reader.GetDouble(2), reader.GetInt64(3), reader.GetBoolean(4)));
         }
       }
       return new Whizbang.Core.Observability.IntegritySealReading {
         Reported = true,
         Lanes = lanes,
         SealRecheckCoverageRatio = coverage,
+        OriginGeneration = generation,
+        CarriedStreams = carried,
+        CarriedStreamsCapped = carriedCapped,
       };
     }, cancellationToken);
+
+  /// <summary>
+  /// #2365: the most index entries the seal reading reads for one lane's open window, and for the carried buckets; a
+  /// count that reaches it is reported as at least that many (capped).
+  /// </summary>
+  internal const int SEAL_READING_COUNT_CAP = 100_000;
 
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
     cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, key.OriginServiceId);

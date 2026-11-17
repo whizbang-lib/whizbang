@@ -545,6 +545,8 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
+        // #2365: the guard lowered the seal because the origin rewrote history this service had verified.
+        services.GetService<StreamIntegrityMetrics>()?.RecordSealLowered(StreamIntegrityMetrics.SEAL_LOWERED_REWRITE);
         return;
       }
     }

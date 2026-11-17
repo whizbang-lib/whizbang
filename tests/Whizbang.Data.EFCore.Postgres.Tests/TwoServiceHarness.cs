@@ -325,7 +325,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   public async Task RunConsumerDrainAsync() {
     var worker = new RepairDrainWorker(
       _consumerProvider!.GetRequiredService<IServiceScopeFactory>(),
-      _consumerProvider.GetRequiredService<IOptions<StreamIntegrityOptions>>(), NullLogger<RepairDrainWorker>.Instance);
+      _consumerProvider!.GetRequiredService<IOptions<StreamIntegrityOptions>>(), NullLogger<RepairDrainWorker>.Instance);
     await worker.DrainOnceAsync(CancellationToken.None);
     await _pumpUntilQuietAsync();
   }

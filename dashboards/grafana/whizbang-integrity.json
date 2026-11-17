@@ -627,21 +627,201 @@
       "options": {}
     },
     {
-      "type": "row",
+      "type": "timeseries",
       "id": 18,
+      "title": "Open window",
+      "description": "Per lane, the events above the epoch frontier waiting to be sealed (capped=true: at least that many). A window that keeps growing means sealing is not keeping up.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "max by (job, origin_service_id) (whizbang_stream_integrity_open_window_events{job=~\"$job\"})",
+          "legendFormat": "{{job}} {{origin_service_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 19,
+      "title": "Seals lowered",
+      "description": "Seals this service lowered for an origin, by reason: rewrite (the origin rewrote verified history) or rule_change. Each one re-verifies history from the lowered seal.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (job, reason) (increase(whizbang_stream_integrity_seal_lowered_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{job}} {{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "id": 20,
+      "title": "Origin generation",
+      "description": "This service's origin generation: it moves when the service rewrites history its consumers verified.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "max by (job) (whizbang_stream_integrity_origin_generation{job=~\"$job\"})",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "Buckets carrying a cut",
+      "description": "Stream digest buckets that still carry the per-stream detail of a cut (capped=true: at least that many); falls as the resting period rolls the detail off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "max by (job) (whizbang_stream_integrity_carried_streams{job=~\"$job\"})",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "id": 22,
+      "title": "Cuts that carried their digest",
+      "description": "Prefix truncates and archives that removed events and carried their digest, by kind.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (job, kind) (increase(whizbang_stream_integrity_carried_compactions_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{job}} {{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "id": 23,
       "title": "Sweeps",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 59
       },
       "panels": []
     },
     {
       "type": "timeseries",
-      "id": 19,
+      "id": 24,
       "title": "Oldest operational record",
       "description": "Age of the oldest operational record the retention sweep left, by category. Above twice the category's retention, the sweep is not keeping up.",
       "datasource": {
@@ -652,7 +832,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 60
       },
       "targets": [
         {
@@ -677,7 +857,7 @@
     },
     {
       "type": "timeseries",
-      "id": 20,
+      "id": 25,
       "title": "Rows cleanup would remove now",
       "description": "Rows each maintenance task would remove now; capped=true means at least that many.",
       "datasource": {
@@ -688,7 +868,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 60
       },
       "targets": [
         {
@@ -713,7 +893,7 @@
     },
     {
       "type": "timeseries",
-      "id": 21,
+      "id": 26,
       "title": "Archive orphan sweeps refused",
       "description": "Orphan sweeps that deleted nothing because the container could not be proven this database's, by reason.",
       "datasource": {
@@ -724,7 +904,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 60
       },
       "targets": [
         {

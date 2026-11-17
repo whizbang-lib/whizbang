@@ -677,8 +677,29 @@ public sealed class StreamIntegrityMetrics {
       unit: "s",
       description: "Per lane, seconds since the epoch frontier last advanced; a value that keeps growing while events arrive means sealing has stopped; reported by the maintainer duty's holder only");
 
-    SealLowered = meter.CreatePassiveCounter<long>("whizbang.stream_integrity.seal_lowered");
-    CarriedCompactions = meter.CreatePassiveCounter<long>("whizbang.stream_integrity.carried_compactions");
+    SealLowered = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.seal_lowered",
+      description: "Seals this service lowered for an origin; tagged by reason (rewrite | rule_change)");
+    SealLowered.Touch(REASON_TAG, [SEAL_LOWERED_REWRITE, SEAL_LOWERED_RULE_CHANGE]);
+    CarriedCompactions = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.carried_compactions",
+      description: "Cuts (a prefix truncate or an archive) that removed events and carried their digest; tagged by kind (truncate | archive)");
+    CarriedCompactions.Touch(KIND_TAG, [COMPACTION_TRUNCATE, COMPACTION_ARCHIVE]);
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.open_window_events",
+      () => _seals.Lanes.Where(l => l.OpenWindowEvents.HasValue).Select(l => new Measurement<long>(
+        l.OpenWindowEvents!.Value, _lane(l), new KeyValuePair<string, object?>(CAPPED_TAG, l.OpenWindowCapped))),
+      description: "Per lane, the events above the epoch frontier, waiting to be sealed, counted up to a cap (capped=true: at least that many); reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.origin_generation",
+      () => _seals.OriginGeneration is { } generation ? [new Measurement<long>(generation)] : (Measurement<long>[])[],
+      description: "This service's origin generation: it moves when the service rewrites history a consumer verified; reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.carried_streams",
+      () => _seals.CarriedStreams is { } carried
+        ? [new Measurement<long>(carried, new KeyValuePair<string, object?>(CAPPED_TAG, _seals.CarriedStreamsCapped))]
+        : (Measurement<long>[])[],
+      description: "Stream digest buckets that still carry the per-stream detail of a cut, counted up to a cap (capped=true: at least that many); falls as the resting period rolls the detail off; reported by the maintainer duty's holder only");
 
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     LedgerBucketsOpened.Touch(HOW_TAG, _openedHows);
@@ -870,19 +891,37 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the eligibility rules changed.</summary>
   public const string SEAL_LOWERED_RULE_CHANGE = "rule_change";
 
-  /// <summary>Seals lowered (#2365), tagged by <c>reason</c>.</summary>
-  public PassiveCounter<long> SealLowered { get; private set; } = null!;
+  /// <summary>
+  /// Seals this service lowered for an origin (#2365), tagged by <c>reason</c>: <c>rewrite</c> when the origin's history
+  /// generation moved, so history this service had verified was rewritten, and <c>rule_change</c> when the eligibility
+  /// rules changed. Each lowering means the next audits re-verify from the lowered seal.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public PassiveCounter<long> SealLowered { get; }
 
-  /// <summary>Cuts that carried their digest (#2365), tagged by <c>kind</c>.</summary>
-  public PassiveCounter<long> CarriedCompactions { get; private set; } = null!;
+  /// <summary>
+  /// Cuts that carried their digest (#2365): a prefix truncate or an archive that removed events, whose digest the bucket
+  /// keeps (#2363). Tagged by <c>kind</c> (<c>truncate</c> | <c>archive</c>).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public PassiveCounter<long> CarriedCompactions { get; }
 
-#pragma warning disable RCS1163, IDE0060, S1186, CA1822 // RED stub
-  /// <summary>Counts a lowered seal.</summary>
-  public void RecordSealLowered(string reason) { }
+  /// <summary>Counts one lowered seal (#2365).</summary>
+  /// <param name="reason"><see cref="SEAL_LOWERED_REWRITE"/> or <see cref="SEAL_LOWERED_RULE_CHANGE"/>.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:SealLowered_AndCarriedCompactions_ExistAtZeroForEveryValue_AndCountByItAsync</tests>
+  public void RecordSealLowered(string reason) => SealLowered.Add(1, new KeyValuePair<string, object?>(REASON_TAG, reason));
 
-  /// <summary>Counts a cut that carried its digest.</summary>
-  public void RecordCarriedCompaction(bool archived) { }
-#pragma warning restore RCS1163, IDE0060, S1186, CA1822
+  /// <summary>Counts one cut that carried its digest (#2365).</summary>
+  /// <param name="archived">True for an archive, false for a truncate.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:SealLowered_AndCarriedCompactions_ExistAtZeroForEveryValue_AndCountByItAsync</tests>
+  public void RecordCarriedCompaction(bool archived) =>
+    CarriedCompactions.Add(1, new KeyValuePair<string, object?>(KIND_TAG, archived ? COMPACTION_ARCHIVE : COMPACTION_TRUNCATE));
+
+  private const string REASON_TAG = "reason";
+  private const string KIND_TAG = "kind";
+  private const string COMPACTION_TRUNCATE = "truncate";
+  private const string COMPACTION_ARCHIVE = "archive";
+  private const string CAPPED_TAG = "capped";
 
   private volatile ChecksEnabled? _checksEnabled;
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _lastRuns = new(StringComparer.Ordinal);

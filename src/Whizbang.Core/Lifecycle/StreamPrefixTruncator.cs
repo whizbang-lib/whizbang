@@ -161,6 +161,8 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual truncate (not a gate-blocked / no-carry-forward / debug-skipped outcome).
     if (string.Equals(result.Status, "truncated", StringComparison.Ordinal)) {
+      // #2365: the cut carried its digest (#2363), whichever way it removed the events.
+      services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.RecordCarriedCompaction(archive);
       await _announceTruncatedAsync(context, services, envelopes, streamId, cancellationToken).ConfigureAwait(false);
     }
     return result;
