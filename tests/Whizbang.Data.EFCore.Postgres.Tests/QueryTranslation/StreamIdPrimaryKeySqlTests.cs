@@ -37,6 +37,10 @@ public class StreamIdPrimaryKeySqlTests {
     public decimal Price { get; init; }
 
     public string Title { get; init; } = string.Empty;
+
+    public Guid CustomerId { get; init; }
+
+    public List<string> Tags { get; init; } = [];
   }
 
   /// <summary>A model whose stream id is never registered.</summary>
@@ -152,6 +156,33 @@ public class StreamIdPrimaryKeySqlTests {
     await Assert.That(sql).Contains("w.id = ANY (");
   }
 
+  /// <summary>A set held in an array, whose <c>Contains</c> is a static method rather than the list's own, is answered too.</summary>
+  [Test]
+  public async Task ProjectedForm_StreamIdInAnArray_AddsPrimaryKeyAsync() {
+    var ids = new[] { _probeId, _otherId };
+    var sql = _projectedSql(models => models.Where(x => ids.Contains(x.OrderId)));
+
+    await Assert.That(sql).Contains("w.id = ANY (");
+  }
+
+  /// <summary>A nullable value lifts the comparison to <c>Guid?</c>, and the row's id is compared the same way.</summary>
+  [Test]
+  public async Task ProjectedForm_StreamIdEqualsANullableValue_AddsPrimaryKeyAsync() {
+    Guid? id = _probeId;
+    var sql = _projectedSql(models => models.Where(x => x.OrderId == id));
+
+    await Assert.That(sql).Contains("w.id = @");
+  }
+
+  /// <summary>A filter holding a lambda of its own moves beneath the projection with that lambda intact.</summary>
+  [Test]
+  public async Task ProjectedForm_AFilterWithANestedLambda_MovesBeneathTheProjectionAsync() {
+    var id = _probeId;
+    var sql = _projectedSql(models => models.Where(x => x.OrderId == id && x.Tags.Any(t => t == "rush")));
+
+    await Assert.That(sql).Contains("w.id = @");
+  }
+
   /// <summary>The original predicate is kept, so results never depend on the two ids agreeing.</summary>
   [Test]
   public async Task ProjectedForm_StreamIdEquality_KeepsTheDocumentPredicateAsync() {
@@ -229,6 +260,41 @@ public class StreamIdPrimaryKeySqlTests {
 
     await Assert.That(sql).DoesNotContain("w.id = @");
     await Assert.That(sql).DoesNotContain("w.id <> @");
+  }
+
+  /// <summary>The stream id compared with another field of the same row names no single row, so nothing is added.</summary>
+  [Test]
+  public async Task StreamIdComparedWithAnotherField_IsLeftAloneAsync() {
+    var sql = _projectedSql(models => models.Where(x => x.OrderId == x.CustomerId));
+
+    await Assert.That(sql).DoesNotContain("w.id =");
+  }
+
+  /// <summary>An operator that does not commute with the projection is left where it is.</summary>
+  [Test]
+  public async Task ProjectedTakeWhile_IsLeftWhereItIsAsync() {
+    var id = _probeId;
+    await using var db = _newContext();
+    var query = db.Set<PerspectiveRow<OrderModel>>().Select(r => r.Data).TakeWhile(x => x.OrderId == id);
+
+    var rewritten = new StreamIdPrimaryKeyRewriter().Visit(query.Expression);
+
+    await Assert.That(rewritten).IsSameReferenceAs(query.Expression);
+  }
+
+  /// <summary>
+  /// A secondary sort that takes a comparer cannot move beneath the projection, so the primary sort beneath it
+  /// stays where it was too, and the query is the one that was written.
+  /// </summary>
+  [Test]
+  public async Task ProjectedThenByWithAComparer_KeepsTheQueryAsWrittenAsync() {
+    await using var db = _newContext();
+    var query = db.Set<PerspectiveRow<OrderModel>>().Select(r => r.Data)
+      .OrderBy(x => x.Title).ThenBy(x => x.Title, StringComparer.Ordinal);
+
+    var rewritten = new StreamIdPrimaryKeyRewriter().Visit(query.Expression);
+
+    await Assert.That(rewritten).IsSameReferenceAs(query.Expression);
   }
 
   /// <summary>A filter after paging does not commute with it, so it stays above the projection.</summary>

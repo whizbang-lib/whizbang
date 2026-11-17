@@ -56,7 +56,7 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
       return base.VisitMethodCall(node);
     }
 
-    var arguments = node.Arguments.Select(a => Visit(a) ?? a).ToArray();
+    var arguments = Visit(node.Arguments).ToArray();
 
     // Decided from the rewritten arguments before the call is rebuilt: a ThenBy whose primary sort has just
     // moved beneath the projection now sits on an IQueryable, not an IOrderedQueryable, and could not be
@@ -110,10 +110,9 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
       case nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending):
         return Expression.Call(null, select.Method, _onRows(method, rows, row, rowLambda), select.Arguments[1]);
 
-      // A secondary sort needs its primary beneath the projection too, which the inside-out rewrite has
-      // already done whenever the primary sort was applied to the same projection.
-      case nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending)
-          when typeof(IOrderedQueryable<>).MakeGenericType(row.Type).IsAssignableFrom(rows.Type):
+      // A secondary sort can only sit on this projection when its primary sort was applied to the same
+      // projection, and the inside-out rewrite has already moved that one beneath it, so the rows are ordered.
+      case nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending):
         return Expression.Call(null, select.Method, _onRows(method, rows, row, rowLambda), select.Arguments[1]);
 
       case nameof(Queryable.Select):
@@ -166,7 +165,7 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
   private static Expression? _primaryKeyTest(Expression conjunct, ParameterExpression row, Type modelType) {
     (Expression Candidate, Expression Other)[] operands = conjunct switch {
       BinaryExpression { NodeType: ExpressionType.Equal } equal => [(equal.Left, equal.Right), (equal.Right, equal.Left)],
-      MethodCallExpression { Method.Name: "Contains" } contains when _collectionAndItem(contains) is var (collection, item) => [(item, collection)],
+      MethodCallExpression { Method.Name: "Contains" } contains => [_itemAndCollection(contains)],
       _ => [],
     };
 
@@ -191,11 +190,9 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
   private static Expression _as(Expression expression, Type type) =>
     expression.Type == type ? expression : Expression.Convert(expression, type);
 
-  /// <summary>The collection and the item of a <c>Contains</c> call, whether it is an instance or an extension method.</summary>
-  private static (Expression Collection, Expression Item) _collectionAndItem(MethodCallExpression contains) =>
-    contains.Object is { } instance
-      ? (instance, contains.Arguments[^1])
-      : (contains.Arguments[0], contains.Arguments[^1]);
+  /// <summary>The item and the collection of a <c>Contains</c> call, whether it is an instance or an extension method.</summary>
+  private static (Expression Item, Expression Collection) _itemAndCollection(MethodCallExpression contains) =>
+    (contains.Arguments[^1], contains.Object ?? contains.Arguments[0]);
 
   /// <summary><c>r.Data.P</c> (through any conversion) when <c>P</c> is the model's registered Guid stream id; null otherwise.</summary>
   private static MemberExpression? _streamIdMember(Expression expression, ParameterExpression row, Type modelType) {
