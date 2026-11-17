@@ -933,9 +933,11 @@ jobs:
 
       # The whole solution, the same projects Compile builds; nothing is uploaded, only the verdict matters.
       # Two build nodes and no -mt: with more, the .NET 11 compiler and analyzers outgrow the hosted runner's
-      # memory and the runner is shut down mid-build (#2135), as the quality build already found.
+      # memory and the runner is shut down mid-build (#2135), as the quality build already found. The libraries
+      # are analyzed for net11.0 alone: they build net10.0 too, the same source twice, which doubles the memory
+      # without adding a finding, and the net10.0 compile job below already proves net10.0 builds.
       - name: Build every project with the analyzers on
-        run: dotnet build --no-restore --configuration Release -mt:false -maxcpucount:2 -nodeReuse:false
+        run: dotnet build --no-restore --configuration Release -mt:false -maxcpucount:2 -nodeReuse:false -p:WhizbangReleaseTargetFrameworks=net11.0
 
   # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day the tests, samples and tools target
   # net11.0 only (the libraries build both), so a .NET 11-only API in them would otherwise surface first on a
