@@ -378,9 +378,11 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
       .Because("the cursor is parked for a restore");
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_perspective_snapshots WHERE stream_id = @id", stream)).IsEqualTo(1L)
       .Because("a snapshot still describes the archived stream");
+    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_stream_digests WHERE stream_id = @id", stream))
+      .IsGreaterThan(0L).Because("#2363: the stream's buckets are kept");
     await Assert.That(await _scalarAsync(connection,
-      "SELECT count(*) FROM wh_stream_digests WHERE stream_id = @id AND carried_count = event_count AND event_count = 3", stream)).IsEqualTo(1L)
-      .Because("#2363: no event of the stream is hot, and its bucket keeps its digest with all of it carried");
+      "SELECT count(*) FROM wh_stream_digests WHERE stream_id = @id AND carried_count IS DISTINCT FROM event_count", stream)).IsEqualTo(0L)
+      .Because("#2363: no event of the stream is hot, so every bucket keeps its digest with all of it carried");
   }
 
   [Test]

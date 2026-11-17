@@ -100,7 +100,7 @@ public class DirectAppendStreamDigestTests : EFCoreTestBase {
       await store.AppendAsync(streamId, _envelope());
     }
 
-    // close_stream XORs the truncated rows back out. Before the fold, it subtracted direct appends that were never added.
+    // The truncate carries the truncated rows (#2363). Before the fold, it subtracted direct appends that were never added.
     await using (var close = connection.CreateCommand()) {
       close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@sid, 2, FALSE)";
       close.Parameters.AddWithValue("sid", streamId);
@@ -109,7 +109,7 @@ public class DirectAppendStreamDigestTests : EFCoreTestBase {
 
     var (differences, _) = await _compareWithRecomputeAsync(connection, streamId);
     await Assert.That(differences).IsEqualTo(0L)
-      .Because("a close subtracts exactly what was folded, whichever path stored it");
+      .Because("a close carries exactly what was folded, whichever path stored it, so the live part equals the recompute");
   }
 
   [Test]
@@ -203,8 +203,11 @@ public class DirectAppendStreamDigestTests : EFCoreTestBase {
           AND split_part(es.event_type, ',', 1) <> ALL(@exempt::text[])
         GROUP BY 1, 2, 3, 4
       ),
+      -- #2363: a bucket is its live events plus what cuts carried; its live part is what equals the recompute.
       stored AS (
-        SELECT origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count
+        SELECT origin_service_id, scope_tenant, event_type, stream_id,
+               digest_lo # COALESCE(carried_lo, 0) AS digest_lo, digest_hi # COALESCE(carried_hi, 0) AS digest_hi,
+               event_count - COALESCE(carried_count, 0) AS event_count
         FROM wh_stream_digests WHERE stream_id = @sid
       )
       SELECT (SELECT COUNT(*) FROM ((TABLE recomputed EXCEPT TABLE stored)
