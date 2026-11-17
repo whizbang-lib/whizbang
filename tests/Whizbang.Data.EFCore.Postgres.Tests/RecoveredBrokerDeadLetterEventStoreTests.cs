@@ -86,6 +86,32 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
     await Assert.That(recoveredAt.HasValue).IsTrue();
   }
 
+  /// <summary>
+  /// A broker-dead-lettered event, recovered, is stored with the origin position its wire envelope carries, exactly as a
+  /// first delivery stores it (#2379): the replay places a received event in its origin's order by that position.
+  /// </summary>
+  [Test]
+  public async Task ARecoveredEvent_IsStoredWithItsOriginPosition_AsAFirstDeliveryWouldBeAsync() {
+    var instanceId = Guid.CreateVersion7();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
+    var origin = (Guid)TrackedGuid.New();
+    await using var provider = _createServices();
+    await using var connection = await _openAsync();
+    await _registerInstanceAsync(connection, instanceId);
+    _ = await _associatePerspectiveAsync(connection);
+
+    var deadLetterId = await _importAsync(provider, messageId, streamId, origin, originCommitSequence: 4790063);
+    await _recoverAsync(provider, deadLetterId);
+    await _claimWorkAsync(connection, instanceId);
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT format('%s %s', origin_service_id, origin_commit_sequence) FROM wh_event_store WHERE event_id = @id";
+    command.Parameters.AddWithValue("id", messageId);
+    await Assert.That(await command.ExecuteScalarAsync() as string).IsEqualTo($"{origin} 4790063")
+      .Because("the recovered event keeps the origin and the origin position its producer published it with");
+  }
+
   [Test]
   public async Task ARecoveredEvent_RefusedByTheInboxCopy_LeavesItsDeadLetterNotRecovered_WithTheOutcomeRecordedAsync() {
     var instanceId = Guid.CreateVersion7();
@@ -139,7 +165,11 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
   }
 
   /// <summary>Gives the event dead-letter custody as the transport dead-letter drain does: the wire body verbatim, the envelope type name, no session.</summary>
-  private async Task<Guid> _importAsync(ServiceProvider provider, Guid messageId, Guid streamId) {
+  private Task<Guid> _importAsync(ServiceProvider provider, Guid messageId, Guid streamId) =>
+    _importAsync(provider, messageId, streamId, originServiceId: Guid.Empty, originCommitSequence: 0);
+
+  private async Task<Guid> _importAsync(
+      ServiceProvider provider, Guid messageId, Guid streamId, Guid originServiceId, long originCommitSequence) {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var envelopeTypeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var payload = new RecoveredOrderPlaced(streamId, "R-1");
@@ -157,6 +187,8 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
         Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "tenant-a", UserId = "SYSTEM" }),
       }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      SourceServiceId = originServiceId,
+      SourceCommitSequence = originCommitSequence,
     }, envelopeTypeInfo);
 
     using var scope = provider.CreateScope();

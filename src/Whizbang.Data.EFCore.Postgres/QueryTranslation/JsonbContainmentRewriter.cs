@@ -506,6 +506,19 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
         && JsonIndexRegistry.HasOrdered(rootModel, names[0]);
   }
 
+  // The lookup IModel.FindEntityType(Type) does for a type the model maps on its own, without that overload's
+  // trimming annotations: the row type comes from a query expression, whose Type cannot carry them, and ILLink 11
+  // follows it this far (#2233). Runs once per translated member, which EF Core's query cache then keeps.
+  private static IEntityType? _findMappedEntityType(IModel model, Type clrType) {
+    foreach (var entityType in model.GetEntityTypes()) {
+      if (entityType.ClrType == clrType && !entityType.HasSharedClrType) {
+        return entityType;
+      }
+    }
+
+    return null;
+  }
+
   /// <summary>
   /// Whether a value converter changes what this member's stored form looks like.
   /// </summary>
@@ -538,7 +551,9 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     // The row type as the chain gave it, falling back to constructing it from the model for a
     // projected model where the row was removed before the filter. Metadata and scope are not
     // generic in the model, so the constructed form is only correct for the Data document.
-    var row = _model.FindEntityType(rowType ?? typeof(PerspectiveRow<>).MakeGenericType(rootModel));
+    var row = rowType is null
+      ? _model.FindEntityType(typeof(PerspectiveRow<>).MakeGenericType(rootModel))
+      : _findMappedEntityType(_model, rowType);
     var complex = row?.FindComplexProperty(document)?.ComplexType;
     if (complex is null) {
       return true;

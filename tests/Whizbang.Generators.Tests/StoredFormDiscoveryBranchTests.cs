@@ -78,6 +78,22 @@ public class StoredFormDiscoveryBranchTests {
   }
 
   /// <summary>
+  /// Every floating-point property type keeps a fractional default: <c>float</c>, <c>double</c> and
+  /// <c>decimal</c> each hold the fraction, so none of them refuses it as an integral type would.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("float")]
+  [Arguments("double")]
+  [Arguments("decimal")]
+  public async Task FractionalDefault_OnEachFloatingPointType_IsGeneratedAsync(string type) {
+    var (code, diagnostics) = await _runAsync("", $"[StoredForm(DefaultWhenMissing = 2.5)] public {type} Ratio {{ get; init; }}");
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ830")).IsEmpty();
+    await Assert.That(code).Contains($"{STEP}DefaultWhenMissing(\"Ratio\", \"2.5\")");
+  }
+
+  /// <summary>
   /// A rename on a promoted field retypes that field's column, found among the model's promoted
   /// fields by name; a vector field ahead of it is passed over rather than matched.
   /// </summary>

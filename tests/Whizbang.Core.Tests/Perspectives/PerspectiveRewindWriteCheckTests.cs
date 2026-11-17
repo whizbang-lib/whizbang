@@ -170,9 +170,12 @@ public class PerspectiveRewindWriteCheckTests {
   [Test]
   public async Task ARewindFromASnapshot_ReplaysAgainFromTheSameSnapshot_WhenTheRowMovesAsync() {
     var streamId = TrackedGuid.New().Value;
-    var snapshotEvent = TrackedGuid.New().Value;
-    var snapshots = new OneSnapshotStore(snapshotEvent, _snapshotOf(new RewindCheckModel { Id = streamId, Attempts = 1 }));
+    var snapshots = new OneSnapshotStore(Guid.Empty, _snapshotOf(new RewindCheckModel { Id = streamId, Attempts = 1 }));
     var harness = new Harness(snapshots);
+    // The snapshot is taken at the stream's first event (version 1), the one Started it holds (#2379: a floor is a real
+    // event of the stream, placed in replay order).
+    var snapshotEvent = (await harness.AppendAsync(streamId, new RewindCheckStarted { StreamId = streamId })).MessageId.Value;
+    snapshots.SnapshotEventId = snapshotEvent;
     var completed = await harness.AppendAsync(streamId, new RewindCheckCompleted { StreamId = streamId });
     harness.Rows.Seed(streamId, new RewindCheckModel { Id = streamId, Attempts = 1 }, snapshotEvent);
     harness.Rows.BeforeFirstWrite = async () => {
@@ -289,7 +292,17 @@ public class PerspectiveRewindWriteCheckTests {
       if (fromEventId is null) {
         FromStartReads++;
       }
-      return base.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
+      return _afterTheArchiveAsync(base.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken));
+    }
+
+    // The hot events sit after the archived ones in the stream: numbered on from the archive, so the rewind places the
+    // snapshot among them by version (#2379).
+    private async IAsyncEnumerable<MessageEnvelope<IEvent>> _afterTheArchiveAsync(IAsyncEnumerable<MessageEnvelope<IEvent>> hot) {
+      await foreach (var envelope in hot) {
+        // The in-memory read builds a new envelope per read, so numbering it on changes nothing stored.
+        envelope.LocalStreamVersion += firstVersion + archived.Length - 1;
+        yield return envelope;
+      }
     }
 
     public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
@@ -306,7 +319,7 @@ public class PerspectiveRewindWriteCheckTests {
           LocalStreamVersion = version++,
         };
       }
-      await foreach (var envelope in Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)) {
+      await foreach (var envelope in _afterTheArchiveAsync(Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken))) {
         yield return envelope;
       }
     }
@@ -500,11 +513,14 @@ public class PerspectiveRewindWriteCheckTests {
   private sealed class OneSnapshotStore(Guid snapshotEventId, JsonDocument data) : IPerspectiveSnapshotStore {
     public int Reads { get; private set; }
 
+    /// <summary>The event the snapshot is at; settable so a test can take it at an event it appended.</summary>
+    public Guid SnapshotEventId { get; set; } = snapshotEventId;
+
     public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default) =>
       Task.CompletedTask;
 
     public Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
-      Task.FromResult<(Guid, JsonDocument)?>((snapshotEventId, data));
+      Task.FromResult<(Guid, JsonDocument)?>((SnapshotEventId, data));
 
     public Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
       GetLatestSnapshotAsync(streamId, perspectiveName, ct);
@@ -512,7 +528,7 @@ public class PerspectiveRewindWriteCheckTests {
     public Task<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeEventInStreamOrderAsync(
         Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
       Reads++;
-      return Task.FromResult<(Guid, int?, JsonDocument)?>((snapshotEventId, 1, data));
+      return Task.FromResult<(Guid, int?, JsonDocument)?>((SnapshotEventId, 1, data));
     }
 
     public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>

@@ -721,7 +721,7 @@ public partial class DeadLetterRecoveryWorker(
     InboxMessage message;
     try {
       message = ReceivedInboxMessageBuilder.BuildRedelivery(scope, redelivery);
-    } catch (Exception ex) when (ex is System.Text.Json.JsonException or NotSupportedException or InvalidOperationException) {
+    } catch (Exception ex) when (Serialization.SerializationFailure.IsSerializationFailure(ex)) {
       LogReentryRefused(_logger, entry.DeadLetterId, ex);
       await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
       Interlocked.Increment(ref _totalHeld);

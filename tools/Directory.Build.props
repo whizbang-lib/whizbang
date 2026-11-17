@@ -1,0 +1,11 @@
+<Project>
+  <!-- Copyright (c) whizbang-lib contributors. SPDX-License-Identifier: MIT -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+  <!-- The tools ship as .NET tool packages, packed from the same build as the libraries, so they build every framework
+       W! ships for, as the libraries do (#2135; see src/Directory.Build.props). An analyzer here overrides this with
+       netstandard2.0. -->
+  <PropertyGroup>
+    <TargetFrameworks>$(WhizbangReleaseTargetFrameworks)</TargetFrameworks>
+  </PropertyGroup>
+</Project>

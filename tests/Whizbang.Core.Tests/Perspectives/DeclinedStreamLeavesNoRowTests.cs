@@ -180,7 +180,10 @@ public class DeclinedStreamLeavesNoRowTests {
   [Test]
   public async Task Rewind_FromASnapshot_WithEveryLaterEventDeclined_KeepsWritingTheSnapshotsModelAsync() {
     var streamId = Guid.NewGuid();
-    var snapshotEventId = Guid.CreateVersion7(DateTimeOffset.FromUnixTimeMilliseconds(Interlocked.Increment(ref _clock)));
+    // The snapshot is at the stream's first event (version 1), the Started it holds (#2379: a floor is a real event of
+    // the stream, placed in replay order).
+    var snapshotEvent = _envelope(new DeclineRunStarted { RunId = streamId, SagaName = DeclineProgressPerspective.OWN_SAGA, TotalItems = 9 });
+    var snapshotEventId = snapshotEvent.MessageId.Value;
     var snapshots = new RecordingSnapshotStore {
       Restorable = (snapshotEventId, _snapshotOf(new DeclineProgressModel {
         Id = streamId,
@@ -190,6 +193,7 @@ public class DeclinedStreamLeavesNoRowTests {
     };
     var harness = new Harness(snapshots, new PerspectiveSnapshotOptions { Enabled = true });
     var foreign = _envelope(new DeclineRunAdvanced { RunId = streamId, SagaName = FOREIGN_SAGA, Items = 2 });
+    await harness.Events.AppendAsync(streamId, snapshotEvent);
     await harness.Events.AppendAsync(streamId, foreign);
 
     var completion = await harness.Runner.RewindAndRunAsync(streamId, PERSPECTIVE_NAME, foreign.MessageId.Value, CancellationToken.None);

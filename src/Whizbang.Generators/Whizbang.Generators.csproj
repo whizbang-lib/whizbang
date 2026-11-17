@@ -6,6 +6,8 @@
     <WhizbangPackageTier>Application</WhizbangPackageTier>
     <WhizbangPackageArea>Core</WhizbangPackageArea>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <!-- Clears the net10.0/net11.0 list Directory.Build.props sets (#2135): Roslyn loads netstandard2.0 only. -->
+    <TargetFrameworks></TargetFrameworks>
     <RootNamespace>Whizbang.Generators</RootNamespace>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsRoslynComponent>true</IsRoslynComponent>

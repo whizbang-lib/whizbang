@@ -242,6 +242,46 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   }
 
   /// <summary>
+  /// "After" an event is after its version (#2379). The stream's first event carries its highest id, so a read after it
+  /// by id selected nothing, and a rewind from a snapshot there replayed nothing, forever.
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicAsync_AfterTheEventWithTheHighestId_ReadsTheEventsAfterItsVersionAsync() {
+    var store = _createStore();
+    var streamId = (Guid)TrackedGuid.New();
+    var first = Guid.Parse("00000000-0000-7000-8000-000000000009");
+    var second = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var third = Guid.Parse("00000000-0000-7000-8000-000000000002");
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "first"), _metadataJson(first), version: 1, eventId: first);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "second"), _metadataJson(second), version: 2, eventId: second);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "third"), _metadataJson(third), version: 3, eventId: third);
+
+    var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)], first);
+
+    await Assert.That(events.Select(e => e.MessageId.Value)).IsEquivalentTo([second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the events after the first are the ones at versions 2 and 3, whatever their ids");
+  }
+
+  /// <summary>
+  /// An event the stream does not hold has no position in it, so the read keeps the order it always had for one: after
+  /// its id (#2379).
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicAsync_AfterAnEventTheStreamDoesNotHold_ReadsAfterItsIdAsync() {
+    var store = _createStore();
+    var streamId = (Guid)TrackedGuid.New();
+    var low = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var high = Guid.Parse("00000000-0000-7000-8000-000000000003");
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "low"), _metadataJson(low), version: 1, eventId: low);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "high"), _metadataJson(high), version: 2, eventId: high);
+
+    var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)],
+      Guid.Parse("00000000-0000-7000-8000-000000000002"));
+
+    await Assert.That(events.Select(e => e.MessageId.Value)).IsEquivalentTo([high], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>
   /// The read says which event is the first in its stream, from the event's position (#1878): version 1, or version 0
   /// for a stream whose numbering began there. A version-1 event of a stream that also holds a version 0 is not first,
   /// even when the read starts after the version 0 and never returns it.
