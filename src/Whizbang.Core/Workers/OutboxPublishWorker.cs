@@ -205,15 +205,21 @@ public sealed partial class OutboxPublishWorker(
           var traceContext = _extractTraceContext(work);
           var enableLifecycleSpans = _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Lifecycle);
 
-          var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
-            work, scope, receptorInvoker, traceContext, enableLifecycleSpans, leaseCt);
+          try {
+            var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
+              work, scope, receptorInvoker, traceContext, enableLifecycleSpans, leaseCt);
 
-          var result = await _publishStrategy.PublishAsync(work, leaseCt);
+            var result = await _publishStrategy.PublishAsync(work, leaseCt);
 
-          await _invokePostOutboxLifecycleAsync(
-            work, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans, leaseCt);
+            await _invokePostOutboxLifecycleAsync(
+              work, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans, leaseCt);
 
-          await _routeResultAsync(work, result, leaseCt);
+            await _routeResultAsync(work, result, leaseCt);
+          } finally {
+            // #2228: the pre-outbox stages began this message's tracking, so it ends here on every outcome
+            // (a stage or the publish that throws included), before the failure is routed.
+            _endOutboxTracking(scope, work);
+          }
         });
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         throw;
@@ -281,37 +287,49 @@ public sealed partial class OutboxPublishWorker(
         _leaseRegistry?.Register(lease);
 
         await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
-          // Per-item scope + Pre lifecycle prep BEFORE bulk publish
-          var contexts = new List<BulkBatchContext>(batch.Count);
-          foreach (var w in batch) {
-            var scope = _scopeFactory.CreateAsyncScope();
-            await SecurityContextHelper.EstablishFullContextAsync(w.Envelope, scope.ServiceProvider, leaseCt);
-            var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-            var traceContext = _extractTraceContext(w);
-            var enableLifecycleSpans = _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Lifecycle);
-            var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
-              w, scope, receptorInvoker, traceContext, enableLifecycleSpans, leaseCt);
-            contexts.Add(new BulkBatchContext(w, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans));
-          }
+          // Per-item scope + Pre lifecycle prep BEFORE bulk publish. Every scope opened is released (its tracking
+          // ended, then the scope disposed) exactly once, in order: by its post-outbox pass, or, for the items a
+          // throw left before theirs, by the finally below (#2228).
+          var opened = new List<(OutboxWork Work, AsyncServiceScope Scope)>(batch.Count);
+          var released = 0;
+          try {
+            var contexts = new List<BulkBatchContext>(batch.Count);
+            foreach (var w in batch) {
+              var scope = _scopeFactory.CreateAsyncScope();
+              opened.Add((w, scope));
+              await SecurityContextHelper.EstablishFullContextAsync(w.Envelope, scope.ServiceProvider, leaseCt);
+              var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+              var traceContext = _extractTraceContext(w);
+              var enableLifecycleSpans = _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Lifecycle);
+              var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
+                w, scope, receptorInvoker, traceContext, enableLifecycleSpans, leaseCt);
+              contexts.Add(new BulkBatchContext(w, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans));
+            }
 
-          var results = await _publishStrategy.PublishBatchAsync(batch, leaseCt);
+            var results = await _publishStrategy.PublishBatchAsync(batch, leaseCt);
 
-          // Per-item Post lifecycle + result routing
-          foreach (var ctx in contexts) {
-            var r = results.FirstOrDefault(x => x.MessageId == ctx.Work.MessageId)
-              ?? new MessagePublishResult {
-                MessageId = ctx.Work.MessageId,
-                Success = false,
-                CompletedStatus = ctx.Work.Status,
-                Error = "No result returned from batch publish",
-                Reason = MessageFailureReason.Unknown
-              };
-            try {
-              await _invokePostOutboxLifecycleAsync(
-                ctx.Work, ctx.Scope, ctx.Tracking, ctx.TypedEnvelope, ctx.TraceContext, ctx.EnableLifecycleSpans, leaseCt);
-              await _routeResultAsync(ctx.Work, r, leaseCt);
-            } finally {
-              await ctx.Scope.DisposeAsync();
+            // Per-item Post lifecycle + result routing
+            foreach (var ctx in contexts) {
+              var r = results.FirstOrDefault(x => x.MessageId == ctx.Work.MessageId)
+                ?? new MessagePublishResult {
+                  MessageId = ctx.Work.MessageId,
+                  Success = false,
+                  CompletedStatus = ctx.Work.Status,
+                  Error = "No result returned from batch publish",
+                  Reason = MessageFailureReason.Unknown
+                };
+              try {
+                await _invokePostOutboxLifecycleAsync(
+                  ctx.Work, ctx.Scope, ctx.Tracking, ctx.TypedEnvelope, ctx.TraceContext, ctx.EnableLifecycleSpans, leaseCt);
+                await _routeResultAsync(ctx.Work, r, leaseCt);
+              } finally {
+                released++;
+                await _releaseBulkItemAsync(ctx.Work, ctx.Scope);
+              }
+            }
+          } finally {
+            for (var i = released; i < opened.Count; i++) {
+              await _releaseBulkItemAsync(opened[i].Work, opened[i].Scope);
             }
           }
         });
@@ -519,6 +537,21 @@ public sealed partial class OutboxPublishWorker(
     return traceContext;
   }
 
+  /// <summary>
+  /// Ends the outbox lifecycle tracking the pre-outbox stages began for <paramref name="work"/>; a no-op when none was
+  /// begun. Called on every outcome, never only on success, so a stage or publish that throws does not leave the
+  /// entry (envelope and payload included) in the coordinator until the stale sweep (#2228).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxPublishWorkerTrackingEndsTests.cs</tests>
+  private static void _endOutboxTracking(AsyncServiceScope scope, OutboxWork work) =>
+    scope.ServiceProvider.GetService<ILifecycleCoordinator>()?.AbandonTracking(LifecycleTrackingPath.Outbox, work.MessageId);
+
+  /// <summary>Ends one bulk item's tracking, then disposes its scope (the tracking is ended through the scope).</summary>
+  private static async ValueTask _releaseBulkItemAsync(OutboxWork work, AsyncServiceScope scope) {
+    _endOutboxTracking(scope, work);
+    await scope.DisposeAsync();
+  }
+
   private async Task<(ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope)> _invokePreOutboxLifecycleAsync(
       OutboxWork work,
       AsyncServiceScope scope,
@@ -584,7 +617,6 @@ public sealed partial class OutboxPublishWorker(
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
         await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
       }
-      coordinator.AbandonTracking(LifecycleTrackingPath.Outbox, work.MessageId);
       return;
     }
 

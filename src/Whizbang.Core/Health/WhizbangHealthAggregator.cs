@@ -144,7 +144,7 @@ public sealed class WhizbangHealthAggregator {
       return new ComponentHealth(ComponentState.Faulted, "health source was canceled");
     } catch (Exception ex) {
       // A throwing source is a faulted component, not a failed probe.
-      return new ComponentHealth(ComponentState.Faulted, ex.GetType().Name);
+      return new ComponentHealth(ComponentState.Faulted, TypeNameFormatter.SimpleName(ex.GetType()));
     }
   }
 }

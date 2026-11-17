@@ -35,6 +35,7 @@
     "RestMutationEndpointGenerator": 500,
     "SagaGenerator": 500,
     "ScopedLensFactoryGenerator": 600,
+    "ServiceAssemblyFactsGenerator": 500,
     "ServiceRegistrationGenerator": 600,
     "ServiceRequirementsGenerator": 1100,
     "SignalTypeRegistryGenerator": 600,

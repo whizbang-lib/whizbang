@@ -32,10 +32,13 @@ namespace Whizbang.Core.Messaging;
 /// <param name="OriginsFilled">Of <paramref name="Adopted"/>, the events whose origin was empty and is now the bundle's;
 /// the rest already carried the origin and took only its sequence (#2099). Null when the store did not say, in which
 /// case every adopted event is taken to have had its origin filled.</param>
+/// <param name="SupersededSatisfied">Of <paramref name="Present"/>, the bundle's copies of a superseding key the store did
+/// not store again because it already holds a newer copy of that key (#2350): satisfied, never a deficit.</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
 public readonly record struct RedeliveredBucketPresence(
   Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
-  int RefusedForeignOrigin = 0, int? OriginsFilled = null);
+  int RefusedForeignOrigin = 0, int? OriginsFilled = null, int SupersededSatisfied = 0);
 
 /// <summary>
 /// One redelivery bundle as a batch reconcile takes it (#2099): the origin that published it, the origin's service name
@@ -234,7 +237,7 @@ public static partial class RedeliveryReconciler {
     }
     var marked = answer.MarkedRefusedTruncated.Count + answer.MarkedUnchanged.Count;
     if (marked > 0) {
-      services.GetService<StreamIntegrityMetrics>()?.RepairsUnhealable.Add(marked);
+      services.GetService<StreamIntegrityMetrics>()?.RecordBucketsMarkedUnhealable(marked);
     }
     return answer;
   }
@@ -294,6 +297,14 @@ public static partial class RedeliveryReconciler {
         writer.WriteStartObject("answeredWindow");
         _writeBound(writer, "from", answered.FromCommitSequence);
         _writeBound(writer, "to", answered.ToCommitSequence);
+        // #2149: the streams the bundle carried only in part; absent when it carried every stream whole.
+        if (answered.PartialStreamIds is { } partial) {
+          writer.WriteStartArray("partialStreams");
+          foreach (var stream in partial) {
+            writer.WriteStringValue(stream);
+          }
+          writer.WriteEndArray();
+        }
         writer.WriteEndObject();
       }
       writer.WriteEndObject();
@@ -308,6 +319,10 @@ public static partial class RedeliveryReconciler {
       writer.WriteNull(name);
     }
   }
+
+  // #2149: the streams the bundle carried only in part; null when the record names none (and on one recorded before).
+  private static List<Guid>? _readPartial(JsonElement window) =>
+    window.TryGetProperty("partialStreams", out var partial) ? [.. partial.EnumerateArray().Select(e => e.GetGuid())] : null;
 
   private static long? _readBound(JsonElement window, string name) {
     var bound = window.GetProperty(name);
@@ -333,7 +348,7 @@ public static partial class RedeliveryReconciler {
       ? flag.GetBoolean()
       : null;
     RedeliveryAnswerWindow? window = root.TryGetProperty("answeredWindow", out var answered)
-      ? new RedeliveryAnswerWindow(_readBound(answered, "from"), _readBound(answered, "to"))
+      ? new RedeliveryAnswerWindow(_readBound(answered, "from"), _readBound(answered, "to")) { PartialStreamIds = _readPartial(answered) }
       : null;
     return new BundleAdoption(
       root.GetProperty("originServiceId").GetGuid(),
@@ -423,6 +438,8 @@ public static partial class RedeliveryReconciler {
     var refusedTruncated = buckets.Sum(b => b.RefusedTruncated);
     var refusedForeignOrigin = buckets.Sum(b => b.RefusedForeignOrigin);
     var metrics = services.GetService<StreamIntegrityMetrics>();
+    // #2350: copies a newer held copy of their key supersedes were settled, not stored; they count as present.
+    metrics?.RedeliveredCopiesSuperseded.Add(buckets.Sum(b => b.SupersededSatisfied));
     _reportForeignOrigins(logger, metrics, refusedForeignOrigin, childCount, originServiceName, origin);
     _reportAdopted(logger, metrics, buckets, adopted, childCount, origin);
     // A bucket holding an event the store refused to restore (#1843) cannot be repaired by asking again. Otherwise,
@@ -432,8 +449,10 @@ public static partial class RedeliveryReconciler {
     // and read as present.
     List<RedeliveredBucketPresence> refusedBuckets = [.. buckets.Where(b => b.RefusedTruncated > 0)];
     var storedNothing = allPresentAtCommit ?? present + refusedTruncated >= childCount;
+    // #2149: a stream the bundle carried only in part may have its missing events in the part it did not carry.
+    var partial = window?.PartialStreamIds ?? [];
     List<RedeliveredBucketPresence> unchanged = adopted == 0 && storedNothing
-      ? [.. buckets.Where(b => b.RefusedTruncated == 0)]
+      ? [.. buckets.Where(b => b.RefusedTruncated == 0 && !partial.Contains(b.StreamId))]
       : [];
     var ledger = services.GetService<IIntegrityRepairLedger>() ?? services.GetService<IntegrityRepairLedger>();
     if (ledger is null) {
@@ -456,7 +475,7 @@ public static partial class RedeliveryReconciler {
         window is { } answered ? (answered, eventIds) : null, cancellationToken)
       .ConfigureAwait(false);
     if (marked > 0) {
-      metrics?.RepairsUnhealable.Add(marked);
+      metrics?.RecordBucketsMarkedUnhealable(marked);
     }
     return new RedeliveryReconciliation(childCount, present, adopted, marked, refusedTruncated, refusedForeignOrigin);
   }

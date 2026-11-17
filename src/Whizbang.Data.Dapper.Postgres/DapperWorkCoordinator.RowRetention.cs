@@ -31,10 +31,10 @@ public partial class DapperWorkCoordinator {
       return;
     }
     await using var __scope = await CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-    var connection = __scope.Connection;
+    var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     await PerspectiveRowRetentionSql.SyncRetentionAsync(
-      () => CoordinatorCommandTimeout.Apply(connection.CreateCommand()), prefix, declarations,
+      () => CoordinatorCommandTimeout.Apply(__scope.Connection.CreateWhizbangCommand()), prefix, declarations,
       _reportUnmatchedRetentionDeclaration, cancellationToken).ConfigureAwait(false);
   }
 
@@ -183,7 +183,7 @@ public partial class DapperWorkCoordinator {
       Func<DbCommand, string, Task<T>> operation, CancellationToken cancellationToken) {
     await using var __scope = await CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
-    await using var command = CoordinatorCommandTimeout.Apply(__scope.Connection.CreateCommand());
+    await using var command = CoordinatorCommandTimeout.Apply(__scope.Connection.CreateWhizbangCommand());
     return await operation(command, prefix).ConfigureAwait(false);
   }
 

@@ -233,6 +233,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
       ["Whizbang:Database:RoleAssignment:CooldownAfterLapse"] = "00:00:20",
       ["Whizbang:Database:RoleAssignment:OwedWorkRetryBase"] = "00:01:00",
       ["Whizbang:Database:RoleAssignment:ProgressWindow"] = "00:00:45",
+      ["Whizbang:Database:RoleAssignment:MigratorStallLimit"] = "00:30:00",
       ["Whizbang:Database:Stamper:DisableStamper"] = "true",
     };
     await using var provider = _driverOnly(pod, dataSource, settings).BuildServiceProvider();
@@ -248,6 +249,8 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await Assert.That(options.OwedWorkRetryBase).IsEqualTo(TimeSpan.FromMinutes(1));
     await Assert.That(options.ProgressWindow).IsEqualTo(TimeSpan.FromSeconds(45))
       .Because("an operator tunes how long a connected but stuck holder keeps its role without a code change (#2140)");
+    await Assert.That(options.MigratorStallLimit).IsEqualTo(TimeSpan.FromMinutes(30))
+      .Because("and how long a migrator may report no progress before its role lapses (#2165)");
     await Assert.That(options.Roles).DoesNotContain(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE)
       .Because("a disabled stamper has no leader to elect");
     await Assert.That(options.Manages(StartupDuties.MAINTAINER)).IsTrue()

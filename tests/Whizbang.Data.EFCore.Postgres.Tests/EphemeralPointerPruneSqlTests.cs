@@ -351,6 +351,106 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
       .Because("The self-gate advances the last-run watermark, so the heavy prune runs at most once per interval.");
   }
 
+  // ===== #2327: a backlog drains in bounded batches, and what is pending is reported =====
+
+  private static Task _settingAsync(NpgsqlConnection connection, string key, string value) =>
+    _execAsync(connection,
+      "INSERT INTO wh_settings (setting_key, setting_value, value_type, description) VALUES (@k, @v, 'integer', 't') " +
+      "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value",
+      ("k", key), ("v", value));
+
+  private static async Task<List<Guid>> _ancientStreamAsync(NpgsqlConnection connection, Guid streamId, int events) {
+    var ids = new List<Guid>();
+    for (var i = 0; i < events; i++) {
+      var id = Guid.NewGuid();
+      await _commitAsync(connection, id, streamId, "Whizbang.Tests.PruneBacklog", flags: 8);
+      await _reapBodyAsync(connection, id);
+      await _agePointerAsync(connection, id, 200);
+      ids.Add(id);
+    }
+    return ids;
+  }
+
+  [Test]
+  public async Task Prune_ABacklogLargerThanABatch_DrainsOverSuccessiveCalls_ThenWaitsForTheIntervalAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var streamId = Guid.NewGuid();
+    await _ancientStreamAsync(connection, streamId, 6);
+    await _enableDeepMaintenanceAsync(connection, true);
+    await _settingAsync(connection, "ephemeral_pointer_prune_batch_size", "2");
+
+    var first = await _pruneAsync(connection);
+    var second = await _pruneAsync(connection);
+    var third = await _pruneAsync(connection);
+    var fourth = await _pruneAsync(connection);
+
+    await Assert.That(first).IsEqualTo((2L, "ok (more due, next cycle)")).Because("one call prunes at most a batch");
+    await Assert.That(second).IsEqualTo((2L, "ok (more due, next cycle)")).Because("a full batch leaves the next cycle due");
+    await Assert.That(third).IsEqualTo((1L, "ok")).Because("the short batch that empties the backlog lets the interval run");
+    await Assert.That(fourth).IsEqualTo((0L, "not due"));
+    await Assert.That(await _remainingVersionsAsync(connection, streamId)).IsEquivalentTo([6])
+      .Because("the newest pointer of the stream is never pruned");
+  }
+
+  [Test]
+  public async Task Prune_PointersThatDoNotQualify_StayWhileTheBacklogDrainsAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var backlog = Guid.NewGuid();
+    await _ancientStreamAsync(connection, backlog, 4);
+    var kept = Guid.NewGuid();
+    var withBody = Guid.NewGuid();
+    var young = Guid.NewGuid();
+    var sourced = Guid.NewGuid();
+    var newest = Guid.NewGuid();
+    await _commitAsync(connection, withBody, kept, "Whizbang.Tests.PruneBacklog", flags: 8);
+    await _agePointerAsync(connection, withBody, 200);
+    await _commitAsync(connection, young, kept, "Whizbang.Tests.PruneBacklog", flags: 8);
+    await _reapBodyAsync(connection, young);
+    await _agePointerAsync(connection, young, 5);
+    await _commitAsync(connection, newest, kept, "Whizbang.Tests.PruneBacklog", flags: 8);
+    await _commitAsync(connection, sourced, Guid.NewGuid(), "Whizbang.Tests.PruneSourced", flags: 0);
+    await _commitAsync(connection, Guid.NewGuid(), Guid.NewGuid(), "Whizbang.Tests.PruneSourced", flags: 0);
+    await _reapBodyAsync(connection, sourced);
+    await _agePointerAsync(connection, sourced, 200);
+    await _enableDeepMaintenanceAsync(connection, true);
+    await _settingAsync(connection, "ephemeral_pointer_prune_batch_size", "2");
+
+    var drained = 0L;
+    for (var call = 0; call < 3; call++) {
+      drained += (await _pruneAsync(connection)).Rows;
+    }
+
+    await Assert.That(drained).IsEqualTo(3L).Because("the backlog stream's three older pointers, and nothing else");
+    foreach (var id in new[] { withBody, young, newest, sourced }) {
+      await Assert.That(await _pointerCountAsync(connection, id)).IsEqualTo(1L);
+    }
+  }
+
+  [Test]
+  public async Task Pending_CountsWhatThePruneWouldRemove_OnlyWhileItIsEnabledAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _ancientStreamAsync(connection, Guid.NewGuid(), 3);
+
+    var disabled = await _pendingAsync(connection);
+    await _enableDeepMaintenanceAsync(connection, true);
+    var enabled = await _pendingAsync(connection);
+    await _setDebugModeAsync(connection, true);
+    var debug = await _pendingAsync(connection);
+
+    await Assert.That(disabled).IsNull().Because("a disabled prune removes nothing");
+    await Assert.That(enabled).IsEqualTo(2L).Because("the two older pointers qualify; the newest is kept");
+    await Assert.That(debug).IsNull();
+  }
+
+  private static async Task<long?> _pendingAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT pending FROM wh_pending_reclamation(100) WHERE task_name = 'prune_ancient_ephemeral_pointers'";
+    return await cmd.ExecuteScalarAsync() is long pending ? pending : null;
+  }
+
   [Test]
   public async Task Coordinator_PruneAncientEphemeralPointers_InvokesSqlAndParsesResultAsync() {
     // #13b3b plumbing: the EFCore coordinator override calls the SQL function and surfaces (rows, status).

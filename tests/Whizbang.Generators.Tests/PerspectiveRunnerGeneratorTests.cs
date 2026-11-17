@@ -341,7 +341,7 @@ namespace TestNamespace {
     await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadArchived)");
     await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadRenamed)");
 
-    await Assert.That(runnerSource).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+    await Assert.That(runnerSource).Contains("HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken)")
       .Because("the probe asks about the handled event types only (issue #696)");
   }
 

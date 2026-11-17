@@ -68,10 +68,16 @@ namespace Whizbang.Core.Messaging;
 /// The receptor class, which a receptor interceptor is asked about before the receptor runs. Generated entries set it;
 /// a runtime registration leaves it null and is identified by <paramref name="RuntimeInstance"/>'s type instead.
 /// </param>
+/// <param name="RunOnRepair">
+/// Whether this receptor runs for a repaired event this service can prove it never handled, set when it is decorated
+/// with <see cref="RunOnRepairAttribute"/>. Default false: a repaired event never runs the receptor (#2273).
+/// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+/// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerRepairTests.cs</tests>
 public sealed record ReceptorInfo(
     Type MessageType,
     string ReceptorId,
@@ -83,7 +89,8 @@ public sealed record ReceptorInfo(
     bool IsOnceAcrossServices = false,
     object? RuntimeInstance = null,
     Dispatch.DispatchModes? DefaultRouting = null,
-    Type? ReceptorType = null
+    Type? ReceptorType = null,
+    bool RunOnRepair = false
 );
 
 /// <summary>

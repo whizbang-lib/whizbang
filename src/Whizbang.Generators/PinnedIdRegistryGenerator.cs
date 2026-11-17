@@ -184,8 +184,9 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("internal static class PinnedIdRegistryModuleInitializer {");
     source.AppendLine("  [System.Runtime.CompilerServices.ModuleInitializer]");
     source.AppendLine("  internal static void Initialize() {");
-    source.AppendLine("    ServiceRegistrationCallbacks.PinnedIdRegistry = static services =>");
-    source.AppendLine("      PinnedIdRegistryExtensions.AddPinnedIdRegistry(services);");
+    // #2243: named by this assembly, so a host replays only its own service's registrations
+    source.AppendLine($"    ServiceRegistrationCallbacks.RegisterPinnedIdRegistry({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, static services =>");
+    source.AppendLine("      PinnedIdRegistryExtensions.AddPinnedIdRegistry(services));");
     source.AppendLine("  }");
     source.AppendLine("}");
 

@@ -226,8 +226,8 @@ public class PhysicalFieldHydratorInitOnlyTests {
     await Assert.That(lines).Contains("var _status = materializationData.GetPropertyValue<string>(\"status\");");
     await Assert.That(lines).Contains("var _size = materializationData.GetPropertyValue<int?>(\"size\");");
     await Assert.That(lines).Contains("var _embedding = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"embedding\");");
-    await Assert.That(lines.Count(l => l.StartsWith("row.Data = row.Data with {", StringComparison.Ordinal))).IsEqualTo(2)
-      .Because("both hydrators copy the record the same way");
+    await Assert.That(lines.Count(l => l.StartsWith("row.Data = row.Data with {", StringComparison.Ordinal))).IsEqualTo(3)
+      .Because("both hydrators, and the Split model's projected document (#2304), copy the record the same way");
   }
 
   [Test]
@@ -263,8 +263,9 @@ public class PhysicalFieldHydratorInitOnlyTests {
 
     await Assert.That(lines.Count(l => l ==
       "row.Data = new global::TestApp.TicketModel { Id = row.Data.Id, Status = _status, Size = _size ?? row.Data.Size, Note = row.Data.Note };"))
-      .IsEqualTo(2)
-      .Because("issue #1002: a class sets an init-only property only while an instance is created, so both hydrators copy the model");
+      .IsEqualTo(3)
+      .Because("issue #1002: a class sets an init-only property only while an instance is created, so both hydrators, and the "
+        + "projected document's copy (#2304), copy the model");
     await Assert.That(lines).Contains("var _status = (string)entry.Property(\"status\").CurrentValue!;");
     await Assert.That(lines).Contains("var _status = materializationData.GetPropertyValue<string>(\"status\");");
     await Assert.That(lines).DoesNotContain("row.Data.Status = _status;");
@@ -274,8 +275,9 @@ public class PhysicalFieldHydratorInitOnlyTests {
   public async Task SplitClass_ThatCannotBeCopied_KeepsTheInPlaceCopyOfItsSettableFieldsAsync() {
     var lines = _lines(await _registrationAsync(SPLIT_CLASS_SOURCE));
 
-    await Assert.That(lines.Count(l => l == "row.Data.Size = _size ?? row.Data.Size;")).IsEqualTo(2)
-      .Because("the runner reports the model (WHIZ808); the hydrators still compile, assigning what a class can");
+    await Assert.That(lines.Count(l => l == "row.Data.Size = _size ?? row.Data.Size;")).IsEqualTo(3)
+      .Because("the runner reports the model (WHIZ808); the hydrators and the projected document's copy (#2304) still "
+        + "compile, assigning what a class can");
     await Assert.That(lines).DoesNotContain("row.Data = new global::TestApp.UncopyableModel {");
   }
 

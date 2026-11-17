@@ -5,6 +5,7 @@ using System.Data.Common;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres;
 
@@ -94,8 +95,13 @@ internal static class CoordinatorCatalogSql {
 
   /// <summary>
   /// The (stream, perspective) pairs with an ephemeral body past its rewind grace, consumed, that no snapshot covers by
-  /// version: the snapshots to take before the body is reaped.
+  /// version and whose row the perspective has not purged (#2294), for perspectives that keep a rewind floor (#2295): the
+  /// snapshots to take before the body is reaped.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_APurgedPair_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:PairsNeedingSnapshot_AReadModelThatKeepsNoFloor_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_AReadModelThatKeepsNoRewindFloor_IsNotATargetAsync</tests>
   internal static async Task<IReadOnlyList<EphemeralSnapshotTarget>> EphemeralPairsNeedingSnapshotAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     cmd.CommandText =
@@ -104,6 +110,9 @@ internal static class CoordinatorCatalogSql {
       $"JOIN {prefix}wh_event_store es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {prefix}wh_ephemeral_type_grace g ON g.event_type = es.event_type " +
       $"JOIN {prefix}wh_message_associations ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
+      // 403 (#2295): a perspective that keeps no rewind floor takes no snapshot, so it is never a target.
+      $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_message_associations nf WHERE nf.association_type = '{EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE}' " +
+      "    AND nf.target_name = ma.target_name) " +
       $"JOIN {prefix}wh_perspective_cursors c ON c.stream_id = es.stream_id AND c.perspective_name = ma.target_name " +
       // #13b4 safety gate: only EPHEMERAL events; consumed sourced bodies are never snapshot targets.
       "WHERE (es.flags & 8) = 8 " +
@@ -114,7 +123,13 @@ internal static class CoordinatorCatalogSql {
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_events pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       // 209: coverage is read by version, the stream's own counter, never by commit sequence.
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
-      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version)";
+      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version) " +
+      // 403 (#2294): a body at or before the perspective's purge event is covered by the purge (a purged row has nothing
+      // to snapshot, and selecting it again every cycle only repeated a bootstrap that found no row). A body after it
+      // stays a target: a stale marker can stand on a resurrected, live row. As in the reap.
+      $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm JOIN {prefix}wh_event_store pv " +
+      "  ON pv.event_id = pm.purge_event_id AND pv.stream_id = pm.stream_id " +
+      "  WHERE pm.stream_id = es.stream_id AND pm.perspective_name = ma.target_name AND es.version <= pv.version)";
     var list = new List<EphemeralSnapshotTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
@@ -131,9 +146,12 @@ internal static class CoordinatorCatalogSql {
   internal static async Task<List<PerspectiveCursorInfo>> PerspectiveCursorsBatchAsync(
       DbCommand cmd, string prefix, Guid[] streamIds, CancellationToken cancellationToken) {
     cmd.CommandText =
-        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, c.rewind_trigger_event_id, e.commit_sequence "
+        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, c.rewind_trigger_event_id, e.commit_sequence, "
+      // #2366: the frontier a completed replay read through, from the live cursor (a parked one resumes without it).
+      + "lc.replayed_through_commit_sequence "
       + $"FROM {prefix}wh_perspective_resume_cursors(@p_stream_ids, NULL) c "
-      + $"LEFT JOIN {prefix}wh_event_store e ON e.event_id = c.last_event_id";
+      + $"LEFT JOIN {prefix}wh_event_store e ON e.event_id = c.last_event_id "
+      + $"LEFT JOIN {prefix}wh_perspective_cursors lc ON lc.stream_id = c.stream_id AND lc.perspective_name = c.perspective_name";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = streamIds });
     var results = new List<PerspectiveCursorInfo>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -144,7 +162,8 @@ internal static class CoordinatorCatalogSql {
         LastEventId = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
         Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
         RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4),
-        LastCommitSequence = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)
+        LastCommitSequence = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
+        ReplayedThroughCommitSequence = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(6)
       });
     }
     return results;

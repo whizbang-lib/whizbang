@@ -10,14 +10,11 @@ using TUnit.Core;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Coverage for two <c>Whizbang.Generators.Utilities.EphemeralResolver</c> branches nothing else
-/// exercises. <c>EphemeralResolver</c> is <c>internal static</c> and this project's
-/// <c>InternalsVisibleTo</c> is deliberately disabled (see <c>Whizbang.Generators/AssemblyInfo.cs</c> —
-/// it collides with PolySharp polyfills), so it can only be driven indirectly through the two
-/// generator-side consumers that call it: <see cref="EphemeralAnalyzer"/> (WHIZ134) and
-/// <see cref="MessageTypeCatalogGenerator"/>.
+/// Coverage for two <c>Whizbang.Generators.Shared.Utilities.EphemeralResolver</c> branches nothing else
+/// exercises, driven through the two generator-side consumers that call it: <see cref="EphemeralAnalyzer"/>
+/// (WHIZ134) and <see cref="MessageTypeCatalogGenerator"/>, so each branch is proved where it decides an outcome.
 /// </summary>
-/// <code-under-test>src/Whizbang.Generators/Utilities/EphemeralResolver.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Generators.Shared/Utilities/EphemeralResolver.cs</code-under-test>
 public class EphemeralResolverCoverageTests {
 
   // IsAmbiguousComposition resolves own type -> base type -> interfaces, most-specific wins (per the

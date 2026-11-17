@@ -11,7 +11,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// The EF Core coordinator's batch reconcile (#2099): every bundle goes to <c>wh_reconcile_redelivered_bundles</c> in one
+/// The EF Core coordinator's batch reconcile (#2099): every bundle goes to <c>wh_reconcile_redelivered_bundles_counting_satisfied</c> in one
 /// call, and each bundle's buckets come back at its own position, with the origins it filled told apart from the
 /// sequences it filled.
 /// </summary>

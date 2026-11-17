@@ -418,7 +418,8 @@ public static class JsonIndexDiscovery {
   /// </summary>
   /// <remarks>
   /// All or nothing. A composite missing one of its columns is a different index, and one that
-  /// silently answered fewer filters would be worse than none at all.
+  /// silently answered fewer filters would be worse than none at all. A name from
+  /// <see cref="PerspectiveRowColumnNames"/> is the row's own column rather than a property.
   /// </remarks>
   private static List<CompositeIndexElement>? _elementsFor(
       AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
@@ -437,6 +438,13 @@ public static class JsonIndexDiscovery {
     var elements = new List<CompositeIndexElement>(names.Length);
 
     foreach (var name in names) {
+      // A row's own column (PerspectiveRowColumns): indexed as the column, and named by it, so a declaration of
+      // updated_at alone derives the name the schema gave every table before #2087 and keeps that index.
+      if (PerspectiveRowColumnNames.ColumnFor(name) is { } column) {
+        elements.Add(new CompositeIndexElement(column, column));
+        continue;
+      }
+
       if (!properties.TryGetValue(name, out var property) || _elementFor(property) is not { } element) {
         return null;
       }

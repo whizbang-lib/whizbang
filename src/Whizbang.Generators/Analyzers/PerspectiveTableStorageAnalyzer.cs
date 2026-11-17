@@ -48,7 +48,7 @@ public sealed class PerspectiveTableStorageAnalyzer : DiagnosticAnalyzer {
       }
 
       context.ReportDiagnostic(Diagnostic.Create(
-        DiagnosticDescriptors.TableStorageValueOutOfRange, location, type.Name, range.Property,
+        DiagnosticDescriptors.TableStorageValueOutOfRange, location, TypeNameUtilities.SimpleName(type), range.Property,
         System.Convert.ToString(argument.Value.Value, CultureInfo.InvariantCulture),
         range.Minimum.ToString(CultureInfo.InvariantCulture), range.Maximum.ToString(CultureInfo.InvariantCulture)));
     }

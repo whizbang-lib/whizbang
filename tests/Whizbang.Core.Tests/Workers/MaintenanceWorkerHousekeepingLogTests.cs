@@ -38,7 +38,7 @@ public class MaintenanceWorkerHousekeepingLogTests {
 
     await Assert.That(coord.SweepCount).IsEqualTo(0);
     var deferred = _single(logger, DEFERRED);
-    await Assert.That(deferred.Message).Contains("has -1 unprocessed inbox row(s), -1 active lease(s), -1 pending outbox row(s) and -1 pending perspective event(s)")
+    await Assert.That(deferred.Message).Contains("has -1 unprocessed inbox row(s), -1 active lease(s), -1 pending outbox row(s), -1 pending perspective event(s) and -1 idle-band row(s); work besides the framework's integrity traffic: -1")
       .Because("a backlog nobody measured must not read as an empty one");
   }
 
@@ -50,7 +50,8 @@ public class MaintenanceWorkerHousekeepingLogTests {
 
     await Assert.That(coord.SweepCount).IsEqualTo(0);
     var deferred = _single(logger, DEFERRED);
-    await Assert.That(deferred.Message).Contains("has 34033 unprocessed inbox row(s), 1870 active lease(s), 12 pending outbox row(s) and 5 pending perspective event(s)");
+    await Assert.That(deferred.Message).Contains("has 34033 unprocessed inbox row(s), 1870 active lease(s), 12 pending outbox row(s), 5 pending perspective event(s) and 7 idle-band row(s); work besides the framework's integrity traffic: 1")
+      .Because("the idle band and the integrity-apart figure decide quiescence, so a deferral that left them out could not say why (#2253)");
   }
 
   [Test]
@@ -62,7 +63,16 @@ public class MaintenanceWorkerHousekeepingLogTests {
     await Assert.That(coord.SweepCount).IsEqualTo(1)
       .Because("the budget is spent, so the sweep runs although the service is busy");
     var forced = _single(logger, FORCED);
-    await Assert.That(forced.Message).Contains("(34033 unprocessed inbox row(s), 1870 active lease(s), 12 pending outbox row(s), 5 pending perspective event(s))");
+    await Assert.That(forced.Message).Contains("(34033 unprocessed inbox row(s), 1870 active lease(s), 12 pending outbox row(s), 5 pending perspective event(s), 7 idle-band row(s); work besides the framework's integrity traffic: 1)");
+  }
+
+  [Test]
+  public async Task ADeferralFromABackendWithoutTheIntegrityFigure_ReportsItAsUnmeasuredAsync() {
+    var (worker, _, logger) = _build(_busy with { NonIntegrityWorkRows = null }, _gate());
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(_single(logger, DEFERRED).Message).Contains("7 idle-band row(s); work besides the framework's integrity traffic: -1");
   }
 
   private static readonly ServiceBacklog _busy = new() {
@@ -70,6 +80,8 @@ public class MaintenanceWorkerHousekeepingLogTests {
     ActiveLeasedRows = 1_870,
     PendingOutboxRows = 12,
     PendingPerspectiveRows = 5,
+    PendingIdleRows = 7,
+    NonIntegrityWorkRows = 1,
   };
 
   private static HousekeepingCoordinator _gate(int maxDeferrals = 6)

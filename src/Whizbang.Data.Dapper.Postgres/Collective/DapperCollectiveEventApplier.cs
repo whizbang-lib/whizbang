@@ -89,7 +89,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     }
     if (entry.ModelType != typeof(TModel)) {
       throw new ArgumentException(
-        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to DapperCollectiveEventApplier<{entry.ModelType.Name}> instead.",
+        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to DapperCollectiveEventApplier<{TypeNameFormatter.ForLog(entry.ModelType)}> instead.",
         nameof(entry));
     }
     if (resolver.ScopeKind != evt.Scope.ScopeKind) {
@@ -105,7 +105,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     var query = new DapperCollectiveQuery(siblingTables);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{typeof(TModel).Name}> instance.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{TypeNameFormatter.ForLog(typeof(TModel))}> instance.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field

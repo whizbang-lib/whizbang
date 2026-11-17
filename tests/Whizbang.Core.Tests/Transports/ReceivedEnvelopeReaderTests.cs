@@ -55,6 +55,23 @@ public class ReceivedEnvelopeReaderTests {
       .Because("metadata for another type is no metadata for the envelope, so the framework's own is used");
   }
 
+  [Test]
+  public async Task TryRead_OptionsWhoseResolverRefusesTheEnvelope_ReadsWithTheFrameworksOwnAsync() {
+    var id = (Guid)TrackedGuid.New();
+    var refusing = new JsonSerializerOptions { TypeInfoResolver = new Refuses() };
+
+    var envelope = ReceivedEnvelopeReader.TryRead(_body(id), refusing);
+
+    await Assert.That(envelope!.MessageId.Value).IsEqualTo(id)
+      .Because("a resolver that throws NotSupportedException for the envelope describes no envelope, so the framework's own is used");
+  }
+
+  /// <summary>A resolver that throws rather than answering null, as some hand-written resolvers do.</summary>
+  private sealed class Refuses : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) =>
+      throw new NotSupportedException($"simulated: this resolver cannot describe {type.Name}");
+  }
+
   /// <summary>A resolver that answers every type with one type's metadata, as a misconfigured transport's might.</summary>
   private sealed class AnswersWith(JsonTypeInfo typeInfo) : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) => typeInfo;

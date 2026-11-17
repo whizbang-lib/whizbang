@@ -242,7 +242,9 @@ __PHYSICAL_FIELD_CONFIGS__
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
         workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
         inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>(),
-        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>()
+        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>(),
+        // #2228: the deferred outbox channel every strategy drains at the start of its flush.
+        deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
@@ -261,7 +263,9 @@ __PHYSICAL_FIELD_CONFIGS__
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
         workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
-        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>()
+        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>(),
+        // #2228: the deferred outbox channel every strategy drains at the start of its flush.
+        deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>()
       );
     });
 

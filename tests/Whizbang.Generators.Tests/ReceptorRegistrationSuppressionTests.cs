@@ -174,4 +174,113 @@ public sealed class UndeclaredReceptor : IReceptor<OrderPlaced> {
              + "Routing must still be generated for its message, or opting out of DI would quietly "
              + "cost the receptor its dispatch as well");
   }
+
+  // ========================================
+  // #2309: the compiled route of a suppressed receptor skips when nothing is registered
+  // ========================================
+
+  private const string SUPPRESSED_ROUTE_SOURCES = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Tracing;
+
+namespace MyApp.Receptors;
+
+public record OrderPlaced : IMessage;
+public record OrderQuoted : IMessage;
+public record Quote(decimal Amount);
+
+[FireAt(LifecycleStage.PostDistributeInline)]
+[SuppressReceptorRegistration]
+public sealed class HandBuiltVoidReceptor(Action<OrderPlaced> onReceived) : IReceptor<OrderPlaced> {
+  public ValueTask HandleAsync(OrderPlaced message, CancellationToken cancellationToken = default) { onReceived(message); return default; }
+}
+
+[FireAt(LifecycleStage.PostDistributeInline)]
+[SuppressReceptorRegistration]
+public sealed class HandBuiltResponseReceptor(Func<OrderQuoted, Quote> quote) : IReceptor<OrderQuoted, Quote> {
+  public ValueTask<Quote> HandleAsync(OrderQuoted message, CancellationToken cancellationToken = default) => new(quote(message));
+}
+
+[FireAt(LifecycleStage.PostDistributeInline)]
+[SuppressReceptorRegistration]
+[WhizbangTrace]
+public sealed class HandBuiltTracedReceptor(Action<OrderPlaced> onReceived) : IReceptor<OrderPlaced> {
+  public ValueTask HandleAsync(OrderPlaced message, CancellationToken cancellationToken = default) { onReceived(message); return default; }
+}
+
+[FireAt(LifecycleStage.PostDistributeInline)]
+[SuppressReceptorRegistration]
+[WhizbangTrace]
+public sealed class HandBuiltTracedResponseReceptor(Func<OrderQuoted, Quote> quote) : IReceptor<OrderQuoted, Quote> {
+  public ValueTask<Quote> HandleAsync(OrderQuoted message, CancellationToken cancellationToken = default) => new(quote(message));
+}
+
+[FireAt(LifecycleStage.PostDistributeInline)]
+[SuppressReceptorRegistration]
+public sealed class HandBuiltSyncReceptor(Action<OrderPlaced> onReceived) : ISyncReceptor<OrderPlaced> {
+  public void Handle(OrderPlaced message) => onReceived(message);
+}
+";
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task SuppressedReceptor_CompiledRoute_ResolvesThroughTheSuppressedRouteAndSkipsWhenUnregisteredAsync() {
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(SUPPRESSED_ROUTE_SOURCES);
+
+    var registry = GeneratorTestHelper.GetRequiredGeneratedSource(result, "ReceptorRegistry.g.cs");
+
+    await Assert.That(registry).Contains(
+        "global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<global::Whizbang.Core.IReceptor<global::MyApp.Receptors.OrderPlaced>, global::MyApp.Receptors.HandBuiltVoidReceptor>(sp, \"global::MyApp.Receptors.HandBuiltVoidReceptor\")")
+      .Because("the owner registers a suppressed receptor by hand or only at runtime, so its route must not demand one from DI");
+    await Assert.That(registry).Contains(
+        "global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<global::Whizbang.Core.IReceptor<global::MyApp.Receptors.OrderQuoted, global::MyApp.Receptors.Quote>, global::MyApp.Receptors.HandBuiltResponseReceptor>")
+      .Because("a receptor with a response resolves through the same route under its own interface");
+    await Assert.That(registry).Contains(
+        "global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<global::Whizbang.Core.ISyncReceptor<global::MyApp.Receptors.OrderPlaced>, global::MyApp.Receptors.HandBuiltSyncReceptor>")
+      .Because("a synchronous receptor resolves through the same route under its synchronous interface");
+    await Assert.That(registry).DoesNotContain("GetRequiredService")
+      .Because("every receptor in this source is suppressed, so no route may throw for a registration nobody was asked to make");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task SuppressedTracedReceptor_ASkip_IsTracedAsAnEarlyReturnAsync() {
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(SUPPRESSED_ROUTE_SOURCES);
+
+    var registry = GeneratorTestHelper.GetRequiredGeneratedSource(result, "ReceptorRegistry.g.cs");
+
+    await Assert.That(registry).Contains("status = global::Whizbang.Core.Tracing.HandlerStatus.EarlyReturn;")
+      .Because("a traced receptor that was skipped did not succeed: the trace says it returned early");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task SuppressedReceptorRoutes_CompileAsync() {
+    // The registry file carries its own usings; the generator's other files lean on a consumer's implicit usings,
+    // which this harness does not supply, so only the file the routes live in is judged.
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<ReceptorDiscoveryGenerator>(SUPPRESSED_ROUTE_SOURCES)
+      .Where(e => e.Location.SourceTree?.FilePath.EndsWith("ReceptorRegistry.g.cs", StringComparison.Ordinal) == true)
+      .Select(e => e.ToString())
+      .ToList();
+
+    await Assert.That(errors).IsEmpty()
+      .Because("the void, response, traced and synchronous suppressed routes must all compile");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task OrdinaryReceptor_CompiledRoute_StillRequiresItsRegistrationAsync() {
+    // Locks the other half of the decision: a receptor without the attribute is registered by discovery, so a route
+    // that cannot resolve it means a registration is genuinely missing, and that must still fail loudly.
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(ORDINARY_SOURCE);
+
+    var registry = GeneratorTestHelper.GetRequiredGeneratedSource(result, "ReceptorRegistry.g.cs");
+
+    await Assert.That(registry).Contains("GetRequiredService<global::Whizbang.Core.IReceptor<global::MyApp.Receptors.OrderPlaced>>()");
+    await Assert.That(registry).DoesNotContain("SuppressedReceptorRoute");
+  }
 }

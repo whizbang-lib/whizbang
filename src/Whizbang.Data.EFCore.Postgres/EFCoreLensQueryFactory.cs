@@ -3,6 +3,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Whizbang.Core;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
@@ -72,7 +73,7 @@ public sealed class EFCoreLensQueryFactory<TDbContext> : ILensQueryFactory
 
     if (!_tableNames.TryGetValue(typeof(TModel), out var tableName)) {
       throw new KeyNotFoundException(
-          $"No table name registered for model type '{typeof(TModel).Name}'. " +
+          $"No table name registered for model type '{TypeNameFormatter.ForLog(typeof(TModel))}'. " +
           "Ensure the model is registered in the ILensQueryFactory's table name dictionary.");
     }
 

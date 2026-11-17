@@ -23,14 +23,14 @@ internal static class ServiceRegistrationInitializer {
   [System.Runtime.CompilerServices.ModuleInitializer]
   internal static void Initialize() {
     // Register lens services callback
-    global::Whizbang.Core.ServiceRegistrationCallbacks.LensServices = (services, options) => {
+    global::Whizbang.Core.ServiceRegistrationCallbacks.RegisterLensServices({{ASSEMBLY_NAME_LITERAL}}, (services, options) => {
       services.AddLensServices(o => o.IncludeSelfRegistration = options.IncludeSelfRegistration);
-    };
+    });
 
     // Register perspective services callback
-    global::Whizbang.Core.ServiceRegistrationCallbacks.PerspectiveServices = (services, options) => {
+    global::Whizbang.Core.ServiceRegistrationCallbacks.RegisterPerspectiveServices({{ASSEMBLY_NAME_LITERAL}}, (services, options) => {
       services.AddPerspectiveServices(o => o.IncludeSelfRegistration = options.IncludeSelfRegistration);
-    };
+    });
   }
 }
 

@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -145,6 +146,73 @@ public class PerspectiveRebuilderTests {
     await Assert.That(result.Error).Contains("state-based");
     await Assert.That(runner.RunCount).IsEqualTo(0);
   }
+
+  /// <summary>
+  /// #2255: a stream an allowed pair mixed rebuilds for a read model that applies only the Sourced type (the rebuild
+  /// passes over the allowed ephemeral type, under its every stored name), and stays refused for the opted-in read model,
+  /// whose full rebuild is refused like any ephemeral read model's.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_AnAllowedMixedStream_RebuildsForADurableOnlyReadModel_AndStaysRefusedForTheOptedInOneAsync() {
+    var pinged = TypeNameFormatter.Format(typeof(RebuildMixPinged));
+    var opened = TypeNameFormatter.Format(typeof(RebuildMixOpened));
+    var mixed = Guid.NewGuid();
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistryWithInfo(runner, [
+      new PerspectiveRegistrationInfo("App.Orders", "global::App.Orders", "global::App.OrderModel", [opened]),
+      new PerspectiveRegistrationInfo("App.Board", "global::App.Board", "global::App.BoardModel", [pinged, opened]) {
+        MixedStreams = MixedStreams.Allow,
+        MixedStreamPairs = [new MixedStreamPair(pinged, opened)],
+      },
+    ]);
+    var coordinator = new MixAwareCoordinator(mixed, pinged);
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(new FakeEventStoreQuery([]));
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IMessageTypeCatalog>(new MixCatalog(
+      new MessageTypeCatalogEntry(typeof(RebuildMixPinged), TypeNameFormatter.FormatClrTypeName(typeof(RebuildMixPinged)), "event", null) {
+        FormerNames = ["Old.RebuildMixPinged"],
+      }));
+    var sp = services.BuildServiceProvider();
+    var rebuilder = new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PerspectiveRebuilder>.Instance);
+
+    var durable = await rebuilder.RebuildStreamsAsync("App.Orders", [mixed]);
+    var optedIn = await rebuilder.RebuildStreamsAsync("App.Board", [mixed]);
+
+    await Assert.That(durable.StreamsRefused).IsEqualTo(0).Because("a read model applying only the Sourced type rebuilds the mixed stream");
+    await Assert.That(durable.StreamsProcessed).IsEqualTo(1);
+    await Assert.That(coordinator.Ignored).IsEquivalentTo([pinged, $"Old.RebuildMixPinged, {typeof(RebuildMixPinged).Assembly.GetName().Name}"])
+      .Because("the allowed ephemeral type is passed over under every name it is stored by");
+    await Assert.That(optedIn.StreamsRefused).IsEqualTo(1).Because("the opted-in read model applies the ephemeral type: its full rebuild is refused");
+    await Assert.That(optedIn.Success).IsFalse();
+    await Assert.That(runner.RunCount).IsEqualTo(1);
+  }
+
+  private sealed class MixAwareCoordinator(Guid mixedStream, string allowedEphemeralType) : IWorkCoordinator {
+    public List<string> Ignored { get; } = [];
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyCollection<Guid>>([.. streamIds.Where(s => s == mixedStream)]);
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, IReadOnlyList<string> ignoredEphemeralTypes, CancellationToken cancellationToken = default) {
+      Ignored.AddRange(ignoredEphemeralTypes);
+      return ignoredEphemeralTypes.Contains(allowedEphemeralType)
+        ? Task.FromResult<IReadOnlyCollection<Guid>>([])
+        : GetStateBasedStreamIdsAsync(streamIds, cancellationToken);
+    }
+  }
+
+  private sealed class MixCatalog(params MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
+  }
+
+  private sealed record RebuildMixPinged;
+  private sealed record RebuildMixOpened;
 
   private sealed class FakeEphemeralCoordinator(Guid ephemeralStream) : IWorkCoordinator {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;

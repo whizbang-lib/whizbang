@@ -82,6 +82,20 @@ public sealed class RoleAssignmentOptions {
   }
 
   /// <summary>
+  /// How long the migrator's startup work may report no progress before its keepalive stops renewing its role (#2165).
+  /// Default <see cref="TimeSpan.Zero"/>: the schema command budget plus the migrator's progress window
+  /// (<see cref="ProgressWindowFor"/>), since one schema statement may run for the whole budget before it fails.
+  /// </summary>
+  /// <remarks>
+  /// A migrator that is alive but stuck (a hung statement, a deadlocked phase) would otherwise keep the role forever on
+  /// its keepalive, and no other instance could take the schema work over. Progress is every committed schema step,
+  /// every phase announcement and every batch or row group a long phase counts.
+  /// </remarks>
+  /// <docs>operations/infrastructure/migrations#a-stuck-migrator-loses-its-role</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorStallLimitTests.cs:MigratorStallLimit_DefaultsToZero_AndANegativeOneIsRefusedAsync</tests>
+  public TimeSpan MigratorStallLimit { get; set; } = TimeSpan.Zero;
+
+  /// <summary>
   /// How long an instance whose assignment lapsed must wait before it can be elected again.
   /// Default 15 seconds.
   /// </summary>
@@ -144,7 +158,7 @@ public sealed class RoleAssignmentOptions {
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two
   /// renewals per lease, a per-duty lease shorter than two renewals, a negative cool-down, a negative
-  /// progress window, or a non-positive retry base.</exception>
+  /// progress window, a negative migrator stall limit, or a non-positive retry base.</exception>
   public void Validate() {
     if (RenewInterval <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(RenewInterval), RenewInterval, "The renew interval must be positive.");
@@ -155,6 +169,10 @@ public sealed class RoleAssignmentOptions {
     }
     if (CooldownAfterLapse < TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(CooldownAfterLapse), CooldownAfterLapse, "The cool-down cannot be negative.");
+    }
+    if (MigratorStallLimit < TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(MigratorStallLimit), MigratorStallLimit,
+        "The migrator's stall limit cannot be negative; zero derives it from the schema command budget.");
     }
     if (ProgressWindow < TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(ProgressWindow), ProgressWindow, "The progress window cannot be negative; zero turns it off.");

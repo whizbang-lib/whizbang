@@ -325,38 +325,105 @@ public class UpgradeOrderTests {
     await Assert.That(since).IsEmpty();
   }
 
-  [Test]
-  public async Task TheGatesError_NamesEachChange_WhoAppliedIt_AndThatItCannotBeReversedYetAsync() {
-    var own = _own("1.0.0", "1.9.0");
-    var text = UpgradeOrder.DescribeAppliedSince(own, [
-      _application("perspective:wh_per_orders", "1.0.0", "2.0.0"),
-      _platform("351_X.sql", "2.0.0", null),
-    ]);
+  // ── #2122: what can be rolled back ──────────────────────────────────
 
-    await Assert.That(text).IsEqualTo(
-      "since this instance's version (library 1.0.0, application 1.9.0), 2 schema change(s) were applied by a newer "
-      + "version that this version did not make, and a migration cannot be reversed yet (down migrations: "
-      + "whizbang-lib/whizbang#2122): perspective:wh_per_orders (applied by library 1.0.0, application 2.0.0), "
-      + "351_X.sql (applied by library 2.0.0, application unknown)");
+  private static AppliedSchemaChange _as(AppliedSchemaChange change, SchemaChangeReversal reversal) => change with { Reversal = reversal };
+
+  [Test]
+  public async Task AChangeWhoseReversalIsNotRecorded_IsIrreversibleAsync() {
+    await Assert.That(_platform("100_X.sql", "2.0.0").Reversal).IsEqualTo(SchemaChangeReversal.Irreversible)
+      .Because("every migration before #2122 has no reverse, and counts as irreversible");
   }
 
   [Test]
-  public async Task TheGatesError_NamesTheFirstFive_AndCountsTheRestAsync() {
+  public async Task WhenEveryChangeSinceIsReversible_NothingRefusesTheRollbackAsync() {
+    var since = new[] {
+      _as(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), SchemaChangeReversal.Reversible),
+      _as(_platform("380_X.sql", "2.0.0", null), SchemaChangeReversal.Reversible),
+    };
+
+    await Assert.That(UpgradeOrder.WhyNotReversible(_own("1.0.0", "1.9.0"), since, allowLossy: false)).IsNull();
+  }
+
+  [Test]
+  public async Task AnIrreversibleChange_RefusesTheRollback_NamingOnlyWhatCannotBeReversed_AndTheVersionsAsync() {
+    var own = _own("1.0.0", "1.9.0");
+    var text = UpgradeOrder.WhyNotReversible(own, [
+      _as(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), SchemaChangeReversal.Reversible),
+      _platform("351_X.sql", "2.0.0", null),
+    ], allowLossy: true);
+
+    await Assert.That(text).IsEqualTo(
+      "since this instance's version (library 1.0.0, application 1.9.0), 2 schema change(s) were applied by a newer "
+      + "version that this version did not make, and 1 cannot be reversed: 351_X.sql (applied by library 2.0.0, "
+      + "application unknown); a rollback runs only when every change since this version can be reversed");
+  }
+
+  [Test]
+  public async Task ALossyChange_RefusesTheRollback_UnlessTheOperatorAllowsItAsync() {
+    var own = _own("1.0.0", "1.9.0");
+    AppliedSchemaChange[] since = [
+      _as(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), SchemaChangeReversal.Lossy),
+      _as(_platform("380_X.sql", "2.0.0", null), SchemaChangeReversal.Reversible),
+    ];
+
+    var refused = UpgradeOrder.WhyNotReversible(own, since, allowLossy: false);
+
+    await Assert.That(refused).IsEqualTo(
+      "since this instance's version (library 1.0.0, application 1.9.0), 2 schema change(s) were applied by a newer "
+      + "version that this version did not make, and reversing 1 would discard data the newer version wrote: "
+      + "perspective:wh_per_orders (applied by library 1.0.0, application 2.0.0); set "
+      + "Whizbang:Startup:AllowLossyRollback to true to roll back anyway");
+    await Assert.That(UpgradeOrder.WhyNotReversible(own, since, allowLossy: true)).IsNull();
+  }
+
+  [Test]
+  public async Task TheRefusal_NamesTheFirstFive_AndCountsTheRestAsync() {
     var changes = Enumerable.Range(1, 7).Select(i => _platform($"35{i}_X.sql", "2.0.0", null)).ToList();
 
-    var text = UpgradeOrder.DescribeAppliedSince(_own(), changes);
+    var text = UpgradeOrder.WhyNotReversible(_own(), changes, allowLossy: false);
 
     await Assert.That(text).Contains("7 schema change(s)");
+    await Assert.That(text).Contains("and 7 cannot be reversed");
     await Assert.That(text).Contains("355_X.sql (applied by library 2.0.0, application unknown), and 2 more");
     await Assert.That(text).DoesNotContain("356_X.sql");
+  }
+
+  [Test]
+  public async Task TheRollback_IsDescribedWithEveryChangeItReversesAsync() {
+    var text = UpgradeOrder.DescribeRollback(_own("1.0.0", "1.9.0"), [
+      _as(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), SchemaChangeReversal.Lossy),
+    ]);
+
+    await Assert.That(text).IsEqualTo(
+      "since this instance's version (library 1.0.0, application 1.9.0), 1 schema change(s) were applied by a newer "
+      + "version that this version did not make, and every one can be reversed: rolling back "
+      + "perspective:wh_per_orders (applied by library 1.0.0, application 2.0.0)");
   }
 
   [Test]
   public async Task TheGate_RefusesNullArgumentsAsync() {
     await Assert.That(() => UpgradeOrder.AppliedSince(null!, [])).Throws<ArgumentNullException>();
     await Assert.That(() => UpgradeOrder.AppliedSince(_own(), null!)).Throws<ArgumentNullException>();
-    await Assert.That(() => UpgradeOrder.DescribeAppliedSince(null!, [])).Throws<ArgumentNullException>();
-    await Assert.That(() => UpgradeOrder.DescribeAppliedSince(_own(), null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.WhyNotReversible(null!, [], false)).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.WhyNotReversible(_own(), null!, false)).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.DescribeRollback(null!, [])).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.DescribeRollback(_own(), null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task TheLossyRollbackKey_IsOffUnlessItSaysTrue_AndRefusedLoudlyWhenItIsNotABooleanAsync() {
+    var key = UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY;
+    IConfiguration config(string? value) => new ConfigurationBuilder()
+      .AddInMemoryCollection(value is null ? [] : [new KeyValuePair<string, string?>(key, value)]).Build();
+
+    await Assert.That(key).IsEqualTo("Whizbang:Startup:AllowLossyRollback");
+    await Assert.That(UpgradeOrder.IsLossyRollbackAllowed(null)).IsFalse();
+    await Assert.That(UpgradeOrder.IsLossyRollbackAllowed(config(null))).IsFalse();
+    await Assert.That(UpgradeOrder.IsLossyRollbackAllowed(config("false"))).IsFalse();
+    await Assert.That(UpgradeOrder.IsLossyRollbackAllowed(config("true"))).IsTrue();
+    await Assert.That(() => UpgradeOrder.IsLossyRollbackAllowed(config("maybe")))
+      .Throws<InvalidOperationException>().WithMessageContaining(key);
   }
 
   // ── the incompatibility override ────────────────────────────────────

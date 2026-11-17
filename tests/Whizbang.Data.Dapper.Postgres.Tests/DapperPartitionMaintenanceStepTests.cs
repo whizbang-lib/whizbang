@@ -228,7 +228,7 @@ public class DapperPartitionMaintenanceStepTests : PostgresTestBase {
     await Assert.That(scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<DapperPartitionMaintenanceStep>().Count()).IsEqualTo(1);
     await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo(
       [PartitionedTables.Log, PartitionedTables.StagedMetadata, PartitionedTables.Traces,
-       PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)]);
+       PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7), PartitionedTables.HandledLedger(TimeSpan.FromDays(7))]);
   }
 
   private sealed class FixedClock(DateTimeOffset now) : TimeProvider {

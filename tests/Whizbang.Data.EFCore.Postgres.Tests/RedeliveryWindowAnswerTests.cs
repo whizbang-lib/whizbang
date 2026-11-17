@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptor.cs</code-under-test>
 [NotInParallel("RedeliveryBuildGate")]   // the receptor's per-process build gate is shared state
 [Category("Shard2")]
-public class RedeliveryWindowAnswerTests {
+public partial class RedeliveryWindowAnswerTests {
   private static readonly Guid _s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
   private static readonly Guid _s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
   private static readonly Guid _s3 = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -174,8 +174,56 @@ public class RedeliveryWindowAnswerTests {
 
     await Assert.That(serializer.Composites).Count().IsEqualTo(3).Because("precondition: one bundle per stream");
     foreach (var bundle in serializer.Composites) {
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(from, to));
+      // #2311: whether more of the answer follows is asserted on its own; here only the window.
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(from, to));
     }
+  }
+
+  [Test]
+  public async Task OrdinaryRequest_FromARequesterThatAcceptsStreamSpanningBundles_AnswersFiftyStreamsInOneBundleAsync() {
+    // #2268: a request names up to the drain batch of streams, most one event short; the answer is one bundle, not one
+    // broker message per missing event.
+    var streams = Enumerable.Range(0, 50).Select(_ => TrackedGuid.New().Value).Order().ToList();
+    var coordinator = new WindowCoordinator { Events = [.. streams.Select((s, i) => _evt(s, 1, i + 1))] };
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, transport, serializer);
+
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RequesterService = "damaged-svc",
+      Topic = "inbox",
+      StreamIds = streams,
+      AcceptsStreamSpanningBundles = true,
+    });
+
+    var bundle = serializer.Composites.Single();
+    await Assert.That(bundle.InnerStreamIds).IsEquivalentTo(streams, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    var session = RedeliveryPump.AnswerSessionFor(coordinator.LocalServiceId, "inbox", "damaged-svc", scope: null);
+    await Assert.That(bundle.StreamId).IsEqualTo(session);
+    await Assert.That(transport.Published.Single().Destination.Metadata!["StreamId"].GetString()).IsEqualTo(session.ToString());
+  }
+
+  [Test]
+  public async Task OrdinaryRequest_SelectedInPages_ShipsEveryPageOnOneSession_SoAStreamSplitAcrossPagesStaysInOrderAsync() {
+    var coordinator = new WindowCoordinator {
+      Events = [_evt(_s1, 1, 1), _evt(_s1, 2, 2), _evt(_s1, 3, 3), _evt(_s2, 1, 4)],
+    };
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    await using var sp = _provider(coordinator, transport, serializer, new RedeliveryPumpOptions { SelectPageSize = 2 });
+
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RequesterService = "damaged-svc",
+      Topic = "inbox",
+      AcceptsStreamSpanningBundles = true,
+    });
+
+    await Assert.That(serializer.Composites).Count().IsEqualTo(2).Because("precondition: two pages, one bundle each");
+    await Assert.That(serializer.Composites.SelectMany(c => c.InnerCommitSequences!).ToList())
+      .IsEquivalentTo([(long?)1, 2, 3, 4], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the first stream spans both pages and keeps its version order");
+    await Assert.That(transport.Published.Select(p => p.Destination.Metadata!["StreamId"].GetString()).Distinct().Count())
+      .IsEqualTo(1).Because("both pages ride one session, so the broker delivers the stream's two halves in order");
   }
 
   [Test]
@@ -196,7 +244,8 @@ public class RedeliveryWindowAnswerTests {
 
     await Assert.That(serializer.Composites).IsNotEmpty();
     foreach (var bundle in serializer.Composites) {
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
+      // #2311: whether more of the answer follows is asserted on its own; here only the window.
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
     }
   }
 
@@ -212,8 +261,9 @@ public class RedeliveryWindowAnswerTests {
 
     await _receptor(sp).HandleAsync(_window(TrackedGuid.New().Value, window: 1, from: null, max: 100));
 
-    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow))
-      .IsEquivalentTo(new RedeliveryAnswerWindow?[] { new(null, 2), new(2, 4), new(4, null) });
+    // #2311: whether more of the answer follows is asserted on its own; here only each page's window.
+    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false }))
+      .IsEquivalentTo(new RedeliveryAnswerWindow[] { new(null, 2), new(2, 4), new(4, null) });
   }
 
   [Test]

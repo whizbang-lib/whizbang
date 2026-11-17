@@ -49,7 +49,7 @@ public sealed class HandledReceptorTypeSnapshot {
   Justification = "Startup-once path with infrequent log calls; LoggerMessage overhead not justified.")]
 [SuppressMessage("Usage", "CA1873:Evaluation may be expensive",
   Justification = "Startup-once path; argument evaluation cost is negligible.")]
-public sealed class OrphanInboxJanitor : BackgroundService {
+public sealed partial class OrphanInboxJanitor : BackgroundService {
   private readonly IServiceProvider _services;
   private readonly HandledReceptorTypeSnapshot _receptorSnapshot;
   private readonly ILogger<OrphanInboxJanitor> _logger;
@@ -108,9 +108,9 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     var names = new HashSet<string>(StringComparer.Ordinal);
 
     foreach (var t in _receptorSnapshot.ReceptorMessageTypes) {
-      var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
-      if (!string.IsNullOrEmpty(qualified)) {
-        names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
+      // The wire form (#2267); a type with no name (an open generic's parameter) has none to compare.
+      if (TypeNameFormatter.TryFormatClrTypeName(t, out _)) {
+        names.Add(TypeNameFormatter.Format(t));
       }
     }
 

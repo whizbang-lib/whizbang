@@ -390,7 +390,7 @@ public class DapperCollectiveUnitTests {
   public async Task AddCollectiveEventsDapper_RegistersDispatcherResolverAccessorAsync() {
     var services = new ServiceCollection();
     services.AddSingleton<IDbConnectionFactory>(new Factory());
-    services.AddCollectiveEventsDapper([]);
+    services.AddCollectiveEventsDapper();
     services.AddCollectiveExecutorDapper<JobModel>("wh_per_job");
     var sp = services.BuildServiceProvider();
 
@@ -402,8 +402,10 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task AddCollectiveEventsDapper_NullEntries_ThrowsAsync() {
+#pragma warning disable CS0618 // the hand-passed overload is obsolete; its guard still holds
     await Assert.That(() => new ServiceCollection().AddCollectiveEventsDapper(null!))
       .Throws<ArgumentNullException>();
+#pragma warning restore CS0618
   }
 
   [Test]
@@ -467,7 +469,7 @@ public class DapperCollectiveUnitTests {
     var services = new ServiceCollection();
     services.AddSingleton<IEventStore>(new NoOpEventStore());
     services.AddSingleton<IEventStoreQuery>(new NoOpEventStoreQuery());
-    services.AddCollectiveEventsDapper([]);
+    services.AddCollectiveEventsDapper();
     var sp = services.BuildServiceProvider();
 
     var applier = sp.GetService<ICollectiveReplayApplier>();

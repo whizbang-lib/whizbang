@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// and the subscribed-type list when no event-type provider is available.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityAuditWorker.cs</code-under-test>
-public class IntegrityAuditWorkerBranchCoverageTests {
+public partial class IntegrityAuditWorkerBranchCoverageTests {
 
   // ── constructor guard ───────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     };
     var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, logger: logger);
+      _bothChecksOn(), logger: logger);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
 
@@ -83,6 +83,30 @@ public class IntegrityAuditWorkerBranchCoverageTests {
   }
 
   [Test]
+  public async Task RunSweepOnce_NoMetricsRegistered_ASliceThatCompletesThePass_StillVerifiesAndLogsAsync() {
+    var coordinator = new AuditCoordinator {
+      DigestResult = new DigestVerificationResult {
+        BucketsChecked = 5,
+        DriftUpdated = 0,
+        DriftRemoved = 0,
+        DriftAdded = 0,
+        PassCompleted = true,
+        PassRuns = 3,
+      },
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
+      _bothChecksOn(), logger: logger);
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(1)
+      .Because("a slice that completes the pass is counted only when something counts it; the compare runs either way");
+    await Assert.That(logger.Saw("verified")).IsTrue()
+      .Because("with nothing counting the completed pass, the cycle still reaches its log line");
+  }
+
+  [Test]
   public async Task RunAuditOnce_NoMetricsRegistered_StillRebuildsReportsAndRequestsManifestAsync() {
     var gapStream = TrackedGuid.New().Value;
     var coordinator = new AuditCoordinator {
@@ -92,13 +116,14 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    var rebuilds = new CaptureRebuildHandler();
     var worker = _buildWorker(coordinator, dispatcher, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 },
-      tracker);
+      tracker, rebuilds: rebuilds);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
-    var rebuild = (RebuildPerspectiveCommand)dispatcher.Sent.Single();
+    var rebuild = rebuilds.Requests.Single();
     await Assert.That(rebuild.IncludeStreamIds?.Contains(gapStream) == true).IsTrue()
       .Because("the capped auto-rebuild is dispatched even when no counter records it");
     var reported = (PerspectiveCoverageGapDetected)dispatcher.Published.Single();
@@ -120,7 +145,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       EpochResult = new EpochVerificationResult(9, 5),
     };
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics);
+      _bothChecksOn(), metrics: metrics);
 
     await worker.RunSweepOnceAsync(CancellationToken.None);
 
@@ -398,9 +423,18 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       bool registerTypeProvider = false,
       ConsumedMessageInfo[]? consumed = null,
       string[]? absorbedNamespaces = null,
-      string[]? ownedDomains = null) {
+      string[]? ownedDomains = null,
+      FakeTimeProvider? clock = null,
+      IntegritySweepScheduleState? scheduleState = null,
+      Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler? rebuilds = null) {
     var services = new ServiceCollection();
-    services.AddSingleton<TimeProvider>(new FakeTimeProvider(_auditNow));
+    if (rebuilds is not null) {
+      services.AddSingleton(rebuilds);
+    }
+    services.AddSingleton<TimeProvider>(clock ?? new FakeTimeProvider(_auditNow));
+    if (scheduleState is not null) {
+      services.AddSingleton(scheduleState);
+    }
     if (absorbedNamespaces is not null || ownedDomains is not null) {
       services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions()
         .AbsorbNamespaces(absorbedNamespaces ?? []).OwnDomains(ownedDomains ?? [])));
@@ -521,12 +555,32 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
 
+    /// <summary>#2349: what the store decides for every origin, and each decision asked for.</summary>
+    public IntegrityAskDecision AskDecision { get; init; } = IntegrityAskDecision.NothingRemembered;
+    public List<(Guid Origin, DateTimeOffset Now, TimeSpan MaxSkip)> AskDecisions { get; } = [];
+
+    public Task<IntegrityAskDecision> IntegrityDecideOriginAskAsync(
+        Guid originServiceId, DateTimeOffset now, TimeSpan maxSkip, CancellationToken cancellationToken = default) {
+      AskDecisions.Add((originServiceId, now, maxSkip));
+      return Task.FromResult(AskDecision);
+    }
+
     public Task<long> GetIntegritySealAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
       Task.FromResult(0L);
 
-    public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
-      TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) {
+    public List<SealRecheckRequest> RecheckRequests { get; } = [];
+
+    /// <summary>Runs inside the re-check, so a test can move the clock while it is "working".</summary>
+    public Action? DuringRecheck { get; init; }
+
+    /// <summary>Runs inside the full-history heal, for the same reason.</summary>
+    public Action? DuringHeal { get; init; }
+
+    public Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+      SealRecheckRequest request, CancellationToken cancellationToken = default) {
       EpochVerifyCalls++;
+      RecheckRequests.Add(request);
+      DuringRecheck?.Invoke();
       return Task.FromResult(EpochResult);
     }
 
@@ -534,9 +588,10 @@ public class IntegrityAuditWorkerBranchCoverageTests {
       TimeSpan settleWindow, int maxGaps, CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([.. Gaps.Take(maxGaps)]);
 
-    public Task<DigestVerificationResult> VerifyDigestTableAsync(
-      TimeSpan settleWindow, CancellationToken cancellationToken = default) {
+    public Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+      FullHistoryCompareRequest request, CancellationToken cancellationToken = default) {
       VerifyCalls++;
+      DuringHeal?.Invoke();
       return Task.FromResult(DigestResult);
     }
   }
@@ -569,5 +624,14 @@ public class IntegrityAuditWorkerBranchCoverageTests {
     }
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
+  /// <summary>The rebuild handling this service would run a repair through: records each request.</summary>
+  private sealed class CaptureRebuildHandler : Whizbang.Core.Perspectives.IPerspectiveRebuildRequestHandler {
+    public List<RebuildPerspectiveCommand> Requests { get; } = [];
+    public ValueTask HandleAsync(RebuildPerspectiveCommand message, CancellationToken cancellationToken = default) {
+      Requests.Add(message);
+      return ValueTask.CompletedTask;
+    }
   }
 }

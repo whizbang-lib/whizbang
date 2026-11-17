@@ -55,6 +55,8 @@ public class StreamRedeliveryRequesterTests {
       .Because("#2078: an operator's redelivery request expires at the broker like every other integrity request");
     await Assert.That(command.StreamIds).Count().IsEqualTo(StreamRedeliveryRequester.MAX_STREAMS_PER_REQUEST);
     await Assert.That(command.OperatorRequested).IsTrue();
+    await Assert.That(command.AcceptsStreamSpanningBundles).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
     await Assert.That(command.RequesterService).IsEqualTo("receiver-svc");
     await Assert.That(command.Topic).IsEqualTo("inbox");
     await Assert.That(command.TenantScope).IsEqualTo("tenant-a");

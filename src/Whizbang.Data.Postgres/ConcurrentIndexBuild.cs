@@ -13,8 +13,12 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Columns">The key, parenthesized, as <c>CREATE INDEX</c> takes it.</param>
 /// <param name="Predicate">The partial-index predicate, or null.</param>
 /// <param name="Comment">The index comment, or null.</param>
+/// <param name="Replaces">An index this one supersedes (#2345), dropped concurrently once this one is valid; null for none.
+/// A migration cannot rebuild an index on a large table, and a valid index under an existing name is never rebuilt, so a
+/// changed index is built under a new name and the old one goes only after it can serve.</param>
 /// <docs>operations/infrastructure/migrations#indexes-built-after-the-migrations</docs>
-public sealed record ConcurrentIndexDefinition(string Table, string Name, string Columns, string? Predicate, string? Comment = null);
+public sealed record ConcurrentIndexDefinition(
+  string Table, string Name, string Columns, string? Predicate, string? Comment = null, string? Replaces = null);
 
 /// <summary>What one <see cref="ConcurrentIndexBuild.EnsureAsync"/> did.</summary>
 /// <docs>operations/infrastructure/migrations#indexes-built-after-the-migrations</docs>
@@ -61,13 +65,16 @@ public enum ConcurrentIndexOutcome {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ConcurrentIndexBuildTests.cs</tests>
 public static partial class ConcurrentIndexBuild {
   /// <summary>
-  /// The framework indexes built this way: the paced backfill's read of one type in commit order (#2092), and the
-  /// paced repair drain's count of the answers it is waiting for (#2184). The first one's predicate also names
+  /// The framework indexes built this way: the paced backfill's read of one type in commit order (#2092), the
+  /// paced repair drain's count of the answers it is waiting for (#2184), and the claim's held-lanes walk over the inbox,
+  /// rebuilt to cover chain_emitted_at in place of 167's index (#2345). The first one's predicate also names
   /// <c>event_type IS NOT NULL</c>, which every row satisfies (the column is NOT NULL) but only a query filtering on the
   /// type implies, so the planner never offers it to a commit-sequence probe that names no type.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PacedBackfillIndexTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs:Count_OnceTheIndexIsBuilt_IsAnsweredFromItAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkPlanShapeTests.HeldInbox.cs:ClaimWork_ReofferingHeldInbox_WalksTheCoveringIndex_IndexOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ConcurrentIndexBuildTests.Replaces.cs:TheHeldLanesIndex_IsRebuiltCovering_AndTheInboxStateKeepsItsIndexCountAsync</tests>
   public static IReadOnlyList<ConcurrentIndexDefinition> FrameworkIndexes { get; } = [
     new ConcurrentIndexDefinition(
       "wh_event_store",
@@ -81,6 +88,15 @@ public static partial class ConcurrentIndexBuild {
       "(answer_pending_until)",
       "answer_pending_until IS NOT NULL",
       "The repair-ledger buckets a request was sent for (#2184): the paced drain counts those still awaiting their answer, up to its cap, on every tick it has tokens to spend. Built concurrently after the migrations."),
+    new ConcurrentIndexDefinition(
+      "wh_inbox_state",
+      "idx_inbox_state_held_lanes_covering",
+      "(instance_id, (CASE WHEN priority <= 99 THEN 0 WHEN priority <= 199 THEN 1 WHEN priority <= 399 THEN 2 ELSE 3 END), "
+        + "is_event, ((attempts = 0)), stream_id, received_at, message_id) "
+        + "INCLUDE (priority, attempts, partition_number, status, lease_expiry, chain_emitted_at)",
+      "processed_at IS NULL",
+      "Pending inbox rows by holder, priority bucket, kind, class, stream and arrival (#2345): claim_work's held-lanes walk reads every column it tests from here, chain_emitted_at included, so each probe is index-only and a held row it passes over costs no heap page. Replaces idx_inbox_state_held_lanes (167). Built concurrently after the migrations.",
+      Replaces: "idx_inbox_state_held_lanes"),
   ];
 
   /// <summary>Ensures <paramref name="index"/> exists in <paramref name="schema"/> and is valid, building it concurrently.</summary>
@@ -101,6 +117,7 @@ public static partial class ConcurrentIndexBuild {
     var log = logger ?? NullLogger.Instance;
     var state = await _stateAsync(connection, schema, index, cancellationToken).ConfigureAwait(false);
     if (state == IndexState.Valid) {
+      await _dropReplacedAsync(connection, schema, index, commandTimeoutSeconds, log, cancellationToken).ConfigureAwait(false);
       return ConcurrentIndexOutcome.AlreadyValid;
     }
     if (state == IndexState.TableAbsent) {
@@ -110,7 +127,37 @@ public static partial class ConcurrentIndexBuild {
       LogBusy(log, index.Name, schema);
       return ConcurrentIndexOutcome.Busy;
     }
-    return await _buildAsync(connection, schema, index, state, commandTimeoutSeconds, log, cancellationToken).ConfigureAwait(false);
+    var outcome = await _buildAsync(connection, schema, index, state, commandTimeoutSeconds, log, cancellationToken).ConfigureAwait(false);
+    if (outcome == ConcurrentIndexOutcome.Built) {
+      await _dropReplacedAsync(connection, schema, index, commandTimeoutSeconds, log, cancellationToken).ConfigureAwait(false);
+    }
+    return outcome;
+  }
+
+  /// <summary>
+  /// #2345: once <paramref name="index"/> is valid, drops the index it replaces, concurrently, when that one is still
+  /// there. Never before: until the new index can serve, the reads that used the old one still need it. A run after the
+  /// drop finds nothing to drop, one catalog read.
+  /// </summary>
+  private static async Task _dropReplacedAsync(
+      NpgsqlConnection connection, string schema, ConcurrentIndexDefinition index, int commandTimeoutSeconds, ILogger log,
+      CancellationToken cancellationToken) {
+    if (index.Replaces is not { } replaced) {
+      return;
+    }
+    await using (var exists = new NpgsqlCommand("""
+      SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'i')
+      """, connection)) {
+      exists.Parameters.Add(new NpgsqlParameter { Value = schema });
+      exists.Parameters.Add(new NpgsqlParameter { Value = replaced });
+      if (!(bool)(await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!) {
+        return;
+      }
+    }
+    await _executeAsync(connection, $"DROP INDEX CONCURRENTLY IF EXISTS {PgIdentifier.Quote(schema)}.{PgIdentifier.Quote(replaced)}",
+      commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+    LogDroppedReplaced(log, replaced, schema, index.Name);
   }
 
   private static async Task<ConcurrentIndexOutcome> _buildAsync(
@@ -188,6 +235,10 @@ public static partial class ConcurrentIndexBuild {
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Index {Index} in {Schema}: dropped the invalid leftover of an interrupted concurrent build before building it again")]
   private static partial void LogDroppedLeftover(ILogger logger, string index, string schema);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Index {Replaced} in {Schema} dropped concurrently: {Index}, which replaces it, is valid")]
+  private static partial void LogDroppedReplaced(ILogger logger, string replaced, string schema, string index);
 
   [LoggerMessage(Level = LogLevel.Debug,
     Message = "Index {Index} in {Schema}: an index build is in progress on its table; this run steps aside")]

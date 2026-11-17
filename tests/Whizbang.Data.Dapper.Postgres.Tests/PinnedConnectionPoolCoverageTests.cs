@@ -21,10 +21,13 @@ public class PinnedConnectionPoolCoverageTests {
   // here is also what tells an operator to register NoOpPinnedConnectionPool instead when the
   // feature is meant to stay off.
   [Test]
-  public async Task Constructor_WithEmptyConnectionString_ThrowsInvalidOperationExceptionAsync() {
+  [Arguments("   ")]
+  [Arguments(null)]
+  public async Task Constructor_WithEmptyConnectionString_ThrowsInvalidOperationExceptionAsync(string? connectionString) {
+    // Blank, or never set at all: neither is a connection string.
     var options = new WhizbangPinnedPoolOptions {
       Enabled = true,
-      ConnectionString = "   ",
+      ConnectionString = connectionString,
       Size = 1,
     };
     var registry = new PinnedWorkerRegistry();

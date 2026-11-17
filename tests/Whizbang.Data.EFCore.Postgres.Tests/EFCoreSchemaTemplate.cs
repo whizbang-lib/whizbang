@@ -48,9 +48,9 @@ internal enum TemplateOutcome {
 /// fingerprint's marker, is dropped and built again.
 /// </para>
 /// <para>
-/// Not <c>IsWhizbangSchemaCurrentAsync</c>: on a database one pass has just built it answers false, because the
-/// stored-form rewrite runs before the pass creates the perspective tables and so records nothing as settled until a
-/// second start. Every template would read as stale.
+/// Not <c>IsWhizbangSchemaCurrentAsync</c>: it reads the record a pass leaves (and, since #2194, a database one pass
+/// built does read as current), while the probe asks whether this build would change anything, which also catches a
+/// template the record was copied into but the schema text moved past.
 /// </para>
 /// <para>
 /// <b>Concurrency.</b> Test classes in one process share one build through <see cref="TemplateGate"/>. Processes

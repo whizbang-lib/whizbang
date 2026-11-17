@@ -29,4 +29,20 @@ public sealed class RowCapAttribute : Attribute {
 
   /// <summary>Maximum rows kept per tenant. -1 leaves cardinality unbounded.</summary>
   public int PerTenant { get; init; } = -1;
+
+  /// <summary>
+  /// The model property whose values partition the cap (#2330), written <c>nameof(Model.Property)</c>: the newest
+  /// <see cref="Max"/> rows are kept per value of that property, the oldest by last update evicted with their companion
+  /// rows. The sweep reads the property from the stored document by this name, so it names a property stored in the
+  /// document under its declared name. It outranks <see cref="PerScope"/> and <see cref="PerTenant"/>, and takes effect
+  /// only with <see cref="Max"/> set.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention#per-property-caps</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/RowCapPerPropertyGeneratorTests.cs</tests>
+  public string? PerProperty { get; init; }
+
+  /// <summary>Maximum rows kept per value of <see cref="PerProperty"/>. -1 leaves cardinality unbounded.</summary>
+  /// <docs>fundamentals/perspectives/row-retention#per-property-caps</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/RowCapPerPropertyGeneratorTests.cs</tests>
+  public int Max { get; init; } = -1;
 }

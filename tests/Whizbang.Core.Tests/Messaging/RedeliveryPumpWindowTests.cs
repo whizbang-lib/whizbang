@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// on the backfill's own session, instead of one bundle per stream.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/RedeliveryPump.cs</code-under-test>
-public class RedeliveryPumpWindowTests {
+public partial class RedeliveryPumpWindowTests {
 
   [Test]
   public async Task PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync() {
@@ -36,7 +36,8 @@ public class RedeliveryPumpWindowTests {
 
     await Assert.That(serializer.Composites.Count).IsEqualTo(3);
     foreach (var answered in serializer.Composites.Take(2)) {
-      await Assert.That(((IIdentityPreservingComposite)answered).AnsweredWindow).IsEqualTo(new RedeliveryAnswerWindow(9, 20))
+      var window = ((IIdentityPreservingComposite)answered).AnsweredWindow!.Value;
+      await Assert.That((window.FromCommitSequence, window.ToCommitSequence)).IsEqualTo(((long?)9, (long?)20))
         .Because("the receiver marks only the buckets whose deficit the answer covered (#2143)");
     }
     await Assert.That(serializer.Composites[2].AnswersWindow).IsFalse()

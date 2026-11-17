@@ -95,7 +95,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
 
     // Extract attribute properties
     var queryName = AttributeUtilities.GetStringValue(graphQLLensAttr, "QueryName")
-                    ?? NamingConventionUtilities.ToDefaultQueryName(modelType.Name);
+                    ?? NamingConventionUtilities.ToDefaultQueryName(TypeNameUtilities.SimpleName(modelType));
     var scope = AttributeUtilities.GetIntValue(graphQLLensAttr, "Scope", 0);
     var enableFiltering = AttributeUtilities.GetBoolValue(graphQLLensAttr, "EnableFiltering", true);
     var enableSorting = AttributeUtilities.GetBoolValue(graphQLLensAttr, "EnableSorting", true);
@@ -115,7 +115,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
         EnableProjection: enableProjection,
         DefaultPageSize: defaultPageSize,
         MaxPageSize: maxPageSize,
-        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace)
+        Namespace: TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(symbol))
     );
   }
 

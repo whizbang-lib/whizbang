@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -95,6 +96,36 @@ public class RealCompositionValidationTests {
     // transport it would need is not a gap; registering a transport turns the consumer on.
     await Assert.That(missing.Where(m => m.MissingService == typeof(ITransport))).IsEmpty()
       .Because("a broker-less host is a supported composition, not a missing registration");
+  }
+
+  [Test]
+  public async Task ATransportConsumerWithATransport_IsCheckedForWhatItsWorkerNeedsAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbang().AddTransportConsumer();
+    services.AddSingleton<ITransport>(new InProcessTransport(new Microsoft.Extensions.Time.Testing.FakeTimeProvider()));
+    services.RemoveAll<IEventMarkerResolver>();
+
+    var missing = _missing(services);
+
+    // #1907: the worker is registered through a factory that builds it only when a transport is registered (#1876), and
+    // validation reads that factory: with a transport, every service the worker needs is checked again.
+    await Assert.That(missing).Contains(
+      new MissingRegistration(typeof(TransportConsumerWorker), typeof(IEventMarkerResolver)))
+      .Because("a host with a broker is checked for every dependency of the consumer it will build");
+  }
+
+  [Test]
+  public async Task ATransportConsumerWithoutATransport_IsNotCheckedForWhatItsWorkerNeedsAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbang().AddTransportConsumer();
+    services.RemoveAll<IEventMarkerResolver>();
+
+    var missing = _missing(services);
+
+    await Assert.That(missing.Where(m => m.NeededBy == typeof(TransportConsumerWorker))).IsEmpty()
+      .Because("with no transport the worker is never built, so nothing it would need is a gap");
   }
 
   private static List<MissingRegistration> _missing(IServiceCollection services) {

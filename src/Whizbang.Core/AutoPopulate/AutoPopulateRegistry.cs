@@ -64,10 +64,11 @@ public static class AutoPopulateRegistry {
     foreach (var registry in AssemblyRegistry<IAutoPopulateRegistry>.GetOrderedContributions()) {
       foreach (var registration in registry.GetAllRegistrations()) {
         var fullName = TypeNameFormatter.TryFormatClrTypeName(registration.MessageType, out var clrTypeName) ? clrTypeName : null;
-        var assemblyQualifiedName = TypeNameFormatter.AssemblyQualifiedNameOrNull(registration.MessageType);
+        // #2267: a name from another build of the contract matches by the wire form, never by the versioned name.
+        var wireName = fullName is null ? null : TypeNameFormatter.Format(registration.MessageType);
 
         if (fullName == messageTypeName ||
-            assemblyQualifiedName == messageTypeName ||
+            (wireName != null && wireName == Messaging.EventTypeMatchingHelper.NormalizeTypeName(messageTypeName)) ||
             (fullName != null && messageTypeName.StartsWith(fullName, StringComparison.Ordinal))) {
           yield return registration;
         }

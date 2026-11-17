@@ -510,6 +510,26 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ReportPerspectiveCompletionAsync_AReplayFrontier_IsStoredAndReadBackWithTheCursorAsync() {
+    // #2366: a replay's frontier is stored on the cursor, so a restarted worker knows which copies it already read.
+    var c = _build();
+    var streamId = (Guid)TrackedGuid.New();
+    await _stageCursorAsync(streamId, "ReplayPerspective", error: null);
+
+    await c.ReportPerspectiveCompletionAsync(new PerspectiveCursorCompletion {
+      StreamId = streamId,
+      PerspectiveName = "ReplayPerspective",
+      LastEventId = (Guid)TrackedGuid.New(),
+      ReplayedThroughCommitSequence = 4242,
+      Status = PerspectiveProcessingStatus.Completed,
+    });
+    var cursor = await c.GetPerspectiveCursorAsync(streamId, "ReplayPerspective");
+
+    await Assert.That(cursor!.ReplayedThroughCommitSequence).IsEqualTo(4242L)
+      .Because("the cursor read back carries what the replay read through");
+  }
+
+  [Test]
   public async Task ReportPerspectiveFailureAsync_RecordsTheErrorOnTheCursorAsync() {
     // Same UPDATE-only function as the completion path: stage the cursor, then assert the failure
     // actually lands on it. The error text on the cursor row is the only place an operator sees

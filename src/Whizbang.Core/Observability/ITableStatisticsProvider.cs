@@ -117,6 +117,28 @@ public interface ITableStatisticsProvider {
     Task.FromResult<IReadOnlyDictionary<string, EventTypeBytes>?>(null);
 
   /// <summary>
+  /// Reads how much storage cleanup has left to do (#2289): per maintenance task whose predicate an index serves, the
+  /// rows it would remove now, counted up to <see cref="PendingReclamationRequest.CountCap"/>; and per incomplete
+  /// ephemeral history walk, the events it has yet to visit.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One instance of the fleet reads per window: the claim is <see cref="PendingReclamationRequest.ClaimKey"/>, and an
+  /// instance that does not get it answers null without reading anything. A task whose count no index serves is left
+  /// out of the reading rather than guessed.
+  /// </para>
+  /// <para>Defaults to null, so a provider that does not count reports nothing.</para>
+  /// </remarks>
+  /// <param name="request">The window's claim and the cap on each count.</param>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The reading, or null where another instance holds the window or the provider does not count.</returns>
+  /// <docs>operations/observability/metrics#pending-reclamation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderThatDoesNotCountPendingReclamation_AnswersNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PendingReclamationSqlTests.cs:EachTask_CountsWhatItWouldRemove_AndNothingElseAsync</tests>
+  Task<PendingReclamation?> SamplePendingReclamationAsync(PendingReclamationRequest request, CancellationToken ct = default) =>
+    Task.FromResult<PendingReclamation?>(null);
+
+  /// <summary>
   /// Returns the indexes on the framework's tables that nothing has scanned since the statistics were last reset, by
   /// index name, with their table and size.
   /// </summary>
@@ -139,6 +161,18 @@ public interface ITableStatisticsProvider {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:GetUnusedIndexesAsync_ReportsTheIndexesNothingScanned_WithTheirSizeAsync</tests>
   Task<IReadOnlyDictionary<string, UnusedIndex>> GetUnusedIndexesAsync(CancellationToken ct = default) =>
     Task.FromResult<IReadOnlyDictionary<string, UnusedIndex>>(new Dictionary<string, UnusedIndex>());
+
+  /// <summary>
+  /// The ratio each table's latest recorded rewrite left it at (<c>wh_table_rewrite_history.bloat_after</c>, #2319):
+  /// the floor the post-rewrite guard measures regrowth from.
+  /// </summary>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The latest post-rewrite ratio by table, or empty where the provider keeps no rewrite history (the default).</returns>
+  /// <docs>operations/observability/metrics#table-rewrites</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderWithoutRewriteHistory_ReportsNoFloorsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:GetRewriteFloorsAsync_ReadsTheLatestRewritePerTableAsync</tests>
+  Task<IReadOnlyDictionary<string, double>> GetRewriteFloorsAsync(CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, double>>(new Dictionary<string, double>());
 
   /// <summary>
   /// Returns, per table, how much reading has been done by sequential scan rather than by index.
@@ -240,6 +274,28 @@ public readonly record struct TableStorageStatistics(
     long HeapBytes, long ToastBytes, long IndexBytes, long LiveRows, double? BloatRatio) {
   /// <summary>The table's whole size on disk: heap, TOAST and indexes together.</summary>
   public long TotalBytes => HeapBytes + ToastBytes + IndexBytes;
+
+  /// <summary>
+  /// The TOAST relation's bloat ratio (#2319): its bytes over its live chunks times a quarter page, the chunk count
+  /// floored at the row floor; null where there is no TOAST relation, its chunk count is unknown, or the table is too
+  /// small for a ratio. <see cref="BloatRatio"/> is the heap's.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  public double? ToastBloatRatio { get; init; }
+
+  /// <summary>
+  /// The heap bytes a rewrite would free now (#2319): the heap's size less what its live rows are expected to occupy,
+  /// at least 0; null where <see cref="BloatRatio"/> is. Summed under the cap's rollup.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  public long? ReclaimableHeapBytes { get; init; }
+
+  /// <summary>
+  /// The TOAST bytes a rewrite would free now (#2319): the TOAST relation's size less what its live chunks occupy, at
+  /// least 0; null where <see cref="ToastBloatRatio"/> is. Summed under the cap's rollup.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  public long? ReclaimableToastBytes { get; init; }
 }
 
 /// <summary>An index nothing has scanned since the statistics were last reset, and what it costs on disk.</summary>

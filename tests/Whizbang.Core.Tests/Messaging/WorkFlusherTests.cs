@@ -108,8 +108,8 @@ public class WorkFlusherTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
 
@@ -144,8 +144,8 @@ public class WorkFlusherTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
 

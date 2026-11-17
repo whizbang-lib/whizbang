@@ -104,12 +104,13 @@ public class RawReceptorDiscoveryGenerator : IIncrementalGenerator {
     source.AppendLine("internal static class RawReceptorModuleInitializer {");
     source.AppendLine("  [ModuleInitializer]");
     source.AppendLine("  internal static void Initialize() {");
-    source.AppendLine("    ServiceRegistrationCallbacks.RawReceptors = static services => {");
+    // #2243: named by this assembly, so a host replays only its own service's raw receptors
+    source.AppendLine($"    ServiceRegistrationCallbacks.RegisterRawReceptors({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, static services => {{");
     foreach (var info in ordered) {
       source.AppendLine($"      services.AddSingleton<IRawReceptor, {info.TypeName}>();");
     }
     source.AppendLine("      services.AddSingleton<IRawReceptorRegistry, RawReceptorRegistry>();");
-    source.AppendLine("    };");
+    source.AppendLine("    });");
     source.AppendLine("  }");
     source.AppendLine("}");
 

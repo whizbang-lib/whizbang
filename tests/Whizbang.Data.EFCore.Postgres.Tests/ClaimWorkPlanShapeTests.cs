@@ -38,7 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 [Category("Shard2")]
 [Category("Integration")]
-public class ClaimWorkPlanShapeTests : EFCoreTestBase {
+public partial class ClaimWorkPlanShapeTests : EFCoreTestBase {
   private const int ROWS_PER_TABLE = 20_000;
   /// <summary>
   /// Rows in the perspective-event table, which needs more of them than the other two to measure

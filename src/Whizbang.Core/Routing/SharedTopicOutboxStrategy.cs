@@ -85,7 +85,7 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
 
     // Get the full namespace from the message type
     var ns = _topicResolver.ResolveTopic(messageType, "", null);
-    var typeName = messageType.Name.ToLowerInvariant();
+    var typeName = TypeNameFormatter.SimpleName(messageType).ToLowerInvariant();
 
     if (kind == MessageKind.Command) {
       // Commands go to shared inbox topic with namespace-based routing key

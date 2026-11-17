@@ -101,6 +101,7 @@ public static class ServiceCollectionExtensions {
   /// <param name="configureOptions">Configures the driver's options.</param>
   /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperScheduledPrefixTruncateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperManagedObjectsTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
   public static IServiceCollection AddWhizbangPostgres(
@@ -169,6 +170,7 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
     _addStreamLifecycleBackfill(services, connectionString);
+    _addUnsequencedDigestCompaction(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -194,6 +196,9 @@ public static class ServiceCollectionExtensions {
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
+      global::Whizbang.Core.Workers.RequestResponseExpiryStep>());
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
     // Register perspective snapshot and rewind options
@@ -247,6 +252,11 @@ public static class ServiceCollectionExtensions {
     // drives IStreamPrefixTruncator.TruncateAsync. It had no receptor on this driver, so the schedule truncated nothing.
     services.AddScheduledPrefixTruncate();
 
+    // TURNKEY: the rebuild command, as the EF Core driver registers it (#1959): RebuildPerspectiveCommand reaches a
+    // receptor that rebuilds the requested perspectives, and a whole-perspective blue-green rebuild runs on the
+    // background rebuild worker. It had no handler on this driver, so the command rebuilt nothing.
+    services.AddRebuildCommandHandling();
+
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
     // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
@@ -277,6 +287,7 @@ public static class ServiceCollectionExtensions {
   /// <param name="configureOptions">Optional configuration callback for PostgreSQL options (retry settings, etc.).</param>
   /// <returns>The service collection for chaining.</returns>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperScheduledPrefixTruncateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGateWiringTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGatePrecedenceTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
@@ -324,6 +335,7 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
     _addStreamLifecycleBackfill(services, connectionString);
+    _addUnsequencedDigestCompaction(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -356,6 +368,9 @@ public static class ServiceCollectionExtensions {
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
+      global::Whizbang.Core.Workers.RequestResponseExpiryStep>());
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
     // Register perspective snapshot and rewind options
@@ -412,6 +427,11 @@ public static class ServiceCollectionExtensions {
     // drives IStreamPrefixTruncator.TruncateAsync. It had no receptor on this driver, so the schedule truncated nothing.
     services.AddScheduledPrefixTruncate();
 
+    // TURNKEY: the rebuild command, as the EF Core driver registers it (#1959): RebuildPerspectiveCommand reaches a
+    // receptor that rebuilds the requested perspectives, and a whole-perspective blue-green rebuild runs on the
+    // background rebuild worker. It had no handler on this driver, so the command rebuilt nothing.
+    services.AddRebuildCommandHandling();
+
     // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
     // the populator run to host startup via an IHostedService that uses the REAL provider.
@@ -435,7 +455,8 @@ public static class ServiceCollectionExtensions {
     new(connectionString, () => createInitializer(sp),
       sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
-      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+      Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the
@@ -522,7 +543,8 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<IStreamPurger>(sp =>
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
-        logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+        integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
     // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
     // registered first wins.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
@@ -546,6 +568,9 @@ public static class ServiceCollectionExtensions {
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
+    // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+      AuditBodyConversionStep.FromServices));
     // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
       SupersedingHistoryReconcileStep.FromServices));
@@ -622,6 +647,14 @@ public static class ServiceCollectionExtensions {
       new DapperStreamLifecycleBackfillMaintenanceStep(
         connectionString,
         sp.GetService<ILogger<DapperStreamLifecycleBackfillMaintenanceStep>>()));
+
+  // TURNKEY (#2351): the fold that keeps the held-without-sequence change log bounded, the same one the EF Core driver
+  // runs, so the event store's row triggers never grow the log on a Dapper service.
+  private static void _addUnsequencedDigestCompaction(IServiceCollection services, string connectionString) =>
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperUnsequencedDigestCompactionStep(
+        connectionString,
+        sp.GetService<ILogger<DapperUnsequencedDigestCompactionStep>>()));
 
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
     services.AddFrameworkPartitionedTables();

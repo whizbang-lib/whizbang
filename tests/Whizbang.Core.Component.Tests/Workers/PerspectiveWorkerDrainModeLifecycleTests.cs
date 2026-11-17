@@ -239,7 +239,8 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
       List<MessageEnvelope<IEvent>> typedEvents,
       List<Guid> streamIds,
       IReadOnlySet<LifecycleStage>? lifecycleStages = null,
-      IReceptorInvoker? customInvoker = null) {
+      IReceptorInvoker? customInvoker = null,
+      PerspectiveWriteMode writeMode = PerspectiveWriteMode.SetBased) {
 
     var coordinator = new DrainWorkCoordinator { StreamIdsToReturn = streamIds, StreamEventsToReturn = rawEvents };
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -278,7 +279,8 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
       // "process this batch once and stop" semantic the lifecycle tests assume.
       options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
-        DrainLoopMaxIterations = 1
+        DrainLoopMaxIterations = 1,
+        WriteMode = writeMode,
       }),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
@@ -985,6 +987,49 @@ public partial class PerspectiveWorkerDrainModeLifecycleTests {
     await Assert.That(invoker.CountForStage(LifecycleStage.PostAllPerspectivesInline)).IsEqualTo(1)
       .Because("Exactly once — never zero (gate stuck) and never twice (gate fires per-perspective instead of per-event).");
     await Assert.That(invoker.CountForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// In both write modes, the worker's lifecycle stages fire as often as the exactly-once contract says for one event
+  /// two perspectives fold: PostPerspectiveInline once per perspective, PostAllPerspectivesInline and
+  /// PostLifecycleInline once for the event (#2246). The set-based path begins a stream's pairs together, where the
+  /// per-stream path ran them one after another, so a stage fired per pair instead of per event would show here.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  [Arguments(PerspectiveWriteMode.SetBased)]
+  [Arguments(PerspectiveWriteMode.PerStream)]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_EachWorkerStageFiresAsTheContractSays_InEitherWriteModeAsync(
+      PerspectiveWriteMode writeMode, CancellationToken cancellationToken) {
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+      new("PerspectiveBeta", "global::Test.PerspectiveBeta", "global::Test.ModelBeta",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+    };
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(streamId, eventId, typeof(AlphaEvent), """{"Data":"x"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(eventId, new AlphaEvent("x"))
+    };
+    var allStages = new HashSet<LifecycleStage> {
+      LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
+      LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
+    };
+
+    var (worker, coordinator, _, _, invoker, _, harness) =
+      _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId], allStages, writeMode: writeMode);
+    await _runWorkerOneBatchAsync(worker, coordinator, harness, cancellationToken);
+
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostPerspectiveInline)).IsEqualTo(2)
+      .Because("once for each perspective that folds the event");
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostAllPerspectivesInline)).IsEqualTo(1)
+      .Because("once for the event, after both perspectives");
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(1)
+      .Because("once for the event");
   }
 
   [Test]

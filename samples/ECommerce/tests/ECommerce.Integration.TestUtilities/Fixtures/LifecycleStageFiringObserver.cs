@@ -46,8 +46,12 @@ public sealed class LifecycleStageFiringObserver : IReceptorFiringObserver {
     LifecycleStage Stage,
     Type MessageType,
     Func<object, bool>? Filter,
-    TaskCompletionSource<IMessageEnvelope> Tcs
-  );
+    TaskCompletionSource<IMessageEnvelope> Tcs,
+    int ExpectedFirings
+  ) {
+    /// <summary>How many matching firings this wait has seen.</summary>
+    public int Seen { get; set; }
+  }
 
   /// <inheritdoc />
   public ValueTask OnReceptorFiringAsync(
@@ -77,17 +81,20 @@ public sealed class LifecycleStageFiringObserver : IReceptorFiringObserver {
     var payload = envelope.Payload;
     var payloadType = payload.GetType();
 
-    List<_Wait> matches;
+    List<_Wait> done = [];
     lock (_lock) {
-      matches = [.. _waits
-        .Where(w =>
+      foreach (var w in _waits.Where(w =>
           w.Stage == stage
           && w.MessageType.IsAssignableFrom(payloadType)
-          && (w.Filter is null || w.Filter(payload))
-        )];
+          && (w.Filter is null || w.Filter(payload)))) {
+        w.Seen++;
+        if (w.Seen >= w.ExpectedFirings) {
+          done.Add(w);
+        }
+      }
     }
 
-    foreach (var w in matches) {
+    foreach (var w in done) {
       w.Tcs.TrySetResult(envelope);
     }
 
@@ -103,9 +110,15 @@ public sealed class LifecycleStageFiringObserver : IReceptorFiringObserver {
   /// <see cref="OperationCanceledException"/> when
   /// <paramref name="cancellationToken"/> fires.
   /// </summary>
+  /// <remarks>
+  /// A perspective stage fires once per perspective that folds the event, so a wait on one names how many firings
+  /// it expects (<paramref name="expectedFirings"/>): it completes on the last of them, never on whichever perspective
+  /// happens to fire first.
+  /// </remarks>
   public Task<IMessageEnvelope> WaitForStageAsync<TEvent>(
       LifecycleStage stage,
       Func<TEvent, bool>? messageFilter = null,
+      int expectedFirings = 1,
       CancellationToken cancellationToken = default)
     where TEvent : IMessage {
     var tcs = new TaskCompletionSource<IMessageEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,7 +127,7 @@ public sealed class LifecycleStageFiringObserver : IReceptorFiringObserver {
       : (object o) => o is TEvent t && messageFilter(t);
 
     lock (_lock) {
-      _waits.Add(new _Wait(stage, typeof(TEvent), boxedFilter, tcs));
+      _waits.Add(new _Wait(stage, typeof(TEvent), boxedFilter, tcs, expectedFirings));
     }
 
     return tcs.Task.WaitAsync(cancellationToken);

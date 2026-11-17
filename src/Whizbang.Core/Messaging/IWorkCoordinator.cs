@@ -102,6 +102,61 @@ public sealed record ServiceBacklog {
   /// can afford to wait, because its own deferral budget already bounds how long it will.
   /// </remarks>
   public bool IsQuiescent => IsSettled && PendingIdleRows == 0;
+
+  /// <summary>
+  /// Rows of the inbox, lease and outbox figures above that are NOT the framework's steady-state integrity traffic
+  /// (<see cref="SteadyIntegrityTraffic"/>): answered only as zero or not (a bound of one), or null when the backend
+  /// does not measure it.
+  /// </summary>
+  /// <remarks>
+  /// Every peer publishes an integrity checkpoint on its own cadence, and the redelivery requests and answers it sets off
+  /// arrive as background-band rows, so a service with no application work at all still reads a row or two every half
+  /// minute. Those are work for the figures above, and stay so: the integrity receptors read them to tell a row in flight
+  /// from a row missing. The housekeeping dwell reads this one instead (<see cref="IsQuiescentApartFromIntegrity"/>), so
+  /// the framework's own chatter never keeps an idle service from reading idle (#2253).
+  /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  public long? NonIntegrityWorkRows { get; init; }
+
+  /// <summary>
+  /// <see cref="IsQuiescent"/> with the framework's steady-state integrity traffic not counted as work: what the
+  /// housekeeping dwell waits for. Falls back to <see cref="IsQuiescent"/> when <see cref="NonIntegrityWorkRows"/> was not
+  /// measured.
+  /// </summary>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
+  public bool IsQuiescentApartFromIntegrity => IsSettledApartFromIntegrity && PendingIdleRows == 0;
+
+  /// <summary>
+  /// <see cref="IsSettled"/> with the framework's steady-state integrity traffic not counted as work: what admits the idle
+  /// drain (#2263). Falls back to <see cref="IsSettled"/> when <see cref="NonIntegrityWorkRows"/> was not measured.
+  /// </summary>
+  /// <remarks>Settled, not quiescent: the idle band is admitted BECAUSE it still holds rows, so its rows are not counted
+  /// (see <see cref="PendingIdleRows"/>).</remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToSettledAsync</tests>
+  public bool IsSettledApartFromIntegrity => NonIntegrityWorkRows is { } work
+    ? work == 0 && PendingPerspectiveRows == 0
+    : IsSettled;
+
+  /// <summary>
+  /// When each housekeeping deferral budget being spent was first deferred, as the service's store holds it, keyed by
+  /// budget (<c>maintenance</c>, <c>dead-letter-recovery</c>, <c>integrity:&lt;requester&gt;</c>); null when the backend
+  /// does not hold the figure (#2288).
+  /// </summary>
+  /// <remarks>
+  /// Read in the same statement as the counts above, so the forced-pass ceiling
+  /// (<see cref="Whizbang.Core.Workers.HousekeepingCoordinator.Settings.MaxDeferral"/>) is measured from the first
+  /// deferral across process restarts, and shared by every instance of the service. Empty means the store holds the
+  /// figure and no budget is being spent; null means it cannot hold it, and the ceiling is measured in memory as before.
+  /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
+  public IReadOnlyDictionary<string, DateTimeOffset>? HousekeepingDeferrals { get; init; }
 }
 
 
@@ -222,6 +277,41 @@ public interface IWorkCoordinator {
     => ValueTask.FromResult<ServiceBacklog?>(null);
 
   /// <summary>
+  /// Records in the service's store when a housekeeping deferral budget was first deferred, unless the store already
+  /// holds a moment for it (the first writer wins), so the forced-pass ceiling survives a restart (#2288).
+  /// </summary>
+  /// <remarks>
+  /// Called with <see cref="Whizbang.Core.Workers.HousekeepingCoordinator.Decision.DeferralToRecord"/>, which a decision
+  /// reports only when the backlog it was given carried <see cref="ServiceBacklog.HousekeepingDeferrals"/> without the
+  /// budget. Default is a no-op, for a backend that does not report the figure.
+  /// </remarks>
+  /// <param name="budgetKey">The budget, as <see cref="ServiceBacklog.HousekeepingDeferrals"/> keys it.</param>
+  /// <param name="firstDeferredAt">When the budget was first deferred.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the moment is recorded.</returns>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
+  ValueTask RecordHousekeepingDeferralAsync(string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default)
+    => ValueTask.CompletedTask;
+
+  /// <summary>
+  /// Clears the stored first deferral of a housekeeping budget, once a pass of its activity has ended (#2288).
+  /// </summary>
+  /// <remarks>
+  /// Called with <see cref="Whizbang.Core.Workers.HousekeepingCoordinator.Decision.DeferralToClear"/>. Any instance of the
+  /// service completing a pass re-arms the budget for all of them. Default is a no-op.
+  /// </remarks>
+  /// <param name="budgetKey">The budget, as <see cref="ServiceBacklog.HousekeepingDeferrals"/> keys it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the record is cleared.</returns>
+  /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:AClear_RemovesOnlyItsOwnBudgetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
+  ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default)
+    => ValueTask.CompletedTask;
+
+  /// <summary>
   /// Publishes the host's debug-retention setting to the store, where the maintenance sweep reads it.
   /// </summary>
   /// <remarks>
@@ -307,7 +397,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceEvictionFencingSqlTests.cs</tests>
   Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
   /// Records the beat of an instance that is still starting: from its registration at the end of Preflight until its
@@ -346,7 +436,7 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/work-coordinator/scheduled-retries</docs>
   Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement NotifyScheduledRetryDueAsync. Override in your IWorkCoordinator implementation.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement NotifyScheduledRetryDueAsync. Override in your IWorkCoordinator implementation.");
 
   /// <summary>
   /// Marks the supplied outbox messages as processed (transport publish succeeded).
@@ -376,7 +466,7 @@ public interface IWorkCoordinator {
     bool debugMode,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CompleteOutboxPublishedAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CompleteOutboxPublishedAsync.");
 
   /// <summary>
   /// Advances perspective cursors and deletes processed perspective_event rows in one round-trip.
@@ -409,7 +499,7 @@ public interface IWorkCoordinator {
     bool debugMode,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CompletePerspectiveAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CompletePerspectiveAsync.");
 
   /// <summary>
   /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category that <paramref name="instanceId"/> still
@@ -434,7 +524,7 @@ public interface IWorkCoordinator {
     int leaseSeconds = 300,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement RenewHeldLeasesAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement RenewHeldLeasesAsync.");
 
   /// <summary>
   /// Hands back inbox rows this instance claimed but never dispatched, refunding the attempt the
@@ -473,7 +563,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<Guid> messageIds,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ReleaseUnprocessedInboxAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ReleaseUnprocessedInboxAsync.");
 
   /// <summary>
   /// Releases the rows this instance has leased but NOT started in the given streams, and ends the
@@ -506,7 +596,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<Guid> perspectiveStreamIds,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ReleaseUnstartedLeasesAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ReleaseUnstartedLeasesAsync.");
 
   /// <summary>
   /// Reports failures for the supplied category. Increments retry counters and sets
@@ -522,7 +612,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<MessageFailure> failures,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ReportFailuresAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ReportFailuresAsync.");
 
   /// <summary>
   /// Atomic transactional bundle for one handler's commit. Marks the inbox completion
@@ -537,7 +627,7 @@ public interface IWorkCoordinator {
     HandlerCommitRequest request,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CommitHandlerResultAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CommitHandlerResultAsync.");
 
   /// <summary>
   /// SAVEPOINT-per-handler batched commit. The throughput multiplier: N handler results
@@ -553,7 +643,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<HandlerCommitRequest> requests,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement CommitHandlerBatchAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement CommitHandlerBatchAsync.");
 
   /// <summary>
   /// Polls for work to claim. The only function the new ClaimWorker polls.
@@ -569,7 +659,7 @@ public interface IWorkCoordinator {
     ClaimWorkRequest request,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ClaimWorkAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ClaimWorkAsync.");
 
   /// <summary>
   /// Composite single-round-trip flusher. Combines outbox completes, perspective completes,
@@ -583,7 +673,7 @@ public interface IWorkCoordinator {
     FlushCompletionsRequest request,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement FlushCompletionsAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement FlushCompletionsAsync.");
 
   /// <summary>
   /// PerspectiveSyncAwaiter read-only path. Returns pending vs processed event counts
@@ -597,7 +687,7 @@ public interface IWorkCoordinator {
     IReadOnlyList<Perspectives.Sync.SyncInquiry> inquiries,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement ResolveSyncInquiriesAsync.");
+      $"{TypeNameFormatter.ForLog(GetType())} does not implement ResolveSyncInquiriesAsync.");
 
   /// <summary>
   /// Reads the applied-event ledger: whether a perspective has applied an event, named by its id or by its
@@ -838,6 +928,16 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
 
   /// <summary>
+  /// Whether <see cref="GetPerspectiveCursorsBatchAsync"/> reads the cursors (#2246). Only then does a pair the read left
+  /// out have no cursor, so a batch may skip that pair's own cursor read. False (the default) is a coordinator whose
+  /// batched read is the interface default, which returns nothing: a batch then reads each pair's cursor itself, since
+  /// taking "nothing" for "no cursor" would apply every pair's stream again from its start.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync</tests>
+  bool ReadsCursorsInBatches => false;
+
+  /// <summary>
   /// Records that PostLifecycle completed for an event.
   /// Used as a durable marker for crash recovery reconciliation.
   /// Idempotent — duplicate event IDs are silently ignored.
@@ -974,6 +1074,41 @@ public interface IWorkCoordinator {
   Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
     IReadOnlyList<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Guid>>([]);
+
+  /// <summary>
+  /// <see cref="GetStateBasedStreamIdsAsync(IReadOnlyList{Guid}, CancellationToken)"/> for a rebuild that may pass over
+  /// some ephemeral types: an event of one of <paramref name="ignoredEphemeralTypes"/> does not make its stream
+  /// state-based (a compaction origin always does). The rebuild passes the ephemeral side of each pair allowed to share a
+  /// stream (<see cref="Perspectives.MixedStreamAllowance"/>) that the rebuilt read model does not apply, so a read model
+  /// applying only the Sourced type rebuilds a mixed stream from its Sourced events (#2255). The default ignores
+  /// nothing: an engine that does not implement it refuses every stream holding an ephemeral event, as before.
+  /// </summary>
+  /// <param name="streamIds">Candidate stream ids to classify.</param>
+  /// <param name="ignoredEphemeralTypes">Ephemeral event types, as stored, that do not count.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ids among <paramref name="streamIds"/> that are StateBased.</returns>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:StateBased_IgnoringTheAllowedEphemeralType_LeavesTheMixedStreamRebuildableAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync</tests>
+  Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+    IReadOnlyList<Guid> streamIds,
+    IReadOnlyList<string> ignoredEphemeralTypes,
+    CancellationToken cancellationToken = default) => GetStateBasedStreamIdsAsync(streamIds, cancellationToken);
+
+  /// <summary>
+  /// Replaces the (ephemeral type, Sourced type) pairs allowed to share a stream with <paramref name="pairs"/> (#2255):
+  /// the store's mixed-stream refusal (WHIZ133) lets either kind of an allowed pair join a stream holding the other.
+  /// Called once at startup by the type-definition reconciler, from the registered read models
+  /// (<see cref="Perspectives.MixedStreamAllowance"/>); an empty list allows nothing. No-op on engines without the
+  /// refusal.
+  /// </summary>
+  /// <param name="pairs">The allowed pairs, under every stored name of each type.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Sync_ReplacesThePairs_AndAnEmptyListClearsThemAsync</tests>
+  Task SyncMixedStreamAllowancesAsync(
+    IReadOnlyList<Perspectives.MixedStreamPair> pairs,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
   /// Replaces the per-type rewind-grace overrides (from <c>[Ephemeral(RewindGraceSeconds = …)]</c>): upserts
@@ -1741,6 +1876,47 @@ public interface IWorkCoordinator {
       DriftRemoved = 0,
       DriftAdded = 0,
     });
+
+  /// <summary>
+  /// #2361: one slice of the full-history compare's heal. Takes the next <see cref="FullHistoryCompareRequest.MaxPerRun"/>
+  /// streams in key order after the cursor the last slice stored (the streams the lifecycle ledger records and the
+  /// streams the digest table holds, so a phantom bucket is in a slice too), heals those last written within
+  /// <see cref="FullHistoryCompareRequest.Lookback"/> (and those the ledger cannot date) as
+  /// <see cref="VerifyDigestTableAsync"/> heals the whole store, and stores where it stopped. A slice that reaches the end
+  /// completes the pass, and the next slice starts again from the first stream. Default: zeros, a pass with nothing in it.
+  /// </summary>
+  /// <param name="request">The settle window, the lookback and the streams per slice.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Checked/healed bucket counts, the streams taken, and whether the pass completed.</returns>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs</tests>
+  Task<DigestVerificationResult> VerifyDigestTableSliceAsync(
+    FullHistoryCompareRequest request,
+    CancellationToken cancellationToken = default) => Task.FromResult(new DigestVerificationResult {
+      BucketsChecked = 0,
+      DriftUpdated = 0,
+      DriftRemoved = 0,
+      DriftAdded = 0,
+      PassCompleted = true,
+    });
+
+  /// <summary>
+  /// #2361: where the full-history compare's ask to <paramref name="originServiceId"/> starts: the first sequence of the
+  /// oldest epoch of that origin's lane sealed within <paramref name="lookback"/>, never above
+  /// <paramref name="seal"/> (so the answer can still advance the seal). With no epoch sealed within the lookback it is
+  /// the seal itself. Default: zero, the whole history.
+  /// </summary>
+  /// <param name="originServiceId">The origin asked.</param>
+  /// <param name="lookback">How far back, by seal time, the ask reaches.</param>
+  /// <param name="epochWidth">Sequence positions per epoch.</param>
+  /// <param name="seal">The origin's current seal.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The sequence the ask starts from.</returns>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestTableSqlTests.Slices.cs:TheAsksStart_IsTheOldestEpochSealedWithinTheLookback_NeverAboveTheSealAsync</tests>
+  Task<long> GetFullHistoryCompareStartAsync(
+    Guid originServiceId, TimeSpan lookback, long epochWidth, long seal,
+    CancellationToken cancellationToken = default) => Task.FromResult(0L);
   /// <summary>
   /// Tables whose heap is disproportionate to their live rows, re-measured at call time.
   /// </summary>
@@ -1753,6 +1929,33 @@ public interface IWorkCoordinator {
   /// </remarks>
   Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<TableRewriteCandidate>>([]);
+
+  /// <summary>
+  /// The rewrite queue at a glance (#2319): how many tables are queued, the bloat threshold the scan compares with, and
+  /// how many tables the post-rewrite floor held back.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The status; by default an empty queue at the default threshold, since a backend without a queue has none.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync</tests>
+  Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(new TableRewriteQueueStatus(0, Whizbang.Core.Workers.TableRewriteSettings.DEFAULT_BLOAT_THRESHOLD, 0));
+
+  /// <summary>
+  /// A framework table's whole size on disk (<c>pg_total_relation_size</c>: heap, TOAST and indexes), which the rewrite
+  /// meters read before and after a rewrite for the bytes it returned (#2319).
+  /// </summary>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The bytes, or null when the table is not there or the backend does not measure it (the default).</returns>
+  /// <docs>operations/observability/metrics#table-rewrites</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsATablesTotalBytesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync</tests>
+  Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
 
   /// <summary>
   /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
@@ -1844,6 +2047,23 @@ public interface IWorkCoordinator {
       string tableName, Whizbang.Core.Observability.BloatMeasurement measurement, double estimatedRatio,
       CancellationToken cancellationToken = default) =>
     RequestTableRewriteAsync(tableName, cancellationToken);
+
+  /// <summary>
+  /// Clears a table's recorded rewrite request, as <see cref="ClearTableRewriteRequestAsync"/> does, and records in the
+  /// rewrite history which strategy carried it out, why the table was owed it, and its ratio before and after (#2301).
+  /// Call only after verifying success.
+  /// </summary>
+  /// <param name="outcome">The rewrite that carried out the request.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the request is cleared and the rewrite recorded.</returns>
+  /// <remarks>Default: the request is cleared and nothing is recorded.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs</tests>
+  Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(outcome);
+    return ClearTableRewriteRequestAsync(outcome.TableName, cancellationToken);
+  }
 
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
@@ -2060,12 +2280,15 @@ public interface IWorkCoordinator {
   /// <param name="originServiceName">Its logical name.</param>
   /// <param name="requestTopic">Its announced request address, or null.</param>
   /// <param name="checkpointAt">When the checkpoint was recorded.</param>
+  /// <param name="latestCommitSequence">The checkpoint's watermark, the highest commit sequence the origin announced
+  /// (#2261); the highest one announced is kept, for <c>verified_percent</c>. Null keeps the known one.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs:TheSeals_CarryTheLatestCommitSequenceTheOriginsCheckpointsAnnouncedAsync</tests>
   Task IntegrityRecordOriginCheckpointAsync(
     Guid originServiceId, string originServiceName, string? requestTopic, DateTimeOffset checkpointAt,
-    CancellationToken cancellationToken = default) => Task.CompletedTask;
+    long? latestCommitSequence = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
   /// #2104: replaces the kept pending gaps of one origin with <paramref name="pending"/> (empty = none), so a gap seen
@@ -2078,6 +2301,39 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityGapTrackerStoreSqlTests.cs</tests>
   Task IntegrityReplacePendingGapsAsync(
     Guid originServiceId, IReadOnlyList<IntegrityGapTracker.PendingGap> pending, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2211: takes (reads and forgets) where the last stream-level walk of one audit window of an origin stopped at the
+  /// consumer's page budget, so the next drill-down of that window resumes after it instead of comparing the same
+  /// leading streams again. A cursor is used once: a walk that ends, or is dropped, leaves none, and the next drill-down
+  /// starts from the first stream. Null = no cursor kept, or unsupported (every drill-down starts from the first stream).
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window is drilled.</param>
+  /// <param name="windowSince">The window's first commit sequence (its start, which names it across audits).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The last stream the stopped walk compared, or null.</returns>
+  /// <docs>resilience/stream-integrity#a-large-window-is-walked-across-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDrillCursorSqlTests.cs</tests>
+  Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) =>
+    Task.FromResult<Guid?>(null);
+
+  /// <summary>
+  /// #2211: keeps where a stream-level walk of one audit window of an origin stopped at the consumer's page budget
+  /// (<see cref="StreamIntegrityOptions.MaxManifestPagesPerAudit"/>), replacing any cursor kept for that window, so the
+  /// next drill-down resumes after it (<see cref="IntegrityTakeDrillCursorAsync"/>). No-op = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin whose window was walked.</param>
+  /// <param name="windowSince">The window's first commit sequence.</param>
+  /// <param name="resumeAfterStreamId">The last stream the walk compared.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the cursor is kept.</returns>
+  /// <docs>resilience/stream-integrity#a-large-window-is-walked-across-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDrillCursorSqlTests.cs</tests>
+  Task IntegritySaveDrillCursorAsync(
+    Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
   /// <summary>
@@ -2185,6 +2441,29 @@ public interface IWorkCoordinator {
     Task.FromResult(0);
 
   /// <summary>
+  /// #2223: takes back the answer-pending record of repair requests whose send failed. The paced drain records a request's
+  /// buckets as awaiting their answer before it sends the request, so an origin that answers before the send returns
+  /// finds them awaiting it; when the send then fails, the request never left, and this clears the wait and returns the
+  /// attempt the drain's claim stamped at <paramref name="now"/>, so a failed send costs no attempt. Applies only to a
+  /// bucket still awaiting the answer that mark recorded (<see cref="IntegrityMarkAnswerPendingAsync"/> with the same
+  /// <paramref name="now"/> and <paramref name="timeout"/>) and claimed at that instant: an answer that landed meanwhile,
+  /// or a later request, stands. Best-effort: 0 = nothing withdrawn or unsupported. Default: 0.
+  /// </summary>
+  /// <param name="originServiceId">The origin the request was for.</param>
+  /// <param name="keys">The buckets the request covered.</param>
+  /// <param name="now">The drain's instant: when the buckets were claimed and marked.</param>
+  /// <param name="timeout">The answer timeout the mark recorded.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The ledger rows withdrawn.</returns>
+  /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RepairDrainRecordsBeforeSendingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync</tests>
+  Task<int> IntegrityWithdrawAnswerPendingAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// Counts the repair-ledger buckets whose answer is on its way at <paramref name="now"/> (a request left for them and
   /// neither its answer landed nor its timeout passed), reading no further than <paramref name="limit"/> (#2184). The
   /// paced repair drain stops claiming while the count is at <c>MaxOutstandingRepairAnswers</c>, because answers can land
@@ -2260,6 +2539,23 @@ public interface IWorkCoordinator {
   /// <docs>resilience/stream-integrity</docs>
   Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<double>?>(null);
+
+  /// <summary>
+  /// Durable <see cref="IIntegrityRepairLedger.MarkTypesHealedWithAgesAsync"/>: forgets every ledger row of each
+  /// (origin, tenant, type) in <paramref name="typeKeys"/>, the type lane and every per-stream row (a key's stream id is
+  /// not read), and returns each forgotten row's age in seconds (first sighting to heal). Null = unsupported; an empty
+  /// list is a real answer (no row of those types was tracked).
+  /// </summary>
+  /// <param name="originServiceId">The origin the types were proven complete for.</param>
+  /// <param name="typeKeys">The proven (tenant, type) pairs.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ages of the rows forgotten, or null when unsupported or failed.</returns>
+  /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityTypeHealSqlTests.cs</tests>
+  Task<IReadOnlyList<double>?> IntegrityMarkTypesHealedWithAgesAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
     CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<double>?>(null);
 
@@ -2375,6 +2671,53 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDomainClaimsSqlTests.cs:Record_StoresTheOwnersClaims_KeyedWithoutCaseAsync</tests>
   Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<IntegrityDomainClaim>>([]);
+
+  /// <summary>
+  /// Which of <paramref name="eventIds"/> the handled ledger records as handled here, and when the ledger's coverage
+  /// starts (#2273). A repaired event inside the coverage that the ledger does not hold was never handled here.
+  /// </summary>
+  /// <param name="eventIds">The repaired events' ids.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The handled subset and the coverage start; <see cref="HandledLedgerAnswer.NoLedger"/> (no coverage, so
+  /// nothing can be proven never handled) for a store that keeps no ledger.</returns>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:LookupHandledEvents_Default_HasNoLedgerAsync</tests>
+  Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) =>
+    Task.FromResult(HandledLedgerAnswer.NoLedger);
+
+  /// <summary>
+  /// #2354: one batch of the operational retention sweep. For every Rolling table the operational retention covers,
+  /// removes up to <paramref name="batchSize"/> rows that are closed and older than their category's resting period in
+  /// <paramref name="retention"/>, and reports what is left. A category missing from <paramref name="retention"/> removes
+  /// nothing and is still reported. Default: nothing swept, for engines without the tables.
+  /// </summary>
+  /// <param name="retention">Each category's resting period.</param>
+  /// <param name="batchSize">Rows removed per table at most.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>One result per swept table.</returns>
+  /// <docs>operations/infrastructure/operational-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OperationalRetentionSweepSqlTests.cs:Coordinator_SweepOperationalRetentionAsync_DrivesTheSqlFunctionAsync</tests>
+  Task<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>> SweepOperationalRetentionAsync(
+    IReadOnlyDictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> retention, int batchSize,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult>>([]);
+
+  /// <summary>
+  /// Keeps the handled ledger to <paramref name="keep"/> (#2273): first moves the ledger's coverage start up to
+  /// <paramref name="now"/> minus <paramref name="keep"/>, then removes the records of events older than that from the
+  /// rows a partition drop does not remove. Coverage moves before anything is removed, so no reader ever sees a window
+  /// with records missing as complete.
+  /// </summary>
+  /// <param name="now">The moment the sweep runs at.</param>
+  /// <param name="keep">How long records are kept: the configured repair receptor lookback.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The records removed; zero for a store that keeps no ledger.</returns>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:SweepHandledLedger_Default_RemovesNothingAsync</tests>
+  Task<long> SweepHandledLedgerAsync(DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0L);
 
   /// <summary>
   /// The next batch of the re-attribution walk (#2008): the rows after the walk's durable cursor by commit sequence, at
@@ -2518,6 +2861,56 @@ public interface IWorkCoordinator {
     Task.FromResult(Observability.LedgerGaugeSnapshot.Empty);
 
   /// <summary>
+  /// Reads the open repair backlog for its gauges (#2256): the ledger's buckets counted once per origin and state, and
+  /// the depth of the integrity delivery queue, in one grouped read. Only the instance whose turn it is to do the
+  /// maintainer's work asks (<see cref="Startup.MaintainerDuty"/>), so N instances do not each count the same shared
+  /// ledger. Defaults to <see cref="Observability.LedgerBacklogSnapshot.NotReported"/> for engines with no ledger: no
+  /// series, never a zero that reads as a healed service.
+  /// </summary>
+  /// <param name="maxRepairAttempts">The repair budget, so a bucket that has spent it reads as exhausted.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The reading, or the not-reported reading.</returns>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  Task<Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
+    int maxRepairAttempts, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.LedgerBacklogSnapshot.NotReported);
+
+  /// <summary>
+  /// Adds the ledger buckets one instance opened and closed to the service's shared per-minute tally (#2261), and prunes
+  /// the minutes before <paramref name="keepSince"/> in the same call. Every instance writes its own counts, so the
+  /// repair progress and ETA read from the tally are per service and outlive a restart. Defaults to false (not written)
+  /// for engines with no ledger; the caller then keeps its counts for the next attempt.
+  /// </summary>
+  /// <param name="at">This instance's clock; the counts land in its minute.</param>
+  /// <param name="opened">Buckets opened since the last write.</param>
+  /// <param name="closed">Buckets closed since the last write.</param>
+  /// <param name="keepSince">Minutes before this are removed.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Whether the counts were written.</returns>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync</tests>
+  Task<bool> IntegrityAddLedgerTallyAsync(
+    DateTimeOffset at, long opened, long closed, DateTimeOffset keepSince, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Reads the service's ledger buckets opened and closed since <paramref name="since"/> from the shared tally (#2261),
+  /// for <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
+  /// ledger: the gauges then report no series, never a zero.
+  /// </summary>
+  /// <param name="since">The window's start.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The window's counts, or null.</returns>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  Task<IntegrityLedgerTally?> GetIntegrityLedgerTallyAsync(DateTimeOffset since, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityLedgerTally?>(null);
+
+  /// <summary>
   /// Tier-2 deep maintenance (E1 #13b3): prunes ANCIENT ephemeral event-store pointers whose bodies the
   /// tier-1 reaper already deleted — keeping the NEWEST pointer per stream so the ephemeral rebuild guard
   /// and the perspective cursor's last-event target survive the prune. The backing implementation is
@@ -2555,6 +2948,23 @@ public interface IWorkCoordinator {
   Task<int> CloseDigestEpochsAsync(
     int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) =>
     Task.FromResult(-1);
+
+  /// <summary>
+  /// #2353: <see cref="CloseDigestEpochsAsync(int, int, CancellationToken)"/> with the configured epoch width
+  /// (<see cref="SealingOptions.EpochWidth"/>): the width is written to the store's <c>integrity_epoch_width</c> setting
+  /// first, so a lane met for the first time pins it. A lane already pinned keeps its own width. Default: the call
+  /// without a width, for engines that keep the width elsewhere.
+  /// </summary>
+  /// <param name="settleSeconds">The settle window, which must equal the audit's.</param>
+  /// <param name="maxEpochs">Cap on epochs closed this call.</param>
+  /// <param name="epochWidth">The width a lane met for the first time is pinned at.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Epochs closed, or <c>-1</c> for engines without the substrate.</returns>
+  /// <docs>resilience/stream-integrity#sealing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DigestEpochSqlTests.cs:Coordinator_CloseDigestEpochsAsync_WithAWidth_SetsItForLanesClosedFromNowOnAsync</tests>
+  Task<int> CloseDigestEpochsAsync(
+    int settleSeconds, int maxEpochs, long epochWidth, CancellationToken cancellationToken = default) =>
+    CloseDigestEpochsAsync(settleSeconds, maxEpochs, cancellationToken);
 
   /// <summary>
   /// The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
@@ -2686,6 +3096,37 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// #2349: records how a type-level compare of an origin's window above the seal ended. A full match (the seal advanced
+  /// over it, or the origin had nothing settled above it) remembers the seal, the origin generation recorded beside it,
+  /// the origin's last checkpoint position and the highest position this store holds from the origin, so a later audit
+  /// can skip the ask while none of them moves. The memo is kept only while everything held from the origin lies below
+  /// the seal. A mismatch forgets the memo, so the next audit asks again. Default no-op (no memo store).
+  /// </summary>
+  /// <param name="originServiceId">The origin the compare was against.</param>
+  /// <param name="fullMatch">True when the window matched in full; false when a type disagreed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAskMemoSqlTests.cs</tests>
+  Task IntegrityRecordCompareOutcomeAsync(Guid originServiceId, bool fullMatch, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2349: whether the audit asks an origin this cycle. <see cref="IntegrityAskDecision.Skip"/> when a full match is
+  /// remembered, none of its four values moved, and the last ask is younger than <paramref name="maxSkip"/>; any other
+  /// answer asks and records <paramref name="now"/> as the last ask. Default
+  /// <see cref="IntegrityAskDecision.NothingRemembered"/>: an engine without the memo asks every cycle, as before.
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="now">The audit's clock.</param>
+  /// <param name="maxSkip">The longest an unchanged origin goes unasked.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAskMemoSqlTests.cs</tests>
+  Task<IntegrityAskDecision> IntegrityDecideOriginAskAsync(
+    Guid originServiceId, DateTimeOffset now, TimeSpan maxSkip, CancellationToken cancellationToken = default) =>
+    Task.FromResult(IntegrityAskDecision.NothingRemembered);
+
+  /// <summary>
   /// #80-D: the sweep's SEAL backstop — recomputes each closed digest epoch from the store,
   /// compares bucket-for-bucket, and refolds on drift. Epochs holding an unsettled arrival are
   /// skipped whole (verifying now would fold an in-flight delivery into a seal). Default: nothing
@@ -2700,10 +3141,27 @@ public interface IWorkCoordinator {
     Task.FromResult(new EpochVerificationResult(0, 0));
 
   /// <summary>
-  /// #80-F: this origin's history generation — bumped by the two legitimate fold-mutation sites
-  /// (close-the-books truncation, reclassification) and stamped on every manifest answer so
-  /// consumers can distinguish deliberate change from damage. Default 0 for engines without the
-  /// generation store.
+  /// #2353: the sealed-history re-check. Recomputes the sealed digest epochs sealed within
+  /// <see cref="SealRecheckRequest.Lookback"/> that were not re-checked within <see cref="SealRecheckRequest.RecheckEvery"/>,
+  /// least recently re-checked first, up to <see cref="SealRecheckRequest.MaxEpochs"/>, and refolds a drifted one when
+  /// <see cref="SealRecheckRequest.Refold"/>. Each epoch records when it was re-checked, so a call resumes past what the
+  /// last one reached. Epochs holding an unsettled arrival are skipped whole. Default: nothing checked, for engines
+  /// without the epoch substrate.
+  /// </summary>
+  /// <param name="request">The re-check's limits.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#seal-re-check</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SealRecheckRotationSqlTests.cs:Coordinator_RecheckDigestEpochsAsync_DrivesTheSqlFunctionAsync</tests>
+  Task<EpochVerificationResult> RecheckDigestEpochsAsync(
+    SealRecheckRequest request, CancellationToken cancellationToken = default) =>
+    Task.FromResult(new EpochVerificationResult(0, 0));
+
+  /// <summary>
+  /// #80-F: this origin's history generation, stamped on every manifest answer so consumers can
+  /// distinguish deliberate change from damage. #2262: it moves only after a rewrite of this
+  /// origin's own lane, and each move records the lowest position the rewrite touched
+  /// (<see cref="GetIntegrityHistoryRewriteAsync"/>). Default 0 for engines without the generation
+  /// store.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity</docs>
@@ -2724,6 +3182,47 @@ public interface IWorkCoordinator {
   Task<bool> EnsureIntegritySealGenerationAsync(
     Guid originServiceId, long generation, CancellationToken cancellationToken = default) =>
     Task.FromResult(true);
+
+  /// <summary>
+  /// #2262: the generation guard with the origin's rewrite floor. The carried generation matches the stored one (or
+  /// first contact): true. A newer generation whose <paramref name="rewrite"/> counts from the stored generation or an
+  /// earlier one: the generation is recorded, a seal at or below the floor is kept (true, compare away), and a seal
+  /// above it falls to the floor (false: the round in flight was asked from the old seal). Otherwise (no floor, a floor
+  /// from a later generation, a generation that went back) the seal resets to zero as before (false). Default: the
+  /// generation-only guard.
+  /// </summary>
+  /// <param name="originServiceId">The origin whose generation the manifest carried.</param>
+  /// <param name="generation">The carried generation.</param>
+  /// <param name="rewrite">How far the origin's history was rewritten since a generation; null when it cannot say.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs</tests>
+  Task<bool> EnsureIntegritySealGenerationAsync(
+    Guid originServiceId, long generation, IntegrityHistoryRewrite? rewrite, CancellationToken cancellationToken = default) =>
+    EnsureIntegritySealGenerationAsync(originServiceId, generation, cancellationToken);
+
+  /// <summary>
+  /// #2262: the origin generation this consumer recorded beside its seal for an origin, named on every ask so the
+  /// origin can answer how far its history was rewritten since. Null before first contact. Default null (no store).
+  /// </summary>
+  /// <param name="originServiceId">The origin.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:SealGeneration_IsNullBeforeFirstContactAsync</tests>
+  Task<long?> GetIntegritySealGenerationAsync(Guid originServiceId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// #2262: the origin side: the lowest position of this origin's own lane that any rewrite after
+  /// <paramref name="sinceGeneration"/> touched. Null when the origin cannot vouch (its rewrite log does not reach back
+  /// that far, or the engine keeps none, the default).
+  /// </summary>
+  /// <param name="sinceGeneration">The generation the asker recorded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs:HistoryRewrite_SinceAGenerationTheLogReaches_IsTheLowestFloorAfterItAsync</tests>
+  Task<IntegrityHistoryRewrite?> GetIntegrityHistoryRewriteAsync(long sinceGeneration, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityHistoryRewrite?>(null);
 
   /// <summary>
   /// A1 (Archival &amp; Compaction): the gated prefix truncate of a durable Sourced stream: remove the detail at
@@ -3746,6 +4245,14 @@ public record PerspectiveCursorInfo {
   /// NULL when no rewind is needed.
   /// </summary>
   public Guid? RewindTriggerEventId { get; init; }
+
+  /// <summary>
+  /// The commit-sequence frontier the last completed replay of this pair read through
+  /// (<see cref="PerspectiveCursorCompletion.ReplayedThroughCommitSequence"/>); null when no replay recorded one. A work
+  /// row for an event stamped at or below it is already applied (#2366).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  public long? ReplayedThroughCommitSequence { get; init; }
 }
 
 /// <summary>
@@ -4551,6 +5058,19 @@ public record PerspectiveCursorCompletion {
   public long? LastCommitSequence { get; init; }
 
   /// <summary>
+  /// The commit-sequence frontier a completed replay (a rewind or a rebuild) read through: every event of the stream
+  /// stamped at or below it was folded into the row. Null for a live apply, which reads only the events it was given.
+  /// </summary>
+  /// <remarks>
+  /// The cursor stores it (<c>wh_perspective_cursors.replayed_through_commit_sequence</c>, never lowered), so a work row
+  /// for an event at or below it is known to be applied whichever instance takes it, after a restart too: a copy of an
+  /// event a rewind already read, queued again under a new work row, is completed without a second rewind (#2366).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRewindLoopTests.cs:AStuckCursorOnTheHighestIdAtTheLowestVersion_ConvergesAfterOneRewind_AndARequeuedCopyIsNotRewoundAsync</tests>
+  public long? ReplayedThroughCommitSequence { get; init; }
+
+  /// <summary>
   /// Whether this batch actually changed the row: it was written, or it was purged.
   /// </summary>
   /// <remarks>
@@ -4572,6 +5092,18 @@ public record PerspectiveCursorCompletion {
   /// </remarks>
   /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
   public bool RowChanged { get; init; }
+
+  /// <summary>
+  /// Why a run that folded events left the row untouched (<see cref="RowChanged"/> false): no event produced a model,
+  /// the row's ordering guard refused the write, or the refused write's fold equals the stored row (#2252). A rebuild
+  /// counts the last as rebuilt and verified, since the read model was already right.
+  /// <see cref="Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported"/> when the run wrote the row,
+  /// folded nothing, or does not say.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RebuildAlreadyCorrectRowTests.cs:RebuildStreamsAsync_AFoldEqualToTheStoredRowTheGuardRefused_IsRebuiltAndVerifiedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RebuildAlreadyCorrectRowTests.cs:RebuildStreamsAsync_AFoldThatDiffersFromTheStoredRowTheGuardRefused_FailsAsRefusedAsync</tests>
+  public Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason UnchangedReason { get; init; }
 
   /// <summary>
   /// Processing status (e.g., Completed, CatchingUp).
@@ -4969,8 +5501,8 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
   /// <summary>
-  /// The table's heap size in bytes (<c>pg_relation_size</c>), what an online rewrite copies; 0 when the backend does not
-  /// measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
+  /// The table's size in bytes, its heap and its TOAST relation (<c>pg_table_size</c>, #2319), what an online rewrite
+  /// copies; 0 when the backend does not measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
   /// </summary>
   public long SizeBytes { get; init; }
 
@@ -4989,6 +5521,60 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
   public double RewriteThreshold { get; init; }
+
+  /// <summary>
+  /// Why the table is offered: <see cref="TableRewriteReason.Bloat"/> (the default) when it measures over the bloat
+  /// threshold, or <see cref="TableRewriteReason.FillFactorDecrease"/> when it is offered only because its fillfactor
+  /// was lowered while it held rows (#2300), which an online strategy honors once and a blocking rewrite never does.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
+  public TableRewriteReason Reason { get; init; }
+}
+
+/// <summary>
+/// A rewrite that carried out a table's request: which strategy did it, why the table was owed it, and its bloat ratio
+/// before and after (#2301). Recorded in the rewrite history as the request is cleared.
+/// </summary>
+/// <param name="TableName">The bare table name.</param>
+/// <param name="Strategy">The <see cref="Whizbang.Core.Workers.ITableRewriter.Strategy"/> that rewrote it.</param>
+/// <param name="Reason">Why it was owed the rewrite.</param>
+/// <param name="BloatBefore">The ratio it was offered with.</param>
+/// <param name="BloatAfter">The ratio measured after the rewrite.</param>
+/// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+public sealed record TableRewriteOutcome(
+  string TableName, string Strategy, TableRewriteReason Reason, double BloatBefore, double BloatAfter);
+
+/// <summary>
+/// The rewrite queue at a glance (#2319): how many tables are queued, the bloat threshold, and how many tables reach the
+/// threshold but are held back by the floor their last rewrite set. The online rewrite step reports it when it has
+/// nothing to rewrite, so "nothing to do" reads differently from "never ran".
+/// </summary>
+/// <param name="Requested">The tables in the <c>pending_table_rewrites</c> queue.</param>
+/// <param name="Threshold">The bloat ratio at or above which a table is offered (<c>table_rewrite_bloat_threshold</c>).</param>
+/// <param name="HeldByFloor">
+/// The tables at or above <paramref name="Threshold"/> that are not offered because their last rewrite left them at a
+/// ratio whose regrowth floor (<c>bloat_after</c> times <c>table_rewrite_regrowth_factor</c>) they have not reached.
+/// </param>
+/// <docs>operations/infrastructure/storage-maintenance#post-rewrite-floor</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+public sealed record TableRewriteQueueStatus(int Requested, double Threshold, int HeldByFloor);
+
+/// <summary>Why a table is offered for rewrite (<see cref="TableRewriteCandidate.Reason"/>).</summary>
+/// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
+public enum TableRewriteReason {
+  // Each value is explicit: the numbers are public API, so a new member takes the next free number and is declared last.
+  /// <summary>The table measures over the bloat threshold; rewritten under every strategy's usual rules.</summary>
+  Bloat = 0,
+
+  /// <summary>
+  /// The table is compact, but its fillfactor was lowered while it held rows, so its pages are packed fuller than the
+  /// new value. Rewritten once, and only by an online strategy (pg_squeeze or pg_repack); never by <c>VACUUM FULL</c>.
+  /// </summary>
+  FillFactorDecrease = 1,
 }
 
 /// <summary>What vacuuming one work table did (#1351).</summary>

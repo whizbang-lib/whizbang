@@ -85,6 +85,8 @@ public class RepairDrainWorkerTests {
     var own = typeA.Single(r => r.StreamIds!.Count == 1);
     await Assert.That(own.FromCommitSequence).IsEqualTo(199L);
     await Assert.That(own.ToCommitSequence).IsEqualTo(599L);
+    await Assert.That(typeA.All(r => r.AcceptsStreamSpanningBundles)).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
   }
 
   [Test]
@@ -119,9 +121,9 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_ButNotAGroupWhoseSendFailedAsync() {
-    // #2029: a bucket whose request left is not claimed again while its answer is on the way. A group whose send
-    // failed never asked, so it waits out its backoff only.
+  public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_AndWithdrawsAGroupWhoseSendFailedAsync() {
+    // #2029: a bucket whose request left is not claimed again while its answer is on the way. #2223: every group is
+    // recorded before it is sent, and a group whose send failed never asked, so its record is withdrawn.
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -139,8 +141,18 @@ public class RepairDrainWorkerTests {
 
     await worker.DrainTickAsync(1.0, now, CancellationToken.None);
 
-    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(1);
-    var mark = coordinator.PendingMarks[0];
+    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(2)
+      .Because("each group is recorded as awaiting its answer before its request is sent");
+    await Assert.That(coordinator.Withdrawals.Count).IsEqualTo(1);
+    var withdrawal = coordinator.Withdrawals[0];
+    await Assert.That(withdrawal.Keys.Select(k => k.StreamId)).IsEquivalentTo([failed])
+      .Because("only the group whose send failed is taken back");
+    await Assert.That(withdrawal.Origin).IsEqualTo(origin);
+    await Assert.That(withdrawal.Now).IsEqualTo(now);
+    await Assert.That(withdrawal.Timeout).IsEqualTo(TimeSpan.FromMinutes(45))
+      .Because("the withdrawal names the record the mark made, so it cannot take back a later one");
+    await Assert.That(coordinator.PendingKeys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
+    var mark = coordinator.PendingMarks.Single(m => m.Keys[0].StreamId == sent);
     await Assert.That(mark.Keys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
     await Assert.That(mark.Keys[0].TenantScope).IsEqualTo("tenant-a");
     await Assert.That(mark.Keys[0].EventType).IsEqualTo("Contracts.TypeB");
@@ -150,7 +162,7 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_NothingSent_MarksNothingPendingAsync() {
+  public async Task DrainTick_NothingSent_LeavesNothingPendingAsync() {
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -161,7 +173,36 @@ public class RepairDrainWorkerTests {
 
     await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
 
-    await Assert.That(coordinator.PendingMarks).IsEmpty();
+    await Assert.That(coordinator.PendingKeys).IsEmpty()
+      .Because("the one request recorded before its send was withdrawn when the send failed");
+    await Assert.That(coordinator.Withdrawals.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task DrainTick_RecordsTheAnswerPending_BeforeTheRequestLeaves_SoAnAnswerThatOutrunsThePublishIsKeptAsync() {
+    // #2223: the origin may answer before the publish call returns (a fast origin, or this host's continuation delayed
+    // under load). An answer clears the bucket's wait; a mark written after it would put the wait back, and the bucket
+    // would count against the outstanding-answer cap until the answer timeout. The fake answers inside the publish.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var stream = TrackedGuid.New().Value;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", stream, 100, 500));
+    var marksWhenPublished = -1;
+    transport.OnPublish = () => {
+      marksWhenPublished = coordinator.PendingMarks.Count;
+      coordinator.Answer(stream);
+    };
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(marksWhenPublished).IsEqualTo(1)
+      .Because("the bucket is recorded as awaiting its answer before the request can reach the origin");
+    await Assert.That(coordinator.PendingKeys).IsEmpty()
+      .Because("the answer that landed inside the publish stands; nothing after it records the bucket as waiting again");
+    await Assert.That(coordinator.Withdrawals).IsEmpty();
   }
 
   [Test]
@@ -546,11 +587,64 @@ public class RepairDrainWorkerTests {
     }
   }
 
+  /// <summary>
+  /// #2346: a drain that finds nothing to claim and nothing awaiting an answer waits longer each tick, doubling from one
+  /// second up to <see cref="StreamIntegrityOptions.IdlePollCeilingSeconds"/>, and the first tick that claims returns it to
+  /// one second. An idle service then asks the ledger a few times a minute instead of every second; the pacing of a drain
+  /// with work is unchanged. Each tick is counted by outcome on <c>whizbang.probes.ticks{probe=repair-drain}</c>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
+  [Test]
+  public async Task ExecuteAsync_AnIdleLedger_WaitsLongerUpToTheCeiling_AndAClaimReturnsItToOneSecondAsync() {
+    var origin = TrackedGuid.New().Value;
+    var clock = new ArmSignalingClock(new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero));
+    using var meters = new ProbeTickMeters();
+    var probes = new ProbeCadenceMetrics(new WhizbangMetrics(meters));
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+      IdlePollCeilingSeconds = 8,
+    }, origin, learnTopic: true, clock: clock, probes: probes);
+    var guard = TimeSpan.FromSeconds(30);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      // Five idle ticks: each waits out the delay it armed, then the loop arms the next.
+      await clock.Armed.WaitAsync(guard);
+      for (var tick = 0; tick < 5; tick++) {
+        clock.Advance(clock.DueTimes.Last());
+        await clock.Armed.WaitAsync(guard);
+      }
+      coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+      clock.Advance(clock.DueTimes.Last());
+      await coordinator.FirstClaim.Task.WaitAsync(guard);
+      await clock.Armed.WaitAsync(guard);
+
+      await Assert.That(clock.DueTimes.Select(d => d.TotalSeconds).ToList())
+        .IsEquivalentTo(new List<double> { 1, 2, 4, 8, 8, 8, 1 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+        .Because("idle ticks double the wait up to the ceiling, and the tick that claims returns it to one second");
+      await Assert.That(transport.Published.Count).IsEqualTo(1);
+      var (idle, work) = meters.Read(ProbeCadenceMetrics.PROBE_REPAIR_DRAIN);
+      await Assert.That(idle).IsEqualTo(5L);
+      await Assert.That(work).IsEqualTo(1L);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>#2346: the idle ceiling defaults to a minute.</summary>
+  [Test]
+  public async Task Options_IdlePollCeilingSeconds_DefaultsTo60Async() =>
+    await Assert.That(new StreamIntegrityOptions().IdlePollCeilingSeconds).IsEqualTo(60);
+
   /// <summary>A fake clock that releases <see cref="Armed"/> each time a timer is created, which is each time the drain's
   /// loop starts waiting out its interval.</summary>
   private sealed class ArmSignalingClock(DateTimeOffset start) : TimeProvider {
     private readonly FakeTimeProvider _inner = new(start);
     public SemaphoreSlim Armed { get; } = new(0);
+    /// <summary>Each wait the loop armed, in order (#2346).</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<TimeSpan> DueTimes { get; } = new();
     public void Advance(TimeSpan by) => _inner.Advance(by);
     public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
     public override long GetTimestamp() => _inner.GetTimestamp();
@@ -558,6 +652,7 @@ public class RepairDrainWorkerTests {
     public override TimeZoneInfo LocalTimeZone => _inner.LocalTimeZone;
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       var timer = _inner.CreateTimer(callback, state, dueTime, period);
+      DueTimes.Enqueue(dueTime);
       Armed.Release();
       return timer;
     }
@@ -594,7 +689,7 @@ public class RepairDrainWorkerTests {
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _build(
       StreamIntegrityOptions options, Guid origin, bool learnTopic, ILogger<RepairDrainWorker>? logger = null,
-      StreamIntegrityMetrics? metrics = null, TimeProvider? clock = null) {
+      StreamIntegrityMetrics? metrics = null, TimeProvider? clock = null, ProbeCadenceMetrics? probes = null) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -610,6 +705,9 @@ public class RepairDrainWorkerTests {
     services.AddSingleton(tracker);
     if (metrics is not null) {
       services.AddSingleton(metrics);
+    }
+    if (probes is not null) {
+      services.AddSingleton(probes);
     }
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
@@ -674,7 +772,23 @@ public class RepairDrainWorkerTests {
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
         DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
       PendingMarks.Add((originServiceId, keys, now, timeout));
+      PendingKeys.AddRange(keys);
       return Task.FromResult(keys.Count);
+    }
+
+    /// <summary>The buckets awaiting an answer, as the ledger would hold them: marked, and neither answered nor withdrawn.</summary>
+    public List<IntegrityRepairLedger.DivergenceKey> PendingKeys { get; } = [];
+
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, DateTimeOffset Now, TimeSpan Timeout)> Withdrawals { get; } = [];
+
+    /// <summary>An answer landing for <paramref name="streamId"/>: its bucket stops waiting.</summary>
+    public void Answer(Guid streamId) => PendingKeys.RemoveAll(k => k.StreamId == streamId);
+
+    public Task<int> IntegrityWithdrawAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+        CancellationToken cancellationToken = default) {
+      Withdrawals.Add((originServiceId, keys, now, timeout));
+      return Task.FromResult(PendingKeys.RemoveAll(keys.Contains));
     }
   }
 
@@ -684,10 +798,13 @@ public class RepairDrainWorkerTests {
     /// <summary>Thrown in place of the throttle timeout, for the cancellation contract.</summary>
     public Exception? FailFirstWith { get; set; }
     public int Attempts { get; private set; }
+    /// <summary>Runs inside each publish, before it succeeds or fails: where an answer that outruns the publish lands.</summary>
+    public Action? OnPublish { get; set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
+      OnPublish?.Invoke();
       lock (Published) {
         Attempts++;
         if (Attempts <= FailFirst) {

@@ -16,6 +16,8 @@ namespace Whizbang.Core;
 /// allowing precise control over how type names appear in generated code, logs, and diagnostics.
 /// </remarks>
 /// <docs>fundamentals/identity/type-formatting</docs>
+#pragma warning disable RS0030 // the qualification-flag renderer reads a type's namespace and assembly name (#2267)
+[TypeNameAuthority]   // a type-name renderer: the qualification-flag forms (#2267)
 public static class TypeFormatter {
   /// <summary>
   /// Formats a type name according to the specified qualification flags.
@@ -154,3 +156,4 @@ public static class TypeFormatter {
     return string.Join(", ", assemblyParts);
   }
 }
+#pragma warning restore RS0030

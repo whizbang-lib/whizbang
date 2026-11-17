@@ -65,6 +65,7 @@ public sealed class StartupHostedServiceAuditTests {
     ["TypeDefinitionReconcilerHostedService"] = SCHEMA_READY,
     ["TableStatisticsCollector"] = SCHEMA_READY,
     ["EventTypeBytesSampler"] = SCHEMA_READY,
+    ["PendingReclamationSampler"] = SCHEMA_READY,
     ["NotifyDebounceStatsCollector"] = SCHEMA_READY,
     // Deregistration is the stop of a service that started when the schema was ready (#1991): an instance stopped
     // before then has nothing to deregister, against tables that may not exist yet.
@@ -114,6 +115,8 @@ public sealed class StartupHostedServiceAuditTests {
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     // Reports items two assemblies both register, from what the registrations already hold (#2201).
     "RegistrationCollisionStartupValidator",
+    // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
+    "ServiceAssemblyScopeStartupReporter",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer",
@@ -125,7 +128,7 @@ public sealed class StartupHostedServiceAuditTests {
     // Subscriptions on the notification connection, which starts at Elect.
     "PgWorkNotificationListener", "MultiStreamCommandSubscriber", "PartitionAssignmentSubscriber",
     // In-process state, or the transport's management plane rather than the database.
-    "RecentlyProcessedEventCacheSweepWorker", "BacklogAgeWorker",
+    "RecentlyProcessedEventCacheSweepWorker", "BacklogAgeWorker", "InProcessTrackerSweepWorker",
     // Fed only by a command receptor, and dispatch is deferred until the schema-ready gate opens.
     "RebuildBackgroundWorker",
     // The health-check publisher runs checks only for a publisher the application registers; the framework registers
@@ -173,6 +176,29 @@ public sealed class StartupHostedServiceAuditTests {
     await Assert.That(started).IsEquivalentTo(["PgSharedNotifyConnection", "SignalBusHostedService", "HeartbeatWorker"])
       .Because("held in Migrate an instance beats, and is neither a role candidate nor a claimant; started: "
         + string.Join(", ", started));
+  }
+
+  /// <summary>
+  /// Every framework worker the host starts at a start point names the mechanism its statements are attributed to, so
+  /// none reports as untagged; the notification connection is the one exception, and must stay one: it is the
+  /// liveness connection, whose session is how an instance is known to be alive, and is never attributed.
+  /// </summary>
+  /// <code-under-test>src/Whizbang.Core/Observability/WorkerDbMechanisms.cs</code-under-test>
+  /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/WorkerDbMechanisms.cs</code-under-test>
+  [Test]
+  public async Task EveryStartedFrameworkWorker_NamesItsDbMechanism_ExceptTheLivenessConnectionAsync() {
+    using var host = _turnkeyHost();
+    var gated = host.Services.GetServices<IHostedService>().OfType<GatedHostedService>().ToList();
+
+    var unnamed = gated.Where(g => g.Service is not Whizbang.Core.Observability.IDbMechanismOwner)
+      .Select(g => g.Service.GetType().Name).ToList();
+    await Assert.That(unnamed).IsEquivalentTo(["PgSharedNotifyConnection"])
+      .Because("a framework worker without a mechanism reports every statement as untagged; unnamed: "
+        + string.Join(", ", unnamed));
+
+    var untagged = gated.Select(g => g.Service).OfType<Whizbang.Core.Observability.IDbMechanismOwner>()
+      .Where(o => o.DbMechanism == Whizbang.Core.Observability.DbMechanism.Untagged).Select(o => o.GetType().Name).ToList();
+    await Assert.That(untagged).IsEmpty().Because("untagged is the gap, never a worker's own name");
   }
 
   private static (string Name, string? StartPoint) _describe(IHostedService service) => service is GatedHostedService gated

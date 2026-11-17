@@ -33,6 +33,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   private readonly IApplicationVersionProvider? _applicationVersion;
   private readonly IServiceInstanceProvider? _instance;
   private readonly bool _overrideIncompatibility;
+  private readonly bool _allowLossyRollback;
 
   /// <summary>Creates the assessor over the consumer's DbContext type, resolved per call.</summary>
   /// <param name="scopeFactory">Scopes the DbContext each read is made through.</param>
@@ -42,10 +43,12 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   /// <param name="instance">This instance's identity (#2022): its own row is never a newer instance.</param>
   /// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022): read by the driver's
   /// registration from <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>.</param>
+  /// <param name="allowLossyRollback">Whether a rollback may discard data a newer version wrote (#2122): read by the
+  /// driver's registration from <see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>.</param>
   public EFCorePostgresStartupAssessor(
       IServiceScopeFactory scopeFactory, Type dbContextType, ILibraryVersionProvider? versionProvider = null,
       IApplicationVersionProvider? applicationVersion = null, IServiceInstanceProvider? instance = null,
-      bool overrideIncompatibility = false) {
+      bool overrideIncompatibility = false, bool allowLossyRollback = false) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(dbContextType);
     _scopeFactory = scopeFactory;
@@ -54,6 +57,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
     _applicationVersion = applicationVersion;
     _instance = instance;
     _overrideIncompatibility = overrideIncompatibility;
+    _allowLossyRollback = allowLossyRollback;
   }
 
   /// <inheritdoc />
@@ -67,6 +71,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
       connection, schema,
       new VersionSighting(_versionProvider?.LibraryVersion, _applicationVersion?.ApplicationVersion.Recorded, _instance?.InstanceId),
       _overrideIncompatibility,
+      _allowLossyRollback,
       ct => DbContextInitializationRegistry.IsSchemaCurrentAsync(services, ct),
       cancellationToken), cancellationToken);
 

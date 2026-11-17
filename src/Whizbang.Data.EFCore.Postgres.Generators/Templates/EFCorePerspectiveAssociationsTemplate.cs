@@ -35,12 +35,15 @@ public static class EFCorePerspectiveAssociationExtensions {
   /// <param name="serviceName">The service name (assembly name)</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
   /// <param name="cancellationToken">Cancellation token</param>
+  /// <param name="collectiveEventTypes">The collective event types a handler on this service applies (#2145), from the
+  /// consumer registry; null when they cannot be known, which writes no collective gate.</param>
   public static async Task RegisterPerspectiveAssociationsAsync<TDbContext>(
     this TDbContext context,
     string schema,
     string serviceName,
     ILogger? logger = null,
-    CancellationToken cancellationToken = default)
+    CancellationToken cancellationToken = default,
+    System.Collections.Generic.IReadOnlyList<string>? collectiveEventTypes = null)
     where TDbContext : DbContext {
 
     // Build JSON array of message associations
@@ -51,6 +54,8 @@ public static class EFCorePerspectiveAssociationExtensions {
     // This region gets replaced with generated association JSON
     #endregion
 
+    // #2145: the collective associations and the gate marker, in the same call, so the orphan delete keeps them in step.
+    json.Append(global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationEntriesJson(collectiveEventTypes, serviceName));
     json.AppendLine("]");
 
     var jsonString = json.ToString();

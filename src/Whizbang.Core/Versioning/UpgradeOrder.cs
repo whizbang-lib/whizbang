@@ -56,13 +56,32 @@ public enum SchemaChangeKind {
   Application = 1,
 }
 
+/// <summary>How a schema change is reversed (#2122, owner decision 2), as the version that applied it recorded.</summary>
+/// <docs>operations/infrastructure/migrations#how-a-migration-is-reversed</docs>
+public enum SchemaChangeReversal {
+  /// <summary>It cannot be reversed (a data rewrite, for example), or nothing recorded how: every change before #2122,
+  /// and every stored-form conversion. A rollback across it always stands down.</summary>
+  Irreversible = 0,
+
+  /// <summary>Reversed without losing anything (an added index, an added table with no data yet).</summary>
+  Reversible = 1,
+
+  /// <summary>Reversed by discarding data the newer version wrote (dropping a column or a table it added); a rollback
+  /// across it runs only when the operator allows it (<see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</summary>
+  Lossy = 2,
+}
+
 /// <summary>A schema change the migration ledger records, and the versions that applied it (#2022).</summary>
 /// <param name="Name">The ledger's name for it (a migration file, a perspective table, an object).</param>
 /// <param name="Kind">Whose change it is.</param>
 /// <param name="LibraryVersion">The library version that applied it; null when unknown.</param>
 /// <param name="ApplicationVersion">The application version that applied it, as recorded; null or <c>unknown</c> when unknown.</param>
 /// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
-public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, string? LibraryVersion, string? ApplicationVersion);
+public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, string? LibraryVersion, string? ApplicationVersion) {
+  /// <summary>How the change is reversed, as recorded when it was applied (#2122); irreversible when nothing says.</summary>
+  /// <docs>operations/infrastructure/migrations#how-a-migration-is-reversed</docs>
+  public SchemaChangeReversal Reversal { get; init; }
+}
 
 /// <summary>
 /// The one rule that orders versions (#2022). It decides whether a newer version is recorded (in the migration ledger) or
@@ -90,7 +109,8 @@ public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, str
 /// The rollback gate (#2022) asks of each schema change the ledger records whether it was applied after this instance's
 /// version: a W! migration by a newer library, or an application schema change (a perspective table, an association,
 /// an application object, which the library generates from the application's model) by a newer application or a newer
-/// library. A migration cannot be reversed yet (#2122), so an instance with anything applied since stands down.
+/// library. Anything applied since is rolled back when every change can be reversed (#2122): the changes and how each
+/// is reversed are what the ledger recorded when each was applied (<see cref="WhyNotReversible"/>).
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#cluster-wide-stand-down</docs>
@@ -104,19 +124,35 @@ public static class UpgradeOrder {
   /// </summary>
   public const string OVERRIDE_INCOMPATIBILITY_KEY = "Whizbang:Startup:OverrideIncompatibility";
 
+  /// <summary>
+  /// The configuration key that lets a rollback discard data (#2122, owner decision 3): <c>true</c> lets an older version
+  /// roll back changes whose reversal discards data a newer version wrote. Off by default, so such a rollback stands
+  /// down with an error naming each change; it never lets an irreversible change be rolled back.
+  /// </summary>
+  public const string ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:AllowLossyRollback";
+
   /// <summary>Whether the host turned the incompatibility override on (#2022).</summary>
   /// <param name="configuration">The host's configuration; null reads none.</param>
   /// <returns><see langword="true"/> only when the key says <c>true</c>.</returns>
   /// <exception cref="InvalidOperationException">The key holds something that is not a boolean: a host that says so
   /// explicitly is told at once, never read as off.</exception>
-  public static bool IsIncompatibilityOverridden(IConfiguration? configuration) {
-    var value = configuration?[OVERRIDE_INCOMPATIBILITY_KEY];
+  public static bool IsIncompatibilityOverridden(IConfiguration? configuration) => _isOn(configuration, OVERRIDE_INCOMPATIBILITY_KEY);
+
+  /// <summary>Whether the host lets a rollback discard data (#2122, <see cref="ALLOW_LOSSY_ROLLBACK_KEY"/>).</summary>
+  /// <param name="configuration">The host's configuration; null reads none.</param>
+  /// <returns><see langword="true"/> only when the key says <c>true</c>.</returns>
+  /// <exception cref="InvalidOperationException">The key holds something that is not a boolean.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheLossyRollbackKey_IsOffUnlessItSaysTrue_AndRefusedLoudlyWhenItIsNotABooleanAsync</tests>
+  public static bool IsLossyRollbackAllowed(IConfiguration? configuration) => _isOn(configuration, ALLOW_LOSSY_ROLLBACK_KEY);
+
+  private static bool _isOn(IConfiguration? configuration, string key) {
+    var value = configuration?[key];
     if (string.IsNullOrWhiteSpace(value)) {
       return false;
     }
     return bool.TryParse(value, out var on)
       ? on
-      : throw new InvalidOperationException($"{OVERRIDE_INCOMPATIBILITY_KEY} is '{value}', which is not true or false.");
+      : throw new InvalidOperationException($"{key} is '{value}', which is not true or false.");
   }
 
   /// <summary>Whether a library version reads as SemVer.</summary>
@@ -197,22 +233,59 @@ public static class UpgradeOrder {
   }
 
   /// <summary>
-  /// The gate's error (#2022): this instance's versions, how many changes were applied since, the first five by name with
-  /// who applied each, and that a migration cannot be reversed yet (#2122).
+  /// Why the changes applied since this instance's version cannot be rolled back (#2122, owner decision 3), or null
+  /// when they can. Any irreversible change refuses, naming each one and who applied it; otherwise any change whose
+  /// reversal discards data refuses unless <paramref name="allowLossy"/>.
   /// </summary>
   /// <param name="own">This instance's versions.</param>
   /// <param name="since">The changes applied since (<see cref="AppliedSince"/>).</param>
-  /// <returns>The error text.</returns>
-  public static string DescribeAppliedSince(VersionSighting own, IReadOnlyList<AppliedSchemaChange> since) {
+  /// <param name="allowLossy">Whether the operator lets a rollback discard data (<see cref="ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
+  /// <returns>The refusal, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:AnIrreversibleChange_RefusesTheRollback_NamingOnlyWhatCannotBeReversed_AndTheVersionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:ALossyChange_RefusesTheRollback_UnlessTheOperatorAllowsItAsync</tests>
+  public static string? WhyNotReversible(VersionSighting own, IReadOnlyList<AppliedSchemaChange> since, bool allowLossy) {
     ArgumentNullException.ThrowIfNull(own);
     ArgumentNullException.ThrowIfNull(since);
+    var irreversible = since.Where(c => c.Reversal == SchemaChangeReversal.Irreversible).ToList();
+    if (irreversible.Count > 0) {
+      return $"{_since(own, since)}, and {irreversible.Count} cannot be reversed: {_named(irreversible)}; a rollback runs only "
+        + "when every change since this version can be reversed";
+    }
+    var lossy = since.Where(c => c.Reversal == SchemaChangeReversal.Lossy).ToList();
+    return lossy.Count == 0 || allowLossy
+      ? null
+      : $"{_since(own, since)}, and reversing {lossy.Count} would discard data the newer version wrote: {_named(lossy)}; set "
+        + $"{ALLOW_LOSSY_ROLLBACK_KEY} to true to roll back anyway";
+  }
+
+  /// <summary>The rollback Assess decided on (#2122): this instance's versions and every change it reverses.</summary>
+  /// <param name="own">This instance's versions.</param>
+  /// <param name="since">The changes applied since, every one reversible.</param>
+  /// <returns>The text.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheRollback_IsDescribedWithEveryChangeItReversesAsync</tests>
+  public static string DescribeRollback(VersionSighting own, IReadOnlyList<AppliedSchemaChange> since) {
+    ArgumentNullException.ThrowIfNull(own);
+    ArgumentNullException.ThrowIfNull(since);
+    return $"{_since(own, since)}, and every one can be reversed: rolling back {_named(since)}";
+  }
+
+  private static string _since(VersionSighting own, IReadOnlyList<AppliedSchemaChange> since) =>
+    $"since this instance's version (library {_text(own.LibraryVersion)}, application {_text(own.ApplicationVersion)}), "
+    + $"{since.Count} schema change(s) were applied by a newer version that this version did not make";
+
+  /// <summary>One change as the gate's errors name it: its name and who applied it.</summary>
+  /// <param name="change">The change.</param>
+  /// <returns>For example <c>351_X.sql (applied by library 2.0.0, application unknown)</c>.</returns>
+  public static string DescribeChange(AppliedSchemaChange change) {
+    ArgumentNullException.ThrowIfNull(change);
+    return $"{change.Name} (applied by library {_text(change.LibraryVersion)}, application {_text(change.ApplicationVersion)})";
+  }
+
+  /// <summary>The first five changes by name with who applied each, and how many more.</summary>
+  private static string _named(IReadOnlyList<AppliedSchemaChange> changes) {
     const int NAMED = 5;
-    var named = string.Join(", ", since.Take(NAMED).Select(c =>
-      $"{c.Name} (applied by library {_text(c.LibraryVersion)}, application {_text(c.ApplicationVersion)})"));
-    var more = since.Count > NAMED ? $", and {since.Count - NAMED} more" : string.Empty;
-    return $"since this instance's version (library {_text(own.LibraryVersion)}, application {_text(own.ApplicationVersion)}), "
-      + $"{since.Count} schema change(s) were applied by a newer version that this version did not make, and a migration "
-      + $"cannot be reversed yet (down migrations: whizbang-lib/whizbang#2122): {named}{more}";
+    var named = string.Join(", ", changes.Take(NAMED).Select(DescribeChange));
+    return changes.Count > NAMED ? $"{named}, and {changes.Count - NAMED} more" : named;
   }
 
   private static string _text(string? version) => string.IsNullOrWhiteSpace(version) ? "unknown" : version;

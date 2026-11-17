@@ -129,7 +129,7 @@ internal static class CoalesceSql {
       int partitionCount, Guid[] foldedIds, CancellationToken cancellationToken) {
     // The caller's transaction is open, so its connection is set: both coordinators begin it on that connection.
     var connection = transaction.Connection!;
-    await using (var store = CoordinatorCommandTimeout.Apply(connection.CreateCommand())) {
+    await using (var store = CoordinatorCommandTimeout.Apply(connection.CreateWhizbangCommand())) {
       store.Transaction = transaction;
       store.CommandText = $"SELECT * FROM {prefix}store_outbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitions)";
       store.Parameters.Add(new NpgsqlParameter("messages", compositeMessagesJson));
@@ -137,7 +137,7 @@ internal static class CoalesceSql {
       store.Parameters.Add(new NpgsqlParameter("partitions", partitionCount));
       await store.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
-    await using var complete = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
+    await using var complete = CoordinatorCommandTimeout.Apply(connection.CreateWhizbangCommand());
     complete.Transaction = transaction;
     complete.CommandText = $"UPDATE {prefix}wh_outbox SET processed_at = NOW() WHERE message_id = ANY(@ids) AND processed_at IS NULL";
     complete.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = foldedIds });

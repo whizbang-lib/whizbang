@@ -113,6 +113,28 @@ public static class PostgresDriverExtensions {
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
+        // TURNKEY: Register IPerspectiveWriteSink, the write seam of set-based perspective writes (#2246): a batch's
+        // prepared rows are written with one statement per table and shape over the consumer's DbContext. TryAdd,
+        // so a service's own sink still wins.
+        selector.Services.TryAddScoped<IPerspectiveWriteSink>(sp =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+        // One sink per DbContext as well, under the context's type: each store keys the rows it prepares to its own
+        // context (PendingPerspectiveWrite.SinkKey), so a service with several contexts writes every perspective through
+        // its own. A second context registered through this driver gets its own keyed sink.
+        selector.Services.TryAddKeyedScoped<IPerspectiveWriteSink>(dbContextType, (sp, _) =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+
+        // TURNKEY: Register IPerspectiveStateSource, the read seam of set-based perspective writes (#2246): a batch's
+        // rows are read with one statement per perspective table, no row is read for a stream known to be new, and the
+        // purge-marker and history probes of missing rows are asked once per perspective. TryAdd, so a service's own
+        // state source still wins. The container takes the logging constructor when logging is registered, and the
+        // parameterless one when it is not.
+        selector.Services.TryAddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
+
         // TURNKEY: Register IPerspectiveRowDigest so a rebuild of named streams can record what those rows
         // looked like before and after it ran. Without this the rebuild still happens and still reports its
         // outcome; the Completed event simply carries no digests, which reads as "not known" rather than as
@@ -178,6 +200,11 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the step that keeps the held-without-sequence change log bounded (#2351). An integrity answer folds
+        // only its own origin's changes; this folds every origin's, so an origin nobody audits never grows the log.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new UnsequencedDigestCompactionStep(dbContextType, sp.GetService<ILogger<UnsequencedDigestCompactionStep>>()));
+
         // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once
         // (#1646) and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled
         // is true, and is idle otherwise. One per DbContext, since each context's schema has its own tables.
@@ -228,11 +255,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
-        // so a built-in receptor shipped from this assembly needs runtime registration.
-        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
-        // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
-        selector.Services.TryAddSingleton<RebuildBackgroundQueue>();
-        selector.Services.AddHostedService<RebuildBackgroundWorker>();
+        // so a built-in receptor needs runtime registration. #1353: a whole-perspective blue-green rebuild runs on the
+        // background rebuild worker, off the inbox handler's budget. Shared with the Dapper driver.
+        selector.Services.AddRebuildCommandHandling();
 
         // TURNKEY: scheduled prefix truncate (#1760): runtime-register ScheduledPrefixTruncateReceptor so a fired
         // schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above. Shared with the
@@ -320,7 +345,8 @@ public static class PostgresDriverExtensions {
           new PostgresStreamPurger(
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
-            logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+            logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+            integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
         // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
         // writes through it; a blob store package registers its own IArchiveStore first and wins.
         // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
@@ -354,6 +380,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#history-conversion</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: the maintenance step that converts audit records written before the pointer default (#1588) to the
+        // pointer form (#2326), keeping the bodies of [AuditEvent(IncludeBody = true)] types, under the maintainer duty.
+        // <docs>fundamentals/events/system-events#audit-body</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+          AuditBodyConversionStep.FromServices));
         // TURNKEY: the maintenance step that brings the history a superseding type stored before its declaration under the
         // superseding rule (#2110), under the maintainer duty. Whizbang:Superseding:ReconcileHistory=false turns it off.
         // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
@@ -533,7 +564,7 @@ public static class PostgresDriverExtensions {
         // An unnamed context still configured under the name earlier releases derived from its class
         // keeps working until its keys are renamed (see ResolveConnectionStringName).
         var legacyConnectionStringName = selector.ConnectionStringName is null
-          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(selector.DbContextType.Name)
+          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(TypeNameFormatter.SimpleName(selector.DbContextType))
           : null;
         // #1012: the same name keys this database's PostgresOptions section,
         // Whizbang:Postgres:<name>, which overrides the code values per key.
@@ -580,5 +611,6 @@ public static class PostgresDriverExtensions {
     sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
     sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
     sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+    Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 }

@@ -22,8 +22,9 @@ namespace Whizbang.Core.Workers;
 /// windows; this worker CLAIMS eligible rows (past backoff, under the attempt cap,
 /// least-recently-attempted first, only origins with a learned request topic) and sends one
 /// directed, range-bounded <see cref="RequestRedeliveryCommand"/> per (origin, tenant, type, window)
-/// group, then records each sent bucket's answer as pending so it is not claimed again while the answer is on its
-/// way (#2029). Inert without a drain-capable coordinator, a transport, or learned origins. Runs on the instance holding the
+/// group. Each group's buckets are recorded as awaiting their answer before the request is sent, so they are not claimed
+/// again while the answer is on its way (#2029) and an answer that outruns the send finds them waiting; a send that fails
+/// takes the record back and returns the claim's attempt (#2223). Inert without a drain-capable coordinator, a transport, or learned origins. Runs on the instance holding the
 /// maintainer duty, and only once the housekeeping idle gate admits integrity work (forced through after
 /// <c>Whizbang:Housekeeping:MaxDeferral</c>); tokens keep accruing, up to the burst cap, while it waits (#2001). It claims
 /// nothing while <see cref="StreamIntegrityOptions.MaxOutstandingRepairAnswers"/> buckets await their answer, and never
@@ -33,6 +34,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
 /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RepairDrainRecordsBeforeSendingTests.cs</tests>
 public sealed partial class RepairDrainWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<StreamIntegrityOptions> options,
@@ -54,9 +56,15 @@ public sealed partial class RepairDrainWorker(
     }
     LogStarted(_logger, _options.RepairDrainRatePerSecond);
     var last = _time.GetUtcNow();
+    // #2346: one second while there is work, doubling on each idle tick up to the ceiling.
+    var backoff = IdlePollBackoff.For(_options);
+    ProbeCadenceMetrics? probes;
+    using (var scope = _scopeFactory.CreateScope()) {
+      probes = scope.ServiceProvider.GetService<ProbeCadenceMetrics>();
+    }
     while (!stoppingToken.IsCancellationRequested) {
       try {
-        await Task.Delay(TimeSpan.FromSeconds(1), _time, stoppingToken);
+        await Task.Delay(backoff.Current, _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -64,10 +72,14 @@ public sealed partial class RepairDrainWorker(
       var elapsed = (now - last).TotalSeconds;
       last = now;
       try {
-        await DrainTickAsync(elapsed, now, stoppingToken);
+        var foundWork = await DrainTickAsync(elapsed, now, stoppingToken);
+        backoff.Next(foundWork);
+        probes?.RecordTick(ProbeCadenceMetrics.PROBE_REPAIR_DRAIN, foundWork);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
+        // A failing tick keeps the one-second step: it is not known to be idle.
+        backoff.Reset();
         LogTickFailed(_logger, ex);
       }
     }
@@ -80,23 +92,27 @@ public sealed partial class RepairDrainWorker(
   /// (grouping only ever sends fewer wire requests than rows paid for). Internal for
   /// deterministic tests; the loop above supplies real elapsed time.
   /// </summary>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One pacing tick refills the token bucket and then, only if a whole token is available and every collaborator is wired, claims ledger rows, dispatches them grouped per origin, tenant, type and window, and records the sent buckets as awaiting their answer. The early exits are the pacing.")]
-  internal async Task DrainTickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
+  /// <returns>
+  /// Whether the tick found work (#2346): it claimed a row, buckets still await their answer, or it was held only by
+  /// pacing. An idle tick lets the loop wait longer before the next.
+  /// </returns>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One pacing tick refills the token bucket and then, only if a whole token is available and every collaborator is wired, claims ledger rows, records each group as awaiting its answer and dispatches it, grouped per origin, tenant, type and window, taking the record back when its send fails. The early exits are the pacing.")]
+  internal async Task<bool> DrainTickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
     if (_options.RepairMode != IntegrityRepairMode.AutoRepairCapped) {
       // ReportOnly is the operator's explicit opt-DOWN from auto-repair, and the drain is a
       // repair dispatcher — it must not claim (a claim stamps an attempt) or send anything.
-      return;
+      return false;
     }
     var rate = _options.RepairDrainRatePerSecond;
     _tokens = Math.Min(_tokens + (rate * Math.Max(0, elapsedSeconds)), rate * 2);
     if (_tokens < 1) {
-      return;
+      return true;   // held by pacing, not idle
     }
 
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     if (!MaintainerDuty.IsThisInstancesTurn(services)) {
-      return;   // #2001: another instance holds the maintainer duty and drains the ledger.
+      return false;   // #2001: another instance holds the maintainer duty and drains the ledger.
     }
     var coordinator = services.GetService<IWorkCoordinator>();
     var transport = services.GetService<ITransport>();
@@ -107,7 +123,7 @@ public sealed partial class RepairDrainWorker(
     var replyTopic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
     if (coordinator is null || transport is null || serializer is null || tracker is null
         || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(replyTopic)) {
-      return;   // no dispatch infrastructure — the ledger keeps the backlog durable.
+      return false;   // no dispatch infrastructure; the ledger keeps the backlog durable.
     }
 
     // Directed or not at all — the same rule as every other integrity send: only origins whose
@@ -117,13 +133,13 @@ public sealed partial class RepairDrainWorker(
     await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
     var origins = tracker.GetOrigins().Where(o => !string.IsNullOrEmpty(o.RequestTopic)).ToList();
     if (origins.Count == 0) {
-      return;
+      return false;
     }
     // #2001: asked only once there is something to send, so an idle drain does not measure the backlog every second.
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(RepairDrainWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
-      return;
+      return false;
     }
 
     var budget = (int)Math.Min(Math.Floor(_tokens), _options.RepairDrainBatchSize);
@@ -131,15 +147,16 @@ public sealed partial class RepairDrainWorker(
     // put on this store. While the cap's worth of buckets await an answer, nothing new is claimed.
     var cap = _options.MaxOutstandingRepairAnswers;
     var metrics = services.GetService<StreamIntegrityMetrics>();
+    var pending = 0;
     if (cap > 0) {
-      var pending = await coordinator.IntegrityCountAnswerPendingAsync(now, cap, cancellationToken).ConfigureAwait(false);
+      pending = await coordinator.IntegrityCountAnswerPendingAsync(now, cap, cancellationToken).ConfigureAwait(false);
       if (pending >= cap) {
         if (!_heldByAnswerCap) {
           _heldByAnswerCap = true;
           metrics?.RepairDrainHolds.Add(1);
           LogHeldByAnswerCap(_logger, pending, cap);
         }
-        return;
+        return true;   // buckets await their answer
       }
       if (_heldByAnswerCap) {
         _heldByAnswerCap = false;
@@ -152,12 +169,12 @@ public sealed partial class RepairDrainWorker(
       TimeSpan.FromSeconds(_options.RepairRequestBackoffSeconds), _options.MaxRepairAttemptsPerBucket,
       budget, cancellationToken).ConfigureAwait(false);
     if (claimed.Count == 0) {
-      return;
+      return pending > 0;
     }
     _tokens -= claimed.Count;
 
     var byOrigin = origins.ToDictionary(o => o.OriginServiceId, o => (o.OriginServiceName, o.RequestTopic));
-    var sent = new Dictionary<Guid, List<IntegrityRepairLedger.DivergenceKey>>();
+    var answerTimeout = TimeSpan.FromMinutes(_options.RepairAnswerTimeoutMinutes);
     // #2034: grouped by window too, so no stream is re-shipped over a wider range than its own divergence. Rows a
     // comparison stamped together share their window, so this costs few extra requests.
     // #2103: rows that name their one missing event ask for those events, apart from rows that ask for their streams:
@@ -184,7 +201,15 @@ public sealed partial class RepairDrainWorker(
         Topic = replyTopic,
         FromCommitSequence = fromSeq,
         ToCommitSequence = toSeq,
+        AcceptsStreamSpanningBundles = true,
       };
+      // #2029, #2223: recorded as awaiting its answer before it is sent. An answer clears the wait, and the origin can
+      // answer before the publish call returns (a fast origin, or this host's continuation delayed under load); recorded
+      // after, the late record put the wait back over that answer and the bucket counted against the cap until the
+      // answer timeout.
+      var keys = items.ConvertAll(i => new IntegrityRepairLedger.DivergenceKey(i.OriginServiceId, i.TenantScope, i.EventType, i.StreamId));
+      await coordinator.IntegrityMarkAnswerPendingAsync(group.Key.OriginServiceId, keys, null, null, now, answerTimeout, cancellationToken)
+        .ConfigureAwait(false);
       try {
         await RedeliveryRequestDispatch.PublishAsync(
           transport, serializer, instanceProvider, command, origin.OriginServiceName,
@@ -193,27 +218,20 @@ public sealed partial class RepairDrainWorker(
       } catch (OperationCanceledException) {
         throw;
       } catch (Exception ex) {
-        // A transient broker failure costs THIS group's attempt (already stamped on claim) — it
-        // must never kill the remaining groups in the tick; their rows also burned an attempt
-        // and deserve their shot at the wire. The ladder re-offers this group after backoff.
+        // A transient broker failure never kills the remaining groups in the tick: their rows were claimed too and
+        // deserve their shot at the wire. This group's request never left, so its record is taken back and the claim's
+        // attempt returned (#2223); the ladder re-offers it after backoff.
         LogGroupDispatchFailed(_logger, group.Key.EventType, origin.OriginServiceName, ex);
+        await coordinator.IntegrityWithdrawAnswerPendingAsync(group.Key.OriginServiceId, keys, now, answerTimeout, cancellationToken)
+          .ConfigureAwait(false);
         continue;
       }
-      if (!sent.TryGetValue(group.Key.OriginServiceId, out var keys)) {
-        sent[group.Key.OriginServiceId] = keys = [];
-      }
-      keys.AddRange(items.Select(i => new IntegrityRepairLedger.DivergenceKey(i.OriginServiceId, i.TenantScope, i.EventType, i.StreamId)));
       metrics?.RepairsRequested.Add(items.Count,
         new KeyValuePair<string, object?>("source", "drain"),
         new KeyValuePair<string, object?>("origin", origin.OriginServiceName));
       LogDispatched(_logger, items.Count, group.Key.EventType, origin.OriginServiceName);
     }
-    // #2029: a request that left has an answer on the way; until it lands or times out the bucket is not claimed.
-    var answerTimeout = TimeSpan.FromMinutes(_options.RepairAnswerTimeoutMinutes);
-    foreach (var (originId, keys) in sent) {
-      await coordinator.IntegrityMarkAnswerPendingAsync(originId, keys, null, null, now, answerTimeout, cancellationToken)
-        .ConfigureAwait(false);
-    }
+    return true;
   }
 
   [LoggerMessage(Level = LogLevel.Warning,
@@ -238,7 +256,7 @@ public sealed partial class RepairDrainWorker(
   private static partial void LogTickFailed(ILogger logger, Exception exception);
 
   [LoggerMessage(Level = LogLevel.Warning,
-    Message = "DRAIN dispatch of {EventType} to '{OriginServiceName}' failed; the group's attempt is spent and the ladder re-offers it after backoff")]
+    Message = "DRAIN dispatch of {EventType} to '{OriginServiceName}' failed; the request is withdrawn, its attempt returned, and the ladder re-offers it after backoff")]
   private static partial void LogGroupDispatchFailed(ILogger logger, string eventType, string originServiceName, Exception exception);
 
   [LoggerMessage(Level = LogLevel.Debug,

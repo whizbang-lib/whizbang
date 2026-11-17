@@ -31,7 +31,21 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-public sealed partial class WorkCoordinatorGate : IDisposable {
+public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Configuration.IDerivedSettingSource {
+  /// <inheritdoc />
+  /// <remarks>The interactive reserve, and for a gate sized from the pool, its permits: each with its inputs (#2251).</remarks>
+  public IEnumerable<Whizbang.Core.Configuration.IDerivedSetting> DerivedSettings => _derived;
+
+  private readonly List<Whizbang.Core.Configuration.IDerivedSetting> _derived = [];
+
+  /// <summary>The interactive reserve as a derived setting: the value <see cref="ComputeInteractiveReserve"/> gives, with its inputs.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DeriveInteractiveReserve(int maxConcurrent, int? configured) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:WorkCoordinatorGate:InteractiveReserve",
+      ComputeInteractiveReserve(maxConcurrent, configured),
+      configured is null ? "MaxConcurrent / 10, leaving at least one shared permit" : "configured, leaving at least one shared permit",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxConcurrent", maxConcurrent));
+
   private readonly SemaphoreSlim? _semaphore;
   // Priority step 4: the permits held back for interactive callers. Null when nothing is reserved.
   private readonly SemaphoreSlim? _reserve;
@@ -101,8 +115,11 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     return new Releaser(taken, _holdDurationHistogram, caller, _holders, id);
   }
 
-  /// <summary>Whether the current caller runs inside an interactive handling and may use the reserve.</summary>
-  private static bool _isInteractiveCaller() =>
+  /// <summary>
+  /// Whether the current caller runs inside an interactive handling and may use the reserve. The batch buffer asks the
+  /// same question, so one rule decides who is interactive for both bulkheads.
+  /// </summary>
+  internal static bool IsInteractiveCaller() =>
     Whizbang.Core.Priority.WorkPriority.Bucket(Whizbang.Core.Priority.PriorityContext.CurrentParent) == Whizbang.Core.Priority.WorkBucket.Interactive;
 
   /// <summary>
@@ -169,7 +186,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       WorkCoordinatorMetrics? metrics = null,
       int? interactiveReserve = null) {
     MaxConcurrent = maxConcurrent;
-    InteractiveReserve = ComputeInteractiveReserve(maxConcurrent, interactiveReserve);
+    var reserve = DeriveInteractiveReserve(maxConcurrent, interactiveReserve);
+    _derived.Add(reserve);
+    InteractiveReserve = reserve.Value;
     AcquireTimeoutMilliseconds = acquireTimeoutMilliseconds;
     // The shared permits are what is left after the reserve; the reserve is its own semaphore so a
     // non-interactive caller can never take one of its permits, and a released reserved permit goes
@@ -209,12 +228,16 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       int reserve = 5,
       int acquireTimeoutMilliseconds = 30000,
       WorkCoordinatorMetrics? metrics = null) {
-    var derived = Math.Max(1, maxPoolSize - reserve);
-    return new WorkCoordinatorGate(
-      maxConcurrent: derived,
+    var derived = Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:WorkCoordinatorGate:MaxConcurrent", Math.Max(1, maxPoolSize - reserve), "MaxPoolSize - reserve, at least 1",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxPoolSize", maxPoolSize), Whizbang.Core.Configuration.SettingInput.Of("Reserve", reserve));
+    var gate = new WorkCoordinatorGate(
+      maxConcurrent: derived.Value,
       logger: logger,
       acquireTimeoutMilliseconds: acquireTimeoutMilliseconds,
       metrics: metrics);
+    gate._derived.Insert(0, derived);
+    return gate;
   }
 
   /// <summary>
@@ -248,7 +271,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     }
     var currentCount = _semaphore.CurrentCount;
     LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
-    if (_reserve is not null && _isInteractiveCaller()) {
+    if (_reserve is not null && IsInteractiveCaller()) {
       return await _acquireInteractiveAsync(caller, cancellationToken).ConfigureAwait(false);
     }
     if (AcquireTimeoutMilliseconds <= 0) {

@@ -76,12 +76,18 @@ public sealed class RunPermitAuditTests {
     "LifecyclePhaseWorker", "ReadModelsReadyDriver", "TypeDefinitionReconcilerHostedService",
     // Measurement and in-process state.
     "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker",
-    "RecentlyProcessedEventCacheSweepWorker", "HealthCheckPublisherHostedService",
+    "RecentlyProcessedEventCacheSweepWorker", "InProcessTrackerSweepWorker", "HealthCheckPublisherHostedService",
+    // Counts what cleanup has left on one instance per window; it reads and never deletes (#2289).
+    "PendingReclamationSampler",
     // Wakes, registrations and checks: each wakes or configures a worker above, which obeys the permit itself.
     "BackupTickCoordinator", "PgWorkNotificationListener", "MultiStreamCommandSubscriber", "PartitionAssignmentSubscriber",
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     // Reports items two assemblies both register, from what the registrations already hold (#2201).
     "RegistrationCollisionStartupValidator",
+    // The startup settings report (#2251) writes one log entry per settings section when the host is up, and nothing else.
+    "StartupSettingsReportService",
+    // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
+    "ServiceAssemblyScopeStartupReporter",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer", "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar",

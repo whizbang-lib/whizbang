@@ -28,7 +28,7 @@ public static class ControlPlaneDestination {
   /// </summary>
   public static TransportDestination For(string address, Guid sessionStreamId, Type payloadType) {
     ArgumentNullException.ThrowIfNull(payloadType);
-    var routingKey = $"{payloadType.Namespace!.ToLowerInvariant()}.{payloadType.Name.ToLowerInvariant()}";
+    var routingKey = $"{TypeNameFormatter.NamespaceOf(payloadType)!.ToLowerInvariant()}.{TypeNameFormatter.ForLog(payloadType).ToLowerInvariant()}";
     return WithSession(new TransportDestination(address, routingKey), sessionStreamId);
   }
 

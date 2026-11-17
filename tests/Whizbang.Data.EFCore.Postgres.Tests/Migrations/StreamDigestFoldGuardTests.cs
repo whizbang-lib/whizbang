@@ -23,9 +23,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>resilience/stream-integrity#one-digest-fold</docs>
 [Category("Shard3")]
 public partial class StreamDigestFoldGuardTests {
-  /// <summary>The helpers that own the math: the only bodies allowed to hash an event id or write a digest row.</summary>
+  /// <summary>
+  /// The helpers that own the math: the only bodies allowed to hash an event id or write a digest row.
+  /// <c>_wh_heal_stream_digests_statement</c> is the heal's own statement, moved out of the heal so it can be planned on
+  /// its own (#2337); the heal runs exactly its text, so it is one home of the heal math, not a copy.
+  /// </summary>
   private static readonly HashSet<string> _helpers = new(StringComparer.Ordinal) {
-    "_wh_digest_lane", "_wh_fold_stream_digests", "_wh_heal_stream_digests",
+    "_wh_digest_lane", "_wh_fold_stream_digests", "_wh_heal_stream_digests", "_wh_heal_stream_digests_statement",
   };
 
   [GeneratedRegex(@"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+__SCHEMA__\.(?<name>[a-z_0-9]+)\s*\(", RegexOptions.IgnoreCase)]

@@ -198,6 +198,104 @@ public sealed class InboxChannelWriterHeldRowsTests {
       .Because("only the row written after the age-out is still held");
   }
 
+  // #1853: once the drain turns rows away for the byte budget, new inbox rows are not leased until the working set has
+  // drained to where the smallest of them fits.
+
+  [Test]
+  public async Task AcquisitionIsDeferred_WhileHeldIsAboveTheMark_AndResumesOnTheRemovalThatReachesItAsync() {
+    var (_, writer) = _writer();
+    var large = _work("""{"a":12345}""");
+    var small = _work("""{"a":1}""");
+    await writer.WriteAsync(large);
+    await writer.WriteAsync(small);
+    var wakes = 0;
+    writer.OnNewInboxWorkAvailable += () => wakes++;
+
+    writer.DeferInboxAcquisitionUntilHeldAtMost(7);
+
+    await Assert.That(writer.InboxAcquisitionDeferred).IsTrue()
+      .Because("leasing a row now only hands it straight back: it would not fit the working set");
+    writer.RemoveInFlight(small.MessageId);
+    await Assert.That(writer.InboxAcquisitionDeferred).IsTrue();
+    await Assert.That(wakes).IsEqualTo(0);
+
+    writer.RemoveInFlight(large.MessageId);
+
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse()
+      .Because("the working set has drained to where a turned-away row fits again");
+    await Assert.That(wakes).IsEqualTo(1)
+      .Because("the claim is woken the moment acquisition resumes, rather than at its next poll");
+    await writer.WriteAsync(_work("""{"a":12345}"""));
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse()
+      .Because("the mark is spent once it is reached; only the drain turning rows away sets another");
+  }
+
+  [Test]
+  public async Task AMarkAtOrAboveWhatIsHeld_DefersNothingAsync() {
+    var (_, writer) = _writer();
+    await writer.WriteAsync(_work("""{"a":1}"""));
+
+    writer.DeferInboxAcquisitionUntilHeldAtMost(7);
+
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse();
+    await writer.WriteAsync(_work("""{"a":12345}"""));
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse()
+      .Because("a mark already met is never set, so rows written later cannot revive it");
+  }
+
+  [Test]
+  public async Task AMarkTheWorkingSetDrainedPastBeforeItWasRead_IsClearedByTheReadAsync() {
+    var (_, writer) = _writer();
+    var held = _work("""{"a":12345}""");
+    await writer.WriteAsync(held);
+    writer.DeferInboxAcquisitionUntilHeldAtMost(0);
+    writer.RemoveInFlight(held.MessageId);
+
+    // The removal reached the mark, so it is spent; the next read and every later one agree.
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse();
+    await writer.WriteAsync(_work("""{"a":12345}"""));
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse();
+  }
+
+  [Test]
+  public async Task TheLatestMark_IsTheOneInForceAsync() {
+    var (_, writer) = _writer();
+    var held = _work("""{"a":12345}""");
+    await writer.WriteAsync(held);
+
+    writer.DeferInboxAcquisitionUntilHeldAtMost(0);
+    writer.DeferInboxAcquisitionUntilHeldAtMost(10);
+
+    await Assert.That(writer.InboxAcquisitionDeferred).IsTrue();
+    writer.DeferInboxAcquisitionUntilHeldAtMost(12);
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse()
+      .Because("a later turn-away of a smaller row resumes acquisition sooner");
+  }
+
+  [Test]
+  public async Task AWriterThatTracksNoRows_NeverDefersAcquisitionAsync() {
+    IInboxChannelWriter writer = new UntrackedWriter();
+
+    writer.DeferInboxAcquisitionUntilHeldAtMost(0);
+
+    await Assert.That(writer.InboxAcquisitionDeferred).IsFalse()
+      .Because("a writer with no working set has no budget to fill");
+  }
+
+  /// <summary>An inbox writer with only the members every writer must have.</summary>
+  private sealed class UntrackedWriter : IInboxChannelWriter {
+    public System.Threading.Channels.ChannelReader<InboxWork> Reader { get; } =
+      System.Threading.Channels.Channel.CreateUnbounded<InboxWork>().Reader;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => ValueTask.CompletedTask;
+    public bool TryWrite(InboxWork work) => true;
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() { }
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
   private static InboxWork _work(string payload = "{}") {
     var id = (Guid)TrackedGuid.New();
     return new InboxWork {

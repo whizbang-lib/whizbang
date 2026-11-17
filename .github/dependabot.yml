@@ -48,6 +48,25 @@ updates:
       remaining:
         patterns:
           - "*"
+    # Never propose a new major version of the .NET runtime line. Moving from one .NET major to the
+    # next changes the target framework and is done deliberately, in its own pull request. Proposed
+    # here, 11.0.0 packages land on a project that still targets net10.0 and the build fails, which
+    # also holds back the 10.0.x patches grouped with them. Patch and minor updates still flow.
+    ignore:
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Data.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.Text.Json"
+        update-types: ["version-update:semver-major"]
+      # Npgsql's EF Core provider tracks EF Core's major (11.x needs EF Core 11, net11.0 only), but its
+      # updates come through the remaining group, which the patterns above don't cover.
+      - dependency-name: "Npgsql*"
+        update-types: ["version-update:semver-major"]
     assignees:
       - "philcarbone"
     labels:

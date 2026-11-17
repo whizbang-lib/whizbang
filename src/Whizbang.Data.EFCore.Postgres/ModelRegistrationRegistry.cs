@@ -147,11 +147,15 @@ public static class ModelRegistrationRegistry {
         _invoked.Add(services, invokedSet);
       }
 
-      foreach (var entry in _entries.Where(entry => invokedSet.Add((dbContextType, entry.Id)))) {
+      // Only the host's own service's models (#2243); another service's are skipped without being marked, so a later
+      // anchor on that service still registers them.
+      var scope = ServiceAssemblyScope.For(services);
+      var included = _entries.Where(entry => scope.Includes(entry.AssemblyName)).ToList();
+      foreach (var entry in included.Where(entry => invokedSet.Add((dbContextType, entry.Id)))) {
         entry.Registrar(services, dbContextType, upsertStrategy);
       }
 
-      var collisions = RegistrationCollisions.Find(MODEL_REGISTRATION, _entries
+      var collisions = RegistrationCollisions.Find(MODEL_REGISTRATION, included
         .Where(entry => entry.AssemblyName is not null)
         .Select(entry => (entry.AssemblyName!, entry.Models
           .Where(model => model.DbContextType == dbContextType)

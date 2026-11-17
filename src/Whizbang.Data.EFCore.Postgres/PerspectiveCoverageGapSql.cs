@@ -52,6 +52,7 @@ internal static class PerspectiveCoverageGapSql {
           WHERE es.stream_id = w.stream_id
             AND es.commit_sequence IS NOT NULL
             AND es.created_at < NOW() - @p_settle::interval
+            -- not the digest rule: an ephemeral event owes no perspective a row
             AND COALESCE(es.flags, 0) & 8 = 0
             AND NOT EXISTS (
               SELECT 1 FROM {schema}.wh_perspective_events pe

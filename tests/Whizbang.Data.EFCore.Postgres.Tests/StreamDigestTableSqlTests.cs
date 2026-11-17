@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 [Category("Shard2")]
-public class StreamDigestTableSqlTests : EFCoreTestBase {
+public partial class StreamDigestTableSqlTests : EFCoreTestBase {
   private const string ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
   /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>

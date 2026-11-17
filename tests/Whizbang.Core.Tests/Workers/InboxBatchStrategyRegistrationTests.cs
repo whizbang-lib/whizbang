@@ -36,7 +36,9 @@ public class InboxBatchStrategyRegistrationTests {
     await using var sp = services.BuildServiceProvider();
     var resolved = sp.GetRequiredService<IInboxBatchStrategy>();
 
-    await Assert.That(resolved).IsTypeOf<SlidingWindowInboxBatchStrategy>();
+    // #2220: every registered strategy is wrapped in the batch buffer's bound.
+    await Assert.That(resolved).IsTypeOf<BoundedInboxBatchStrategy>();
+    await Assert.That(((BoundedInboxBatchStrategy)resolved).Inner).IsTypeOf<SlidingWindowInboxBatchStrategy>();
   }
 
   [Test]
@@ -49,7 +51,8 @@ public class InboxBatchStrategyRegistrationTests {
     await using var sp = services.BuildServiceProvider();
     var resolved = sp.GetRequiredService<IInboxBatchStrategy>();
 
-    await Assert.That(resolved).IsTypeOf<ImmediateInboxBatchStrategy>();
+    await Assert.That(resolved).IsTypeOf<BoundedInboxBatchStrategy>();
+    await Assert.That(((BoundedInboxBatchStrategy)resolved).Inner).IsTypeOf<ImmediateInboxBatchStrategy>();
   }
 
   [Test]

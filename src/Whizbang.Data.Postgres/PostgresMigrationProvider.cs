@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 
 namespace Whizbang.Data.Postgres;
@@ -38,7 +39,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
     _assembly = assembly;
     ArgumentNullException.ThrowIfNull(schemaName);
     _schemaName = schemaName;
-    _resourcePrefix = $"{_assembly.GetName().Name}.Migrations.";
+    _resourcePrefix = $"{TypeNameFormatter.AssemblySimpleName(_assembly)}.Migrations.";
   }
 
   /// <summary>
@@ -51,6 +52,19 @@ public class PostgresMigrationProvider : IMigrationProvider {
   /// Release notes for this version. Set manually for releases.
   /// </summary>
   public string? ReleaseNotes { get; init; }
+
+  /// <summary>
+  /// How <paramref name="migration"/> is reversed (#2122): its declared kind and its reverse script, rendered for this
+  /// provider's schema as the forward text is; null for a migration that predates the declaration.
+  /// </summary>
+  /// <param name="migration">One of this provider's migrations.</param>
+  /// <returns>The reversal, or null.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaRollbackTests.cs</tests>
+  public MigrationReversal? ReversalOf(MigrationScript migration) {
+    ArgumentNullException.ThrowIfNull(migration);
+    return MigrationReversal.ForLibraryMigration(
+      migration.Name, migration.Sql, sql => MigrationConstants.Apply(sql.Replace("__SCHEMA__", _schemaName)), _assembly);
+  }
 
   /// <summary>
   /// Gets all migration scripts in order (sorted by filename) with __SCHEMA__ and the migration constants replaced.

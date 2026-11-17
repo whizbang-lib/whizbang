@@ -20,12 +20,13 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// <remarks>
 /// <para>
-/// Constructor-injectable. Wire up in <c>IServiceCollection</c>:
+/// Registered by the driver's collective registration (<c>AddCollectiveEventsEFCore</c>, <c>AddCollectiveEventsDapper</c>),
+/// which hands it every assembly's handlers from the container (#2238). Wired by hand, it reads the same:
 /// </para>
 /// <code>
 /// services.AddSingleton&lt;ICollectiveDispatcher&gt;(sp =&gt; new CollectiveDispatcher(
 ///   sp,
-///   CollectiveApplyRegistry.Entries,
+///   sp.GetCollectiveApplyEntries(),
 ///   sp.GetServices&lt;ICollectiveScopeResolver&gt;().ToList(),
 ///   sp.GetServices&lt;ICollectiveEventExecutor&gt;().ToList(),
 ///   sp.GetService&lt;EventCategoryMetrics&gt;()));
@@ -55,7 +56,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
   /// Creates a dispatcher.
   /// </summary>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
-  /// <param name="entries">Compile-time registry from <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <param name="entries">The handlers, normally every assembly's (<see cref="CollectiveApplyRegistryServiceCollectionExtensions.GetCollectiveApplyEntries"/>).</param>
   /// <param name="resolvers">All <see cref="ICollectiveScopeResolver"/> instances registered in DI.</param>
   /// <param name="executors">All <see cref="ICollectiveEventExecutor"/> instances registered in DI (one per <c>TModel</c>).</param>
   /// <param name="metrics">Optional cross-cutting metrics. When null, recording is a no-op.</param>
@@ -88,7 +89,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
 
     var eventType = evt.GetType();
     var eventTypeName = TypeNameFormatter.DisplayName(eventType);
-    var eventNamespace = eventType.Namespace ?? string.Empty;
+    var eventNamespace = TypeNameFormatter.NamespaceOf(eventType) ?? string.Empty;
 
     // OTel span for the whole fan-out: this is what surfaces a single slow collective event in a trace
     // (the metrics tag event_type/namespace too, but a span shows the duration + causal parent). Tagged the
@@ -165,7 +166,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace),
-          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.MODEL_TYPE, entry.ModelType.Name));
+          new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.MODEL_TYPE, TypeNameFormatter.ForLog(entry.ModelType)));
       }
     } catch (Exception ex) when (ex is not InvalidOperationException && ex is not OperationCanceledException) {
       activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
@@ -241,6 +242,6 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
       }
     }
     throw new InvalidOperationException(
-      $"No ICollectiveEventExecutor registered for ModelType='{TypeNameFormatter.DisplayName(modelType)}'. Register an EFCoreCollectiveEventExecutor<{modelType.Name}> (or driver-equivalent) for each TModel that has a [CollectiveApplyFor] handler.");
+      $"No ICollectiveEventExecutor registered for ModelType='{TypeNameFormatter.DisplayName(modelType)}'. Register an EFCoreCollectiveEventExecutor<{TypeNameFormatter.ForLog(modelType)}> (or driver-equivalent) for each TModel that has a [CollectiveApplyFor] handler.");
   }
 }

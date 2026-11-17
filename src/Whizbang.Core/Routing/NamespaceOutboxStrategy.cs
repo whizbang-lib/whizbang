@@ -95,7 +95,7 @@ public sealed class NamespaceOutboxStrategy : IOutboxRoutingStrategy, ICommandIn
     }
 
     var contractNamespace = _topicResolver.ResolveTopic(messageType, "", null);
-    var routingKey = $"{contractNamespace}.{messageType.Name.ToLowerInvariant()}";
+    var routingKey = $"{contractNamespace}.{TypeNameFormatter.ForLog(messageType).ToLowerInvariant()}";
 
     if (kind == MessageKind.System) {
       // System traffic is broadcast by nature — one send, N broadcast-inbox deliveries.

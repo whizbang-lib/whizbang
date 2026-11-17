@@ -104,7 +104,7 @@ public partial class TransportPublishStrategy(
   // Derived once: short transport tag for OTEL dimensions. Maps "AzureServiceBusTransport"
   // → "asb", "RabbitMQTransport" → "rabbitmq", etc. Unknown transport types fall back to the
   // class name so the dashboard still shows *something* distinguishable.
-  private string _transportTag => _transport.GetType().Name switch {
+  private string _transportTag => TypeNameFormatter.SimpleName(_transport.GetType()) switch {
     "AzureServiceBusTransport" => "asb",
     "RabbitMQTransport" => "rabbitmq",
     "InMemoryTransport" => "inmemory",
@@ -273,7 +273,7 @@ public partial class TransportPublishStrategy(
           MessageId = work.MessageId,
           Success = false,
           CompletedStatus = work.Status, // Already stored, publish failed
-          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
           Reason = reason,
         };
       }
@@ -442,7 +442,7 @@ public partial class TransportPublishStrategy(
               MessageId = work.MessageId,
               Success = false,
               CompletedStatus = work.Status,
-              Error = $"{caught.GetType().Name}: {caught.Message}",
+              Error = $"{TypeNameFormatter.ForLog(caught.GetType())}: {caught.Message}",
               Reason = reason,
             });
           }

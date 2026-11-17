@@ -116,7 +116,7 @@ public sealed partial class IntegrityDeliveryWorker(
     if (services.GetService<IWorkCoordinator>() is not { } coordinator) {
       return new Pass(PassOutcome.NoCoordinator);
     }
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(IntegrityDeliveryWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
       _deferredSince ??= _time.GetUtcNow();

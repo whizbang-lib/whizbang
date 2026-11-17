@@ -427,15 +427,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
-    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
-    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
-    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
-    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
-    // in its constructor, which is not registered in DI, causing a build failure.
-    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
-    // the auto-registration callback is not needed.
-    ServiceRegistrationCallbacks.Dispatcher = null;
-
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
@@ -473,9 +464,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register TopicRegistry to provide base topic names for events
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
-
-    // Register dispatcher
-    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
     // Register lenses
     builder.Services.AddScoped<IProductLens, ProductLens>();
@@ -600,10 +588,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
-    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
-    // See comment in _createInventoryHost() for full explanation.
-    ServiceRegistrationCallbacks.Dispatcher = null;
-
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
@@ -632,9 +616,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register TopicRegistry
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
-
-    // Register dispatcher
-    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();

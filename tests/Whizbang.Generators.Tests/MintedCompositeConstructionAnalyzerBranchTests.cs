@@ -44,4 +44,29 @@ public class MintedCompositeConstructionAnalyzerBranchTests {
 
     await Assert.That(diagnostics.Count(d => d.Id == "WHIZ150")).IsEqualTo(1);
   }
+
+  /// <summary>
+  /// A lambda no expression consumes (a field initializer's) hands its composite to no builder: the climb reaches the
+  /// top of the tree, and the construction is WHIZ150 like any other outside a builder.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ACompositeBuiltInAFieldInitializersLambda_IsNotInsideABuilderAsync() {
+    var source = """
+      using System;
+      using Whizbang.Core.Minting;
+
+      namespace ConsumerApp;
+
+      public sealed class DigestComposite : CompositeEventBase;
+
+      public class DigestShipper {
+        private static readonly Func<object> _make = () => new DigestComposite();
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<MintedCompositeConstructionAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ150")).IsEqualTo(1);
+  }
 }

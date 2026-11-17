@@ -53,6 +53,8 @@ WHIZ014 | active | Whizbang.Generators | Receptor May Not Be Constructible by De
 WHIZ015 | active | Whizbang.Generators | Generic message types are not supported
 WHIZ016 | active | Whizbang.Generators | Stream ID Override Has Nothing to Override
 WHIZ017 | active | Whizbang.Generators | Stream ID Generation Opt-Out Cannot Hold Across Assemblies
+WHIZ018 | active | Whizbang.Generators | Stream ID Inherits From A Type That Is Not A Strong ID
+WHIZ019 | active | Whizbang.Generators | InheritFrom On A Stream ID That Is Not A Strong ID
 WHIZ020 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
 WHIZ021 | active | Whizbang.Generators | WhizbangId Must Be Partial
 WHIZ022 | active | Whizbang.Generators | Topic Filter Discovered
@@ -62,10 +64,13 @@ WHIZ025 | active | Whizbang.Generators | TopicFilter On Non-Command
 WHIZ026 | active | Whizbang.Generators | No Topic Filters Found
 WHIZ027 | active | Whizbang.Generators | Perspective Runner Generated
 WHIZ028 | active | Whizbang.Generators | Perspective Runner Registry Generated
+WHIZ029 | active | Whizbang.Generators | WhizbangId AcceptAnyVersion Disagrees
 WHIZ030 | active | Whizbang.Generators | Perspective Event Missing StreamId
 WHIZ031 | active | Whizbang.Generators | Multiple StreamId Attributes
 WHIZ032 | active | Whizbang.Generators | Perspective Name Collision
 WHIZ033 | active | Whizbang.Generators | Perspective Model Missing StreamId
+WHIZ034 | active | Whizbang.Generators | InheritFrom Lists The Stream ID's Own Type
+WHIZ035 | active | Whizbang.Generators | IHasStreamId Is Written Instead Of A Strong-ID Stream ID
 WHIZ040 | active | Whizbang.Generators | User Service Discovered
 WHIZ041 | active | Whizbang.Generators | Abstract Class Skipped
 WHIZ042 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
@@ -118,6 +123,7 @@ WHIZ135 | active | Whizbang.Generators | Event type is both ephemeral and supers
 WHIZ136 | active | Whizbang.Generators | Superseding event type has more than one key
 WHIZ137 | active | Whizbang.Generators | Destruction value has not shipped
 WHIZ138 | active | Whizbang.Generators | Superseding group's types disagree on their key
+WHIZ139 | active | Whizbang.Generators | Read model keeps an allowed mixed-stream pair refused
 WHIZ140 | active | Whizbang.Generators | Perspective shares stream event types with a group but joins none
 WHIZ141 | active | Whizbang.Generators | Stream group has no announcing member with a row evictor
 WHIZ142 | active | Whizbang.Generators | Bridge on a sole stream-group membership
@@ -153,6 +159,9 @@ WHIZ602 | active | Directory.Build.targets | A test project declares a WhizbangT
 WHIZ603 | active | Whizbang.TestAnalyzers | IsNotNull() on a Nullable<T> subject cannot fail
 WHIZ604 | active | Whizbang.RepoAnalyzers | A JsonDocument is created and dropped without being disposed
 WHIZ605 | active | Whizbang.TestAnalyzers | A test class in a sharded project must carry exactly one Shard category
+WHIZ606 | active | Whizbang.RepoAnalyzers | A credential-named settings property is a plain string
+WHIZ607 | active | Whizbang.RepoAnalyzers | A type name is read outside the shared naming code
+WHIZ608 | active | Whizbang.RepoAnalyzers | A type-naming exception does not say why
 WHIZ701 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Perspective Discovery
 WHIZ702 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Migration Files Discovery
 WHIZ703 | active | Whizbang.Data.EFCore.Postgres.Generators | No DbContext Found

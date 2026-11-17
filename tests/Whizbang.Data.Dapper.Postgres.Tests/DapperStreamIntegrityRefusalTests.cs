@@ -45,7 +45,8 @@ public class DapperStreamIntegrityRefusalTests {
     var options = provider.GetRequiredService<IOptions<StreamIntegrityOptions>>().Value;
 
     await Assert.That(options.CheckpointsEnabled || options.GapDetectionEnabled || options.AuditEnabled
-                      || options.EpochClosureEnabled || options.RepairDrainEnabled || options.BackfillOnSubscriptionGrowth).IsFalse()
+                      || options.Sealing.Enabled || options.SealRecheck.Enabled || options.FullHistoryCompare.Enabled
+                      || options.RepairDrainEnabled || options.BackfillOnSubscriptionGrowth).IsFalse()
       .Because("on Dapper the integrity features would run and do nothing, so a host that asks for none gets none");
     await Assert.That(options.RepairMode).IsEqualTo(IntegrityRepairMode.ReportOnly);
   }
@@ -54,7 +55,9 @@ public class DapperStreamIntegrityRefusalTests {
   [Arguments("CheckpointsEnabled", "stream integrity checkpoints")]
   [Arguments("GapDetectionEnabled", "stream integrity gap detection")]
   [Arguments("AuditEnabled", "the stream integrity audit")]
-  [Arguments("EpochClosureEnabled", "integrity digest epoch closure")]
+  [Arguments("Sealing:Enabled", "integrity digest epoch sealing")]
+  [Arguments("SealRecheck:Enabled", "the sealed-history re-check")]
+  [Arguments("FullHistoryCompare:Enabled", "the full-history compare")]
   [Arguments("RepairDrainEnabled", "the integrity repair drain")]
   [Arguments("BackfillOnSubscriptionGrowth", "subscription-growth backfill (redelivery of a new type's history)")]
   public async Task ASwitchConfiguredOn_RefusesTheHost_NamingTheFeatureTheKeyAndTheReasonAsync(string key, string feature) {
@@ -68,6 +71,21 @@ public class DapperStreamIntegrityRefusalTests {
         .Because("only the switch configuration turned on is refused, whichever registration ran first");
       await Assert.That(refusal.Message).Contains($"Whizbang:StreamIntegrity:{key} is true, which turns on {feature}");
       await Assert.That(refusal.Message).Contains("stream integrity runs on the EF Core driver only");
+    }
+  }
+
+  [Test]
+  public async Task TheOldSealingKey_StillTurnsSealingOn_AndIsRefusedUnderItsNewNameAsync() {
+    // #2353: EpochClosureEnabled is an alias of Sealing:Enabled for one release. A Dapper host that still sets the alias
+    // must be refused exactly as if it set the section key, whichever registration ran first.
+    foreach (var workersFirst in new[] { true, false }) {
+      await using var provider = _build(
+        new Dictionary<string, string?> { ["Whizbang:StreamIntegrity:EpochClosureEnabled"] = "true" }, workersFirst);
+
+      var refusal = await Assert.That(() => provider.GetRequiredService<IOptions<StreamIntegrityOptions>>().Value)
+        .Throws<OptionsValidationException>();
+
+      await Assert.That(refusal!.Message).Contains("Whizbang:StreamIntegrity:Sealing:Enabled is true");
     }
   }
 

@@ -146,6 +146,13 @@
            Text="$(MSBuildProjectName) declares &lt;WhizbangTestType&gt;$(WhizbangTestType)&lt;/WhizbangTestType&gt;, which no test runner knows, so its tests would never run. Use one of: $(WhizbangKnownTestTypes), or add the type to every reader (docs/TEST-PROJECTS.md, &quot;Adding a test type&quot;)." />
   </Target>
 
+  <!-- A package that ships no build output (the generators and analyzers, which pack their assembly as an analyzer) has
+       no symbols to put in a symbol package. NuGet in the .NET 11 SDK refuses that empty .snupkg (NU5017) where earlier
+       versions skipped it (#2135). Set here because IncludeBuildOutput is set in the project file. -->
+  <PropertyGroup Condition="'$(IncludeBuildOutput)' == 'false'">
+    <IncludeSymbols>false</IncludeSymbols>
+  </PropertyGroup>
+
   <!-- Public API compatibility (#1439). Packing a library compares it with the last stable release on
        nuget.org and fails on any change that breaks binary or source compatibility (a removed or changed
        public member, a narrowed framework), unless the break is recorded as intended in the project's

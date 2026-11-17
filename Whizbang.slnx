@@ -32,6 +32,7 @@
     <Project Path="samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests/ECommerce.AzureServiceBus.Integration.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests.AppHost/ECommerce.AzureServiceBus.Integration.Tests.AppHost.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities/ECommerce.Integration.TestUtilities.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities.Tests/ECommerce.Integration.TestUtilities.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.Lifecycle.Integration.Tests/ECommerce.Lifecycle.Integration.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.InventoryWorker.Tests/ECommerce.InventoryWorker.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.NotificationWorker.Tests/ECommerce.NotificationWorker.Tests.csproj" />
@@ -121,6 +122,8 @@
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Component.Tests/Whizbang.Transports.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.HotChocolate.Ids.Fixtures/Whizbang.Transports.HotChocolate.Ids.Fixtures.csproj" />
+    <Project Path="tests/Whizbang.Transports.HotChocolate.Ids.Tests/Whizbang.Transports.HotChocolate.Ids.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.HotChocolate.Component.Tests/Whizbang.Transports.HotChocolate.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Mutations.Tests/Whizbang.Transports.Mutations.Tests.csproj" />
     <Project Path="tests/Whizbang.Offloads.InMemory.Tests/Whizbang.Offloads.InMemory.Tests.csproj" />

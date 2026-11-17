@@ -34,6 +34,17 @@ public class StreamIntegrityOptionsDefaultsTests {
   }
 
   [Test]
+  public async Task Defaults_TheDerivedCompletionGaugesAreOn_OverAnHourAsync() {
+    var options = new StreamIntegrityOptions();
+
+    await Assert.That(options.VerifiedPercentGaugeEnabled).IsTrue()
+      .Because("#2261: a dashboard answers \"are we done?\" without configuration; a team that prunes its feed switches them off");
+    await Assert.That(options.RepairProgressGaugeEnabled).IsTrue();
+    await Assert.That(options.BacklogEtaGaugeEnabled).IsTrue();
+    await Assert.That(options.RepairProgressWindowMinutes).IsEqualTo(60);
+  }
+
+  [Test]
   public async Task Defaults_StormCapsBoundEveryRepairRungAsync() {
     var options = new StreamIntegrityOptions();
 

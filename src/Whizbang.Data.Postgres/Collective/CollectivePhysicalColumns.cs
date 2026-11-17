@@ -4,6 +4,7 @@
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Collective;
@@ -49,7 +50,7 @@ public static class CollectivePhysicalColumns {
     ArgumentNullException.ThrowIfNull(modelType);
     if (field.IsVector) {
       throw new NotSupportedException(
-        $"{modelType.Name}.{field.PropertyName} is a [VectorField]. A collective can set a vector column but cannot " +
+        $"{TypeNameFormatter.ForLog(modelType)}.{field.PropertyName} is a [VectorField]. A collective can set a vector column but cannot " +
         "compare one; filter the cohort on another field.");
     }
   }
@@ -62,7 +63,7 @@ public static class CollectivePhysicalColumns {
     ArgumentNullException.ThrowIfNull(modelType);
     if (!field.IsJsonbColumn) {
       throw new NotSupportedException(
-        $"UpsertElement on {modelType.Name}.{field.PropertyName} targets a physical column that is not jsonb. Keyed " +
+        $"UpsertElement on {TypeNameFormatter.ForLog(modelType)}.{field.PropertyName} targets a physical column that is not jsonb. Keyed " +
         "elements need a jsonb column, which a promoted list is unless another ColumnType is declared; drop the " +
         "declared type, or keep the array in the document.");
     }
@@ -119,13 +120,13 @@ public static class CollectivePhysicalColumns {
     }
     if (parent.Expression is not ParameterExpression || Resolve(modelType, root.Name) is not { IsJsonbColumn: true } field) {
       throw new NotSupportedException(
-        $"A collective setter on {modelType.Name}.{root.Name}.{key.Name} sets a key inside a property. That is supported only " +
+        $"A collective setter on {TypeNameFormatter.ForLog(modelType)}.{root.Name}.{key.Name} sets a key inside a property. That is supported only " +
         "one level down, inside a [PhysicalField(ColumnType = \"jsonb\")] property; set the whole value instead, or use " +
         "[CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
     }
     if (key.SetMethod is null) {
       throw new NotSupportedException(
-        $"{root.PropertyType.Name}.{key.Name} has no setter, so a replay could not apply the collective that sets it.");
+        $"{TypeNameFormatter.ForLog(root.PropertyType)}.{key.Name} has no setter, so a replay could not apply the collective that sets it.");
     }
     return new CollectiveJsonbKey(root, key, field);
   }

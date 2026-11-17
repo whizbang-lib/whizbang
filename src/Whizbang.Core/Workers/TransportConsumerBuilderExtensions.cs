@@ -350,11 +350,13 @@ public static class TransportConsumerBuilderExtensions {
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_StartsNoConsumerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithTheInProcessTransport_StartsTheConsumerAsBeforeAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithoutATransport_IsNotAGapAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithATransport_IsCheckedForWhatItsWorkerNeedsAsync</tests>
   private static void _addConsumerWorker(IServiceCollection services) {
     // A factory rather than a type registration: container validation (ValidateOnBuild) activates a type
     // registration's constructor graph, which needs a transport. A null result is what GetService returns,
-    // and the forwards below read it. Registered through a descriptor so registration validation does not
-    // read the constructor as this registration's requirements: the transport is optional here.
+    // and the forwards below read it. Registration validation reads this factory's shape (#1907): what the
+    // branch that builds the worker resolves is required only when a transport is registered, so a broker-less
+    // host starts and a host with a broker is checked for every service the worker needs.
     services.TryAdd(ServiceDescriptor.Singleton<TransportConsumerWorker>(sp => sp.GetService<ITransport>() is not { } transport
       ? null!
       : new TransportConsumerWorker(
@@ -455,7 +457,7 @@ public static class TransportConsumerBuilderExtensions {
   /// Gets the service name from <see cref="IServiceInstanceProvider"/> or falls back to assembly name.
   /// </summary>
   private static string _getServiceName(IServiceProvider sp)
-    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name);
+    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly() is { } entry ? TypeNameFormatter.AssemblySimpleName(entry) : null);
 
   /// <summary>
   /// The service-name fallback chain, with the entry-assembly lookup supplied by the caller.

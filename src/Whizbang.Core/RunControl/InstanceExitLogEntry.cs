@@ -133,7 +133,7 @@ internal sealed class InstanceExitLogEntry : IReadOnlyList<KeyValuePair<string, 
   private static string _whatToCheck(ExitCause cause) => cause switch {
     ExitCause.HostShutdown => "check what asked the host to stop: a deployment, a scale-down, a node drain or a failed liveness probe.",
     ExitCause.OperatorStop => "check who used the killswitch.",
-    ExitCause.UpgradeStandDown => "check the rollout that migrated the schema to the newer version.",
+    ExitCause.UpgradeStandDown => "check the rollout that migrated the schema to the newer version (or that left changes to roll back).",
     ExitCause.Crash => "check the exception attached to this entry and the worker that threw it.",
     ExitCause.ClusterEviction => "check for heartbeat starvation (thread-pool starvation, long garbage-collection or CPU-throttling pauses), "
       + "database connectivity from this host, and long process pauses (a debugger, a suspended VM or container) around the last heartbeat.",

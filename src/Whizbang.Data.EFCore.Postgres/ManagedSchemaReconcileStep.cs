@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
@@ -47,7 +48,9 @@ public sealed partial class ManagedSchemaReconcileStep(
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     if (services.GetKeyedService<ManagedSchemaManifest>(_dbContextType) is not { } manifest) {
-      LogNoManifest(_logger, _dbContextType.Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      LogNoManifest(_logger, TypeNameFormatter.ForLog(_dbContextType));
+#pragma warning restore CA1873
       return;
     }
     var settings = ManagedSchemaReconcile.Settings(services);

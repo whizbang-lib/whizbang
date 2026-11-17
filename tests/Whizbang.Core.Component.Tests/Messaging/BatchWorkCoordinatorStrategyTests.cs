@@ -95,8 +95,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - Queue exactly batch size messages
@@ -132,8 +132,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Subscribe to flush event to detect when flush occurs
@@ -168,8 +168,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - Mix of outbox and inbox messages
@@ -207,8 +207,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - Queue 1 message (below batch size)
@@ -242,8 +242,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Subscribe to flush event
@@ -290,8 +290,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - Queue batch size worth of messages quickly
@@ -328,8 +328,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
@@ -359,8 +359,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
@@ -398,8 +398,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -434,8 +434,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act
@@ -464,8 +464,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -488,8 +488,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -514,8 +514,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act - Dispose multiple times
@@ -550,8 +550,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    )).Throws<ArgumentNullException>();
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+)).Throws<ArgumentNullException>();
   }
 
   [Test]
@@ -569,8 +569,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    )).Throws<ArgumentNullException>();
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+)).Throws<ArgumentNullException>();
   }
 
   // ========================================
@@ -596,8 +596,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     // Assert - the startup line is the only place the EFFECTIVE batch configuration is visible.
     // Batch size and debounce interval trade write amplification against latency, and a
@@ -630,8 +630,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
     var message = _createOutboxMessage(destination: "orders.placed");
 
     try {
@@ -670,8 +670,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
     var message = _createInboxMessage(handlerName: "OrderPlacedHandler");
 
     try {
@@ -710,8 +710,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Queue various operations to cover logger paths in flush
@@ -746,8 +746,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - flush with nothing queued
@@ -773,8 +773,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     // Act
     await sut.DisposeAsync();
@@ -807,8 +807,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     // Queue operations without flushing: 1 outbox message, 1 inbox message,
     // 2 completions (one each side) and 2 failures (one each side).
@@ -856,8 +856,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -898,8 +898,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - Queue inbox messages to trigger batch flush
@@ -928,8 +928,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act
@@ -959,8 +959,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act
@@ -989,8 +989,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act
@@ -1028,8 +1028,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - trigger batch flush that will error
@@ -1074,8 +1074,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1110,8 +1110,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       // Act - queue a message below batch size, then end the quiet period
@@ -1152,8 +1152,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1184,8 +1184,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1225,8 +1225,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1267,8 +1267,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1307,8 +1307,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1336,8 +1336,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1371,8 +1371,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: scopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -1403,8 +1403,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
     sut.OnBatchFlushed += args => flushTcs.TrySetResult(args);
@@ -1435,8 +1435,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
     sut.OnBatchFlushed += args => flushTcs.TrySetResult(args);
@@ -1470,8 +1470,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var message = new OutboxMessage {
       MessageId = Guid.CreateVersion7(),
@@ -1504,8 +1504,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var message = new InboxMessage {
       MessageId = Guid.CreateVersion7(),
@@ -1538,8 +1538,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     var message = new OutboxMessage {
       MessageId = Guid.CreateVersion7(),
@@ -1593,8 +1593,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1637,7 +1637,7 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      detachedWork: new DetachedLifecycleWork(),
+      detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel(),
       metrics: metrics
     );
 
@@ -1668,7 +1668,7 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      detachedWork: new DetachedLifecycleWork(),
+      detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel(),
       metrics: metrics
     );
 
@@ -1698,7 +1698,7 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      detachedWork: new DetachedLifecycleWork(),
+      detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel(),
       metrics: metrics
     );
 
@@ -1729,7 +1729,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxMessage(_createInboxMessage()))
@@ -1746,7 +1746,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published))
@@ -1763,7 +1763,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored))
@@ -1780,7 +1780,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
@@ -1797,7 +1797,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
@@ -1837,8 +1837,8 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: channelWriter, detachedWork: new DetachedLifecycleWork()
-    );
+      workChannelWriter: channelWriter, detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel()
+);
 
     try {
       sut.QueueOutboxMessage(_createOutboxMessage());

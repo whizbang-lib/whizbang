@@ -340,6 +340,9 @@ Set-StrictMode -Version Latest
 
 # Import shared PR readiness module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+# The run's pass/fail verdict, including a crashed test process (#2231)
+$testRunVerdictModule = Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1"
+Import-Module $testRunVerdictModule -Force
 
 # Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
 $fastBuildArgs = @()
@@ -950,6 +953,9 @@ function Invoke-CoverageReport {
     }
 }
 
+# Read by the finally block below, so set before anything in the try can exit: a run that exits early
+# (no test assemblies found) otherwise halts there under strict mode, and the halt hides its own error.
+$failFastTriggered = $false
 try {
     # Determine parallel level
     if ($MaxParallel -eq 0) {
@@ -1204,6 +1210,8 @@ try {
             return [PSCustomObject]@{
                 ProjectName = if ($script:TestFrameworks.Count -gt 1) { "$projName ($Framework)" } else { $projName }
                 ExitCode = $proc.ExitCode
+                # From the full output, before it is cut down to the failure signal (#2231).
+                CrashLines = @(Select-TestProcessCrashLine -Line ($output -split "`n"))
                 Output = (_selectFailureSignal ($output -split "`n")) -join "`n"
                 TestsPassed = $counts.Passed
                 TestsFailed = $counts.Failed
@@ -1299,6 +1307,8 @@ try {
                     $reportTrx = $using:ReportTrx
                     $resultsBag = $using:results
                     $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
+                    # A parallel runspace sees none of the script's functions or modules; this one it needs.
+                    Import-Module $using:testRunVerdictModule -Force
 
                     if ($IsLinux -or $IsMacOS) {
                         $testExe = Join-Path $projectDir "bin" $config $framework $projectName
@@ -1357,9 +1367,12 @@ try {
                         }
                     }
 
+                    $exitCode = $LASTEXITCODE
                     $resultsBag.Add([PSCustomObject]@{
                         ProjectName = $runName
-                        ExitCode = $LASTEXITCODE
+                        ExitCode = $exitCode
+                        # From the full output, before it is cut down to the failure signal (#2231).
+                        CrashLines = @(Select-TestProcessCrashLine -Line ($fullOutput -split "`n"))
                         Output = $failureSignal -join "`n"
                         TestsPassed = $tPassed
                         TestsFailed = $tFailed
@@ -1422,7 +1435,9 @@ try {
             $totalTestsFailed += if ($result.PSObject.Properties['TestsFailed']) { $result.TestsFailed } else { 0 }
             $totalTestsSkipped += if ($result.PSObject.Properties['TestsSkipped']) { $result.TestsSkipped } else { 0 }
 
-            if ($result.ExitCode -eq 0) {
+            # A crashed test process (#2231) failed whatever its exit code said, and was cut short.
+            $crashed = $result.ExitCode -eq 7 -or @($result.CrashLines).Count -gt 0
+            if ($result.ExitCode -eq 0 -and -not $crashed) {
                 $totalProjectsPassed++
                 if ($useAiOutput) {
                     Write-Host "  ✓ $($result.ProjectName) passed" -ForegroundColor Green
@@ -1434,9 +1449,14 @@ try {
                 # COMPLETE cobertura, and dropping it would discard real coverage. Only a project
                 # that was cut short mid-run produces a truncated one. Exit code 143 is the
                 # SIGTERM from this script's own stall/hang Kill($true); under fail-fast any
-                # failure also cancels the rest of that project's run.
-                if ($result.ExitCode -eq 143 -or $FailFast) {
+                # failure also cancels the rest of that project's run; and a crashed test process
+                # (exit code 7, or a crash line in its output) never ran the tests after the crash.
+                if ($result.ExitCode -eq 143 -or $FailFast -or $crashed) {
                     $truncatedProjects += $result.ProjectName
+                }
+                if ($crashed) {
+                    $reason = if (@($result.CrashLines).Count -gt 0) { @($result.CrashLines) -join '; ' } else { "exit code $($result.ExitCode)" }
+                    Write-Host "  TEST PROCESS CRASHED: $($result.ProjectName): $reason" -ForegroundColor Red
                 }
                 if ($useAiOutput) {
                     Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
@@ -1513,9 +1533,12 @@ try {
             #
             # Filtering by write time against the run's own start keeps this non-destructive --
             # nothing is deleted, they are simply not counted as if they were current.
-            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
-                               $_.LastWriteTimeUtc -ge $script:runStartTime }
+            #
+            # Under the configuration that ran (#2244): a -Configuration Release run that looked under Debug
+            # found nothing, or a stale Debug run's files. @(): one file is not a collection under strict mode.
+            $coberturaFiles = @(Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
+                               $_.LastWriteTimeUtc -ge $script:runStartTime })
 
             # Drop the cobertura of any project that failed or was killed.
             #
@@ -1677,6 +1700,20 @@ try {
         return $null -ne $testType
     }
 
+    # Written, not Write-Error: this script stops on errors, and its trap re-throws a Write-Error as a
+    # bare "ScriptHalted" with the message lost. A workflow error annotation under GitHub Actions.
+    function Write-RunError([string]$Message) {
+        if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$Message" } else { Write-Host $Message -ForegroundColor Red }
+    }
+
+    # The one error for a run that found nothing to run (#2244), whichever selection found it, naming the
+    # selection and the build output it looked in.
+    function Exit-NoTestAssemblies([string]$Selection, [string]$Hint) {
+        Write-RunError ("No test assemblies found: $Selection matched no test DLL in bin/$Configuration/$($script:TestFrameworks -join '|'), " +
+            "so nothing ran. $Hint")
+        exit 1
+    }
+
     # Helper function to ensure build exists for dynamic DLL discovery
     function Ensure-BuildExists {
         # Discovery maps a BUILT DLL back to its .csproj and only then reads <WhizbangTestType>, so a
@@ -1751,9 +1788,11 @@ try {
             } else {
                 Write-Host "Building solution ($($unbuilt.Count) test project(s) not built)..." -ForegroundColor Gray
             }
-            & dotnet build --verbosity quiet @fastBuildArgs
+            # The configuration discovery then reads (#2244): without it the build wrote Debug, and a
+            # -Configuration Release run found no test assembly and exited 1 having run nothing.
+            & dotnet build --configuration $Configuration --verbosity quiet @fastBuildArgs
             if ($LASTEXITCODE -ne 0) {
-                Write-Error "Build failed. Cannot discover test projects."
+                Write-RunError "Build failed. Cannot discover test projects."
                 exit 1
             }
         }
@@ -1801,8 +1840,7 @@ try {
                 Write-Host "Discovered $($tagFilteredDlls.Count) test projects with tag '$Tag'" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test projects found with tag '$Tag'. Check that projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
-            exit 1
+            Exit-NoTestAssemblies "tag '$Tag'" "Check for build failures first, then that the projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
         }
     } elseif ($ProjectFilter) {
         Ensure-BuildExists
@@ -1826,8 +1864,7 @@ try {
                 Write-Host "Discovered $($filteredDlls.Count) test projects matching '$ProjectFilter'" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found matching '$ProjectFilter'. Check the project name."
-            exit 1
+            Exit-NoTestAssemblies "project filter '$ProjectFilter'" "Check for build failures first, then the project name."
         }
     } else {
         # Run every project whose WhizbangTestType this mode selects ($selectedTestTypes)
@@ -1848,11 +1885,9 @@ try {
                 Write-Host "Discovered $($selectedDlls.Count) test projects (WhizbangTestType: $typeList)" -ForegroundColor Gray
             }
         } else {
-            Write-Error ("No test projects selected (WhizbangTestType: $typeList). Discovery reads " +
-                "<WhizbangTestType> from the .csproj behind each BUILT DLL, so a project with no output in " +
-                "bin/$Configuration/<framework> is invisible even when the property is correct. " +
-                "Check for build failures first, then the property.")
-            exit 1
+            Exit-NoTestAssemblies "WhizbangTestType $typeList" ("Discovery reads <WhizbangTestType> from the .csproj " +
+                "behind each BUILT DLL, so a project with no output there is invisible even when the property is " +
+                "correct. Check for build failures first, then the property.")
         }
     }
 
@@ -1894,6 +1929,7 @@ try {
         $buildWarnings = @()
         $projectErrors = @()  # Track test project-level errors (not individual test failures)
         $infrastructureErrors = 0  # Track MTP infrastructure error count from summary
+        $crashLines = @()  # Lines reporting a test process that died mid-suite (#2231)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -2072,6 +2108,8 @@ try {
             # Strip ANSI escape sequences for reliable regex matching
             # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+            # Checked before the parse below, which claims a line for one purpose only.
+            $crashLines += @(Select-TestProcessCrashLine -Line $cleanLine)
 
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
             # Format: [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
@@ -2352,6 +2390,7 @@ try {
 
         # Capture any stderr content for display
         $stderrContent = $stderrBuilder.ToString().Trim()
+        $crashLines += @(Select-TestProcessCrashLine -Line ($stderrContent -split "`n"))
 
         # Calculate elapsed time
         $endTime = Get-Date
@@ -2571,6 +2610,7 @@ try {
         $buildErrors = @()
         $projectErrors = @()
         $infrastructureErrors = 0
+        $crashLines = @()  # Lines reporting a test process that died mid-suite (#2231)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -2615,6 +2655,8 @@ try {
             # Strip ANSI escape sequences for reliable regex matching
             # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+            # Checked before the parse below, which claims a line for one purpose only.
+            $crashLines += @(Select-TestProcessCrashLine -Line $cleanLine)
 
             # Capture test counts from TUnit summary format
             # Use $cleanLine because TUnit wraps these in ANSI color codes
@@ -2704,6 +2746,7 @@ try {
         }
 
         $stderrContent = $stderrBuilder.ToString().Trim()
+        $crashLines += @(Select-TestProcessCrashLine -Line ($stderrContent -split "`n"))
 
         Write-Host ""
         Write-Host "<<< END TEST OUTPUT <<<" -ForegroundColor Cyan
@@ -2784,25 +2827,24 @@ try {
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Exit code 8 = all tests skipped (TUnit), not treated as failure
         #
-        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if:
-        # - Tests also failed (indicates a real problem)
-        # - No tests passed (indicates setup failure)
-        # If tests pass but cleanup throws, we log a warning but don't fail the build
-        # Non-zero exit code with zero test failures and infrastructure errors = infra issue, not test failure
-        # The .NET test platform can exit non-zero due to NamedPipeServer broken pipe during cleanup
-        $exitCodeIsInfraIssue = $processExitCode -ne 0 -and $processExitCode -ne 8 -and $totalFailed -eq 0 -and $infrastructureErrors -gt 0
-        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8 -and -not $exitCodeIsInfraIssue)
-        $hasInfraErrorsOnly = ($infrastructureErrors -gt 0 -or $exitCodeIsInfraIssue) -and -not $hasTestFailures
+        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if tests also failed or
+        # none passed: the .NET test platform can exit non-zero when its named pipe breaks during cleanup.
+        # A crashed test process is never that noise (#2231): it reports the same shape (a non-zero exit,
+        # no failed test, one `error:`), but every test after the crash never ran. The rules live in
+        # scripts/lib/TestRunVerdict.psm1.
+        $verdict = Get-TestRunVerdict -ExitCode $processExitCode -Passed $totalPassed -Failed $totalFailed `
+            -InfrastructureErrors $infrastructureErrors -FailFastTriggered $failFastTriggered `
+            -ProjectErrorCount $projectErrors.Count -BuildErrorCount $buildErrors.Count -CrashLines $crashLines
+        $hasErrors = $verdict.HasErrors
+        $hasTestFailures = $verdict.HasTestFailures
 
-        if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
+        if ($verdict.Crashed) {
+            Write-TestProcessCrash -Verdict $verdict -Passed $totalPassed
+        } elseif ($verdict.CleanupNoise) {
             # Infrastructure errors with passing tests - warn but don't fail
             Write-Host ""
             Write-Host "WARNING: $infrastructureErrors infrastructure error(s) during cleanup (all tests passed)" -ForegroundColor Yellow
             Write-Host "         This is typically Docker container cleanup noise and does not affect test results." -ForegroundColor DarkYellow
-            $hasErrors = $false
-        } else {
-            # Real failures or infrastructure errors without passing tests
-            $hasErrors = $hasTestFailures -or ($infrastructureErrors -gt 0 -and $totalPassed -eq 0)
         }
     } else {
         # Check both exit code AND output for failures
@@ -2838,9 +2880,9 @@ try {
         # Find all cobertura XML files from test output
         # Same staleness guard as the primary call site above: only count cobertura files this
         # run produced, or the report merges every run still sitting in TestResults.
-        $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
-                           $_.LastWriteTimeUtc -ge $script:runStartTime }
+        $coberturaFiles = @(Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
+                           $_.LastWriteTimeUtc -ge $script:runStartTime })
 
         if ($coberturaFiles.Count -gt 0) {
             $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($hasTestFailures)

@@ -22,8 +22,8 @@ namespace Whizbang.Core.Workers;
 /// <list type="bullet">
 /// <item><b>Local (L)</b> — perspective coverage gaps (settled history a registered perspective
 /// never folded: no cursor, no pending work) → <see cref="PerspectiveCoverageGapDetected"/>
-/// reports; at <see cref="IntegrityRepairMode.AutoRepairCapped"/> a capped LOCAL
-/// <see cref="RebuildPerspectiveCommand"/> per gap.</item>
+/// reports; at <see cref="IntegrityRepairMode.AutoRepairCapped"/> a capped rebuild per gap, run in this service through
+/// <see cref="Perspectives.IPerspectiveRebuildRequestHandler"/> and never put on the transport (#2344).</item>
 /// <item><b>Cross-service (A)</b> — for every origin this consumer knows (the checkpoint
 /// tracker's origin set), a DIRECTED <see cref="RequestIntegrityManifest"/> asking for its
 /// identity digests of the event types this consumer consumes (#2058: its consumer registry, plus the
@@ -72,7 +72,7 @@ public sealed partial class IntegrityAuditWorker(
         break;
       }
       try {
-        askedNobody = await _runAuditCoreAsync(forceSweep: false, stoppingToken);
+        askedNobody = await _runAuditCoreAsync(forceFullCompare: false, forceRecheck: false, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -109,13 +109,74 @@ public sealed partial class IntegrityAuditWorker(
 
   /// <summary>One audit cycle: the local coverage half, then the cross-service manifest requests.</summary>
   public Task RunAuditOnceAsync(CancellationToken cancellationToken) =>
-    _runAuditCoreAsync(forceSweep: false, cancellationToken);
+    _runAuditCoreAsync(forceFullCompare: false, forceRecheck: false, cancellationToken);
 
   /// <inheritdoc />
   /// <remarks>#80-D: the scheduled idle-time entry point. The cycle claim still applies, so a
   /// just-swept service's next steady audit is naturally deduped too.</remarks>
-  public Task RunSweepOnceAsync(CancellationToken cancellationToken) =>
-    _runAuditCoreAsync(forceSweep: true, cancellationToken);
+  public async Task RunSweepOnceAsync(CancellationToken cancellationToken) {
+    if (_options.FullHistoryCompare.Enabled) {
+      // The audit cycle runs the re-check too, when it is on, so the two share one admission.
+      await _runAuditCoreAsync(forceFullCompare: true, forceRecheck: true, cancellationToken).ConfigureAwait(false);
+    } else if (_options.SealRecheck.Enabled) {
+      await _runSealRecheckAloneAsync(cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <inheritdoc />
+  public Task RunCheckOnceAsync(IntegrityCheck check, CancellationToken cancellationToken) =>
+    check switch {
+      IntegrityCheck.FullHistoryCompare when _options.FullHistoryCompare.Enabled =>
+        _runAuditCoreAsync(forceFullCompare: true, forceRecheck: false, cancellationToken),
+      IntegrityCheck.SealRecheck when _options.SealRecheck.Enabled => _runSealRecheckAloneAsync(cancellationToken),
+      _ => Task.CompletedTask,
+    };
+
+  /// <summary>
+  /// The sealed-history re-check outside an audit cycle: local, so it asks no origin and claims no cycle, but it runs
+  /// on the maintainer and only when the idle gate admits it, like the rest of the integrity work.
+  /// </summary>
+  private async Task _runSealRecheckAloneAsync(CancellationToken cancellationToken) {
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);
+    var services = scope.ServiceProvider;
+    var coordinator = services.GetService<IWorkCoordinator>();
+    if (coordinator is null || !MaintainerDuty.IsThisInstancesTurn(services)) {
+      return;
+    }
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
+      services, coordinator, nameof(IntegrityAuditWorker), _logger, cancellationToken).ConfigureAwait(false);
+    if (!admission.Granted) {
+      return;
+    }
+    await _recheckSealsAsync(services, coordinator, TimeSpan.FromMinutes(_options.AuditSettleWindowMinutes),
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// One sealed-history re-check with the configured limits (#2353): counted, timed and logged by its check. A drift
+  /// refolded is also counted as healed (<c>epoch-refolded</c>); a report-only drift is not, because nothing moved.
+  /// </summary>
+  private async Task _recheckSealsAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, TimeSpan settle, CancellationToken cancellationToken) {
+    var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
+    var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+    var started = clock.GetTimestamp();
+    var result = await coordinator.RecheckDigestEpochsAsync(
+      SealRecheckRequest.From(_options.SealRecheck, settle), cancellationToken).ConfigureAwait(false);
+    var check = new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.CHECK_TAG, Observability.StreamIntegrityMetrics.CHECK_SEAL_RECHECK);
+    metrics?.CheckDuration.Record(clock.GetElapsedTime(started).TotalSeconds, check);
+    metrics?.EpochsRechecked.Add(result.EpochsChecked, check);
+    metrics?.CheckDriftFound.Add(result.EpochsDrifted, check);
+    if (result.EpochsDrifted > 0 && _options.SealRecheck.OnDrift == SealDriftAction.Refold) {
+      metrics?.DigestDriftHealed.Add(result.EpochsDrifted, new KeyValuePair<string, object?>("kind", "epoch-refolded"));
+      LogEpochDrift(_logger, result.EpochsDrifted, result.EpochsChecked);
+    } else if (result.EpochsDrifted > 0) {
+      LogEpochDriftReported(_logger, result.EpochsDrifted, result.EpochsChecked);
+    } else if (result.EpochsChecked > 0) {
+      LogEpochsVerified(_logger, result.EpochsChecked);
+    }
+  }
 
   /// <summary>
   /// One audit cycle. Returns <see langword="true"/> when the cross-service half had origins it
@@ -125,7 +186,7 @@ public sealed partial class IntegrityAuditWorker(
   /// not a cold start, and retrying sooner would never help.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One audit cycle runs the local half (verification, epoch drift, gap reports, optional rebuild) and the cross-service half (ask each reachable origin), and its return value distinguishes a cycle that asked nobody from a deployment with nobody to ask. Both halves feed that one answer.")]
-  private async Task<bool> _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
+  private async Task<bool> _runAuditCoreAsync(bool forceFullCompare, bool forceRecheck, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
     var services = scope.ServiceProvider;
@@ -139,7 +200,7 @@ public sealed partial class IntegrityAuditWorker(
     if (!MaintainerDuty.IsThisInstancesTurn(services)) {
       return true;
     }
-    using var admission = await IntegrityAdmission.TryAdmitAsync(
+    await using var admission = await IntegrityAdmission.TryAdmitAsync(
       services, coordinator, nameof(IntegrityAuditWorker), _logger, cancellationToken).ConfigureAwait(false);
     if (!admission.Granted) {
       return true;
@@ -159,22 +220,36 @@ public sealed partial class IntegrityAuditWorker(
       return false;
     }
 
-    // ── A1c: the full-sweep cadence ──────────────────────────────────────
-    // Steady-state cycles run on the incrementally-maintained digest table (O(buckets), with
-    // settle-skip on busy buckets). Every Nth cycle is the trust-but-verify sweep: heal our OWN
-    // table against a full recompute (non-zero drift = an unaccounted write path — alarm), and
-    // exchange recomputed digests end to end so busy buckets get their coverage too.
-    // #80-D: once the idle-time cron owns the sweep (the driver registered it on the temporal
-    // engine), the counter stands down — otherwise the heaviest work runs on both cadences, and
-    // the counter lands it at arbitrary load times. Hosts without the temporal engine never set
-    // the state, keeping the every-Nth-cycle counter as the fallback.
-    var cronOwnsTheSweep = services.GetService<IntegritySweepScheduleState>()?.CronActive == true;
+    // ── the opt-in checks (#2353) ────────────────────────────────────────
+    // Steady-state cycles run on the incrementally maintained digest table and ask windowed from each seal; neither
+    // grows with history. Two checks do, so each is off by default and has its own section and schedule:
+    //   - the full-history compare heals this service's own digest table against a full recompute (non-zero drift is
+    //     an unaccounted write path) and asks each origin for its full history, so buckets whose steady traffic
+    //     settle-skips them get their coverage too;
+    //   - the sealed-history re-check recomputes sealed epochs, which answers trust without re-verifying.
+    // Each runs when its schedule fires (forced), or on every Nth cycle when its schedule is not registered on the
+    // temporal engine (hosts without the engine). Otherwise the heaviest work would run on both cadences.
+    var schedule = services.GetService<IntegritySweepScheduleState>();
     var cycle = Interlocked.Increment(ref _cycleCount);
-    var sweep = forceSweep
-      || (!cronOwnsTheSweep && _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0);
+    var counterDue = _options.FullSweepEveryNthAudit > 0 && cycle % _options.FullSweepEveryNthAudit == 0;
+    var sweep = _options.FullHistoryCompare.Enabled && (forceFullCompare || (counterDue && schedule?.CronActive != true));
+    var recheck = _options.SealRecheck.Enabled && (forceRecheck || (counterDue && schedule?.SealRecheckCronActive != true));
     if (sweep) {
-      var verification = await coordinator.VerifyDigestTableAsync(settle, cancellationToken).ConfigureAwait(false);
+      var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+      var started = clock.GetTimestamp();
+      // #2361: one slice of streams after the stored cursor, within the lookback; the next run resumes after it.
+      var verification = await coordinator.VerifyDigestTableSliceAsync(
+        FullHistoryCompareRequest.From(_options.FullHistoryCompare, settle), cancellationToken).ConfigureAwait(false);
+      var check = new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.CHECK_TAG, Observability.StreamIntegrityMetrics.CHECK_FULL_HISTORY_COMPARE);
+      metrics?.CheckDuration.Record(clock.GetElapsedTime(started).TotalSeconds, check);
+      metrics?.CheckDriftFound.Add(verification.TotalDrift, check);
       metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);
+      metrics?.CompareStreamsCovered.Add(verification.StreamsChecked);
+      metrics?.CompareSlices.Add(1);
+      if (verification.PassCompleted) {
+        metrics?.ComparePassesCompleted.Add(1);
+        metrics?.ComparePassRuns.Record(verification.PassRuns);
+      }
       if (verification.TotalDrift > 0) {
         metrics?.DigestDriftHealed.Add(verification.DriftUpdated, new KeyValuePair<string, object?>("kind", "updated"));
         metrics?.DigestDriftHealed.Add(verification.DriftRemoved, new KeyValuePair<string, object?>("kind", "removed"));
@@ -184,19 +259,9 @@ public sealed partial class IntegrityAuditWorker(
       } else {
         LogDigestVerified(_logger, verification.BucketsChecked);
       }
-
-      // #80-D: the seal backstop. Manifest answers trust sealed epochs WITHOUT re-verifying (the
-      // whole point of the epochs), so this is the ONE place a bad seal gets caught. Bounded per
-      // sweep — a very large store finishes across several nightly sweeps.
-      var epochVerification = await coordinator.VerifyDigestEpochsAsync(
-        settle, _options.MaxEpochVerificationsPerSweep, cancellationToken).ConfigureAwait(false);
-      if (epochVerification.EpochsDrifted > 0) {
-        metrics?.DigestDriftHealed.Add(epochVerification.EpochsDrifted,
-          new KeyValuePair<string, object?>("kind", "epoch-refolded"));
-        LogEpochDrift(_logger, epochVerification.EpochsDrifted, epochVerification.EpochsChecked);
-      } else if (epochVerification.EpochsChecked > 0) {
-        LogEpochsVerified(_logger, epochVerification.EpochsChecked);
-      }
+    }
+    if (recheck) {
+      await _recheckSealsAsync(services, coordinator, settle, cancellationToken).ConfigureAwait(false);
     }
 
     // ── L: local perspective coverage ────────────────────────────────────
@@ -209,16 +274,26 @@ public sealed partial class IntegrityAuditWorker(
     if (gaps.Count >= maxGapReports) {
       LogCoverageGapsCapped(_logger, maxGapReports);
     }
-    var rebuildBudget = _options.MaxAutoRebuildsPerAudit;
+    // #2344: the repair runs in this service, through the same rebuild handling the rebuild command's receptor runs
+    // (routing to the streams' owners and the background queue included), and puts nothing on the transport. The gap is
+    // in this service's own perspective; a command sent through the dispatcher is a system command, broadcast to every
+    // service, and each one hosting a perspective of that name would rebuild a stream it never found missing. An
+    // operator's command stays broadcast: it names a perspective without knowing which service hosts it.
+    var rebuilds = services.GetService<Perspectives.IPerspectiveRebuildRequestHandler>();
+    var autoRepair = _options.RepairMode == IntegrityRepairMode.AutoRepairCapped;
+    if (autoRepair && rebuilds is null && gaps.Count > 0) {
+      LogNoRebuildHandling(_logger, gaps.Count);
+    }
+    var rebuildBudget = rebuilds is null ? 0 : _options.MaxAutoRebuildsPerAudit;
     foreach (var gap in gaps) {
-      var autoRebuild = _options.RepairMode == IntegrityRepairMode.AutoRepairCapped && rebuildBudget > 0;
+      var autoRebuild = autoRepair && rebuildBudget > 0;
       metrics?.CoverageGapsDetected.Add(1, new KeyValuePair<string, object?>("perspective", gap.PerspectiveName));
       if (autoRebuild) {
         rebuildBudget--;
         metrics?.RebuildsRequested.Add(1, new KeyValuePair<string, object?>("perspective", gap.PerspectiveName));
-        await dispatcher.SendAsync(new RebuildPerspectiveCommand(
+        await rebuilds!.HandleAsync(new RebuildPerspectiveCommand(
           PerspectiveNames: [gap.PerspectiveName],
-          IncludeStreamIds: [gap.StreamId])).ConfigureAwait(false);
+          IncludeStreamIds: [gap.StreamId]), cancellationToken).ConfigureAwait(false);
       }
       await dispatcher.PublishAsync(new PerspectiveCoverageGapDetected {
         ReportStreamId = TrackedGuid.New().Value,
@@ -282,6 +357,9 @@ public sealed partial class IntegrityAuditWorker(
     // matches nothing and every origin answers with silence. Never null: null asks for every type.
     var eventNamespaces = absorbed.Count > 0 ? absorbed : null;
     var requested = 0;
+    var skipped = 0;
+    var auditClock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+    var maxSkip = TimeSpan.FromMinutes(Math.Max(0, _options.MaxAskSkipMinutes));
     // #2104: a restarted process asks the origins the store kept, not only those whose checkpoint arrived since.
     await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
     foreach (var (originId, originName, originRequestTopic) in tracker.GetOrigins()) {
@@ -292,12 +370,38 @@ public sealed partial class IntegrityAuditWorker(
         LogManifestRequestSkippedNoTopic(_logger, originName, originId);
         continue;
       }
+      // #2349: the window above the seal changes only when the origin emits (its checkpoint position moves), this service
+      // receives (the highest position held moves), history is rewritten (the generation or the seal moves) or a verified
+      // window advances the seal. While none of those moved since the last full match, the ask would fold the same window
+      // on both sides and match again, so it is skipped; the store still says ask once the last ask is MaxAskSkipMinutes
+      // old, so what no remembered value tracks (an origin event that settles after the match) is still found. The
+      // full-history compare re-verifies below the seal, which an unchanged open window says nothing about.
+      var reason = sweep ? "sweep" : "every_cycle";
+      if (!sweep && maxSkip > TimeSpan.Zero) {
+        var decision = await coordinator.IntegrityDecideOriginAskAsync(originId, auditClock.GetUtcNow(), maxSkip, cancellationToken)
+          .ConfigureAwait(false);
+        if (decision == IntegrityAskDecision.Skip) {
+          metrics?.ManifestAsksSkipped.Add(1, new KeyValuePair<string, object?>("origin", originName));
+          LogManifestAskSkipped(_logger, originName, originId, _options.MaxAskSkipMinutes);
+          skipped++;
+          continue;
+        }
+        reason = _askReason(decision);
+      }
       // #80-B/C: steady-state cycles ask WINDOWED from the stored seal — verified history is
-      // never re-shipped or re-verified. The sweep deliberately asks FULL: it is trust-but-verify
-      // for exactly the state the seals assume is fine; a windowed sweep would be circular trust.
-      // An origin that predates the protocol ignores the extra fields and answers unwindowed —
-      // the comparator then compares legacy and the seal simply stays put.
-      var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
+      // never re-shipped or re-verified. The sweep re-verifies below the seal: it is trust-but-verify for exactly the
+      // state the seals assume is fine. #2361: it reaches back to the oldest epoch sealed within its lookback, not to the
+      // start of history, and never above the seal, so a clean answer still advances it. An origin that predates the
+      // protocol ignores the extra fields and answers unwindowed; the comparator then compares legacy and the seal
+      // simply stays put.
+      var seal = await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
+      var since = sweep
+        ? await coordinator.GetFullHistoryCompareStartAsync(
+            originId, _options.FullHistoryCompare.Lookback, _options.Sealing.EpochWidth, seal, cancellationToken).ConfigureAwait(false)
+        : seal;
+      // #2262: the generation recorded beside the seal, so the origin answers how far its history was rewritten since and
+      // a new generation lowers the seal only that far. A sweep's answer passes the same guard, so it names it too.
+      var knownGeneration = await coordinator.GetIntegritySealGenerationAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.New()),
@@ -308,8 +412,9 @@ public sealed partial class IntegrityAuditWorker(
           EventNamespaces = eventNamespaces,
           Level = ManifestLevel.Types,
           UseRecompute = sweep,
-          Windowed = !sweep,
+          Windowed = true,
           SinceSequence = since,
+          KnownOriginGeneration = knownGeneration,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -326,20 +431,34 @@ public sealed partial class IntegrityAuditWorker(
         cancellationToken: cancellationToken).ConfigureAwait(false);
       metrics?.ManifestsRequested.Add(1,
         new KeyValuePair<string, object?>("origin", originName),
-        new KeyValuePair<string, object?>("sweep", sweep));
+        new KeyValuePair<string, object?>("sweep", sweep),
+        new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.ASK_REASON_TAG, reason));
       LogManifestRequested(_logger, originName, originId);
       requested++;
     }
 
     // Nobody to ask. On a cold fleet start the origin set is still empty — it fills only from
     // inbound checkpoints — so this cycle audited nothing across services. Saying so lets the
-    // caller retry on the startup window instead of sleeping out the full interval.
-    if (requested == 0) {
+    // caller retry on the startup window instead of sleeping out the full interval. An origin skipped as unchanged
+    // (#2349) was reached: its last full match still stands.
+    if (requested == 0 && skipped == 0) {
       LogNoOriginsToAsk(_logger);
       return true;
     }
     return false;
   }
+
+  /// <summary>The <c>reason</c> tag of an ask the store decided (#2349).</summary>
+  private static string _askReason(IntegrityAskDecision decision) => decision switch {
+    IntegrityAskDecision.Moved => "moved",
+    IntegrityAskDecision.BoundReached => "bound_reached",
+    _ => "nothing_remembered",
+  };
+
+  [LoggerMessage(EventId = 100, Level = LogLevel.Debug,
+    Message = "Integrity manifest ask to origin '{OriginServiceName}' ({OriginServiceId}) skipped: nothing moved since the "
+            + "last full match; it is asked again at the latest {MaxAskSkipMinutes} minute(s) after the last ask")]
+  static partial void LogManifestAskSkipped(ILogger logger, string originServiceName, Guid originServiceId, int maxAskSkipMinutes);
 
   [LoggerMessage(EventId = 97, Level = LogLevel.Information,
     Message = "Integrity audit forgot {RowCount} repair-ledger row(s) of event types this service does not consume: "
@@ -368,6 +487,10 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 81, Level = LogLevel.Information,
     Message = "Integrity audit disabled by configuration")]
   static partial void LogDisabled(ILogger logger);
+
+  [LoggerMessage(EventId = 93, Level = LogLevel.Warning,
+    Message = "Integrity audit: {GapCount} coverage gap(s) found at AutoRepairCapped, but this host has no rebuild handling registered (a data layer registers it), so they are reported and not repaired. Nothing is sent to other services: each one audits its own perspectives.")]
+  private static partial void LogNoRebuildHandling(ILogger logger, int gapCount);
 
   [LoggerMessage(EventId = 82, Level = LogLevel.Warning,
     Message = "LOCAL coverage gap: perspective '{PerspectiveName}' never folded {EventCount} settled event(s) on stream {GapStreamId} (autoRebuild={AutoRebuildRequested})")]
@@ -412,4 +535,9 @@ public sealed partial class IntegrityAuditWorker(
   [LoggerMessage(EventId = 91, Level = LogLevel.Information,
     Message = "SWEEP: {EpochsChecked} sealed epoch(s) verified clean against the store recompute")]
   static partial void LogEpochsVerified(ILogger logger, int epochsChecked);
+
+  [LoggerMessage(EventId = 92, Level = LogLevel.Warning,
+    Message = "SEAL RE-CHECK: {EpochsDrifted} of {EpochsChecked} sealed epoch(s) DRIFTED and were left as sealed " +
+              "(SealRecheck:OnDrift is ReportOnly); an unaccounted write path touched sealed history, and answers served from those seals disagree with the store")]
+  static partial void LogEpochDriftReported(ILogger logger, int epochsDrifted, int epochsChecked);
 }

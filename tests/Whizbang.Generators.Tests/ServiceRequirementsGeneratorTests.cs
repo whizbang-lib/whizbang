@@ -745,6 +745,360 @@ public class ServiceRequirementsGeneratorTests {
     await Assert.That(generated).DoesNotContain("IPrivateWorker");
   }
 
+  // #1907: a factory that builds its service only when another service is registered, else a stand-in. What the building
+  // branch needs is required only when that condition holds, so a host without the condition is not failed for it, and
+  // a host with it is checked for all of it.
+
+  private const string CONDITIONAL_PREAMBLE = """
+    using Microsoft.Extensions.DependencyInjection;
+    using Microsoft.Extensions.DependencyInjection.Extensions;
+    namespace TestApp;
+    public interface ITransport { }
+    public interface IClock { }
+    public interface ILog { }
+    public interface IThing { }
+    public sealed class Worker : IThing {
+      public Worker(ITransport transport, IClock clock) { }
+    }
+    public sealed class StandIn : IThing {
+      public StandIn(ILog log) { }
+    }
+    public static class Probing {
+      public static T? Probe<T>(this System.IServiceProvider sp) => default;
+      public static T? GetService<T, U>(this System.IServiceProvider sp) => default;
+    }
+    """;
+
+  private static string _conditional(string registration) => CONDITIONAL_PREAMBLE + $$"""
+
+    public static class Registration {
+      public static IServiceCollection AddThing(this IServiceCollection services, bool enabled) {
+        {{registration}}
+        return services;
+      }
+    }
+    """;
+
+  /// <summary>Each shape of "is the condition service registered" a factory's conditional can test.</summary>
+  public static IEnumerable<Func<string>> ConditionShapes() {
+    // The transport consumer's own shape (#1876): no transport, no worker.
+    yield return () => "sp.GetService<ITransport>() is not { } transport ? null! : new Worker(transport, sp.GetRequiredService<IClock>())";
+    yield return () => "sp.GetService<ITransport>() is { } transport ? new Worker(transport, sp.GetRequiredService<IClock>()) : null!";
+    yield return () => "sp.GetService<ITransport>() is null ? null! : new Worker(null!, sp.GetRequiredService<IClock>())";
+    yield return () => "sp.GetService<ITransport>() is not null ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    yield return () => "sp.GetService<ITransport>() is ITransport transport ? new Worker(transport, sp.GetRequiredService<IClock>()) : null!";
+    yield return () => "sp.GetService<ITransport>() == null ? null! : new Worker(null!, sp.GetRequiredService<IClock>())";
+    yield return () => "sp.GetService<ITransport>() != null ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    yield return () => "null != sp.GetService<ITransport>() ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    yield return () => "(sp.GetService<ITransport>() is not { } transport) ? null! : (new Worker(transport, sp.GetRequiredService<IClock>()))";
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [MethodDataSource(nameof(ConditionShapes))]
+  public async Task AFactoryThatBuildsOnlyWhenAServiceIsRegistered_RequiresItsBuildingBranch_OnlyUnderThatConditionAsync(
+      string factory) {
+    var source = _conditional($"services.TryAdd(ServiceDescriptor.Singleton<Worker>(sp => {factory}));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(_compileErrors(source)).IsEmpty()
+      .Because("the shape is read from a source that binds, against the container's own ServiceDescriptor");
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]){Condition=typeof(global::TestApp.ITransport)},")
+      .Because("the worker is built, and so needs its dependencies, only when a transport is registered");
+    await Assert.That(generated).DoesNotContain("IClock),]),")
+      .Because("nothing is required of a host that registers no transport");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task TheStandInBranch_IsRequiredUnconditionally_AndTheBuildingBranchUnderItsConditionAsync() {
+    var source = _conditional(
+      "services.TryAdd(ServiceDescriptor.Singleton<IThing>(sp => sp.GetService<ITransport>() is null "
+      + "? new StandIn(sp.GetRequiredService<ILog>()) : new Worker(null!, sp.GetRequiredService<IClock>())));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    // The branch taken when the condition service is absent is built in exactly the hosts the condition does not
+    // describe, so it keeps the unconditional check: erring towards checking.
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.IThing),[typeof(global::TestApp.ILog),]),");
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.IThing),[typeof(global::TestApp.IClock),]){Condition=typeof(global::TestApp.ITransport)},");
+  }
+
+  /// <summary>Conditionals that do not say whether a service is registered.</summary>
+  public static IEnumerable<Func<string>> UnreadableConditions() {
+    // Not a resolve at all.
+    yield return () => "enabled ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A property of the resolved service as well as its presence.
+    yield return () => "sp.GetService<ITransport>() is { } t && enabled ? new Worker(t, sp.GetRequiredService<IClock>()) : null!";
+    // A pattern that matches null too.
+    yield return () => "sp.GetService<ITransport>() is var t ? new Worker(t!, sp.GetRequiredService<IClock>()) : null!";
+    // A comparison with something other than null.
+    yield return () => "sp.GetService<ITransport>() == sp.GetService<ITransport>() ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A comparison other than equality.
+    yield return () => "(object?)sp.GetService<ITransport>() is > 3 ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A non-null constant.
+    yield return () => "sp.GetService<object>() is \"x\" ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // The negation of a pattern that says nothing either.
+    yield return () => "sp.GetService<object>() is not \"x\" ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A resolve that is not generic.
+    yield return () => "sp.GetService(typeof(ITransport)) is { } ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A generic call that is not a resolve.
+    yield return () => "sp.Probe<ITransport>() is { } ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A resolve with two type arguments.
+    yield return () => "sp.GetService<ITransport, IClock>() is { } ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+    // A resolve with arguments: not a test of the one service.
+    yield return () => "sp.GetService<ITransport>()?.ToString() is { } ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!";
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [MethodDataSource(nameof(UnreadableConditions))]
+  public async Task AConditionThatDoesNotSayWhetherAServiceIsRegistered_LeavesTheRequirementUnconditionalAsync(string factory) {
+    var source = _conditional($"services.TryAdd(ServiceDescriptor.Singleton<Worker>(sp => {factory}));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]),")
+      .Because("a condition the composition cannot be read for says nothing about when the worker is built");
+    await Assert.That(generated).DoesNotContain("Condition=");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AResolveInTheConditionItself_IsNotPartOfEitherBranchAsync() {
+    var source = _conditional(
+      "services.TryAdd(ServiceDescriptor.Singleton<Worker>(sp => sp.GetRequiredService<ILog>() is { } ? new Worker(null!, sp.GetRequiredService<IClock>()) : null!));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    // GetRequiredService throws rather than return null, so testing what it returns is no condition on registration.
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ILog),typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).DoesNotContain("Condition=");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ARegistrationMethodFactoryThatBuildsOnlyUnderACondition_RequiresTheConstructorUnderItTooAsync() {
+    // The defect as reported: TryAddSingleton<T>(factory) was read as a plain type registration, every constructor
+    // dependency of T recorded as if T were always built.
+    var source = _conditional(
+      "services.TryAddSingleton<Worker>(sp => sp.GetService<ITransport>() is not { } transport ? null! : new Worker(transport, sp.GetRequiredService<IClock>()));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),]){Condition=typeof(global::TestApp.ITransport)},");
+    await Assert.That(generated).DoesNotContain("IClock),]),");
+  }
+
+  /// <summary>Factories whose conditional does not build the registered type only when the service is present.</summary>
+  public static IEnumerable<Func<string>> FactoriesThatDoNotBuildTheTypeUnderTheCondition() {
+    // Built when the service is absent.
+    yield return () => "services.TryAddSingleton<Worker>(sp => sp.GetService<ITransport>() is null ? new Worker(null!, null!) : null!);";
+    // Built either way.
+    yield return () => "services.TryAddSingleton<Worker>(sp => sp.GetService<ITransport>() is null ? new Worker(null!, null!) : new Worker(null!, null!));";
+    // Not built with new.
+    yield return () => "services.TryAddSingleton<Worker>(sp => sp.GetService<ITransport>() is { } ? Make() : null!);";
+    // A block body, which is not read.
+    yield return () => "services.TryAddSingleton<Worker>(sp => { return sp.GetService<ITransport>() is { } ? new Worker(null!, null!) : null!; });";
+    // A conditional on something else.
+    yield return () => "services.TryAddSingleton<Worker>(sp => enabled ? new Worker(null!, null!) : null!);";
+    // An argument that is not a lambda.
+    yield return () => "services.TryAddSingleton<Worker>(Make());";
+    // A resolve of a service the compilation cannot name.
+    yield return () => "services.TryAddSingleton<Worker>(sp => sp.GetService<IUndeclared>() is { } ? new Worker(null!, null!) : null!);";
+    // A resolve of a service the manifest cannot name.
+    yield return () => "services.TryAddSingleton<Worker>(sp => sp.GetService<IPrivate>() is { } ? new Worker(null!, null!) : null!);";
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [MethodDataSource(nameof(FactoriesThatDoNotBuildTheTypeUnderTheCondition))]
+  public async Task AFactoryThatDoesNotBuildItsTypeOnlyUnderTheCondition_RequiresTheConstructorUnconditionallyAsync(string registration) {
+    var source = _conditional(registration).Replace(
+      "public static class Registration {",
+      "public static class Registration {\n  private static Worker Make() => null!;\n  private interface IPrivate { }", StringComparison.Ordinal);
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).DoesNotContain("Condition=");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task TheSameTypeRequiredWithAndWithoutACondition_IsTwoEntriesAsync() {
+    var source = _conditional("""
+      services.AddSingleton<Worker>(sp => new Worker(null!, sp.GetRequiredService<IClock>()));
+      services.TryAdd(ServiceDescriptor.Singleton<Worker>(sp => sp.GetService<ITransport>() is { } t ? new Worker(t, sp.GetRequiredService<IClock>()) : null!));
+      """);
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]){Condition=typeof(global::TestApp.ITransport)},");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task TwoRegistrationsOfTheSameTypeRequiringDifferentServices_ContributeTheirUnionAsync() {
+    // One entry per type and condition, so what each registration requires must survive the merge, not only the first.
+    var source = _conditional("""
+      services.AddSingleton<Worker>();
+      services.AddSingleton<Worker>(sp => { sp.GetRequiredService<ILog>(); return new Worker(null!, null!); });
+      """);
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),typeof(global::TestApp.ILog),]),");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AConditionalHostedServiceFactory_CarriesItsConditionWithItsFactoryServiceTypeAsync() {
+    var source = _conditional(
+      "services.AddHostedService<Worker>(sp => sp.GetService<ITransport>() is { } t ? new Worker(t, sp.GetRequiredService<IClock>()) : null!);");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),],[typeof(global::Microsoft.Extensions.Hosting.IHostedService),]){Condition=typeof(global::TestApp.ITransport)},");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AQualifiedServiceDescriptorFactory_IsReadAsync() {
+    var source = _conditional(
+      "services.TryAdd(Microsoft.Extensions.DependencyInjection.ServiceDescriptor.Singleton<Worker>(sp => sp.GetService<ITransport>() is { } t ? new Worker(t, sp.GetRequiredService<IClock>()) : null!));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]){Condition=typeof(global::TestApp.ITransport)},");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task EveryResolveInTheBuildingBranch_IsOneRequirementUnderTheConditionAsync() {
+    var source = _conditional(
+      "services.TryAdd(ServiceDescriptor.Singleton<Worker>(sp => sp.GetService<ITransport>() is { } "
+      + "? new Worker(sp.GetRequiredService<ITransport>(), sp.GetRequiredService<IClock>()) : null!));");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),]){Condition=typeof(global::TestApp.ITransport)},");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryWhoseBuildingBranchMakesAnotherType_RequiresTheConstructorUnconditionallyAsync() {
+    var source = _conditional(
+      "services.TryAddSingleton<IThing, Worker>(sp => sp.GetService<ITransport>() is { } ? new StandIn(null!) : null!);");
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.ITransport),typeof(global::TestApp.IClock),],[typeof(global::TestApp.IThing),]),")
+      .Because("the registration names Worker, and the branch builds something else, so nothing says when Worker is built");
+  }
+
+  /// <summary>
+  /// ServiceDescriptor factory shapes the scan does not read: two type arguments name a service type many registrations
+  /// share, so the requirement would apply wherever any of them is registered; a call on another type is not a descriptor.
+  /// </summary>
+  public static IEnumerable<Func<string>> UnreadDescriptorFactories() {
+    yield return () => "services.TryAddEnumerable(ServiceDescriptor.Singleton<IThing, Worker>(sp => new Worker(null!, sp.GetRequiredService<IClock>())));";
+    yield return () => "services.TryAdd(Descriptors.Singleton<Worker>(sp => new Worker(null!, sp.GetRequiredService<IClock>())));";
+    // A consumer's own type of the same name.
+    yield return () => "services.TryAdd(Other.ServiceDescriptor.Singleton<Worker>(sp => new Worker(null!, sp.GetRequiredService<IClock>())));";
+    // A call that binds to no overload.
+    yield return () => "services.TryAdd(ServiceDescriptor.Singleton<Worker>(sp => new Worker(null!, sp.GetRequiredService<IClock>()), 42));";
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [MethodDataSource(nameof(UnreadDescriptorFactories))]
+  public async Task AServiceDescriptorFactoryNamingASharedServiceType_OrAnotherType_IsNotReadAsync(string registration) {
+    var source = _conditional(registration) + """
+
+      public static class Descriptors {
+        public static ServiceDescriptor Singleton<T>(System.Func<System.IServiceProvider, T> f) where T : class
+          => ServiceDescriptor.Singleton(f);
+      }
+      public static class Other {
+        public static class ServiceDescriptor {
+          public static Microsoft.Extensions.DependencyInjection.ServiceDescriptor Singleton<T>(System.Func<System.IServiceProvider, T> f)
+            where T : class => Microsoft.Extensions.DependencyInjection.ServiceDescriptor.Singleton(f);
+        }
+      }
+      """;
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(generated).DoesNotContain("IClock),");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task EverySingleServiceDescriptorFactoryLifetime_IsReadAsync() {
+    var source = _conditional("""
+      services.TryAdd(ServiceDescriptor.Singleton<IThing>(sp => new Worker(null!, sp.GetRequiredService<IClock>())));
+      services.TryAdd(ServiceDescriptor.Scoped<Worker>(sp => new Worker(null!, sp.GetRequiredService<IClock>())));
+      services.TryAdd(ServiceDescriptor.Transient<StandIn>(sp => new StandIn(sp.GetRequiredService<ILog>())));
+      """);
+
+    var generated = _flatten(_runWithContainer(source));
+
+    await Assert.That(_compileErrors(source)).IsEmpty();
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.IThing),[typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.StandIn),[typeof(global::TestApp.ILog),]),");
+  }
+
+  /// <summary>
+  /// Runs the generator over a compilation that references the container's abstractions and the hosting abstractions,
+  /// so ServiceDescriptor, the registration extensions and GetService bind to the real types: the descriptor check is
+  /// semantic, and a source in which they do not bind would prove nothing about it.
+  /// </summary>
+  [RequiresAssemblyFiles]
+  private static Microsoft.CodeAnalysis.GeneratorDriverRunResult _runWithContainer(string source) =>
+    Microsoft.CodeAnalysis.CSharp.CSharpGeneratorDriver.Create(new ServiceRequirementsGenerator())
+      .RunGenerators(_containerCompilation(source))
+      .GetRunResult();
+
+  [RequiresAssemblyFiles]
+  private static string _runtimeDirectory => System.IO.Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+
+  [RequiresAssemblyFiles]
+  private static Microsoft.CodeAnalysis.CSharp.CSharpCompilation _containerCompilation(string source) =>
+    GeneratorTestHelper.CreateCompilation(source).AddReferences(
+      // IServiceProvider's home, which the container's signatures name.
+      SharedMetadataReferences.FromFile(System.IO.Path.Combine(_runtimeDirectory, "System.ComponentModel.dll")),
+      SharedMetadataReferences.FromFile(System.IO.Path.Combine(_runtimeDirectory, "System.Collections.dll")),
+      SharedMetadataReferences.FromFile(typeof(Microsoft.Extensions.DependencyInjection.ServiceDescriptor).Assembly.Location),
+      SharedMetadataReferences.FromFile(typeof(Microsoft.Extensions.Hosting.IHostedService).Assembly.Location));
+
+  /// <summary>The source's own compile errors, before the generator runs.</summary>
+  [RequiresAssemblyFiles]
+  private static List<string> _compileErrors(string source) =>
+    [.. _containerCompilation(source).GetDiagnostics()
+      .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+      .Select(d => d.ToString())];
+
   private static string _flatten(Microsoft.CodeAnalysis.GeneratorDriverRunResult result) =>
     string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source))
       .Replace(" ", "", StringComparison.Ordinal)

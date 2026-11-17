@@ -7,6 +7,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -92,7 +93,7 @@ public class PerspectiveCurrentModelAnalyzer : DiagnosticAnalyzer {
     if (symbol.ContainingType.GetAttributes().Any(static a => Shared.Utilities.TypeNameUtilities.IsNamed(a.AttributeClass, OVERWRITE_ONLY_ATTRIBUTE))
         && _firstRead(method, current, context.SemanticModel, context.CancellationToken) is { } read) {
       context.ReportDiagnostic(Diagnostic.Create(
-          OverwriteOnlyApplyReadsCurrentModel, read.GetLocation(), symbol.Name, symbol.ContainingType.Name, current.Name));
+          OverwriteOnlyApplyReadsCurrentModel, read.GetLocation(), symbol.Name, TypeNameUtilities.SimpleName(symbol.ContainingType), current.Name));
     }
   }
 

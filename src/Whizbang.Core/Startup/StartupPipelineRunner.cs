@@ -243,7 +243,7 @@ public sealed class StartupPipelineRunner {
       // still Skipped; only the reason distinguishes "lost the race" from "could not ask".
       var reason = transient is null
         ? "capability not held"
-        : $"capability undetermined: the elector failed with {transient.GetType().Name}: {transient.Message}";
+        : $"capability undetermined: the elector failed with {TypeNameFormatter.ForLog(transient.GetType())}: {transient.Message}";
       return new StartupStepReport(StartupStepOutcome.Skipped,
         reason + await _oweAsync(descriptor, cancellationToken).ConfigureAwait(false));
     }
@@ -258,7 +258,7 @@ public sealed class StartupPipelineRunner {
         if (transientFailures > MaxTransientDutyFailures) {
           return new StartupStepReport(StartupStepOutcome.Failed,
             $"duty '{descriptor.RequiredCapability}' could not be reached after "
-            + $"{transientFailures} consecutive failures — last was {transient.GetType().Name}: "
+            + $"{transientFailures} consecutive failures; last was {TypeNameFormatter.ForLog(transient.GetType())}: "
             + $"{transient.Message}. Failing the step rather than waiting on it indefinitely.");
         }
       } else if (attempt!.Refusal is DutyRefusal.Halted && _dutyElector is Whizbang.Core.RunControl.IObeysRunPermit { RunPermit: var permit }) {
@@ -300,7 +300,7 @@ public sealed class StartupPipelineRunner {
         nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
         var detail = transient is null
           ? attempt!.Detail
-          : $"{transient.GetType().Name}: {transient.Message}";
+          : $"{TypeNameFormatter.ForLog(transient.GetType())}: {transient.Message}";
         await _notifyAsync(o => o.OnStepWaitingAsync(
           new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, detail),
           cancellationToken)).ConfigureAwait(false);
@@ -329,7 +329,7 @@ public sealed class StartupPipelineRunner {
 #pragma warning disable CA1031 // reported in the step's reason; the step stays skipped exactly as without owing
     } catch (Exception ex) {
 #pragma warning restore CA1031
-      return $"; could not be owed to the duty's holder ({ex.GetType().Name})";
+      return $"; could not be owed to the duty's holder ({TypeNameFormatter.ForLog(ex.GetType())})";
     }
   }
 

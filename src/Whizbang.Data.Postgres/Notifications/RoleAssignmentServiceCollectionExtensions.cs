@@ -164,6 +164,9 @@ internal sealed class ConfigureRoleAssignmentOptionsFromConfiguration(IConfigura
     if (TimeSpan.TryParse(section["ProgressWindow"], CultureInfo.InvariantCulture, out var progress)) {
       options.ProgressWindow = progress;
     }
+    if (TimeSpan.TryParse(section["MigratorStallLimit"], CultureInfo.InvariantCulture, out var stall)) {
+      options.MigratorStallLimit = stall;
+    }
   }
 }
 

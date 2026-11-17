@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -69,6 +70,16 @@ public class MaintenanceWorkerBestEffortStepsTests {
         ? Task.FromException<int>(LifecycleCleanupThrows)
         : Task.FromResult(0);
 
+    /// <summary>Fails the handled-ledger sweep (#2273).</summary>
+    public Exception? HandledSweepThrows { get; init; }
+    public long HandledRemoved { get; init; }
+    public List<(DateTimeOffset Now, TimeSpan Keep)> HandledSweeps { get; } = [];
+
+    public Task<long> SweepHandledLedgerAsync(DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) {
+      HandledSweeps.Add((now, keep));
+      return HandledSweepThrows is not null ? Task.FromException<long>(HandledSweepThrows) : Task.FromResult(HandledRemoved);
+    }
+
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
@@ -83,9 +94,16 @@ public class MaintenanceWorkerBestEffortStepsTests {
       => Task.CompletedTask;
   }
 
-  private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(StepCoordinator coord) {
+  private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
+      StepCoordinator coord, TimeProvider? clock = null, StreamIntegrityOptions? integrity = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
+    if (clock is not null) {
+      services.AddSingleton(clock);
+    }
+    if (integrity is not null) {
+      services.AddSingleton(Options.Create(integrity));
+    }
     var sp = services.BuildServiceProvider();
     var logger = new CapturingLogger();
     var worker = new MaintenanceWorker(
@@ -219,5 +237,55 @@ public class MaintenanceWorkerBestEffortStepsTests {
       .Throws<OperationCanceledException>()
       .Because("every best-effort step in this cycle lets shutdown through; a newly wired one is "
              + "exactly where that gets forgotten");
+  }
+
+  // ============================================================
+  // #2273: the handled ledger is kept to the repair receptor lookback every cycle
+  // ============================================================
+
+  private static readonly DateTimeOffset _cycleAt = new(2026, 11, 11, 12, 0, 0, TimeSpan.Zero);
+
+  [Test]
+  public async Task HandledLedger_IsSweptEveryCycle_ToTheRepairReceptorLookback_AtTheHostsTimeAsync() {
+    var coord = new StepCoordinator { HandledRemoved = 3 };
+    var (worker, logger) = _build(coord, new FakeTimeProvider(_cycleAt),
+      new StreamIntegrityOptions { RepairReceptorLookback = TimeSpan.FromDays(2) });
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.HandledSweeps).IsEquivalentTo([(_cycleAt, TimeSpan.FromDays(2))])
+      .Because("the completion records every handled event on any driver, so the ledger needs this sweep to stay bounded");
+    await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("handled ledger", StringComparison.OrdinalIgnoreCase))).IsTrue();
+  }
+
+  [Test]
+  public async Task HandledLedger_WithNothingConfigured_IsKeptForTheDefaultLookback_AndARemovalOfNothingIsQuietAsync() {
+    var coord = new StepCoordinator();
+    var (worker, logger) = _build(coord);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.HandledSweeps.Single().Keep).IsEqualTo(TimeSpan.FromDays(7));
+    await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("handled ledger", StringComparison.OrdinalIgnoreCase))).IsFalse();
+  }
+
+  [Test]
+  public async Task HandledLedgerSweepFailing_DoesNotFailTheCycleAsync() {
+    var coord = new StepCoordinator { HandledSweepThrows = new InvalidOperationException("sweep failed") };
+    var (worker, logger) = _build(coord);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException && e.Message.Contains("handled ledger", StringComparison.OrdinalIgnoreCase)))
+      .IsTrue().Because("a failed sweep is reported with what it was keeping, never swallowed");
+  }
+
+  [Test]
+  public async Task HandledLedgerSweepCanceled_PropagatesAsync() {
+    var coord = new StepCoordinator { HandledSweepThrows = new OperationCanceledException() };
+    var (worker, _) = _build(coord);
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>();
   }
 }

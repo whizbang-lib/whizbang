@@ -2456,6 +2456,37 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// #2145: the associations step writes the collective event types this service handles, read from the consumer
+  /// registry the host's service provider holds, and the schema currency check reads the same set, so a start whose
+  /// handler set changed is not reported current and runs the step.
+  /// </summary>
+  [Test]
+  public async Task Generator_HandledCollectiveSet_ReachesTheAssociationsStep_AndTheCurrencyCheckAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions")).SourceText.ToString();
+    var registration = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(schemaExtensions).Contains("logger, cancellationToken, _collectiveEventTypes.Value);")
+      .Because("the step passes the handled set the pass resolved, the set its hash was computed over");
+    await Assert.That(registration).Contains("IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider)")
+      .Because("the currency check must hash the same handled set the pass would write");
+  }
+
+  /// <summary>
   /// Test that Step 5 is called AFTER Step 4 (migrations).
   /// The order matters because associations should only be registered after the
   /// wh_message_associations table and register_message_associations function are created.

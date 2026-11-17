@@ -11,6 +11,7 @@ using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 using static Whizbang.Core.Messaging.ProcessingModeAccessor;
 
@@ -28,6 +29,9 @@ public sealed partial class PerspectiveRebuilder(
     ILogger<PerspectiveRebuilder> logger) : IPerspectiveRebuilder {
 
   private readonly ConcurrentDictionary<string, RebuildStatus> _activeRebuilds = new();
+
+  // One blue-green rebuild of a table at a time, on this instance and through the table's duty across the fleet (#2301).
+  private readonly PerspectiveRebuildGuard _guard = new(logger);
 
   // Batch size for flushing pending cursor completions to IPerspectiveCheckpointCompleter.
   // Matches PerspectiveWorker's intent of amortizing round-trips while still persisting
@@ -114,7 +118,7 @@ public sealed partial class PerspectiveRebuilder(
       return (await digester.ComputeAsync(perspectiveName, streamIds, ct), null);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogRowDigestNotComputed(logger, ex, perspectiveName);
-      return (null, $"the row digest failed: {ex.GetType().Name}: {ex.Message}");
+      return (null, $"the row digest failed: {TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}");
     }
   }
 
@@ -133,23 +137,33 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <summary>
-  /// Counts one replayed stream: rebuilt when the fold wrote its row, or when it ends purged (a deleted record, whose
-  /// correct result is no row, #1370); unchanged when it folded and the store wrote nothing; neither when it had no
-  /// events for this perspective.
+  /// Counts one replayed stream: rebuilt when the fold wrote its row, when it ends purged (a deleted record, whose
+  /// correct result is no row, #1370), or when the fold equals the stored row (the read model was already right,
+  /// #2252); otherwise by why the row was left untouched (the ordering guard refused the write, no event produced a
+  /// model, or unreported); and apart from all of these when it had no events for this perspective.
   /// </summary>
   private async Task _countStreamAsync(
       RebuildRun run, Guid streamId, IReadOnlyList<PerspectiveCursorCompletion> completions, CancellationToken ct) {
-    if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
+    var folded = completions.Where(c => c.LastEventId != Guid.Empty).ToList();
+    if (folded.Count == 0) {
+      run.StreamsWithoutEvents++;
+    } else if (folded.Any(c => c.RowChanged)) {
       run.StreamsProcessed++;
-    } else if (completions.Any(c => c.LastEventId != Guid.Empty)) {
-      if (await _endsPurgedAsync(run, completions, ct)) {
-        run.StreamsProcessed++;
-        LogRebuildLeftPurged(logger, run.PerspectiveName, streamId);
-      } else {
-        // Folded, but the row was left as it was: the store's ordering guard refused the write, or no event produced
-        // a model. Counted apart from a stream with no events, which the "nothing rebuilt" message used to call it (#1346).
-        run.StreamsUnchanged++;
-      }
+    } else if (folded.All(c => c.UnchangedReason == PerspectiveRowUnchangedReason.AlreadyCorrect)) {
+      run.StreamsProcessed++;
+      run.StreamsAlreadyCorrect++;
+    } else if (await _endsPurgedAsync(run, folded, ct)) {
+      run.StreamsProcessed++;
+      LogRebuildLeftPurged(logger, run.PerspectiveName, streamId);
+    } else if (folded.Any(c => c.UnchangedReason == PerspectiveRowUnchangedReason.WriteRefused)) {
+      run.StreamsWriteRefused++;
+      LogRebuildWriteRefused(logger, run.PerspectiveName, streamId);
+    } else if (folded.Any(c => c.UnchangedReason == PerspectiveRowUnchangedReason.NoModel)) {
+      run.StreamsWithoutModel++;
+    } else {
+      // Folded, but the row was left as it was, by a runner that does not say why. Counted apart from a stream with no
+      // events, which the "nothing rebuilt" message used to call it (#1346).
+      run.StreamsUnchanged++;
     }
   }
 
@@ -186,11 +200,21 @@ public sealed partial class PerspectiveRebuilder(
     }
   }
 
-  private void _logRebuildCompleted(bool partOfRun, RebuildMode mode, string perspectiveName, int streams, long elapsedMs) {
+  private void _logRebuildCompleted(bool partOfRun, RebuildRun run, long elapsedMs) {
     if (!partOfRun) {
-      LogRebuildCompleted(logger, mode, perspectiveName, streams, elapsedMs);
+      LogRebuildCompleted(logger, run.Mode, run.PerspectiveName, run.StreamsProcessed, elapsedMs, new RebuildOutcomeCounts(
+          run.StreamsProcessed - run.StreamsAlreadyCorrect, run.StreamsAlreadyCorrect, run.StreamsWriteRefused,
+          run.StreamsWithoutModel, run.StreamsWithoutEvents));
     }
   }
+
+  // How each stream the run folded ended (#2252), copied onto its result
+  private static RebuildResult _withOutcomeCounts(RebuildResult result, RebuildRun run) => result with {
+    StreamsAlreadyCorrect = run.StreamsAlreadyCorrect,
+    StreamsWriteRefused = run.StreamsWriteRefused,
+    StreamsWithoutModel = run.StreamsWithoutModel,
+    StreamsWithoutEvents = run.StreamsWithoutEvents,
+  };
 
   // The row digest for a rebuild of named streams, with why there is none; a stream of a run takes none
   private (IPerspectiveRowDigest? Digester, string? Unavailable) _digesterFor(
@@ -215,7 +239,9 @@ public sealed partial class PerspectiveRebuilder(
       // interface and the concrete type's registration would never be consulted.
       await dispatcher.AsSystem().ForAllTenants().PublishAsync(rebuildEvent);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      LogRebuildEventNotPublished(logger, ex, typeof(TEvent).Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      LogRebuildEventNotPublished(logger, ex, TypeNameFormatter.ForLog(typeof(TEvent)));
+#pragma warning restore CA1873
     }
   }
 
@@ -270,7 +296,7 @@ public sealed partial class PerspectiveRebuilder(
       var eventTypes = _effectiveEventTypes(sp, registry, perspectiveName);
       streamIds ??= await _resolveStreamIdsToReplayAsync(sp, perspectiveName, eventTypes, ct);
       var resolved = streamIds.Count;
-      streamIds = await _withoutStateBasedStreamsAsync(sp, perspectiveName, streamIds, ct);
+      streamIds = await _withoutStateBasedStreamsAsync(sp, registry, perspectiveName, streamIds, ct);
       run.StreamsRefused = resolved - streamIds.Count;
 
       // Blue-green needs a driver that can build and swap a shadow table. Without one the rebuild
@@ -331,16 +357,16 @@ public sealed partial class PerspectiveRebuilder(
       }
       // A stream skipped for its archived data is reported as skipped, not as a stream nothing rebuilt (#1931).
       if (requested > 0 && run.StreamsProcessed == 0 && run.StreamsSkipped == 0) {
-        var nothingRebuilt = _nothingRebuiltError(requested, run.StreamsRefused, run.StreamsUnchanged);
+        var nothingRebuilt = _nothingRebuiltError(requested, run);
         LogRebuildNothingRebuilt(logger, mode, perspectiveName, requested, run.StreamsRefused);
         await _emitAsync(new PerspectiveRebuildFailed(
             rebuildStreamId, perspectiveName, mode, nothingRebuilt, 0, sw.Elapsed, origin), partOfRun);
-        return new RebuildResult(perspectiveName, 0, run.EventsReplayed, sw.Elapsed, false, nothingRebuilt) {
+        return _withOutcomeCounts(new RebuildResult(perspectiveName, 0, run.EventsReplayed, sw.Elapsed, false, nothingRebuilt) {
           StreamsRequested = requested,
           StreamsRefused = run.StreamsRefused,
-        };
+        }, run);
       }
-      _logRebuildCompleted(partOfRun, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
+      _logRebuildCompleted(partOfRun, run, sw.ElapsedMilliseconds);
       var (digestAfter, digestAfterFailure) = digester is null
           ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
@@ -349,12 +375,12 @@ public sealed partial class PerspectiveRebuilder(
           rebuildStreamId, perspectiveName, mode, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, origin,
           digestBefore, digestAfter, digestUnavailable), partOfRun);
 
-      return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null) {
+      return _withOutcomeCounts(new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null) {
         StreamsRequested = requested,
         StreamsRefused = run.StreamsRefused,
         StreamsPurged = run.StreamsPurged,
         StreamsSkipped = run.StreamsSkipped,
-      };
+      }, run);
     } catch (Exception ex) {
       sw.Stop();
       var streamsProcessed = run?.StreamsProcessed ?? 0;
@@ -371,10 +397,14 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <summary>Why a rebuild of named streams rebuilt none of them, in words an operator can act on.</summary>
-  private static string _nothingRebuiltError(int requested, int refused, int unchanged) =>
-    refused == requested
-      ? $"None of the {requested} requested stream(s) was rebuilt: all {refused} are state-based (ephemeral or compacted) and not a rebuildable source of truth."
-      : $"None of the {requested} requested stream(s) was rebuilt: {refused} refused as state-based, {unchanged} folded but left the row unchanged (the store refused the write, or no event produced a model), {requested - refused - unchanged} had no events for this perspective.";
+  private static string _nothingRebuiltError(int requested, RebuildRun run) =>
+    run.StreamsRefused == requested
+      ? $"None of the {requested} requested stream(s) was rebuilt: all {run.StreamsRefused} are state-based (ephemeral or compacted) and not a rebuildable source of truth."
+      : $"None of the {requested} requested stream(s) was rebuilt: {run.StreamsRefused} refused as state-based, "
+        + $"{run.StreamsWriteRefused} folded but the row's ordering guard refused the write, "
+        + $"{run.StreamsWithoutModel} folded but no event produced a model, "
+        + $"{run.StreamsUnchanged} folded but left the row unchanged (the store refused the write, or no event produced a model), "
+        + $"{run.StreamsWithoutEvents} had no events for this perspective.";
 
   /// <summary>
   /// StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
@@ -383,13 +413,25 @@ public sealed partial class PerspectiveRebuilder(
   /// backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
   /// so engines without the flags are unaffected.
   /// </summary>
+  /// <remarks>
+  /// A stream an allowed pair mixed (#2255) is not refused for a read model that applies only the pair's Sourced type: the
+  /// pair's ephemeral type, under every stored name, is passed over for it (<see cref="MixedStreamAllowance.IgnoredByRebuild"/>).
+  /// The opted-in read model applies the ephemeral type, so its full rebuild of the stream stays refused.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_AnAllowedMixedStream_RebuildsForADurableOnlyReadModel_AndStaysRefusedForTheOptedInOneAsync</tests>
   private async Task<List<Guid>> _withoutStateBasedStreamsAsync(
-      IServiceProvider sp, string perspectiveName, List<Guid> streamIds, CancellationToken ct) {
+      IServiceProvider sp, IPerspectiveRunnerRegistry registry, string perspectiveName, List<Guid> streamIds, CancellationToken ct) {
     var stateBasedGuard = sp.GetService<IWorkCoordinator>();
     if (stateBasedGuard is null || streamIds.Count == 0) {
       return streamIds;
     }
-    var stateBased = await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct);
+    var catalog = sp.GetService<IMessageTypeCatalog>();
+    var perspective = registry.GetRegisteredPerspectives().FirstOrDefault(p => p.ClrTypeName == perspectiveName);
+    List<string> ignored = [.. MixedStreamAllowance.IgnoredByRebuild(perspective, MixedStreamAllowance.Allowed(registry))
+      .SelectMany(e => MixedStreamAllowance.StoredNames(e, catalog))];
+    var stateBased = ignored.Count == 0
+      ? await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct)
+      : await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ignored, ct);
     if (stateBased.Count == 0) {
       return streamIds;
     }
@@ -459,6 +501,16 @@ public sealed partial class PerspectiveRebuilder(
         $"Perspective '{run.PerspectiveName}' (looked up as '{tableKey}') has no registered table, so there is " +
         "nothing to rebuild blue-green.");
     var options = sp.GetOptionsValue<BlueGreenRebuildOptions>() ?? new BlueGreenRebuildOptions();
+
+    // Two rebuilds of one table share its shadow, and creating the shadow drops one left behind, so a second rebuild
+    // would destroy the first one's replay. The table's duty is held until the swap is done (#2301); a rebuild that
+    // cannot take it fails before it touches anything, as any rebuild that cannot start fails: with the reason.
+    var entry = await _guard.TryEnterAsync(
+      table, sp.GetService<IDutyElector>(), sp.GetService<TimeProvider>() ?? TimeProvider.System, ct).ConfigureAwait(false);
+    await using var guard = entry.Held ?? throw new InvalidOperationException(entry.IsInFlight
+      ? $"Perspective '{run.PerspectiveName}' was not rebuilt: another blue-green rebuild of {table} is in flight, on this " +
+        "instance or another. Run it again once that rebuild has finished."
+      : $"Perspective '{run.PerspectiveName}' was not rebuilt: it {entry.Refusal}.");
 
     var mark = await changes.WatermarkAsync(ct).ConfigureAwait(false);
     var shadow = await swapper.CreateShadowAsync(table, ct).ConfigureAwait(false);
@@ -778,6 +830,14 @@ public sealed partial class PerspectiveRebuilder(
     /// <summary>What the ledger says each stream has archived; null in a host with no archive.</summary>
     public Archival.IArchivedStreamExtents? ArchivedExtents { get; init; }
     public int StreamsUnchanged { get; set; }
+    /// <summary>Streams whose fold equals the stored row: rebuilt and verified (#2252).</summary>
+    public int StreamsAlreadyCorrect { get; set; }
+    /// <summary>Streams whose differing write the row's ordering guard refused (#2252).</summary>
+    public int StreamsWriteRefused { get; set; }
+    /// <summary>Streams where no event produced a model (#2252).</summary>
+    public int StreamsWithoutModel { get; set; }
+    /// <summary>Streams with no events for this perspective (#2252).</summary>
+    public int StreamsWithoutEvents { get; set; }
     /// <summary>Where a stream the fold left untouched is checked for a purge; null when the host has no store.</summary>
     public IPerspectivePurgeMarkerStore? PurgeMarkers { get; init; }
     /// <summary>The events re-keyed onto each row this run has read, across all of its phases (#1820).</summary>
@@ -875,8 +935,24 @@ public sealed partial class PerspectiveRebuilder(
   private static partial void LogRebuildNothingRebuilt(ILogger logger, RebuildMode mode, string perspective, int requested, int refused);
 
   [LoggerMessage(Level = LogLevel.Information,
-      Message = "Completed {Mode} rebuild of perspective {Perspective} — {Streams} streams in {ElapsedMs}ms")]
-  private static partial void LogRebuildCompleted(ILogger logger, RebuildMode mode, string perspective, int streams, long elapsedMs);
+      Message = "Completed {Mode} rebuild of perspective {Perspective}: {Streams} streams in {ElapsedMs}ms ({Outcomes})")]
+  private static partial void LogRebuildCompleted(ILogger logger, RebuildMode mode, string perspective, int streams, long elapsedMs,
+      RebuildOutcomeCounts outcomes);
+
+  /// <summary>
+  /// How each stream of a completed rebuild ended (#2252), logged as one value on the completion line. Formatted only
+  /// when the line is written, so a disabled log level costs nothing.
+  /// </summary>
+  internal readonly record struct RebuildOutcomeCounts(
+      int Rewritten, int AlreadyCorrect, int WriteRefused, int WithoutModel, int WithoutEvents) {
+    /// <inheritdoc />
+    public override string ToString() =>
+      $"{Rewritten} rewritten, {AlreadyCorrect} already correct, {WriteRefused} write refused, {WithoutModel} without a model, {WithoutEvents} without events";
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild of perspective {Perspective} stream {StreamId} folded a row that differs from the stored one, and the row's ordering guard refused the write; the row keeps what it holds")]
+  private static partial void LogRebuildWriteRefused(ILogger logger, string perspective, Guid streamId);
 
   [LoggerMessage(Level = LogLevel.Error,
       Message = "Failed {Mode} rebuild of perspective {Perspective} after {Streams} streams in {ElapsedMs}ms")]

@@ -73,6 +73,46 @@ public class SnapshotSelectionFollowsStreamOrderTests : EFCoreTestBase {
     await Assert.That(beforeThird.Value.SnapshotVersion).IsEqualTo(2);
   }
 
+  /// <summary>
+  /// #2295, the floor a reap-driven snapshot gives: the pass bootstraps at the cursor's tip, and a snapshot at the tip
+  /// is a rewind floor only for a late event placed after it in the stream. A late event below the tip finds no floor
+  /// in it, so for an ephemeral perspective that late event is dropped (its earlier bodies are reaped once the tip
+  /// snapshot covers them). Snapshotting at the reap boundary instead would give such an event a floor; that needs the
+  /// model as of the boundary, which only a replay can produce, and is a follow-up. This test locks what ships.
+  /// </summary>
+  [Test]
+  public async Task AReapDrivenSnapshotAtTheTip_IsAFloorOnlyForALateEventAfterItAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var (first, second, tip, later) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+    await _commitAsync(connection, first, streamId);
+    await _commitAsync(connection, second, streamId);
+    await _commitAsync(connection, tip, streamId);
+    await _commitAsync(connection, later, streamId);
+    await _placeAsync(connection, first, version: 1, commitSequence: 10);
+    await _placeAsync(connection, second, version: 2, commitSequence: 20);
+    await _placeAsync(connection, tip, version: 3, commitSequence: 30);
+    await _placeAsync(connection, later, version: 4, commitSequence: 40);
+
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    IPerspectiveSnapshotStore store = new EFCorePerspectiveSnapshotStore(dataSource);
+    // The write the bootstrap makes: at the cursor's last event, with its commit sequence and no collectives mark.
+    using var data = System.Text.Json.JsonDocument.Parse("{}");
+    await store.CreateSnapshotAsync(streamId, _perspectiveName, tip, 30, data, null, CancellationToken.None);
+
+    var forASecondEventArrivingLate = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, second, CancellationToken.None);
+    await Assert.That(forASecondEventArrivingLate).IsNull()
+      .Because("the tip snapshot sits after the late event in the stream, and restoring from it would skip the event");
+
+    var forAnEventAfterTheTip = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, later, CancellationToken.None);
+    await Assert.That(forAnEventAfterTheTip).IsNotNull();
+    await Assert.That(forAnEventAfterTheTip!.SnapshotEventId).IsEqualTo(tip)
+      .Because("the positive control: an event placed after the tip restores from it");
+    await Assert.That(forAnEventAfterTheTip.SnapshotVersion).IsEqualTo(3);
+  }
+
   [Test]
   public async Task GetLatestSnapshotBeforeEventInStreamOrder_SnapshotRecordingNoVersion_IsNotSelectedAsync() {
     await using var dbContext = CreateDbContext();

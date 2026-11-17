@@ -22,19 +22,44 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityDeliveryWorkerTests.cs</tests>
 internal static partial class IntegrityAdmission {
   /// <summary>An admission decision, and the slot it holds until disposed.</summary>
-  internal readonly struct Ticket : IDisposable {
+  /// <remarks>
+  /// Asynchronously disposable only, so a caller cannot release the slot without also clearing the requester's stored
+  /// first deferral (#2288): a synchronous <c>using</c> does not compile.
+  /// </remarks>
+  internal readonly struct Ticket : IAsyncDisposable {
     private readonly HousekeepingCoordinator? _holder;
+    private readonly IWorkCoordinator? _coordinator;
+    private readonly HousekeepingCoordinator.Decision _decision;
+    private readonly ILogger _logger;
 
-    internal Ticket(bool granted, HousekeepingCoordinator? holder) {
+    // A ticket that holds no slot: admitted ungated (no coordinator to ask), or refused.
+    internal Ticket(bool granted) : this(granted, holder: null, coordinator: null, decision: default, logger: null) { }
+
+    internal Ticket(
+        bool granted, HousekeepingCoordinator? holder, IWorkCoordinator? coordinator,
+        HousekeepingCoordinator.Decision decision, ILogger? logger) {
       Granted = granted;
       _holder = holder;
+      _coordinator = coordinator;
+      _decision = decision;
+      _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
 
     /// <summary>Whether the activity may run now.</summary>
     public bool Granted { get; }
 
-    /// <summary>Releases the integrity slot, if this ticket holds it.</summary>
-    public void Dispose() => _holder?.End(HousekeepingCoordinator.Activity.Integrity);
+    /// <summary>
+    /// Releases the integrity slot, if this ticket holds it, and clears the requester's stored first deferral when the
+    /// admitting decision asked for it.
+    /// </summary>
+    /// <returns>A task that completes when the slot is released and the record cleared.</returns>
+    public async ValueTask DisposeAsync() {
+      if (_holder is null) {
+        return;
+      }
+      _holder.End(HousekeepingCoordinator.Activity.Integrity);
+      await HousekeepingDeferralStore.ClearAsync(_coordinator, _decision, _logger).ConfigureAwait(false);
+    }
   }
 
   /// <summary>Asks the idle gate whether <paramref name="requester"/> may run integrity work now.</summary>
@@ -48,7 +73,7 @@ internal static partial class IntegrityAdmission {
       IServiceProvider services, IWorkCoordinator coordinator, string requester, ILogger logger,
       CancellationToken cancellationToken) {
     if (services.GetService<HousekeepingCoordinator>() is not { } housekeeping) {
-      return new Ticket(granted: true, holder: null);
+      return new Ticket(granted: true);
     }
     ServiceBacklog? backlog = null;
     try {
@@ -57,11 +82,13 @@ internal static partial class IntegrityAdmission {
       LogBacklogUnmeasured(logger, requester, ex);
     }
     var decision = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog, requester);
+    // #2288: the requester's first deferral of a run goes to the store, so its forced-pass ceiling survives a restart.
+    await HousekeepingDeferralStore.RecordAsync(coordinator, decision, logger, cancellationToken).ConfigureAwait(false);
     if (!decision.Granted) {
       LogDeferred(logger, requester, decision.Reason);
-      return new Ticket(granted: false, holder: null);
+      return new Ticket(granted: false);
     }
-    return new Ticket(granted: true, holder: housekeeping);
+    return new Ticket(granted: true, holder: housekeeping, coordinator, decision, logger);
   }
 
   [LoggerMessage(Level = LogLevel.Warning,

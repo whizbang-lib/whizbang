@@ -102,8 +102,8 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(Diagnostic.Create(
         InheritScopeOnPerspectiveClass,
         location,
-        symbol.Name,
-        model.Name));
+        TypeNameUtilities.SimpleName(symbol),
+        TypeNameUtilities.SimpleName(model)));
     }
 
     // WHIZ171: both OnCreate and Always set to None. OnCreate defaults to every field (63).
@@ -113,7 +113,7 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(Diagnostic.Create(
         InheritScopeGivesNoScope,
         location,
-        symbol.Name));
+        TypeNameUtilities.SimpleName(symbol)));
     }
   }
 
@@ -123,8 +123,8 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static ITypeSymbol? _otherModel(INamedTypeSymbol symbol) {
     foreach (var iface in symbol.AllInterfaces) {
-      if (!_perspectiveInterfaceNames.Contains(iface.Name)
-          || TypeNameUtilities.Display(iface.ContainingNamespace) != PERSPECTIVES_NAMESPACE) {
+      if (!_perspectiveInterfaceNames.Contains(TypeNameUtilities.SimpleName(iface))
+          || TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(iface)) != PERSPECTIVES_NAMESPACE) {
         continue;
       }
       var model = iface.TypeArguments[0];

@@ -324,6 +324,25 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
 
   // ── Whole stream: tombstone and generation ────────────────────────────────────────────────────────
 
+  /// <summary>
+  /// #2262: an archive that removes no position of this origin's lane (its events were never stamped, so no window a
+  /// consumer verified holds them) leaves the generation alone; a bump would only have reset consumers' seals.
+  /// </summary>
+  [Test]
+  public async Task Write_WholeStream_OfUnstampedEvents_LeavesTheOriginGenerationAloneAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = Guid.CreateVersion7();
+    _ = await _streamAsync(connection, stream, 3);
+    var generation = await _generationAsync(connection);
+    var store = _store();
+
+    var written = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+
+    await Assert.That(written).IsEqualTo(new ArchiveWriteResult(ArchiveStatus.ARCHIVED, 3, 3, store.Locator, generation));
+    await Assert.That(await _generationAsync(connection)).IsEqualTo(generation);
+  }
+
   [Test]
   public async Task Write_WholeStream_LeavesATombstone_AndBumpsTheOriginGenerationAsync() {
     await using var ctx = CreateDbContext();
@@ -336,6 +355,8 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await _executeAsync(connection,
       "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version) " +
       $"VALUES (@id, 'P', '{ids[2]}', '{{}}'::jsonb, 1, 3)", stream);
+    // #2262: the events hold positions in this origin's lane, so the archive rewrites history a consumer may have verified.
+    await _executeAsync(connection, "SELECT stamp_pending_commit_sequences(1000)");
     var generation = await _generationAsync(connection);
     var store = _store();
 
@@ -343,7 +364,7 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
 
     await Assert.That(written).IsEqualTo(new ArchiveWriteResult(ArchiveStatus.ARCHIVED, 3, 3, store.Locator, generation + 1));
     await Assert.That(await _generationAsync(connection)).IsEqualTo(generation + 1)
-      .Because("every archive bumps the origin generation once, so integrity re-verifies instead of alarming");
+      .Because("an archive that removes positions of this origin's lane bumps the origin generation once, so integrity re-verifies instead of alarming");
     await Assert.That(await _tombstoneAsync(connection, stream))
       .IsEqualTo(("Archived", (long?)3, "postgres-table://wh_event_archive?codec=none&format=1", (long?)(generation + 1)));
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @id", stream)).IsEqualTo(0L)

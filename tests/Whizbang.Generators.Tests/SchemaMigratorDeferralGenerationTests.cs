@@ -196,7 +196,10 @@ public class SchemaMigratorDeferralGenerationTests {
   public async Task TheMigratorRenewsItsRole_AndMarksTheBackendRunningTheMigrationAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains("await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger);", StringComparison.Ordinal);
+    await Assert.That(output).Contains("await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger,", StringComparison.Ordinal);
+    await Assert.That(output).Contains("Whizbang.Data.Postgres.MigratorDuty.StallLimitFor(", StringComparison.Ordinal)
+      .Because("the keepalive renews only while the schema work reports progress (#2165)");
+    await Assert.That(output).Contains("Whizbang.Data.Postgres.StartupProgress.ReportTo(migratorDuty.NoteProgress)", StringComparison.Ordinal);
     await Assert.That(output).Contains("await migratorDuty.HoldAsync(staging);", StringComparison.Ordinal);
     await Assert.That(output).Contains("migratorDuty.Grant.VerifyStillHeldAsync", StringComparison.Ordinal);
     await Assert.That(output).Contains("PgRoleElector.MarkDutyBackendAsync", StringComparison.Ordinal);

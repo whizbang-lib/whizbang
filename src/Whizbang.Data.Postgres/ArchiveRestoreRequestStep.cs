@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Workers;
 
@@ -92,7 +93,7 @@ public sealed partial class ArchiveRestoreRequestStep : IMaintenanceStep {
       } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
-        failure = $"{ex.GetType().Name}: {ex.Message}";
+        failure = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}";
         LogRestoreThrew(_logger, streamId, ex);
       }
       if (failure is null) {

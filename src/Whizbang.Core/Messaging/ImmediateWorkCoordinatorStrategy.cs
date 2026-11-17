@@ -137,17 +137,12 @@ public partial class ImmediateWorkCoordinatorStrategy(
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
     // are picked up here and included in the current work batch.
-    if (_deferredChannel.HasPending) {
-      var deferredMessages = _deferredChannel.DrainAll();
-      // Prepend deferred messages to the queue. The deferred channel bypasses
-      // AddOutboxMessage, so this drain is a mint seam of its own — coalesce stamping
-      // must run here too (events published outside transaction context, including the
-      // audit event-store decorator's mints, arrive this way).
-      var index = 0;
-      foreach (var deferred in deferredMessages) {
-        _queues.OutboxMessages.Insert(index++, _queues.Stamp(deferred));
-      }
-      LogDeferredChannelDrained(_logger, deferredMessages.Count);
+    // The deferred channel bypasses AddOutboxMessage, so this drain is a mint seam of its own:
+    // coalesce stamping runs here too (events published outside transaction context, including the
+    // audit event-store decorator's mints, arrive this way).
+    var drained = DeferredOutboxDrain.PrependTo(_deferredChannel, _queues.OutboxMessages, _queues.Stamp);
+    if (drained > 0) {
+      LogDeferredChannelDrained(_logger, drained);
     }
 
     if (_queues.IsEmpty) {

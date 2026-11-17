@@ -66,8 +66,8 @@ internal static class CollectiveApplyShape {
   private static ITypeSymbol? _specModelType(IMethodSymbol methodSymbol) {
     if (methodSymbol.ReturnType is not INamedTypeSymbol returnType ||
         !returnType.IsGenericType ||
-        returnType.OriginalDefinition.Name != SPEC_TYPE_NAME ||
-        !TypeNameUtilities.IsNamed(returnType.OriginalDefinition.ContainingNamespace, SPEC_NAMESPACE)) {
+        TypeNameUtilities.SimpleName(returnType.OriginalDefinition) != SPEC_TYPE_NAME ||
+        !TypeNameUtilities.IsNamed(TypeNameUtilities.NamespaceOf(returnType.OriginalDefinition), SPEC_NAMESPACE)) {
       return null;
     }
 

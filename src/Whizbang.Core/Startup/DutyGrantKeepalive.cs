@@ -27,17 +27,27 @@ namespace Whizbang.Core.Startup;
 /// the grant says itself whether it lost the role or could not reach the database, and the next tick asks again.
 /// </para>
 /// <para>
+/// A holder that is alive but stuck (a hung statement, a deadlocked phase) would keep the role forever on a timer, so a
+/// keepalive may be given a stall limit (#2165): it renews only while the work reports progress
+/// (<see cref="NoteProgress"/>), and once nothing has been reported for longer than the limit it stops renewing for
+/// good and says so once. The lease then lapses and another instance takes the role over through the normal vote.
+/// Progress reported after that does not take the role back: the lease may already belong to another instance.
+/// </para>
+/// <para>
 /// Disposing stops the timer and waits for a verify in flight, so nothing renews the grant once it returns: the
 /// owner disposes the keepalive first and the grant after it. It never disposes the grant.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs:AHolderThatReportsNoProgress_StopsBeingRenewed_PastTheStallLimit_AndSaysSoOnceAsync</tests>
 public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   private static readonly DutyGrantKeepalive _idle = new();
 
   private readonly IDutyGrant? _grant;
   private readonly ITimer? _timer;
+  private readonly TimeProvider? _timeProvider;
+  private readonly TimeSpan? _stallLimit;
   private readonly ILogger _logger;
   private readonly CancellationTokenSource _stopping = new();
   private readonly Lock _sync = new();
@@ -45,6 +55,8 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   private bool _verifying;
   private bool _owed;
   private bool _stopped;
+  private bool _stalled;
+  private long _lastProgress;
 
   /// <summary>The keepalive of nothing: never running.</summary>
   private DutyGrantKeepalive() {
@@ -52,18 +64,31 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
     _stopped = true;
   }
 
-  private DutyGrantKeepalive(IDutyGrant grant, TimeSpan renewInterval, TimeProvider timeProvider, ILogger logger) {
+  private DutyGrantKeepalive(IDutyGrant grant, TimeSpan renewInterval, TimeProvider timeProvider, ILogger logger, TimeSpan? stallLimit) {
     _grant = grant;
     _logger = logger;
+    _timeProvider = timeProvider;
+    _stallLimit = stallLimit;
+    _lastProgress = timeProvider.GetTimestamp();
     TickInterval = renewInterval / 2;
     _timer = timeProvider.CreateTimer(_ => Tick(), null, TickInterval.Value, TickInterval.Value);
   }
 
-  /// <summary>Whether the keepalive is renewing a grant now: started over a grant with a lease, and not yet disposed.</summary>
+  /// <summary>Whether the keepalive is renewing a grant now: started over a grant with a lease, not yet disposed, and not
+  /// stalled.</summary>
   public bool IsRunning {
     get {
       lock (_sync) {
-        return !_stopped;
+        return !_stopped && !_stalled;
+      }
+    }
+  }
+
+  /// <summary>Whether it stopped renewing because the work reported no progress for longer than its stall limit (#2165).</summary>
+  public bool IsStalled {
+    get {
+      lock (_sync) {
+        return _stalled;
       }
     }
   }
@@ -77,13 +102,32 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   /// </summary>
   /// <param name="grant">The grant, or null when nothing is held.</param>
   /// <param name="timeProvider">The clock the ticks are measured on.</param>
-  /// <param name="logger">Where a verify that throws is reported.</param>
+  /// <param name="logger">Where a verify that throws, and a stall, are reported.</param>
+  /// <param name="stallLimit">How long the work may report no progress before the keepalive stops renewing (#2165);
+  /// null renews for as long as the keepalive runs.</param>
   /// <returns>The keepalive; dispose it before the grant.</returns>
-  public static DutyGrantKeepalive Start(IDutyGrant? grant, TimeProvider timeProvider, ILogger? logger = null) {
+  /// <exception cref="ArgumentOutOfRangeException">A stall limit that is not positive.</exception>
+  public static DutyGrantKeepalive Start(
+      IDutyGrant? grant, TimeProvider timeProvider, ILogger? logger = null, TimeSpan? stallLimit = null) {
     ArgumentNullException.ThrowIfNull(timeProvider);
+    if (stallLimit is { } limit && limit <= TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(stallLimit), limit, "A stall limit must be positive; null has none.");
+    }
     return grant?.RenewInterval is { } interval
-      ? new DutyGrantKeepalive(grant, interval, timeProvider, logger ?? NullLogger.Instance)
+      ? new DutyGrantKeepalive(grant, interval, timeProvider, logger ?? NullLogger.Instance, stallLimit)
       : _idle;
+  }
+
+  /// <summary>
+  /// The work the grant is held for made progress (#2165): the stall limit is measured from now. Harmless on a
+  /// keepalive with no limit, of nothing, stopped or stalled.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs:AHolderThatReportsProgress_IsRenewedPastTheStallLimit_ForAsLongAsItDoesAsync</tests>
+  public void NoteProgress() {
+    if (_timeProvider is null) {
+      return;
+    }
+    Interlocked.Exchange(ref _lastProgress, _timeProvider.GetTimestamp());
   }
 
   /// <summary>
@@ -93,7 +137,7 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs:ATickThatArrivesAfterTheStop_VerifiesNothingAsync</tests>
   internal void Tick() {
     lock (_sync) {
-      if (_stopped) {
+      if (_stopped || _stalled || _hasStalled()) {
         return;
       }
       if (_verifying) {
@@ -105,11 +149,25 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
     }
   }
 
+  /// <summary>Whether the work has reported nothing for longer than the stall limit; the first time, stops and says so.</summary>
+  private bool _hasStalled() {
+    if (_stallLimit is not { } limit) {
+      return false;
+    }
+    var silent = _timeProvider!.GetElapsedTime(Interlocked.Read(ref _lastProgress));
+    if (silent <= limit) {
+      return false;
+    }
+    _stalled = true;
+    LogStalled(_logger, _grant!.Duty, limit);
+    return true;
+  }
+
   private async Task _verifyUntilNothingIsOwedAsync() {
     while (true) {
       await _verifyOnceAsync().ConfigureAwait(false);
       lock (_sync) {
-        if (!_owed || _stopped) {
+        if (!_owed || _stopped || _stalled) {
           _verifying = false;
           return;
         }
@@ -150,4 +208,8 @@ public sealed partial class DutyGrantKeepalive : IAsyncDisposable {
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
     Message = "The keepalive of the {Duty} role could not verify its grant; the lease stands until it lapses, and the next tick asks again")]
   static partial void LogVerifyFailed(ILogger logger, string duty, Exception exception);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+    Message = "The {Duty} role's holder reported no progress for longer than {StallLimit}; its keepalive stops renewing, so the lease lapses and another instance can take the role over")]
+  static partial void LogStalled(ILogger logger, string duty, TimeSpan stallLimit);
 }

@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -22,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stream synchronously via <c>allStreams.AddRange(query)</c> rather than silently skip the
 /// enumeration. No database: every dependency is an interface satisfied by an in-memory fake.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
 [Category("Shard1")]
 public class RebuildPerspectiveCommandReceptorCoverageTests {
 

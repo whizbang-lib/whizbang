@@ -157,7 +157,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
-        detachedWork: new DetachedLifecycleWork(),
+        detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
@@ -174,7 +174,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
-        detachedWork: new DetachedLifecycleWork(),
+        detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });

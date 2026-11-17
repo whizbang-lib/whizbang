@@ -168,6 +168,71 @@ public class StreamIntegrityRedeliveryE2ETests {
       .Because("the children are repair traffic: an event deduplication remembers but the event store lost is stored again (#1843).");
   }
 
+  [Test]
+  public async Task DroppedDeliveriesOnTwoStreams_RepairInOneBundleAcrossStreams_EachChildFiledUnderItsOwnStreamAsync() {
+    // #2268: an answer spans streams. Over the real wire and the real fan-out, the one bundle's children are filed under
+    // the streams the origin stored them on, not under the bundle's shared session key.
+    _ensureJsonContext();
+    await using var harness = await MultiServiceHarness.Create()
+      .AddService("healthy-svc", svc => svc.WithCatalog<ProbeCatalog>())
+      .AddService("damaged-svc", svc => svc.WithCatalog<ProbeCatalog>())
+      .StartAsync();
+    var healthy = harness.GetService("healthy-svc");
+    var damaged = harness.GetService("damaged-svc");
+
+    await harness.PublishAsync(new RepairProbeEvent { X = 1 });
+    using (harness.SuppressDeliveries("damaged-svc")) {
+      await harness.PublishAsync(new RepairProbeEvent { X = 2 });
+      await harness.PublishAsync(new RepairProbeEvent { X = 3 });
+    }
+    await harness.PublishAsync(new RepairProbeEvent { X = 4 });
+    var healthyRows = await healthy.Inbox.WaitForInboxAsync(4, TimeSpan.FromSeconds(10));
+    _ = await damaged.Inbox.WaitForInboxAsync(2, TimeSpan.FromSeconds(10));
+
+    var missing = healthyRows.Where(r => _x(r) is 2 or 3).OrderBy(_x).ToList();
+    var missingIds = missing.ConvertAll(m => m.MessageId);
+    Guid[] streams = [.. new[] { TrackedGuid.New().Value, TrackedGuid.New().Value }.Order()];
+    var events = missing.Select((row, i) => new RedeliveryEvent {
+      EventId = row.MessageId,
+      StreamId = streams[i],
+      Version = 1,
+      CommitSequence = i + 1,
+      EventType = TypeNameFormatter.FormatClrTypeName(typeof(RepairProbeEvent)),
+      EventData = row.Envelope.Payload.GetRawText(),
+    }).ToList();
+
+    var pump = new RedeliveryPump(
+      transport: harness.Wire,
+      envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      compositeFactory: new CompositeFactory()) { BundleAcrossStreams = true };
+    var originServiceId = TrackedGuid.New().Value;
+    var published = await pump.PublishAnswerAsync(
+      events, new RedeliveryAnswerWindow(null, null), MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc",
+      originServiceId: originServiceId);
+    await Assert.That(published).IsEqualTo(1).Because("two streams' deficits ride one bundle");
+
+    // Sentinel after the repair: per-subscriber delivery is ordered, so once it lands the bundle has too.
+    await harness.PublishAsync(new RepairProbeEvent { X = 5 });
+    var damagedFinal = await damaged.Inbox.WaitForInboxAsync(4, TimeSpan.FromSeconds(10));
+    var bundle = damagedFinal.Single(r => r.EnvelopeType.Contains("RedeliveryComposite"));
+    var composite = (RedeliveryComposite)JsonSerializer.Deserialize(
+      bundle.Envelope.Payload.GetRawText(), JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RedeliveryComposite)))!;
+    await Assert.That(composite.StreamId).IsEqualTo(
+      RedeliveryPump.AnswerSessionFor(originServiceId, MultiServiceHarnessDefaults.SHARED_TOPIC, "damaged-svc", scope: null));
+
+    using var scope = damaged.Provider.CreateScope();
+    var fanout = CompositeInboxFanout.TryExpand(composite, bundle.Envelope, scope.ServiceProvider);
+    await Assert.That(fanout.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(fanout.Children.Select(c => c.MessageId).ToList()).IsEquivalentTo(missingIds,
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(fanout.Children.Select(c => c.StreamId).ToList()).IsEquivalentTo(streams.Select(s => (Guid?)s).ToList(),
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("each child is filed under the stream the origin stored it on, never under the bundle's session key");
+    await Assert.That(fanout.Children.Select(c => c.SourceCommitSequence).ToList()).IsEquivalentTo([1L, 2L],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static int _x(InboxMessage row) {

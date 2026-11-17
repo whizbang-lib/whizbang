@@ -110,4 +110,27 @@ public class MultiPassMessageTypeBinderCoverageTests {
       .Because("a malformed nested assembly name must degrade to a reported miss the caller can "
              + "dead-letter, not an exception thrown out of pass 3's assembly scan");
   }
+
+  // Each failure a lookup raises for a name it cannot resolve is a miss, not a throw; anything else is a
+  // real fault the binder must not swallow. Only FileLoadException is reachable from a header in a test
+  // (above); the other two come from the deployment, so the shared predicate is checked directly.
+  [Test]
+  [Arguments("file-load")]
+  [Arguments("bad-image")]
+  [Arguments("argument")]
+  public async Task IsUnresolvableName_EachLookupFailure_IsUnresolvableAsync(string kind) {
+    Exception ex = kind switch {
+      "file-load" => new FileLoadException("unloadable assembly segment"),
+      "bad-image" => new BadImageFormatException("assembly built for another architecture"),
+      _ => new ArgumentException("names nothing loadable"),
+    };
+
+    await Assert.That(MultiPassMessageTypeBinder.IsUnresolvableName(ex)).IsTrue();
+  }
+
+  [Test]
+  public async Task IsUnresolvableName_AnyOtherFailure_IsNotAMissAsync() {
+    await Assert.That(MultiPassMessageTypeBinder.IsUnresolvableName(new InvalidOperationException("a real fault"))).IsFalse()
+      .Because("only a name the lookup cannot resolve is a miss; any other exception is a defect that must surface");
+  }
 }

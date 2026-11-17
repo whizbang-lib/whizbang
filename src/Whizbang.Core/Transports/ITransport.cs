@@ -150,7 +150,7 @@ public interface ITransport {
     TransportDestination destination,
     CancellationToken cancellationToken = default
   ) => throw new NotSupportedException(
-    $"Transport '{GetType().Name}' does not implement push DLQ subscription. The TransportDeadLetterDrainWorker will fall back to polling on IntervalMinutes.");
+    $"Transport '{TypeNameFormatter.ForLog(GetType())}' does not implement push DLQ subscription. The TransportDeadLetterDrainWorker will fall back to polling on IntervalMinutes.");
 
   /// <summary>
   /// Sends a request message and waits for a response (request/response pattern).

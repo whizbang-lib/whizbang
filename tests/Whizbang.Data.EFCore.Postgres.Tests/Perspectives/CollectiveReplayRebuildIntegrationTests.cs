@@ -89,20 +89,12 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
         new EFCorePostgresPerspectiveCheckpointCompleter(sp.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddSingleton<IPerspectiveRebuilder, PerspectiveRebuilder>();
 
-    // Collective consume + replay wiring. Entries come from the generated registry in this assembly.
-    services.AddCollectiveEventsEFCore<WorkCoordinationDbContext>(_collectiveEntries(asm));
+    // Collective consume + replay wiring. This assembly's generated handler table is its contribution (#2238).
+    Generated.CollectiveApplyRegistryExtensions.AddCollectiveApplyRegistry(services);
+    services.AddCollectiveEventsEFCore<WorkCoordinationDbContext>();
     services.AddCollectiveExecutorEFCore<RebuildBalanceModel>();
 
     return services.BuildServiceProvider();
-  }
-
-  // The source generator emits `public static readonly ... Entries` on CollectiveApplyRegistry (namespace
-  // Whizbang.Core.Generated) into THIS assembly — resolve it from the test assembly's own types (Core's copy
-  // is empty) and read the field.
-  private static IReadOnlyList<CollectiveApplyEntry> _collectiveEntries(System.Reflection.Assembly asm) {
-    var registry = asm.GetTypes().Single(t => t.Name == "CollectiveApplyRegistry");
-    var entries = registry.GetField("Entries")!.GetValue(null)!;
-    return (IReadOnlyList<CollectiveApplyEntry>)entries;
   }
 
   private static async Task _appendAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload, Guid? eventId = null)

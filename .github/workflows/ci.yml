@@ -243,9 +243,9 @@ jobs:
     name: Plan · Reuse already-tested results
     # A develop push carries a tree another run already tested, and skips the suites and Quality here:
     # the merge queue fast-forwards develop to the exact SHA its run just validated.
-    # A RELEASE CUT never reuses develop's results (#2135): develop builds and tests net11.0 only, while a
-    # release branch builds, tests and packs net10.0 and net11.0 (Directory.Build.props detects the
-    # branch), so develop's run never tested or built what the release ships. The cut runs the full matrix.
+    # A RELEASE CUT never reuses develop's results (#2135): develop tests net11.0 only (its libraries build
+    # both frameworks, its tests one), while a release branch builds and tests net10.0 and net11.0
+    # everywhere (Directory.Build.props detects the branch), so develop's run never tested what the release ships. The cut runs the full matrix.
     # The evidence comes from find-tested-run (the queue run, or on a fast-forward the PR run), and
     # validated is true only when both its coverage and its build manifest are still available.
     # Anything less runs the full matrix: this job never fails the run.
@@ -932,12 +932,17 @@ jobs:
         run: dotnet restore --locked-mode
 
       # The whole solution, the same projects Compile builds; nothing is uploaded, only the verdict matters.
+      # One build node and no -mt: with more, the .NET 11 compiler and analyzers outgrow the hosted runner's
+      # memory and the runner stalls or is shut down mid-build (#2135); with two it finished in 13 minutes on one
+      # run and stalled past the 45-minute limit on the next. The libraries
+      # are analyzed for net11.0 alone: they build net10.0 too, the same source twice, which doubles the memory
+      # without adding a finding, and the net10.0 compile job below already proves net10.0 builds.
       - name: Build every project with the analyzers on
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build --no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:WhizbangReleaseTargetFrameworks=net11.0
 
-  # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day every project targets net11.0
-  # only, so a .NET 11-only API would otherwise surface first on a release branch, the day a release is cut.
-  # This compiles the whole solution for net10.0 (no tests, analyzers off) on every pull request into develop
+  # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day the tests, samples and tools target
+  # net11.0 only (the libraries build both), so a .NET 11-only API in them would otherwise surface first on a
+  # release branch, the day a release is cut. This compiles the whole solution for net10.0 (no tests, analyzers off) on every pull request into develop
   # and in the merge queue, so it is caught on the change that introduces it. A release-branch run builds and
   # tests both frameworks itself and skips this. In ci-result's needs: a failure blocks the merge.
   compile-net10:
@@ -971,9 +976,11 @@ jobs:
       - name: Restore Dependencies
         run: dotnet restore --locked-mode
 
-      # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0.
+      # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0. One build
+      # node: with two, the hosted runner ran out of memory and was shut down mid-build ("The runner has received a
+      # shutdown signal") on three runs in a row, as the quality build did (#2135).
       - name: Build every project for net10.0
-        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false
+        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an

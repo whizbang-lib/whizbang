@@ -19,11 +19,12 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <param name="applicationVersion">This instance's application version, as recorded (#2022); null when unknown.</param>
 /// <param name="instanceId">This instance's id (#2022): its own row is never a newer instance; null when it has none.</param>
 /// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022).</param>
+/// <param name="allowLossyRollback">Whether a rollback may discard data a newer version wrote (#2122).</param>
 /// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
 internal sealed class DapperPostgresStartupAssessor(
     string connectionString, Func<PostgresSchemaInitializer> createInitializer, string? applicationVersion = null, Guid? instanceId = null,
-    bool overrideIncompatibility = false)
+    bool overrideIncompatibility = false, bool allowLossyRollback = false)
     : IStartupAssessor, IOnlineVersionReader {
   /// <inheritdoc />
   public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
@@ -32,6 +33,7 @@ internal sealed class DapperPostgresStartupAssessor(
     return await PostgresStartupAssessment.AssessAsync(
       connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false),
       new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId), overrideIncompatibility,
+      allowLossyRollback,
       ct => createInitializer().IsCurrentAsync(ct), cancellationToken).ConfigureAwait(false);
   }
 

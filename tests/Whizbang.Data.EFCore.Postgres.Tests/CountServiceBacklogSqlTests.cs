@@ -7,6 +7,11 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
+using Whizbang.Core.Priority;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -283,6 +288,117 @@ public class CountServiceBacklogSqlTests : EFCoreTestBase {
     cmd.CommandTimeout = 300;
     await cmd.ExecuteNonQueryAsync();
   }
+
+  // ===== #2253: the framework's integrity traffic is backlog, but not work for the housekeeping dwell =====
+
+  /// <summary>
+  /// Rows of the framework's steady-state integrity traffic (a checkpoint, a redelivery request, a redelivery) are still
+  /// backlog, which the integrity receptors read to tell a row in flight from a row missing, and are not work besides
+  /// integrity. Each is stored under the form its write path uses: the stored form, and the versioned assembly-qualified
+  /// name the dispatcher writes to the outbox.
+  /// </summary>
+  [Test]
+  public async Task IntegrityTraffic_IsBacklog_ButNotWorkBesidesIntegrityAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _seedTypedInboxAsync(conn, TypeNameFormatter.Format(typeof(IntegrityCheckpoint)), WorkPriority.BACKGROUND, leased: false);
+    await _seedTypedInboxAsync(conn, TypeNameFormatter.AssemblyQualifiedName(typeof(RequestRedeliveryCommand)), WorkPriority.BACKGROUND, leased: true);
+    await _seedTypedOutboxAsync(conn, TypeNameFormatter.AssemblyQualifiedName(typeof(RedeliveryComposite)), WorkPriority.BACKGROUND);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var backlog = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(backlog!.UnprocessedInboxRows).IsEqualTo(2L).Because("the integrity receptors still see the rows in flight");
+    await Assert.That(backlog.ActiveLeasedRows).IsEqualTo(1L);
+    await Assert.That(backlog.PendingOutboxRows).IsEqualTo(1L);
+    await Assert.That(backlog.IsQuiescent).IsFalse();
+    await Assert.That(backlog.NonIntegrityWorkRows).IsEqualTo(0L)
+      .Because("the framework's own integrity chatter is not work the housekeeping dwell waits out");
+    await Assert.That(backlog.IsQuiescentApartFromIntegrity).IsTrue();
+  }
+
+  /// <summary>Application work is work besides integrity, wherever it sits: queued in the inbox, leased by a peer, or
+  /// waiting in the outbox. Idle-band rows are counted apart, as before.</summary>
+  [Test]
+  public async Task ApplicationWork_IsWorkBesidesIntegrity_InEachTableAsync() {
+    var seeds = new Func<NpgsqlConnection, Task>[] {
+      c => _seedTypedInboxAsync(c, "Consumer.Orders.OrderPlaced, Consumer.Orders", WorkPriority.BACKGROUND, leased: false),
+      c => _seedTypedInboxAsync(c, "Consumer.Orders.OrderPlaced, Consumer.Orders", WorkPriority.IDLE, leased: true),
+      c => _seedTypedOutboxAsync(c, "Consumer.Orders.OrderPlaced, Consumer.Orders", WorkPriority.STANDARD),
+    };
+    foreach (var seed in seeds) {
+      await using var ctx = CreateDbContext();
+      var conn = await _openAsync(ctx);
+      await _execAsync(conn, "DELETE FROM wh_inbox_state; DELETE FROM wh_inbox; DELETE FROM wh_outbox;");
+      await _seedTypedInboxAsync(conn, TypeNameFormatter.Format(typeof(IntegrityCheckpoint)), WorkPriority.BACKGROUND, leased: false);
+      await seed(conn);
+      var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+        ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+      var backlog = await coordinator.CountServiceBacklogAsync();
+
+      await Assert.That(backlog!.NonIntegrityWorkRows).IsEqualTo(1L).Because("a bound of one: only zero or not matters");
+      await Assert.That(backlog.IsQuiescentApartFromIntegrity).IsFalse();
+    }
+  }
+
+  [Test]
+  public async Task IdleBandApplicationRows_AreCountedApart_NotAsWorkBesidesIntegrityAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _seedTypedInboxAsync(conn, "Consumer.Audit.Recorded, Consumer.Audit", WorkPriority.IDLE, leased: false);
+    await _seedTypedOutboxAsync(conn, "Consumer.Audit.Recorded, Consumer.Audit", WorkPriority.IDLE);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var backlog = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(backlog!.PendingIdleRows).IsEqualTo(2L);
+    await Assert.That(backlog.NonIntegrityWorkRows).IsEqualTo(0L);
+    await Assert.That(backlog.IsQuiescentApartFromIntegrity).IsFalse().Because("the idle band still holds the sweep back, as before");
+  }
+
+  /// <summary>
+  /// The whole path: a service whose only traffic is integrity checkpoints, read through the real backlog query, admits
+  /// maintenance once the settled cooldown has passed (#2253).
+  /// </summary>
+  [Test]
+  public async Task AServiceWithOnlyIntegrityCheckpoints_AdmitsMaintenanceAfterTheCooldownAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _seedTypedInboxAsync(conn, TypeNameFormatter.Format(typeof(IntegrityCheckpoint)), WorkPriority.BACKGROUND, leased: true);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UnixEpoch);
+    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.FromMinutes(2) }, clock);
+
+    housekeeping.Observe(await coordinator.CountServiceBacklogAsync());
+    clock.Advance(TimeSpan.FromMinutes(2));
+    var decision = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, await coordinator.CountServiceBacklogAsync());
+
+    await Assert.That(decision.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.Proceed);
+  }
+
+  private static Task _seedTypedInboxAsync(NpgsqlConnection conn, string messageType, int priority, bool leased) =>
+    _execAsync(conn, $@"
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (gen_random_uuid(), 'TestHandler', '{messageType}', '{{}}', '{{}}', NOW(), gen_random_uuid())
+        RETURNING message_id, stream_id, received_at, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, {priority}, is_event, 1, 0, 0,
+             {(leased ? "gen_random_uuid(), NOW() + INTERVAL '5 minutes'" : "NULL, NULL")}
+      FROM m");
+
+  private static Task _seedTypedOutboxAsync(NpgsqlConnection conn, string messageType, int priority) =>
+    _execAsync(conn, $@"
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number, priority)
+      VALUES (gen_random_uuid(), 'topic', '{messageType}', '{{}}', '{{}}', 0, 0, NOW(), gen_random_uuid(), 0, {priority})");
 
   [Test]
   public async Task OldestUnprocessedRowSetsTheLagMeasureAsync() {

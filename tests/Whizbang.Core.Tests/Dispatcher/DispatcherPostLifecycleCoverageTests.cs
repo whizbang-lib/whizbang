@@ -497,6 +497,29 @@ public class DispatcherPostLifecycleCoverageTests {
       .Because("Coordinator path should also process tags via ReceptorInvoker");
   }
 
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_WithCoordinator_PostLifecycleStageThrows_EndsItsTrackingAsync() {
+    // #2228: the local dispatch path ended its lifecycle entry only after its last stage, so a stage that threw left
+    // the entry (envelope and payload included) in the singleton coordinator until the stale sweep.
+    _reset();
+    var provider = _buildProviderWithCoordinator(registerAsyncReceptor: false);
+    var registry = (TestReceptorRegistry)provider.GetRequiredService<IReceptorRegistry>();
+    registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
+      MessageType: typeof(PostLifecycleCommand),
+      ReceptorId: "coord_post_lifecycle_inline_throws",
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) =>
+        ValueTask.FromException<object?>(new InvalidOperationException("post-lifecycle receptor failed"))));
+    var dispatcher = new PostLifecycleDispatcher(provider);
+
+    await Assert.That(async () => await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test")))
+      .Throws<InvalidOperationException>();
+
+    var coordinator = (LifecycleCoordinator)provider.GetRequiredService<ILifecycleCoordinator>();
+    await Assert.That(coordinator.TrackedCount).IsEqualTo(0)
+      .Because("the path that began the entry ends it whatever its stages did; nothing else would");
+  }
+
   // ========================================
   // Test helpers
   // ========================================

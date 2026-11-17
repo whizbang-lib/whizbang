@@ -204,9 +204,13 @@ public class InboxDispatchWorkerCoverageTests {
   /// completion signal is needed.</summary>
   private sealed class RecordingInvoker : IReceptorInvoker {
     public ConcurrentBag<LifecycleStage> Invoked { get; } = [];
+    public ConcurrentBag<LifecycleStage> InvokedAsRepair { get; } = [];
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
         ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       Invoked.Add(stage);
+      if (context?.IsRepair == true) {
+        InvokedAsRepair.Add(stage);
+      }
       return ValueTask.CompletedTask;
     }
   }
@@ -604,6 +608,33 @@ public class InboxDispatchWorkerCoverageTests {
 
     await Assert.That(invoker.Invoked.Contains(LifecycleStage.PreInboxInline)).IsTrue();
     await Assert.That(invoker.Invoked.Contains(LifecycleStage.PostInboxInline)).IsTrue();
+  }
+
+  /// <summary>
+  /// #2273: a repaired child the fan-out proved never handled runs its stages, as a repair: the invoker then runs only
+  /// the receptors declared to run on repair. The ordinary delivery above is the control (no stage is a repair).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  [Test]
+  public async Task RepairedDelivery_RunsItsStagesAsARepairAsync() {
+    var (worker, invoker) = _workerWithRecordingInvoker();
+    var work = _makeWork(messageType: "Some.Repaired.Event, Test");
+    ((MessageEnvelope<JsonElement>)work.Envelope).Repaired = true;
+
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(invoker.InvokedAsRepair.Contains(LifecycleStage.PreInboxInline)).IsTrue();
+    await Assert.That(invoker.InvokedAsRepair.Contains(LifecycleStage.PostInboxInline)).IsTrue()
+      .Because("the handling stage is where a trigger receptor runs, so it is where the restriction must reach");
+  }
+
+  [Test]
+  public async Task OrdinaryDelivery_RunsNoStageAsARepairAsync() {
+    var (worker, invoker) = _workerWithRecordingInvoker();
+
+    await worker.ProcessOneInnerAsync(_makeWork(messageType: "Some.Restored.Event, Test"), CancellationToken.None);
+
+    await Assert.That(invoker.InvokedAsRepair).IsEmpty();
   }
 
   [Test]

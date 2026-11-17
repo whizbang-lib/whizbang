@@ -96,8 +96,12 @@ public sealed class EvictionEphemeralModel {
   public int Total { get; set; }
 }
 
-/// <summary>An ephemeral perspective whose rows leave by a cap.</summary>
+/// <summary>
+/// An ephemeral perspective whose rows leave by a cap. It applies only ephemeral events, so it opts in to a rewind floor
+/// (#2295): these tests are about rebuilding an evicted row from that floor.
+/// </summary>
 [RowCap(PerScope = 10)]
+[KeepEphemeralRewindFloor]
 public sealed class EvictionEphemeralPerspective : IPerspectiveFor<EvictionEphemeralModel, EvictionEphemeralAdded> {
   public EvictionEphemeralModel Apply(EvictionEphemeralModel currentData, EvictionEphemeralAdded @event) {
     currentData.Total += @event.Delta;

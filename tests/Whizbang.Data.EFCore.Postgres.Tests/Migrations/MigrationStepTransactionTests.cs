@@ -450,7 +450,10 @@ public partial class MigrationStepTransactionTests {
       logger, initConnectionString: _database.ConnectionString, serviceProvider: services, cancellationToken: cancellationToken);
   }
 
-  /// <summary>Records every write that applies a ledger row: a first apply, or an update.</summary>
+  /// <summary>
+  /// Records every write that applies a ledger row: a first apply, or an update of its content or status. A write that
+  /// only records how the change is reversed (#2122, a statement of its own after the apply) applies nothing.
+  /// </summary>
   private Task _recordAppliedWritesAsync() => _executeAsync("""
     CREATE TABLE public.test_applied_log (id bigserial PRIMARY KEY, file_name text NOT NULL, owner text NOT NULL);
     CREATE FUNCTION public.test_log_applied() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -458,7 +461,7 @@ public partial class MigrationStepTransactionTests {
       INSERT INTO public.test_applied_log (file_name, owner) VALUES (NEW.file_name, NEW.owner);
       RETURN NEW;
     END $$;
-    CREATE TRIGGER test_log_applied AFTER INSERT OR UPDATE ON public.wh_schema_migrations
+    CREATE TRIGGER test_log_applied AFTER INSERT OR UPDATE OF content_hash, status ON public.wh_schema_migrations
       FOR EACH ROW WHEN (NEW.status IN (1, 2)) EXECUTE FUNCTION public.test_log_applied();
     """);
 

@@ -347,7 +347,7 @@ public sealed partial class InboxDrainWorker(
       // ceiling/floor calls however many streams are active.
       var plan = _planFetches(streamIds);
       // #1793: rows the working-set budget turned away this cycle, handed back once the streams are done.
-      var deferred = new List<Guid>();
+      var deferred = new TurnedAwayRows();
       var capByStream = new Dictionary<Guid, int>(streamIds.Count);
       var collected = new List<InboxBatchRow>();
       foreach (var group in plan) {
@@ -421,7 +421,7 @@ public sealed partial class InboxDrainWorker(
             // the stream's order holds.
             if (full || !_fitsWorkingSet(work)) {
               full = true;
-              deferred.Add(row.MessageId);
+              deferred.Add(row.MessageId, work);
               continue;
             }
             await _inboxChannelWriter.WriteAsync(work, ct);
@@ -444,7 +444,7 @@ public sealed partial class InboxDrainWorker(
           LogDrainError(_logger, sid, ex);
         }
       }
-      if (deferred.Count > 0) {
+      if (deferred.Ids.Count > 0) {
         await _handBackAsync(coordinator, deferred, ct);
       }
     } finally {
@@ -458,7 +458,7 @@ public sealed partial class InboxDrainWorker(
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Per-stream drain loop coordinates fetch + sort + serialize + dispatch + completion enqueue; the loop's invariants depend on the branches staying inline (skip-empty short-circuit, FIFO ordering guarantee, scope lifetime).")]
-  private async Task _drainStreamInnerAsync(Guid streamId, List<Guid> deferred, CancellationToken ct) {
+  private async Task _drainStreamInnerAsync(Guid streamId, TurnedAwayRows deferred, CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -518,7 +518,7 @@ public sealed partial class InboxDrainWorker(
         }
         if (full || !_fitsWorkingSet(work)) {
           full = true;
-          deferred.Add(row.MessageId);
+          deferred.Add(row.MessageId, work);
           continue;
         }
         var writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -568,12 +568,33 @@ public sealed partial class InboxDrainWorker(
   /// Hands back the rows the working-set budget turned away (#1793), refunding the attempt their claim took. They stay
   /// on streams this instance owns, so the next claim offers them again here once the working set has drained.
   /// </summary>
-  private async Task _handBackAsync(IWorkCoordinator coordinator, List<Guid> deferred, CancellationToken ct) {
-    LogWorkingSetFull(_logger, deferred.Count, _inboxChannelWriter.HeldPayloadBytes, _options.MaxHeldPayloadBytes);
+  /// <remarks>
+  /// First it tells the writer where the working set must drain to before the smallest of them fits (#1853), and the
+  /// claim leases no new inbox rows until then: each would be fetched, turned away and released on every poll. A row
+  /// larger than the budget fits only when nothing is held, so the mark never goes below zero.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.cs:WorkingSetFull_DefersAcquisitionUntilTheSmallestTurnedAwayRowFitsAsync</tests>
+  private async Task _handBackAsync(IWorkCoordinator coordinator, TurnedAwayRows deferred, CancellationToken ct) {
+    LogWorkingSetFull(_logger, deferred.Ids.Count, _inboxChannelWriter.HeldPayloadBytes, _options.MaxHeldPayloadBytes);
+    _inboxChannelWriter.DeferInboxAcquisitionUntilHeldAtMost(Math.Max(0L, _options.MaxHeldPayloadBytes - deferred.SmallestBytes));
     try {
-      await coordinator.ReleaseUnprocessedInboxAsync(_instanceProvider.InstanceId, deferred, ct);
+      await coordinator.ReleaseUnprocessedInboxAsync(_instanceProvider.InstanceId, deferred.Ids, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      LogHandBackFailed(_logger, deferred.Count, ex);
+      LogHandBackFailed(_logger, deferred.Ids.Count, ex);
+    }
+  }
+
+  /// <summary>
+  /// The rows the working-set budget turned away in one drain cycle (#1793), and the payload bytes of the smallest of
+  /// them, which is what the working set must make room for before acquiring more is worthwhile (#1853).
+  /// </summary>
+  private sealed class TurnedAwayRows {
+    public List<Guid> Ids { get; } = [];
+    public long SmallestBytes { get; private set; } = long.MaxValue;
+
+    public void Add(Guid messageId, InboxWork work) {
+      Ids.Add(messageId);
+      SmallestBytes = Math.Min(SmallestBytes, InboxPayload.Bytes(work.Envelope.Payload));
     }
   }
 

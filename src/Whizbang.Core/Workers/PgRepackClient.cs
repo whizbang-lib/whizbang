@@ -52,6 +52,19 @@ public static class PgRepackClient {
     return options.TableRewriteStrategy == TableRewriteStrategy.PgRepack
       && options.TableRewrite.PgRepack.Mode == PgRepackMode.InProcess;
   }
+
+  /// <summary>
+  /// Whether the client is probed on this host: when it runs in process (<see cref="RunsInProcess"/>), and under
+  /// <see cref="TableRewriteStrategy.Online"/> or <see cref="TableRewriteStrategy.Auto"/> with the client in process, where
+  /// pg_repack is the second choice and its probe decides whether it is used (#2301, #2319). Only <see cref="RunsInProcess"/> makes the client a requirement.
+  /// </summary>
+  /// <param name="options">The maintenance options.</param>
+  public static bool ProbesClient(MaintenanceWorkerOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    return RunsInProcess(options)
+      || (options.TableRewriteStrategy is TableRewriteStrategy.Online or TableRewriteStrategy.Auto
+          && options.TableRewrite.PgRepack.Mode == PgRepackMode.InProcess);
+  }
 }
 
 /// <summary>
@@ -78,7 +91,7 @@ public sealed class PgRepackClientCapabilityProvider(IOptions<MaintenanceWorkerO
 
   /// <inheritdoc />
   public IReadOnlyList<string> Scopes =>
-    PgRepackClient.RunsInProcess(options.Value) ? [options.Value.TableRewrite.PgRepack.ClientPath] : [];
+    PgRepackClient.ProbesClient(options.Value) ? [options.Value.TableRewrite.PgRepack.ClientPath] : [];
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<CapabilityStatus>> ProbeAsync(string scope, CancellationToken cancellationToken) {

@@ -95,7 +95,7 @@ public static class MessageKindDetector {
   /// (<c>Whizbang.Core.Commands.System</c> or a sub-namespace of it).
   /// </summary>
   private static bool _isFrameworkSystemNamespace(Type type) {
-    var ns = type.Namespace;
+    var ns = TypeNameFormatter.NamespaceOf(type);
     if (string.IsNullOrEmpty(ns)) {
       return false;
     }
@@ -136,7 +136,7 @@ public static class MessageKindDetector {
   /// Detects MessageKind from namespace convention.
   /// </summary>
   private static MessageKind _detectFromNamespace(Type type) {
-    var ns = type.Namespace;
+    var ns = TypeNameFormatter.NamespaceOf(type);
     if (string.IsNullOrEmpty(ns)) {
       return MessageKind.Unknown;
     }
@@ -166,7 +166,7 @@ public static class MessageKindDetector {
   /// Detects MessageKind from type name suffix.
   /// </summary>
   private static MessageKind _detectFromTypeName(Type type) {
-    var name = type.Name;
+    var name = TypeNameFormatter.SimpleName(type);
 
     // Check Command suffix first (most specific)
     if (name.EndsWith("Command", StringComparison.Ordinal)) {

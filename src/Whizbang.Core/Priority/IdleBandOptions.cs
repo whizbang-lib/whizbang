@@ -82,8 +82,8 @@ public sealed class IdleBandOptions {
   /// <summary>Opts a message type into trickling, so it cannot wait longer than <see cref="TrickleAfter"/>.</summary>
   public IdleBandOptions TrickleType<TMessage>() where TMessage : notnull {
     // Rendered through the shared helper, never Type.FullName: a type name is a key and both
-    // sides have to agree on its form (issue #698).
-    _trickleTypes.Add(TypeNameFormatter.AssemblyQualifiedName(typeof(TMessage)));
+    // sides have to agree on its form (issue #698): the wire form, which a stored name from any build normalizes to (#2267).
+    _trickleTypes.Add(TypeNameFormatter.Format(typeof(TMessage)));
     return this;
   }
 
@@ -107,7 +107,7 @@ public sealed class IdleBandOptions {
     if (string.IsNullOrEmpty(clrTypeName)) {
       return false;
     }
-    if (_trickleTypes.Contains(clrTypeName)) {
+    if (_trickleTypes.Contains(Messaging.EventTypeMatchingHelper.NormalizeTypeName(clrTypeName))) {
       return true;
     }
     return _trickleNamespaces.Exists(ns => clrTypeName.StartsWith(ns + ".", StringComparison.Ordinal));

@@ -24,9 +24,9 @@ internal static class RepoAnalyzerTestHelper {
   /// <returns>The analyzer diagnostics, without the compiler's own.</returns>
   [RequiresAssemblyFiles()]
   public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
-      string source, bool withJsonReference = true)
+      string source, bool withJsonReference = true, bool withRoslynReference = false)
       where TAnalyzer : DiagnosticAnalyzer, new() {
-    var compilation = CreateCompilation(source, withJsonReference);
+    var compilation = CreateCompilation(source, withJsonReference, withRoslynReference);
     return await compilation
       .WithAnalyzers([new TAnalyzer()])
       .GetAnalyzerDiagnosticsAsync();
@@ -37,9 +37,10 @@ internal static class RepoAnalyzerTestHelper {
   /// </summary>
   /// <param name="source">The C# source to compile.</param>
   /// <param name="withJsonReference">Whether System.Text.Json is referenced.</param>
+  /// <param name="withRoslynReference">Whether Microsoft.CodeAnalysis is referenced, for a generator-shaped snippet.</param>
   /// <returns>The compilation; its own diagnostics say whether the snippet bound.</returns>
   [RequiresAssemblyFiles()]
-  public static Compilation CreateCompilation(string source, bool withJsonReference = true) {
+  public static Compilation CreateCompilation(string source, bool withJsonReference = true, bool withRoslynReference = false) {
     var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     var references = new List<MetadataReference> {
       MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
@@ -50,6 +51,11 @@ internal static class RepoAnalyzerTestHelper {
     };
     if (withJsonReference) {
       references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonDocument).Assembly.Location));
+    }
+    if (withRoslynReference) {
+      references.Add(MetadataReference.CreateFromFile(typeof(ISymbol).Assembly.Location));
+      references.Add(MetadataReference.CreateFromFile(Path.Combine(runtimeDirectory, "System.Collections.Immutable.dll")));
+      references.Add(MetadataReference.CreateFromFile(Path.Combine(runtimeDirectory, "System.Reflection.dll")));
     }
 
     return CSharpCompilation.Create(

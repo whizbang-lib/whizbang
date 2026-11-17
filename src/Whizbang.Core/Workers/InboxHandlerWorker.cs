@@ -17,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
-public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandlerCommitChannel {
+public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandlerCommitChannel, IQueuedWriteFlusher {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IFailureChannel _failureChannel;
   private readonly InboxHandlerWorkerOptions _options;
@@ -84,6 +84,23 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
     return _flusher.EnqueueAsync(request, cancellationToken);
   }
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerIdleSignalTests.cs:InboxHandlerWorker_ReportsAQueuedCommitUntilItLandsAsync</tests>
+  public QueuedWriteActivity Activity => _flusher.Activity;
+
+  /// <inheritdoc />
+  public bool IsIdle => _flusher.IsIdle;
+
+  /// <inheritdoc />
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle {
+    add => _flusher.OnWorkProcessingIdle += value;
+    remove => _flusher.OnWorkProcessingIdle -= value;
+  }
+
+  /// <inheritdoc />
+  public Task WaitForIdleAsync(CancellationToken cancellationToken = default) => _flusher.WaitForIdleAsync(cancellationToken);
 
   /// <inheritdoc />
   public override Task StartAsync(CancellationToken cancellationToken) {

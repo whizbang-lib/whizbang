@@ -79,7 +79,7 @@ public sealed partial class LocalSyncSignaler(ILogger<LocalSyncSignaler> logger)
       } catch (Exception ex) {
         // One failing handler must not block the others — but never silently. A dropped signal can
         // leave a sync waiter blocked until its poll/timeout, so log it.
-        LogHandlerThrew(logger, ex, signal.PerspectiveType.Name);
+        LogHandlerThrew(logger, ex, TypeNameFormatter.ForLog(signal.PerspectiveType));
       }
     }
   }

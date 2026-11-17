@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Linq;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
@@ -32,8 +33,11 @@ internal sealed record PolymorphicTypeInfo(
 ) {
   /// <summary>
   /// Unique identifier derived from fully qualified name, suitable for C# identifiers.
-  /// Strips "global::" prefix and replaces "." with "_".
-  /// E.g., "global::MyApp.Events.BaseEvent" becomes "MyApp_Events_BaseEvent".
+  /// Strips "global::" prefix and replaces every character an identifier cannot hold ("." and, for a
+  /// constructed generic base, "&lt;", "&gt;", "," and " ") with "_".
+  /// E.g., "global::MyApp.Events.BaseEvent" becomes "MyApp_Events_BaseEvent", and
+  /// "global::MyApp.Events.EventBase&lt;int&gt;" becomes "MyApp_Events_EventBase_int_" (#2072).
   /// </summary>
-  public string UniqueIdentifier => BaseTypeName.Replace("global::", "").Replace(".", "_");
+  public string UniqueIdentifier =>
+    new([.. BaseTypeName.Replace("global::", "").Select(c => char.IsLetterOrDigit(c) ? c : '_')]);
 }

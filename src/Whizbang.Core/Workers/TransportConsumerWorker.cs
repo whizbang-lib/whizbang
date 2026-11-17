@@ -865,7 +865,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     try {
       var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
       return JsonSerializer.Serialize(envelope, options.GetTypeInfo(envelope.GetType()));
-    } catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or JsonException) {
+    } catch (Exception ex) when (Serialization.SerializationFailure.IsSerializationFailure(ex)) {
       using var buffer = new MemoryStream();
       using (var writer = new Utf8JsonWriter(buffer)) {
         writer.WriteStartObject();
@@ -1052,7 +1052,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // Never a silent skip (#915): a message that cannot become an inbox row is dead-lettered with
       // its body by the batch handler; the reflective serializer call wraps the real cause.
       var cause = ex.GetBaseException();
-      var description = $"{cause.GetType().Name}: {cause.Message}";
+      var description = $"{TypeNameFormatter.ForLog(cause.GetType())}: {cause.Message}";
       // Not logged here: the dead-letter record logged when the message is given custody carries this exception and is
       // its one terminal record, at the configured level (#1901); a custody failure is logged with the cause instead.
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
@@ -1268,11 +1268,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
         LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostAllPerspectivesDetached, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
-      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
-      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
+      try {
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
+      } finally {
+        // #2228: this path began the entry, so it ends it whatever the stages did; nothing else would.
+        coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
+      }
     } else {
       // Detached stages: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
@@ -1368,7 +1372,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       jsonEnvelope = alreadyJsonEnvelope;
     } else if (payloadType == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. MessageId: {envelope.MessageId}");
+        $"Envelope has JsonElement payload but envelope type is {TypeNameFormatter.ForLog(envelope.GetType())}. MessageId: {envelope.MessageId}");
     } else {
       // Strongly-typed envelope - serialize it
       // Required: an unregistered serializer throws InvalidOperationException naming the type.

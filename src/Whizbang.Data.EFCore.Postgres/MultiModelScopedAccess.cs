@@ -4,6 +4,7 @@
 #pragma warning disable CS0618
 
 using Microsoft.EntityFrameworkCore;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 
@@ -80,7 +81,7 @@ internal sealed class MultiModelScopedAccess<T1, T2>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T2>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid. Valid types: {typeof(T1).Name}, {typeof(T2).Name}");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid. Valid types: {TypeNameFormatter.ForLog(typeof(T1))}, {TypeNameFormatter.ForLog(typeof(T2))}");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -92,7 +93,7 @@ internal sealed class MultiModelScopedAccess<T1, T2>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T2>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -116,7 +117,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T3>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -132,7 +133,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T3>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -160,7 +161,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T4>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -180,7 +181,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T4>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -212,7 +213,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T5>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -236,7 +237,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T5>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -272,7 +273,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T6>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -300,7 +301,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T6>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -340,7 +341,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T7>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -372,7 +373,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T7>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -416,7 +417,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7, T8>(
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T8>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -452,7 +453,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7, T8>(
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T8>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -500,7 +501,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7, T8, T9>
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T9>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -540,7 +541,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7, T8, T9>
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T9>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }
 
@@ -592,7 +593,7 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7, T8, T9,
       return (IQueryable<PerspectiveRow<T>>)(object)MultiModelScopeHelper.GetQuery<T10>(context, _filterInfo);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
@@ -636,6 +637,6 @@ internal sealed class MultiModelScopedAccess<T1, T2, T3, T4, T5, T6, T7, T8, T9,
       return (T?)(object?)await MultiModelScopeHelper.GetByIdAsync<T10>(context, _filterInfo, id, cancellationToken);
     }
 
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid.");
+    throw new ArgumentException($"Type '{TypeNameFormatter.ForLog(typeof(T))}' is not valid.");
   }
 }

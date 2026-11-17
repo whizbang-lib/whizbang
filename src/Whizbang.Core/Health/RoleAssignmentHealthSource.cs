@@ -68,7 +68,7 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
 #pragma warning disable CA1031 // reported, not swallowed: the failure is the Degraded detail
     } catch (Exception ex) {
 #pragma warning restore CA1031
-      return new ComponentHealth(ComponentState.Degraded, $"role assignments could not be read: {ex.GetType().Name}");
+      return new ComponentHealth(ComponentState.Degraded, $"role assignments could not be read: {TypeNameFormatter.ForLog(ex.GetType())}");
     }
 
     var byRole = snapshots.ToDictionary(s => s.Role, StringComparer.Ordinal);

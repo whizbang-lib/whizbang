@@ -23,13 +23,12 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// the session accessor that hands the perspective <c>DbContext</c> to the apply chain.
 /// </summary>
 /// <remarks>
-/// The <c>applyEntries</c> argument is the consumer's generated
-/// <c>Whizbang.Core.Generated.CollectiveApplyRegistry.Entries</c> — passed in (not referenced here)
-/// because the registry is generated per consuming assembly from its <c>[CollectiveApplyFor]</c> handlers;
-/// the framework assembly's own copy is empty. Per-model executors are registered with
-/// <see cref="AddCollectiveExecutorEFCore{TModel}"/> — one line per perspective model. Kept as explicit
-/// compile-time generic calls (no <c>MakeGenericType</c>) to stay AOT-clean (L19); a source generator can
-/// emit these calls for full turnkey registration as a follow-up.
+/// The dispatcher's handlers come from the container: every assembly that declares <c>[CollectiveApplyFor]</c>
+/// handlers registers its generated table as a contribution, through <c>AddWhizbang()</c>, so a host whose handlers
+/// live in several assemblies dispatches to all of them and passes nothing by hand (#2238). Per-model executors are
+/// registered with <see cref="AddCollectiveExecutorEFCore{TModel}"/>, one line per perspective model. Kept as explicit
+/// compile-time generic calls (no <c>MakeGenericType</c>) to stay AOT-clean (L19); a source generator can emit these
+/// calls for full turnkey registration as a follow-up.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync</tests>
@@ -41,14 +40,39 @@ public static class CollectiveEventsEFCoreExtensions {
   /// and the EF Core <see cref="ICollectiveSessionAccessor"/> bound to <typeparamref name="TDbContext"/>.
   /// Call <see cref="AddCollectiveExecutorEFCore{TModel}"/> once per collective perspective model.
   /// </summary>
+  /// <remarks>
+  /// The dispatcher and the replay applier read every assembly's <c>[CollectiveApplyFor]</c> handlers from the
+  /// container (<see cref="CollectiveApplyRegistryServiceCollectionExtensions.GetCollectiveApplyEntries"/>): each
+  /// assembly's generated table is registered by <c>AddWhizbang()</c>, for the host's own service only (#2238).
+  /// </remarks>
   /// <typeparam name="TDbContext">The perspective-owning EF Core context.</typeparam>
   /// <param name="services">The service collection.</param>
-  /// <param name="applyEntries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/MultiAssemblyCollectiveDispatchTests.cs:TwoAssemblies_TheDispatcher_AppliesEachAssemblysCollectiveEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/MultiAssemblyCollectiveDispatchTests.cs:AddWhizbang_GivesTheDispatcherThisAssemblysHandlers_WithNothingPassedByHandAsync</tests>
+  public static IServiceCollection AddCollectiveEventsEFCore<TDbContext>(this IServiceCollection services)
+      where TDbContext : DbContext =>
+    _addCollectiveEvents<TDbContext>(services, handPassed: null);
+
+  /// <summary>
+  /// The registration that took one assembly's handler table by hand. The table now joins the handlers every assembly
+  /// registers, so it is no longer needed: call <see cref="AddCollectiveEventsEFCore{TDbContext}(IServiceCollection)"/>.
+  /// </summary>
+  /// <typeparam name="TDbContext">The perspective-owning EF Core context.</typeparam>
+  /// <param name="services">The service collection.</param>
+  /// <param name="applyEntries">A generated <c>CollectiveApplyRegistry.Entries</c>; handlers it lists that no assembly registered are dispatched too.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/MultiAssemblyCollectiveDispatchTests.cs:TheObsoleteHandPassedTable_StillApplies_AlongsideTheContributedOnesAsync</tests>
+  [Obsolete("Every assembly's [CollectiveApplyFor] handlers are now registered automatically (#2238). Drop the argument: call AddCollectiveEventsEFCore<TDbContext>(). Will be removed in the next major.")]
   public static IServiceCollection AddCollectiveEventsEFCore<TDbContext>(
       this IServiceCollection services,
       IReadOnlyList<CollectiveApplyEntry> applyEntries)
       where TDbContext : DbContext {
     ArgumentNullException.ThrowIfNull(applyEntries);
+    return _addCollectiveEvents<TDbContext>(services, applyEntries);
+  }
+
+  private static IServiceCollection _addCollectiveEvents<TDbContext>(
+      IServiceCollection services, IReadOnlyList<CollectiveApplyEntry>? handPassed)
+      where TDbContext : DbContext {
     // Apply policy (batching + statement_timeout) from PostgresOptions. TryAdd so a consumer can register
     // their own CollectiveApplyOptions first to override.
     services.TryAddSingleton(sp => {
@@ -67,7 +91,7 @@ public static class CollectiveEventsEFCoreExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
-      applyEntries,
+      sp.GetCollectiveApplyEntries(handPassed),
       [.. sp.GetServices<ICollectiveScopeResolver>()],
       [.. sp.GetServices<ICollectiveEventExecutor>()],
       sp.GetService<EventCategoryMetrics>()));
@@ -75,7 +99,7 @@ public static class CollectiveEventsEFCoreExtensions {
     // mutation survives a perspective rebuild (the rebuilder never runs the set-based SQL path). Scoped so it
     // can resolve the request-scoped event-store query. Driver-neutral applier (lives in Whizbang.Data.Postgres).
     services.TryAddScoped<ICollectiveReplayApplier>(sp => new CollectiveReplayApplier(
-      applyEntries,
+      sp.GetCollectiveApplyEntries(handPassed),
       sp,
       sp.GetRequiredService<IEventStore>(),
       sp.GetRequiredService<IEventStoreQuery>(),

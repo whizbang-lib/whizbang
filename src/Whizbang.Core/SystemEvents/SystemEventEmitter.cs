@@ -152,7 +152,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       // Derived from the event it audits, so a record derived again is the same record (#1724).
       Id = AuditLedger.RecordIdFor(envelope.MessageId.Value),
       OriginalEventId = envelope.MessageId.Value,
-      OriginalEventType = typeof(TEvent).Name,
+      OriginalEventType = TypeNameFormatter.SimpleName(typeof(TEvent)),
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,
@@ -216,11 +216,11 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
       Id = TrackedGuid.New(),
-      CommandType = typeof(TCommand).Name,
+      CommandType = TypeNameFormatter.SimpleName(typeof(TCommand)),
       CommandBody = commandJson,
       Timestamp = DateTimeOffset.UtcNow,
       ReceptorName = receptorName,
-      ResponseType = typeof(TResponse).Name,
+      ResponseType = TypeNameFormatter.SimpleName(typeof(TResponse)),
       // Store individual properties for backward compatibility
       TenantId = scope.TryGetValue(SCOPE_TENANT_ID, out var t) ? t : null,
       UserId = context?.UserId,

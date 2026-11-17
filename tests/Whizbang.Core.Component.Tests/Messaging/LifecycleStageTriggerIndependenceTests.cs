@@ -133,7 +133,7 @@ public class LifecycleStageTriggerIndependenceTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new PassthroughDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(), deferredChannel: new global::Whizbang.Core.Messaging.DeferredOutboxChannel());
     return (strategy, invoker);
   }
 

@@ -130,9 +130,7 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
     }
     var database = services.GetRequiredService<PostgresArchiveConnection>();
     var json = services.GetService<JsonSerializerOptions>() ?? JsonContextRegistry.CreateCombinedOptions();
-    var targets = _types()
-      .Select(t => new TypeHistoryTarget(TypeNameFormatter.Format(t), TypeNameFormatter.FormatClrTypeName(t), SupersedingEvents.GroupOf(t)))
-      .ToList();
+    var targets = _targets(_types(), services.GetService<IMessageTypeCatalog>());
     var walk = await new TypeHistoryWalker(OPERATION, _scanSize, _maxBatches)
       .WalkAsync(database, targets, (transaction, prefix, target, window, ct) => _applyAsync(transaction, prefix, target, window, json, ct),
         cancellationToken)
@@ -152,11 +150,48 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
     return new SupersedingHistoryReconcileResult(walk.Batches, walk.Scanned, walk.Changed, walk.Queued, walk.TypesFinished, walk.Status);
   }
 
+  /// <summary>
+  /// One walk per name each superseding type is stored under: its current name, and each former name from the pinned-type
+  /// ledger in its stored form (#2269).
+  /// </summary>
+  /// <remarks>
+  /// An event under a type's current name supersedes one with the same key stored under any of the type's former names
+  /// (owner decision, #2269): they are one logical type. A former name's events are read with the type's own key accessor
+  /// (<see cref="SupersedingTarget.KeyTypeName"/>), and stamped with the type's group, or, for an ungrouped type, its
+  /// current stored name as the group, so the reconcile and the write paths, which match on
+  /// <c>COALESCE(supersede_group, event_type)</c>, judge supersession across all of the type's names. The current name's
+  /// own walk keeps the type's group (none for an ungrouped type), as before, so the write paths' stamps are not churned.
+  /// A former name is in the form the store holds it (<see cref="TypeNameFormatter.FormatFormerName"/>): one from another
+  /// assembly keeps that assembly, a bare one takes the type's own.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingFormerNameReconcileSqlTests.cs</tests>
+  private static List<SupersedingTarget> _targets(IReadOnlyList<Type> types, IMessageTypeCatalog? catalog) {
+    var formerNames = (catalog?.GetAll() ?? [])
+      .GroupBy(e => e.Type).ToDictionary(g => g.Key, g => g.SelectMany(e => e.FormerNames).ToList());
+    var targets = new List<SupersedingTarget>();
+    foreach (var type in types) {
+      var current = TypeNameFormatter.Format(type);
+      var definition = TypeNameFormatter.FormatClrTypeName(type);
+      var group = SupersedingEvents.GroupOf(type);
+      targets.Add(new SupersedingTarget(current, definition, group, current));
+      targets.AddRange(formerNames.GetValueOrDefault(type, [])
+        .Select(n => TypeNameFormatter.FormatFormerName(type, n))
+        .Distinct(StringComparer.Ordinal)
+        .Select(n => new SupersedingTarget(n, definition, group ?? current, current)));
+    }
+    return targets;
+  }
+
+  // A walk of one stored name of a superseding type: KeyTypeName is the type's current stored name, whose accessor reads
+  // the key of every event the walk finds, under whichever of the type's names it is stored.
+  private sealed record SupersedingTarget(string EventType, string DefinitionName, string? Variant, string KeyTypeName)
+    : TypeHistoryTarget(EventType, DefinitionName, Variant);
+
   // One window: read its unflagged events and their keys, then stamp and queue, in the walker's transaction.
   private async Task<TypeHistoryBatch> _applyAsync(
-      NpgsqlTransaction transaction, string prefix, TypeHistoryTarget target, TypeHistoryWindow window,
+      NpgsqlTransaction transaction, string prefix, SupersedingTarget target, TypeHistoryWindow window,
       JsonSerializerOptions json, CancellationToken cancellationToken) {
-    var (ids, keys) = await _keysAsync(transaction, prefix, target.EventType, window, json, cancellationToken).ConfigureAwait(false);
+    var (ids, keys) = await _keysAsync(transaction, prefix, target, window, json, cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
       "SELECT status, events_stamped, events_queued, events_total, events_matched " +
       $"FROM {prefix}wh_superseding_history_apply($1, $2, $3, $4, $5, $6, $7)", transaction.Connection, transaction);
@@ -173,11 +208,11 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
   }
 
   private async Task<(Guid[] Ids, string?[] Keys)> _keysAsync(
-      NpgsqlTransaction transaction, string prefix, string eventType, TypeHistoryWindow window,
+      NpgsqlTransaction transaction, string prefix, SupersedingTarget target, TypeHistoryWindow window,
       JsonSerializerOptions json, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
       $"SELECT event_id, event_data::text FROM {prefix}wh_superseding_history_rows($1, $2, $3)", transaction.Connection, transaction);
-    command.Parameters.AddWithValue(eventType);
+    command.Parameters.AddWithValue(target.EventType);
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)window.After ?? DBNull.Value });
     command.Parameters.AddWithValue(window.Through);
     var ids = new List<Guid>();
@@ -186,7 +221,7 @@ public sealed partial class SupersedingHistoryReconcileStep : IMaintenanceStep {
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var eventId = reader.GetGuid(0);
       ids.Add(eventId);
-      keys.Add(_keyOf(eventId, eventType, reader.GetString(1), json));
+      keys.Add(_keyOf(eventId, target.KeyTypeName, reader.GetString(1), json));
     }
     return ([.. ids], [.. keys]);
   }

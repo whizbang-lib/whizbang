@@ -19,19 +19,26 @@ namespace Whizbang.Core.Observability;
 /// AOT-friendly, zero-allocation, cross-platform.
 /// </summary>
 /// <remarks>
-/// Use dotnet-trace or OpenTelemetry SDK to collect activities:
-/// <code>
-/// dotnet-trace collect --providers Whizbang.Execution
-/// </code>
-///
-/// OpenTelemetry integration:
+/// <para>
+/// These are <see cref="ActivitySource"/>s, not EventSources, so naming one as a dotnet-trace provider
+/// (<c>--providers Whizbang.Execution</c>) collects nothing (#1864). Subscribe with the OpenTelemetry SDK; the wildcard
+/// takes every Whizbang source, including <c>Whizbang.Hosting</c>, <c>Whizbang.Tracing</c> and
+/// <c>Whizbang.MessageTags</c>, and any added later:
+/// </para>
 /// <code>
 /// services.AddOpenTelemetry()
-///   .WithTracing(builder => builder
-///     .AddSource("Whizbang.Execution")
-///     .AddSource("Whizbang.Transport"));
+///   .WithTracing(builder => builder.AddSource("Whizbang.*"));
+/// </code>
+/// <para>
+/// Without an SDK in the process, dotnet-trace reaches activities through the runtime's DiagnosticSource bridge: enable
+/// <c>Microsoft-Diagnostics-DiagnosticSource</c> with its Events keyword (0x2; 0x3 adds its diagnostic messages) and an
+/// activity filter naming the source. The filter matches one source by its exact name, or every source with <c>*</c>:
+/// </para>
+/// <code>
+/// dotnet-trace collect -p &lt;pid&gt; --providers 'Microsoft-Diagnostics-DiagnosticSource:0x3:5:FilterAndPayloadSpecs="[AS]Whizbang.Execution"'
 /// </code>
 /// </remarks>
+/// <docs>operations/observability/tracing#collecting-activities</docs>
 public static class WhizbangActivitySource {
   private const string ACTIVITY_SOURCE_VERSION = "1.0.0";
 

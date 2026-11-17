@@ -44,6 +44,20 @@ public static class ConsumedMessageTypes {
   }
 
   /// <summary>
+  /// The collective event types a <c>[CollectiveApplyFor]</c> handler on this service applies, read from the consumer
+  /// registry (<see cref="IConsumerRegistry.GetHandledCollectiveEventTypes"/>): the one answer the startup association
+  /// writer and the perspective drain both gate collective work on (#2145).
+  /// </summary>
+  /// <param name="services">The service provider to resolve the registry from; null when the caller has none.</param>
+  /// <returns>The handled collective event types, or <see langword="null"/> when no registry is registered, none is
+  /// given, or the registry cannot say. Null gates nothing.</returns>
+  /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:ConsumedMessageTypes_HandledCollectiveEventTypes_ReadsTheRegisteredRegistryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:ConsumedMessageTypes_HandledCollectiveEventTypes_WithNoRegistry_IsUnknownAsync</tests>
+  public static IReadOnlyList<string>? HandledCollectiveEventTypes(IServiceProvider? services) =>
+    services?.GetService<IConsumerRegistry>()?.GetHandledCollectiveEventTypes();
+
+  /// <summary>
   /// The event namespaces this service absorbs (<see cref="RoutingOptions.AbsorbNamespaces"/>), lowercase and in
   /// ordinal order: their events are stored here though nothing consumes them. Empty when routing is not configured.
   /// </summary>

@@ -107,7 +107,7 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
     }
 
     // Fall back to convention-based routing
-    var typeName = typeSymbol.Name;
+    var typeName = TypeNameUtilities.SimpleName(typeSymbol);
     if (typeName.StartsWith("Product", System.StringComparison.Ordinal)) {
       return "products";
     }

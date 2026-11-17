@@ -91,6 +91,8 @@ public static class WhizbangWorkerServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(factory);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, SchemaReadyGatedService<TWorker>>(sp =>
       new SchemaReadyGatedService<TWorker>(factory(sp), StartupStageGatedServiceCollectionExtensions.SchemaReadyGateOf(sp))));
+    // #1899: a hosted worker that queues work-table writes is watched by the landed signal.
+    QueuedWritesLandedSignal.RegisterIfFlusher(services, factory);
     return services;
   }
 }

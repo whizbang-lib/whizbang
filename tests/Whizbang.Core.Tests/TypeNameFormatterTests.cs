@@ -15,6 +15,38 @@ namespace Whizbang.Core.Tests;
 public class TypeNameFormatterTests {
 
   // ========================================
+  // FORMER NAMES (#2254)
+  // ========================================
+
+  // The ledger records former names bare; the event store holds them with their assembly. A bare former name read as
+  // stored never matches a stored event_type, so the history walks under it read nothing.
+  [Test]
+  public async Task FormatFormerName_ABareFormerName_TakesTheTypesAssemblyAsync() {
+    var result = TypeNameFormatter.FormatFormerName(typeof(TypeNameFormatterTests), "Old.Contracts.Pinged");
+
+    await Assert.That(result).IsEqualTo("Old.Contracts.Pinged, Whizbang.Core.Tests")
+      .Because("the stored form a write under the former name produced, in the assembly the type lives in");
+    await Assert.That(TypeNameFormatter.FormatFormerName(typeof(TypeNameFormatterTests), TypeNameFormatter.FormatClrTypeName(typeof(TypeNameFormatterTests))))
+      .IsEqualTo(TypeNameFormatter.Format(typeof(TypeNameFormatterTests)))
+      .Because("the control: the type's own bare name in this form is exactly what the append path stores");
+  }
+
+  [Test]
+  public async Task FormatFormerName_AnAssemblyQualifiedFormerName_KeepsItsOwnAssemblyAsync() {
+    var result = TypeNameFormatter.FormatFormerName(
+      typeof(TypeNameFormatterTests), "Old.Contracts.Pinged, Old.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
+
+    await Assert.That(result).IsEqualTo("Old.Contracts.Pinged, Old.Contracts")
+      .Because("a type moved between assemblies was stored under its old assembly; the version parts are never stored");
+  }
+
+  [Test]
+  public async Task FormatFormerName_ItsArguments_AreCheckedAsync() {
+    await Assert.That(() => TypeNameFormatter.FormatFormerName(null!, "Old.Pinged")).Throws<ArgumentNullException>();
+    await Assert.That(() => TypeNameFormatter.FormatFormerName(typeof(string), " ")).Throws<ArgumentException>();
+  }
+
+  // ========================================
   // FORMAT TESTS
   // ========================================
 

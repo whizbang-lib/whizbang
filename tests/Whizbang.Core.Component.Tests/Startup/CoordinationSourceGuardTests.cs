@@ -72,6 +72,7 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/CanonicalTemporalRewritePhase.cs"] = EXCLUSION,
+    ["src/Whizbang.Data.Postgres/SchemaRollback.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/PostgresCapabilityProvisioner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs"] = EXCLUSION,

@@ -7,6 +7,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Models;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -79,7 +80,7 @@ public class PerspectiveModelCircularReferenceAnalyzer : DiagnosticAnalyzer {
             .FirstOrDefault(l => l.SourceTree is { } tree && context.Compilation.ContainsSyntaxTree(tree))
           ?? perspective.Locations[0];
         context.ReportDiagnostic(Diagnostic.Create(
-            CircularReferenceInPerspectiveModel, location, circular.Path, model.Name, circular.Target.Name, circular.ContainerPath));
+            CircularReferenceInPerspectiveModel, location, circular.Path, TypeNameUtilities.SimpleName(model), TypeNameUtilities.SimpleName(circular.Target), circular.ContainerPath));
       }
     }
   }

@@ -23,6 +23,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Npgsql" />
     <PackageReference Include="SSH.NET" />

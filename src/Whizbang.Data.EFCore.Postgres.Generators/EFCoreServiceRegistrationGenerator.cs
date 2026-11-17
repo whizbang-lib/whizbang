@@ -300,24 +300,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Either arm yields a non-null schema, so the DbContextInfo below needs no fallback of its own.
     var schema = _extractSchemaFromAttribute(attribute) is { Length: > 0 } declaredSchema
         ? declaredSchema
-        : _deriveSchemaFromNamespace(TypeNameUtilities.NamespaceName(symbol.ContainingNamespace));
+        : _deriveSchemaFromNamespace(TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(symbol)));
 
     // Extract connection string name from attribute, or derive from class name
     var explicitConnectionStringName = _extractConnectionStringNameFromAttribute(attribute);
     var connectionStringName = explicitConnectionStringName ?? DEFAULT_CONNECTION_STRING_NAME;
 
     return new DbContextInfo(
-        ClassName: symbol.Name,
+        ClassName: TypeNameUtilities.SimpleName(symbol),
         FullyQualifiedName: TypeNameUtilities.FullyQualified(symbol),
         // Empty for the global namespace (issue #707): Roslyn's display string for it is the
         // literal "<global namespace>", which is neither a schema name nor a namespace declaration.
-        Namespace: TypeNameUtilities.NamespaceName(symbol.ContainingNamespace),
+        Namespace: TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(symbol)),
         Schema: schema,
         Keys: keys,
         ConnectionStringName: connectionStringName,
         // The name earlier releases derived from the class, read as a fallback only when the context
         // names no connection string (see WhizbangNamingConvention.ResolveConnectionStringName).
-        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(symbol.Name) : null
+        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(TypeNameUtilities.SimpleName(symbol)) : null
     );
   }
 
@@ -1200,9 +1200,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     if (parameterSyntax.Type is not GenericNameSyntax genericName
         || context.SemanticModel.GetTypeInfo(genericName, ct).Type is not INamedTypeSymbol type
         || type.TypeKind != TypeKind.Interface
-        || !type.Name.Equals("ILensQuery", StringComparison.Ordinal)
+        || !TypeNameUtilities.SimpleName(type).Equals("ILensQuery", StringComparison.Ordinal)
         || type.TypeArguments.Length < 2
-        || !TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses")) {
+        || !TypeNameUtilities.IsNamed(TypeNameUtilities.NamespaceOf(type), "Whizbang.Core.Lenses")) {
       return null;
     }
 
@@ -1273,6 +1273,47 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generates the SplitDocumentRegistry.Register call for a model with a Split field (#2304): the projection a query
+  /// whose result is the model's document is rewritten to, reading every promoted column the copy fills beside the
+  /// document, and that copy, by the hydrators' rules. A Split document no longer holds its promoted fields, and a query
+  /// that projects the document materializes no row for a hydrator to fill.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/SplitDocumentProjectionGenerationTests.cs:SplitRecord_RegistersAProjectionThatReadsEveryPromotedColumn_AndACopyWithAWithExpressionAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/SplitDocumentProjectionGenerationTests.cs:ExtractedModel_RegistersNoProjection_ItsDocumentAlreadyHoldsTheFieldsAsync</tests>
+  private static void _generateSplitDocumentRegistration(StringBuilder sb, PerspectiveModelInfo model) {
+    const string REGISTRY = "Whizbang.Data.EFCore.Postgres.SplitDocumentRegistry";
+    var copied = _copiedFields(model);
+    var columns = string.Join(", ", copied.Select(f =>
+      $"global::Microsoft.EntityFrameworkCore.EF.Property<{(f.IsVector ? "global::Pgvector.Vector?" : f.TypeName)}>(r, \"{f.ColumnName}\")"));
+    sb.AppendLine($"        // Register the Split document projection for {model.ModelTypeName} (zero reflection, AOT-safe)");
+    sb.AppendLine($"        {REGISTRY}.Register<{model.ModelTypeName}>(");
+    sb.AppendLine($"          r => {REGISTRY}.WithColumns(r.Data, new object?[] {{ {columns} }}),");
+    sb.AppendLine("          (data, columns) => {");
+    sb.AppendLine($"          var row = new {REGISTRY}.Document<{model.ModelTypeName}>(data);");
+    _appendColumnCopy(sb, model, field => {
+      var index = copied.IndexOf(field);
+      if (field.IsVector) {
+        return $"(global::Pgvector.Vector?)columns[{index}]";
+      }
+      // A value that cannot be null is unwrapped; a nullable one keeps its null for the copy to test.
+      var suppress = _isNullableTypeName(field.TypeName) ? "" : "!";
+      return $"({field.TypeName})columns[{index}]{suppress}";
+    });
+    sb.AppendLine("          return row.Data;");
+    sb.AppendLine("        });");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// The promoted fields a hydrator copies into the model: every one with a setter, except an <c>init</c>-only one of a
+  /// class that is assigned in place (it cannot be assigned once the instance exists).
+  /// </summary>
+  private static List<PhysicalFieldInfo> _copiedFields(PerspectiveModelInfo model) {
+    var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
+    return [.. model.PhysicalFields.Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))];
+  }
+
+  /// <summary>
   /// Emits the body both hydrators share: one local per promoted column, read with
   /// <paramref name="read"/>, then the copy of those locals into <c>row.Data</c>.
   /// </summary>
@@ -1295,9 +1336,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       PerspectiveModelInfo model,
       Func<PhysicalFieldInfo, string> read) {
     var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
-    var copied = model.PhysicalFields
-        .Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))
-        .ToList();
+    var copied = _copiedFields(model);
 
     foreach (var field in copied) {
       sb.AppendLine($"          var _{field.ColumnName} = {read(field)};");
@@ -2003,6 +2042,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _generatePhysicalFieldHydratorRegistration(sb, model);
     _generateChangeTrackerHydratorRegistration(sb, model);
+    if (model.PhysicalFields.Any(f => f.IsSplit)) {
+      _generateSplitDocumentRegistration(sb, model);
+    }
   }
 
   /// <summary>
@@ -2294,6 +2336,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine("      // This connection's own timeout key wins (Whizbang:Postgres:<name>:CommandTimeoutSeconds).");
       sb.AppendLine("      global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
+      sb.AppendLine("      // #2347: a connection behind a transaction-mode pooler stops sending DISCARD ALL on every return.");
+      sb.AppendLine("      global::Whizbang.Data.Postgres.PostgresTransactionPooler.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
       sb.AppendLine("      connectionString = connStringBuilder.ToString();");
       sb.AppendLine();
       sb.AppendLine("      var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
@@ -2434,6 +2478,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("        // This connection's own timeout key wins (Whizbang:Postgres:<name>:CommandTimeoutSeconds).");
     sb.AppendLine("        global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
+    sb.AppendLine("        // #2347: a connection behind a transaction-mode pooler stops sending DISCARD ALL on every return.");
+    sb.AppendLine("        global::Whizbang.Data.Postgres.PostgresTransactionPooler.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
     sb.AppendLine("        connectionString = connStringBuilder.ToString();");
     sb.AppendLine();
     sb.AppendLine("        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
@@ -2530,7 +2576,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<{dbContext.FullyQualifiedName}>(async (sp, ct) => {{");
     sb.AppendLine("      using var scope = sp.CreateScope();");
     sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
-    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct);");
+    sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider);");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
   }
@@ -2645,7 +2691,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string registerAssociationsCode;
       string associationsHashExpr;
       if (matchingPerspectives.Count > 0) {
-        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken);";
+        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken, _collectiveEventTypes.Value);";
         // Reference the AssociationsHash constant emitted by EFCorePerspectiveAssociationGenerator
         // in this same assembly. Using the generated const avoids recomputing the hash here.
         associationsHashExpr = $"global::{assemblyName}.Generated.EFCorePerspectiveAssociationExtensions.AssociationsHash";
@@ -2681,7 +2727,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // __LIBRARY_VERSION__ is the Whizbang library version from the generator assembly
       template = template.Replace("__LIBRARY_VERSION__", GeneratorLibraryVersion.Get());
       // __APPLICATION_VERSION__ is the consuming assembly name + version for tracking which app applied migrations
-      var appVersion = compilation.Assembly.Identity.Version.ToString();
+      var appVersion = TypeNameUtilities.AssemblyIdentityVersion(compilation.Assembly).ToString();
       var applicationVersion = $"{assemblyName}/{appVersion}";
       template = template.Replace("__APPLICATION_VERSION__", applicationVersion);
 
@@ -2741,7 +2787,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </remarks>
   private static string _generateBootstrapMigrationsCode() {
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
-    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+    var resourcePrefix = $"{TypeNameUtilities.AssemblySimpleName(assembly)}.Templates.Migrations.";
 
     var entries = new List<string>();
 
@@ -2792,7 +2838,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Load migrations from generator's own embedded resources (Templates/Migrations)
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
-    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+    var resourcePrefix = $"{TypeNameUtilities.AssemblySimpleName(assembly)}.Templates.Migrations.";
 
     // Get all embedded SQL migration files
     var migrationResources = assembly.GetManifestResourceNames()
@@ -2806,7 +2852,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       resourceList += $", ... and {migrationResources.Length - 5} more";
     }
     context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.EFCoreMigrationFilesDiscovery, Location.None,
-        migrationResources.Length, assembly.GetName().Name, resourcePrefix, resourceList));
+        migrationResources.Length, TypeNameUtilities.AssemblySimpleName(assembly), resourcePrefix, resourceList));
 
     // Generate migration tuples
     for (int i = 0; i < migrationResources.Length; i++) {
@@ -3129,10 +3175,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// <c>created_at</c> serves time-based queries. <c>updated_at</c> carries the sliding retention
-  /// predicate (<c>updated_at &lt; NOW() - interval</c>): written with the arithmetic on the NOW() side
-  /// it is sargable, and unindexed the reaper degrades to a sequential scan of every enrolled table on
-  /// every maintenance cycle.
+  /// <c>created_at</c> serves time-based queries, and is written once, so its index costs an update
+  /// nothing.
+  /// </para>
+  /// <para>
+  /// <c>updated_at</c> is not indexed here (#2087). Every update rewrites it, and a btree over it keeps
+  /// PostgreSQL from making the update HOT (measured on PostgreSQL 17 at fillfactor 80: no HOT updates
+  /// with the index, about 56 percent without it). Two things ask for it instead. A table that declares
+  /// row retention gets it from the managed-object reconcile, which reads enrollment from
+  /// <c>wh_perspective_registry</c> as the retention sweeps do (<c>PerspectiveRetentionIndexes</c>); a
+  /// model that queries <c>UpdatedAt</c> declares it with
+  /// <c>[PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]</c>, which derives the same name. On every
+  /// other table the index an earlier release built is no longer declared, so the reconcile retires it.
   /// </para>
   /// <para>
   /// The index over the model's document answers a whole-document match, which is what an equality
@@ -3154,11 +3208,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// when the table already has an index with its definition.
   /// </para>
   /// <para>
-  /// Nothing here ever drops an index. An index an earlier release built that this one no longer
-  /// declares stays until an operator removes it, since removing one a production query relies on
-  /// is worse than keeping one nobody reads. The one exception is a promoted field's document index,
-  /// which no query can read once the field is redirected to its column and which is replaced by an
-  /// index of the same kind on the column; see <see cref="_appendPromotedFieldIndexes"/>.
+  /// Nothing here drops an index. An index an earlier release built that this one no longer declares
+  /// is retired by the managed-object reconcile, under its rules (a start records it first, and a
+  /// running instance that still declares it holds it). The one drop the schema emits itself is a
+  /// promoted field's document index, which no query can read once the field is redirected to its
+  /// column and which is replaced by an index of the same kind on the column; see
+  /// <see cref="_appendPromotedFieldIndexes"/>.
   /// </para>
   /// </remarks>
   private static IEnumerable<string> _standardIndexStatements(
@@ -3166,7 +3221,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var table = $"{quotedSchema}.{perspective.TableName}";
 
     yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_created_at")} ON {table} (created_at);";
-    yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_updated_at")} ON {table} (updated_at);";
     if (perspective.DocumentMatching.BuildsDataIndex) {
       yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_data_gin")} ON {table} USING gin (data);";
     }
@@ -4058,7 +4112,7 @@ public static class GeneratorLibraryVersion {
         assembly.GetCustomAttributes<System.Reflection.AssemblyInformationalVersionAttribute>()
           .Select(a => a.InformationalVersion)
           .FirstOrDefault(),
-        assembly.GetName().Version);
+        TypeNameUtilities.AssemblyVersion(assembly));
   }
 
   /// <summary>

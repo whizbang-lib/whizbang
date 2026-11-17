@@ -43,6 +43,7 @@ public static class WhizbangMeters {
   private static readonly List<string> _names = [
     DeadLetterMetrics.METER_NAME,
     DispatcherMetrics.METER_NAME,
+    EphemeralBlockerMetrics.METER_NAME,
     EventCategoryMetrics.METER_NAME,
     GovernorMetrics.METER_NAME,
     HousekeepingMetrics.METER_NAME,
@@ -67,6 +68,7 @@ public static class WhizbangMeters {
     TransportMetrics.METER_NAME,
     TypeRegistryMetrics.METER_NAME,
     WorkCoordinatorMetrics.METER_NAME,
+    DbStatementMetrics.METER_NAME,
     // Optional-package meters, as literals (see remarks). Each package's tests lock its
     // literal to the owning METER_NAME constant.
     "Whizbang.Sagas",                    // Whizbang.Sagas — SagaMetrics

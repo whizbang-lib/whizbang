@@ -166,6 +166,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     Guid? resumeAfter = null;
     var answeredWindowed = false;
     var windowCapped = false;
+    var nothingSettledAbove = false;
 
     if (message.Windowed) {
       // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
@@ -181,10 +182,19 @@ public sealed partial class IntegrityManifestRequestReceptor(
             null, eventTypes, message.SinceSequence, until,
             message.ResumeAfterStreamId, message.MaxDigests ?? options.MaxDigestsPerManifest, settle,
             cancellationToken).ConfigureAwait(false);
-      if (windowed is not null) {
-        if (windowed.Digests.Count == 0 && windowed.ComputedThrough <= message.SinceSequence) {
-          return;   // nothing settled beyond the asker's watermark — no progress to report.
+      if (windowed is { Digests.Count: 0 } && windowed.ComputedThrough <= message.SinceSequence) {
+        // #2349: nothing settled at or above the asker's start. The engine folds nothing for such a window (it reads the
+        // settled head first and returns before the fold), and a type-level ask is answered with exactly that, so the
+        // asker can tell an unchanged origin from a lost answer and stop asking it until something moves. A drill-down
+        // page or a ledger re-check has no use for the reply, and stays silent as before.
+        services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestAnswersUnchanged.Add(1,
+          new KeyValuePair<string, object?>("level", message.Level.ToString()));
+        if (message.Level != ManifestLevel.Types || message.Recheck) {
+          return;
         }
+        nothingSettledAbove = true;
+      }
+      if (windowed is not null) {
         digests = windowed.Digests;
         computedThrough = windowed.ComputedThrough;
         // #2107: the answer stopped at the cap, not at the settled head: more settled history follows.
@@ -229,6 +239,11 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // #80-F: every answer carries the history generation — how a consumer distinguishes a
     // deliberate mutation of folded history (reset + re-verify) from damage (alarm).
     var originGeneration = await coordinator.GetIntegrityOriginGenerationAsync(cancellationToken).ConfigureAwait(false);
+    // #2262: how far history was rewritten since the generation the asker recorded. Read AFTER the generation, so a rewrite
+    // committed between the two reads is counted in the floor: the floor may then be lower than needed, never higher.
+    var rewrite = message.KnownOriginGeneration is long knownGeneration
+      ? await coordinator.GetIntegrityHistoryRewriteAsync(knownGeneration, cancellationToken).ConfigureAwait(false)
+      : null;
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -259,9 +274,14 @@ public sealed partial class IntegrityManifestRequestReceptor(
           ResumeAfterStreamId = resumeAfter,
           ChunkCount = totalChunks,
           OriginGeneration = originGeneration,
+          RewrittenSinceGeneration = rewrite?.SinceGeneration,
+          RewrittenFrom = rewrite?.RewrittenFrom,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
+          // #2225: the walk's types, so each follow-up page asks for all of them, not only those this page held.
+          RequestedEventTypes = message.Level == ManifestLevel.Streams ? eventTypes : null,
+          NothingSettledAbove = nothingSettledAbove,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -351,7 +371,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(IntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
-    if (message.Digests.Count == 0 && !_isQuietWindow(message)) {
+    if (message.Digests.Count == 0 && !_isQuietWindow(message) && !_continuesAWalk(message)) {
       return;
     }
     // NON-QUEUEING by design. Waiting here looked free but was not: every queued manifest held
@@ -385,6 +405,14 @@ public sealed partial class IntegrityManifestReceptor(
   /// </summary>
   private static bool _isQuietWindow(IntegrityManifest message) =>
     message.Digests.Count == 0 && message.Level == ManifestLevel.Types && message.ComputedThrough is not null;
+
+  /// <summary>
+  /// #2225: a stream-level page that says the walk has more pages (a cursor) and which types the walk asks for (an origin
+  /// that echoes them). With no digest of its own to compare it is still followed, so the walk is not cut short by one
+  /// empty page.
+  /// </summary>
+  private static bool _continuesAWalk(IntegrityManifest message) =>
+    message.Level == ManifestLevel.Streams && message.ResumeAfterStreamId is not null && message.RequestedEventTypes is { Count: > 0 };
 
   /// <summary>Metrics for the gate path, which runs before any scope exists. Root-resolved and
   /// cached — StreamIntegrityMetrics is a singleton wherever it is registered at all.</summary>
@@ -421,7 +449,8 @@ public sealed partial class IntegrityManifestReceptor(
     // because its redelivery is discarded on receive.
     var keeps = ConsumedMessageTypes.Keeps(services);
     var kept = message.Digests.Where(d => keeps(d.EventType)).ToList();
-    if (kept.Count == 0 && !_isQuietWindow(message)) {
+    // #2225: a walk page left with nothing to compare still carries the walk's cursor; it is followed below.
+    if (kept.Count == 0 && !_isQuietWindow(message) && !_continuesAWalk(message)) {
       return;
     }
     if (kept.Count < message.Digests.Count) {
@@ -433,8 +462,12 @@ public sealed partial class IntegrityManifestReceptor(
     // and folds were aligned to the OLD world, and comparing them would alarm on deliberate
     // change. The guard resets the seal once; the next audit re-verifies from the beginning.
     if (message.OriginGeneration is long carriedGeneration) {
+      // #2262: with the origin's rewrite floor, the guard lowers the seal only as far as the rewrite reached.
+      var rewrite = message.RewrittenSinceGeneration is long rewrittenSince
+        ? new IntegrityHistoryRewrite(rewrittenSince, message.RewrittenFrom)
+        : null;
       var coherent = await coordinator.EnsureIntegritySealGenerationAsync(
-        message.OriginServiceId, carriedGeneration, cancellationToken).ConfigureAwait(false);
+        message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
         return;
@@ -452,9 +485,18 @@ public sealed partial class IntegrityManifestReceptor(
       message = message with {
         Digests = [.. message.Digests.Where(d => !ownership.IsNotAuthoritative(d.EventType, message.OriginServiceId, ownDomains))],
       };
-      if (message.Digests.Count == 0) {
+      if (message.Digests.Count == 0 && !_continuesAWalk(message)) {
         return;
       }
+    }
+
+    // #2225: a stream-level page with nothing to compare (it held no digest, or every one was left out above) still says,
+    // by its cursor, that the walk has more pages. Only an origin that echoes the walk's types can be followed: such a
+    // page names no type of its own, and asking for none would ask for nothing.
+    if (message.Digests.Count == 0 && _continuesAWalk(message)) {
+      await _followResumeCursorAsync(services, options, message, [.. message.RequestedEventTypes!], cancellationToken)
+        .ConfigureAwait(false);
+      return;
     }
 
     var types = message.Digests.Select(d => d.EventType).Distinct(StringComparer.Ordinal).ToList();
@@ -576,6 +618,14 @@ public sealed partial class IntegrityManifestReceptor(
         _ => "local_extra",
       };
       divergent.Add((origin, mine, isDeficit, reason));
+    }
+
+    // #2259: a re-check also heals a divergent bucket whose fold matches once the events stored inside the settle window
+    // are counted. A repair answer stores the missing events now, so the settled fold leaves out exactly what the answer
+    // brought, and the healed bucket read as short until the window passed.
+    if (message.Recheck && divergent.Count > 0) {
+      divergent = await _healWhatTheAnswerStoredAsync(coordinator, message, divergent, healedKeys, cancellationToken)
+        .ConfigureAwait(false);
     }
 
     // #2115: the rows this comparison removed, which a re-check's answer counts (a ledger that cannot say what it removed
@@ -760,7 +810,57 @@ public sealed partial class IntegrityManifestReceptor(
     // Without following, a lane wider than one page only ever audited its first
     // MaxDigestsPerManifest streams — the rest was never compared, never repaired, and the seal
     // never certified the window (the type-level seal rule requires a null cursor).
-    await _followResumeCursorAsync(services, options, message, types, cancellationToken).ConfigureAwait(false);
+    // #2225: a follow-up page asks for every type the walk started with; a type absent from this page may fill the next.
+    await _followResumeCursorAsync(services, options, message, _walkTypes(message, types), cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// #2225: the types a follow-up page of a stream-level walk asks for: every type the walk started with, as the origin
+  /// echoed them, so a type with no streams on one page stays in the walk; the page's own types from an origin that
+  /// echoes none.
+  /// </summary>
+  private static List<string> _walkTypes(IntegrityManifest message, List<string> pageTypes) =>
+    message.RequestedEventTypes is { Count: > 0 } walk ? [.. walk] : pageTypes;
+
+  /// <summary>
+  /// #2259: folds a re-check's divergent buckets again counting the events stored inside the settle window, and moves
+  /// each one that now matches its origin's digest to <paramref name="healedKeys"/>. The settle window exists for events
+  /// still in flight from the origin; it judges by the local arrival time, so it also leaves out the events a repair
+  /// answer just stored, which is exactly what a re-check of an answered bucket has to see. Only a fold EQUAL to the
+  /// origin's closes a row: an event in flight the origin has not yet settled makes the fold differ and the bucket stays
+  /// as the settled fold read it. An engine that cannot fold the chunk leaves every bucket as it was.
+  /// </summary>
+  /// <returns>The divergences still to record, in manifest order.</returns>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_HealsABucketWhoseAnsweredEventIsInsideTheSettleWindowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenEvenWhatTheAnswerStoredDoesNotMatchAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenTheUnsettledFoldHasNoRowForTheBucketAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_ARecheckAnswer_OnAnEngineThatCannotFoldTheChunk_KeepsTheRowAsync</tests>
+  private static async Task<List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>> _healWhatTheAnswerStoredAsync(
+      IWorkCoordinator coordinator, IntegrityManifest message,
+      List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)> divergent,
+      List<IntegrityRepairLedger.DivergenceKey> healedKeys, CancellationToken cancellationToken) {
+    var streams = divergent.Select(d => d.Origin.StreamId).Distinct().ToList();
+    // The same range the settled fold covered: the manifest's window, or the whole history.
+    var windowed = message.ComputedThrough is not null;
+    var unsettled = await coordinator.ComputeStreamDigestsForChunkAsync(
+      message.OriginServiceId, streams, windowed ? message.SinceSequence ?? 0 : null, message.ComputedThrough, TimeSpan.Zero,
+      cancellationToken).ConfigureAwait(false);
+    if (unsettled is null) {
+      return divergent;
+    }
+    var byBucket = unsettled.ToDictionary(d => (d.TenantScope, d.EventType, d.StreamId));
+    var still = new List<(StreamDigest Origin, StreamDigest? Mine, bool IsDeficit, string Reason)>(divergent.Count);
+    foreach (var entry in divergent) {
+      var origin = entry.Origin;
+      byBucket.TryGetValue((origin.TenantScope, origin.EventType, origin.StreamId), out var held);
+      if (IntegrityDigestMath.PlaceHeld(origin, held, null).Verdict == HeldWindowVerdict.Matches) {
+        healedKeys.Add(new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId));
+      } else {
+        still.Add(entry);
+      }
+    }
+    return still;
   }
 
   /// <summary>
@@ -861,7 +961,9 @@ public sealed partial class IntegrityManifestReceptor(
   /// purpose: the bound protects THIS replica's compare budget, a restart merely re-follows a few
   /// pages, and carrying a page counter on the wire would hand old peers a field they never echo —
   /// an unbounded chain, the exact failure the bound exists to stop. Entries expire by
-  /// timestamp (a fresh audit round restarts the budget) and complete windows remove theirs.
+  /// timestamp (a fresh audit round restarts the budget), complete windows remove theirs, and a drill-down removes its
+  /// window's (#2211: a new walk gets a fresh budget). Where a walk stopped at the budget is kept in the store instead
+  /// (IWorkCoordinator.IntegritySaveDrillCursorAsync), so the next audit resumes there on any replica.
   /// </summary>
   private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid Origin, long Since, long Until), (int Pages, DateTimeOffset Last)> _pagesFollowed = new();
 
@@ -892,7 +994,14 @@ public sealed partial class IntegrityManifestReceptor(
       LogCursorFollowCapped(logger, message.OriginServiceName, Pages);
       services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesCapped.Add(1,
         new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
-      return;   // the rest of the lane re-audits from the seal next cycle.
+      // #2211: the next drill-down of this window resumes here. Dropping the cursor restarted every audit's walk at the
+      // window's first stream, so a window wider than the budget had the same leading streams compared and repaired at
+      // every audit and the streams after them never. A re-check walks the window of its own rows and keeps none.
+      if (!message.Recheck) {
+        await services.GetRequiredService<IWorkCoordinator>().IntegritySaveDrillCursorAsync(
+          message.OriginServiceId, message.SinceSequence ?? 0, cursor, now, cancellationToken).ConfigureAwait(false);
+      }
+      return;
     }
 
     var transport = services.GetService<ITransport>();
@@ -934,6 +1043,8 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = cursor,
         // #2115: the rest of a re-check's window is a re-check too.
         Recheck = message.Recheck,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)
@@ -984,6 +1095,15 @@ public sealed partial class IntegrityManifestReceptor(
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
     var coordinator = services.GetRequiredService<IWorkCoordinator>();
     var windowed = message.ComputedThrough is not null;
+    if (message.NothingSettledAbove) {
+      // #2349: the origin had nothing settled at or above the window's start, so there is nothing to fold or compare. When
+      // the window started at or below the seal, the whole window above the seal matched: remember it, so the next audit
+      // skips the ask while nothing moves.
+      if ((message.SinceSequence ?? 0) <= await coordinator.GetIntegritySealAsync(message.OriginServiceId, cancellationToken).ConfigureAwait(false)) {
+        await coordinator.IntegrityRecordCompareOutcomeAsync(message.OriginServiceId, fullMatch: true, cancellationToken).ConfigureAwait(false);
+      }
+      return true;
+    }
     IReadOnlyList<StreamDigest> local;
     if (message.ComputedThrough is long windowEnd) {
       // #80-B/C: the local fold covers the manifest's EXACT window — anything else compares
@@ -1051,9 +1171,17 @@ public sealed partial class IntegrityManifestReceptor(
           && (message.SinceSequence ?? 0) <= await coordinator.GetIntegritySealAsync(message.OriginServiceId, cancellationToken).ConfigureAwait(false)) {
         await coordinator.AdvanceIntegritySealAsync(message.OriginServiceId, through, cancellationToken)
           .ConfigureAwait(false);
+        // #2349: the window above the seal matched in full; the next audit skips the ask while nothing moves.
+        await coordinator.IntegrityRecordCompareOutcomeAsync(message.OriginServiceId, fullMatch: true, cancellationToken)
+          .ConfigureAwait(false);
         LogSealAdvanced(logger, message.OriginServiceName, through);
       }
       return true;   // every type roll-up matches: the whole subscribed surface is provably complete.
+    }
+    if (windowed) {
+      // #2349: a window that disagrees is under repair; forgetting the last match makes the next audit ask again.
+      await coordinator.IntegrityRecordCompareOutcomeAsync(message.OriginServiceId, fullMatch: false, cancellationToken)
+        .ConfigureAwait(false);
     }
 
     var transport = services.GetService<ITransport>();
@@ -1138,6 +1266,23 @@ public sealed partial class IntegrityManifestReceptor(
     foreach (var t in drillDown) {
       _lastDrilled[(message.OriginServiceId, t)] = drilledAt;
     }
+    // Directed or not at all: the same rule as the repair request (see
+    // _sendRepairRequestAsync): without the origin's carried address the drill-down waits for a
+    // checkpoint instead of broadcasting off the requester's own topic.
+    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
+    if (string.IsNullOrEmpty(originRequestTopic)) {
+      LogDrillDownSkippedNoOriginTopic(logger, message.OriginServiceName, drillDown.Count);
+      return true;
+    }
+    var since = message.SinceSequence ?? 0;
+    Guid? resumeAfter = null;
+    if (message.ComputedThrough is long walkUntil) {
+      // #2211: a drill-down starts a new walk of its window, with a fresh page budget, from where the last walk the
+      // budget stopped left off (the cursor is taken, so it is used once).
+      _pagesFollowed.TryRemove((message.OriginServiceId, since, walkUntil), out _);
+      resumeAfter = await coordinator.IntegrityTakeDrillCursorAsync(message.OriginServiceId, since, cancellationToken)
+        .ConfigureAwait(false);
+    }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1150,9 +1295,12 @@ public sealed partial class IntegrityManifestReceptor(
         // #80-C: the drill-down inherits the window that disagreed — the stream-level exchange
         // (and the repairs it spawns) stay bounded to that range instead of re-shipping history.
         Windowed = windowed,
-        SinceSequence = message.SinceSequence ?? 0,
+        SinceSequence = since,
         UntilSequence = message.ComputedThrough,
         MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
+        ResumeAfterStreamId = resumeAfter,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1160,14 +1308,6 @@ public sealed partial class IntegrityManifestReceptor(
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
     };
-    // Directed or not at all — the same rule as the repair request (see
-    // _sendRepairRequestAsync): without the origin's carried address the drill-down waits for a
-    // checkpoint instead of broadcasting off the requester's own topic.
-    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(message.OriginServiceId);
-    if (string.IsNullOrEmpty(originRequestTopic)) {
-      LogDrillDownSkippedNoOriginTopic(logger, message.OriginServiceName, drillDown.Count);
-      return true;
-    }
     var serialized = serializer.SerializeEnvelope(envelope);
     await transport.PublishAsync(serialized.JsonEnvelope,
       Whizbang.Core.Transports.IntegrityControlDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest), options), serialized.EnvelopeType,
@@ -1181,7 +1321,10 @@ public sealed partial class IntegrityManifestReceptor(
   /// <summary>
   /// #2207: heals the type-lane ledger row (the empty stream) of every (tenant, type) this answer proves complete, so a
   /// deficit recorded on the type lane, by a bulk backfill or a checkpoint gap, clears once the type compares equal
-  /// instead of waiting for a checkpoint window heal that a type with no new traffic never gets.
+  /// instead of waiting for a checkpoint window heal that a type with no new traffic never gets. The same proof covers
+  /// every stream of the type, so every per-stream row of that (origin, tenant, type) is a phantom and is forgotten in
+  /// the same step (phantom heal); a type with a stream genuinely missing has a roll-up that disagrees and never reaches
+  /// here.
   /// </summary>
   /// <remarks>
   /// A match is proof only when both sides were counted over the whole history of the type: a full-history answer
@@ -1193,6 +1336,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// </remarks>
   /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.TypeLaneHeal.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.PhantomHeal.cs</tests>
   private static async Task _healProvenTypeLanesAsync(
       IServiceProvider services, IWorkCoordinator coordinator, IntegrityManifest message, List<StreamDigest> matched,
       CancellationToken cancellationToken) {
@@ -1205,7 +1349,8 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
     var ledger = IntegrityRepairSupport.ResolveLedger(services);
-    var ages = await ledger.MarkHealedBatchWithAgesAsync(
+    // The same proof covers every stream of the type, so its per-stream rows are phantoms and go with the type lane.
+    var ages = await ledger.MarkTypesHealedWithAgesAsync(
       matched.ConvertAll(d => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, d.TenantScope, d.EventType, Guid.Empty)),
       cancellationToken).ConfigureAwait(false);
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
@@ -1248,6 +1393,8 @@ public sealed partial class IntegrityManifestReceptor(
         Windowed = true,
         SinceSequence = through,
         WindowNumber = window,
+        // #2262: the answer passed the generation guard, so its generation is the one recorded.
+        KnownOriginGeneration = message.OriginGeneration,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1324,6 +1471,7 @@ public sealed partial class IntegrityManifestReceptor(
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
         StateOnly = true,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1379,6 +1527,7 @@ public sealed partial class IntegrityManifestReceptor(
         // manifests leave both null, the pre-existing whole-history semantics.
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
+        AcceptsStreamSpanningBundles = true,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1461,7 +1610,8 @@ public sealed partial class IntegrityManifestReceptor(
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Information,
     Message = "Origin '{OriginServiceName}' history generation changed to {Generation} — a legitimate " +
-              "mutation (close/reclassify); seal reset, this comparison round skipped, re-verifying from the beginning next audit")]
+              "rewrite of its history below the seal; the seal fell to the rewrite point (or to the start when the origin " +
+              "could not say how far the rewrite reached), this comparison round skipped, re-verifying from there next audit")]
   static partial void LogGenerationChanged(ILogger logger, string originServiceName, long generation);
 
   [LoggerMessage(EventId = 62, Level = LogLevel.Debug,
@@ -1475,7 +1625,7 @@ public sealed partial class IntegrityManifestReceptor(
 
   [LoggerMessage(EventId = 64, Level = LogLevel.Information,
     Message = "AUDIT cursor-following capped at {PagesFollowed} page(s) for '{OriginServiceName}' — " +
-              "the rest of the window re-audits from the seal next cycle")]
+              "the next audit's drill-down of the window resumes where this walk stopped")]
   static partial void LogCursorFollowCapped(ILogger logger, string originServiceName, int pagesFollowed);
 
   [LoggerMessage(EventId = 65, Level = LogLevel.Debug,

@@ -829,6 +829,8 @@ public partial class IntegrityManifestReceptorTests {
                "per-stream commands multiplied every storm by the stream count.");
     var command = _deserializeRedelivery(transport.Published[0].Envelope);
     await Assert.That(command.StreamIds).IsEquivalentTo([s1, s2, s3]);
+    await Assert.That(command.AcceptsStreamSpanningBundles).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
     await Assert.That(transport.Published[0].Destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never anywhere else.");
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
@@ -2130,29 +2132,6 @@ public partial class IntegrityManifestReceptorTests {
   }
 
   [Test]
-  public async Task RequestReceptor_WindowedNothingNewSettled_StaysSilentAsync() {
-    // ComputedThrough == since means the origin has nothing settled beyond the asker's watermark.
-    // There is no progress to report — the asker simply re-asks on its next cadence.
-    var coordinator = new AuditCoordinator {
-      WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 100 },
-    };
-    var transport = new CaptureTransport();
-    var sp = _provider(coordinator, transport);
-    var receptor = new IntegrityManifestRequestReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
-
-    await receptor.HandleAsync(new RequestIntegrityManifest {
-      RequesterService = "auditor-svc",
-      Topic = "inbox",
-      Level = ManifestLevel.Types,
-      Windowed = true,
-      SinceSequence = 100,
-    });
-
-    await Assert.That(transport.Published).IsEmpty();
-  }
-
-  [Test]
   public async Task RequestReceptor_WindowedStreamsAsk_CarriesTheResumeCursorAsync() {
     var stream = TrackedGuid.New().Value;
     var cursor = TrackedGuid.New().Value;
@@ -2430,6 +2409,8 @@ public partial class IntegrityManifestReceptorTests {
       .Because("the whole type's window backfills — a stream list is exactly the drip this path skips");
     await Assert.That(bulk.FromCommitSequence).IsEqualTo(99L);
     await Assert.That(bulk.ToCommitSequence).IsEqualTo(299L);
+    await Assert.That(bulk.AcceptsStreamSpanningBundles).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
 
     await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestIntegrityManifest") == true)).IsFalse()
       .Because("the bulk path REPLACES the stream drill-down for that type — both would double-ship");
@@ -3095,6 +3076,14 @@ public partial class IntegrityManifestReceptorTests {
       return Task.CompletedTask;
     }
 
+    /// <summary>#2349: each compare outcome recorded, in order.</summary>
+    public List<(Guid Origin, bool FullMatch)> CompareOutcomes { get; } = [];
+
+    public Task IntegrityRecordCompareOutcomeAsync(Guid originServiceId, bool fullMatch, CancellationToken cancellationToken = default) {
+      CompareOutcomes.Add((originServiceId, fullMatch));
+      return Task.CompletedTask;
+    }
+
     public Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(OriginGeneration);
 
@@ -3102,6 +3091,23 @@ public partial class IntegrityManifestReceptorTests {
         Guid originServiceId, long generation, CancellationToken cancellationToken = default) {
       GenerationGuardSeen = generation;
       return Task.FromResult(SealGenerationCoherent);
+    }
+
+    public Task<bool> EnsureIntegritySealGenerationAsync(
+        Guid originServiceId, long generation, IntegrityHistoryRewrite? rewrite, CancellationToken cancellationToken = default) {
+      GenerationGuardSeen = generation;
+      GuardRewriteSeen = rewrite;
+      return Task.FromResult(SealGenerationCoherent);
+    }
+
+    /// <summary>#2262: what the origin vouches was rewritten since the asked generation; null = it cannot say.</summary>
+    public IntegrityHistoryRewrite? HistoryRewrite { get; set; }
+    public long? HistoryRewriteSinceSeen;
+    public IntegrityHistoryRewrite? GuardRewriteSeen;
+
+    public Task<IntegrityHistoryRewrite?> GetIntegrityHistoryRewriteAsync(long sinceGeneration, CancellationToken cancellationToken = default) {
+      HistoryRewriteSinceSeen = sinceGeneration;
+      return Task.FromResult(HistoryRewrite);
     }
 
     public Task<WindowedDigestResult?> ComputeTypeDigestsWindowedAsync(
@@ -3134,6 +3140,12 @@ public partial class IntegrityManifestReceptorTests {
     /// honest "I cannot answer this" signal, distinct from an empty-but-answerable fold.</summary>
     public bool ForChunkReturnsNull { get; set; }
 
+    /// <summary>#2259: the fold with no settle window, which also counts events stored inside it; null = as settled.</summary>
+    public IReadOnlyList<StreamDigest>? UnsettledReceivedDigests { get; set; }
+
+    /// <summary>The settle window each answered chunk fold was asked with, in order.</summary>
+    public List<TimeSpan> ForChunkSettlesSeen { get; } = [];
+
     public async Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
       Guid originServiceId, IReadOnlyList<Guid> streamIds,
       long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
@@ -3149,7 +3161,22 @@ public partial class IntegrityManifestReceptorTests {
       if (ForChunkReturnsNull) {
         return null;
       }
-      return [.. ReceivedDigests.Where(d => streamIds.Contains(d.StreamId))];
+      ForChunkSettlesSeen.Add(settleWindow);
+      // #2259: what this store holds counting events stored inside the settle window too (a repair answer's events).
+      var held = settleWindow == TimeSpan.Zero && UnsettledReceivedDigests is { } unsettled ? unsettled : ReceivedDigests;
+      return [.. held.Where(d => streamIds.Contains(d.StreamId))];
+    }
+
+    /// <summary>#2211: the drill cursors kept per (origin, window start).</summary>
+    public Dictionary<(Guid Origin, long Since), Guid> DrillCursors { get; } = [];
+
+    public Task<Guid?> IntegrityTakeDrillCursorAsync(Guid originServiceId, long windowSince, CancellationToken cancellationToken = default) =>
+      Task.FromResult(DrillCursors.Remove((originServiceId, windowSince), out var cursor) ? cursor : (Guid?)null);
+
+    public Task IntegritySaveDrillCursorAsync(
+        Guid originServiceId, long windowSince, Guid resumeAfterStreamId, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      DrillCursors[(originServiceId, windowSince)] = resumeAfterStreamId;
+      return Task.CompletedTask;
     }
 
     /// <summary>#2103: what the comparison recorded as each deficit's one missing event.</summary>
@@ -3705,6 +3732,96 @@ public partial class IntegrityManifestReceptorTests {
 
     await Assert.That(ledger.Count).IsEqualTo(0).Because("the bucket matches, so its row is removed exactly as the audit removes it");
     await Assert.That(cleared()).IsEqualTo(1L).Because("the re-check counts the rows it cleared");
+  }
+
+  // #2259: a repair answer stores the missing event now, so the event sits inside this store's settle window and the
+  // settled fold leaves it out: the bucket read as still short, and stayed open until the window passed (an hour by
+  // default), although the data had healed the moment the answer landed. A re-check compares what the answer stored.
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_HealsABucketWhoseAnsweredEventIsInsideTheSettleWindowAsync() {
+    var (coordinator, transport, ledger, receptor, cleared) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ReceivedDigests = [];                                   // settled: the answered event is too new
+    coordinator.UnsettledReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];  // as of the answer: equal to the origin's
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])) with { Recheck = true });
+
+    await Assert.That(ledger.Count).IsEqualTo(0).Because("the answer brought the bucket level with its origin, so the re-check closes it");
+    await Assert.That(cleared()).IsEqualTo(1L);
+    await Assert.That(_redeliveries(transport)).IsEmpty();
+    await Assert.That(coordinator.ForChunkSettlesSeen).IsEquivalentTo(
+      [TimeSpan.FromMinutes(new StreamIntegrityOptions().AuditSettleWindowMinutes), TimeSpan.Zero],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the settled fold decides first; only a bucket it reads as divergent is folded again without the window");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_OverAWindowFromTheStart_FoldsWhatTheAnswerStoredFromTheStartAsync() {
+    var (coordinator, _, ledger, receptor, _) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.UnsettledReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])) with { Recheck = true, SinceSequence = null });
+
+    await Assert.That(ledger.Count).IsEqualTo(0);
+    await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(0L).Because("a window with no floor is folded from the start");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenEvenWhatTheAnswerStoredDoesNotMatchAsync() {
+    var (coordinator, _, ledger, receptor, cleared) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ReceivedDigests = [];
+    coordinator.UnsettledReceivedDigests = [_digest(stream, 0x2, 0x2, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x3, 0x3, 2)])) with { Recheck = true });
+
+    await Assert.That(ledger.Count).IsEqualTo(1).Because("only a fold equal to the origin's closes a row; a short one stays reported");
+    await Assert.That(cleared()).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_KeepsTheRow_WhenTheUnsettledFoldHasNoRowForTheBucketAsync() {
+    var (coordinator, _, ledger, receptor, _) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.UnsettledReceivedDigests = [];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x3, 0x3, 2)])) with { Recheck = true });
+
+    await Assert.That(ledger.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_ARecheckAnswer_OnAnEngineThatCannotFoldTheChunk_KeepsTheRowAsync() {
+    // A whole-history re-check on an engine without the chunk fold compares against the whole-store recompute, and has
+    // no unsettled fold to look at, so it decides exactly as before.
+    var (coordinator, _, ledger, receptor, _) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ForChunkReturnsNull = true;
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 0x3, 0x3, 2)], recomputed: true) with { Recheck = true });
+
+    await Assert.That(ledger.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ManifestReceptor_AnOrdinaryAnswer_StillSettlesTheEventsAnAnswerStoredAsync() {
+    // The audit's own answers keep the settle window: an event inside it may still be in flight from the origin.
+    var (coordinator, _, ledger, receptor, _) = _recheckFixture();
+    var stream = TrackedGuid.New().Value;
+    await _reportStaleAsync(ledger, coordinator.OriginId, stream);
+    coordinator.ReceivedDigests = [];
+    coordinator.UnsettledReceivedDigests = [_digest(stream, 0x1, 0x1, 1)];
+
+    await receptor.HandleAsync(_windowed(_manifest(coordinator, [_digest(stream, 0x1, 0x1, 1)])));
+
+    await Assert.That(ledger.Count).IsEqualTo(1);
+    await Assert.That(coordinator.ForChunkSettlesSeen.Contains(TimeSpan.Zero)).IsFalse();
   }
 
   [Test]

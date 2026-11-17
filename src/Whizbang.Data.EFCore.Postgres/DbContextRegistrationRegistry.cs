@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -104,7 +105,7 @@ public static class DbContextRegistrationRegistry {
       // deadlocks or silent crashes in orchestrated environments (e.g., Aspire)
       if (services.Any(sd => sd.ServiceType == dbContextType)) {
         Console.WriteLine(
-            $"[Whizbang] DbContext '{dbContextType.Name}' already registered — skipping turnkey registration. " +
+            $"[Whizbang] DbContext '{TypeNameFormatter.ForLog(dbContextType)}' already registered; skipping turnkey registration. " +
             "Consider removing manual DbContext setup and using the turnkey .WithEFCore<T>().WithDriver.Postgres pattern.");
         return false;
       }
