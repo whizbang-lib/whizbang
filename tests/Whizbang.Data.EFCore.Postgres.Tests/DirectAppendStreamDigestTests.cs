@@ -209,6 +209,9 @@ public class DirectAppendStreamDigestTests : EFCoreTestBase {
                digest_lo # COALESCE(carried_lo, 0) AS digest_lo, digest_hi # COALESCE(carried_hi, 0) AS digest_hi,
                event_count - COALESCE(carried_count, 0) AS event_count
         FROM wh_stream_digests WHERE stream_id = @sid
+          -- A bucket the cut emptied keeps its digest, all of it carried, and has no live part to compare.
+          AND NOT (event_count - COALESCE(carried_count, 0) = 0
+                   AND digest_lo # COALESCE(carried_lo, 0) = 0 AND digest_hi # COALESCE(carried_hi, 0) = 0)
       )
       SELECT (SELECT COUNT(*) FROM ((TABLE recomputed EXCEPT TABLE stored)
                                     UNION ALL
