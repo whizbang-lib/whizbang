@@ -55,6 +55,11 @@ public partial class ClaimWorkPlanShapeTests {
     var second = await _explainClaimAsync(connection, poller, BATCH);
 
     var removed = _walkRemovedByFilter(second);
+    Console.WriteLine($"#2345 walk entries passed over: first poll {_walkRemovedByFilter(first)}, second poll {removed}; "
+      + $"held leases still expired after the first poll: {stillExpired}");
+    foreach (var plan in first.Where(p => p.Contains($"using {LEASE_ORDER}", StringComparison.Ordinal))) {
+      Console.WriteLine(plan);
+    }
     await Assert.That(stillExpired).IsEqualTo(0L)
       .Because($"the poller owns every one of the streams, so the first poll renews all {EXPIRED_ROWS} leases (its window is eight batches)");
     await Assert.That(removed).IsEqualTo(0L)
