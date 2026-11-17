@@ -75,7 +75,7 @@ public partial class PerspectiveRewindLoopTests {
     var specimen = await _seedFirstEventHasTheHighestIdAsync(pipeline, conn, streamId, ct);
     await _executeAsync(conn, "DELETE FROM wh_perspective_events WHERE stream_id = @id", streamId, ct);
 
-    // The deploy: migration 485's repair, as it runs once on upgrade.
+    // The deploy: migration 466's repair, as it runs once on upgrade.
     await Assert.That(await _scalarAsync<int>(conn, "SELECT wh_queue_unreachable_rewinds()", streamId, ct)).IsEqualTo(1);
     var workIds = await _workIdsAsync(conn, streamId, ct);
     await Assert.That(workIds.Count).IsEqualTo(1).Because("the flag's trigger is queued, unleased");

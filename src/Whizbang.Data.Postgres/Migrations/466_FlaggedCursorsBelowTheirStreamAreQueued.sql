@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 485_FlaggedCursorsBelowTheirStreamAreQueued.sql
+-- Migration: 466_FlaggedCursorsBelowTheirStreamAreQueued.sql
 -- Date: 2026-11-17
 -- Description: A cursor flagged for a rewind, sitting below its stream's last version with no work left to claim, gets
 --              its trigger queued on upgrade, so the fixed rewind runs at once (#2379).
@@ -17,8 +17,6 @@
 --              kept. A pair with pending work, a cursor at its stream's last version, an unflagged cursor and a flag
 --              whose trigger its stream does not hold are left alone. Called once here; a re-run finds every queued
 --              pair holding pending work and queues nothing.
---
---              Number 485: this bundle's range for #2379 (the integrator renumbers).
 --
 -- Reversal: reversible (the function goes; a queued row is ordinary work and is processed as any other)
 -- Dependencies: 009 (wh_perspective_events), 455 (the one-order cursor completion that clears the flag)
