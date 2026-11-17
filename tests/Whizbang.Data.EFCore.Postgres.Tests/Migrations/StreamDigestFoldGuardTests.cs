@@ -27,9 +27,14 @@ public partial class StreamDigestFoldGuardTests {
   /// The helpers that own the math: the only bodies allowed to hash an event id or write a digest row.
   /// <c>_wh_heal_stream_digests_statement</c> is the heal's own statement, moved out of the heal so it can be planned on
   /// its own (#2337); the heal runs exactly its text, so it is one home of the heal math, not a copy.
+  /// <c>_wh_carry_cut</c>, <c>_wh_uncarry_restored</c> and <c>wh_roll_off_carried_detail</c> are the one home of the
+  /// carried part (#2363): every cut carries through the first, every restore takes back through the second, and the
+  /// resting period clears through the third. They write the carried columns, not the comparable digest, and hash
+  /// through <c>_wh_digest_lane</c>.
   /// </summary>
   private static readonly HashSet<string> _helpers = new(StringComparer.Ordinal) {
     "_wh_digest_lane", "_wh_fold_stream_digests", "_wh_heal_stream_digests", "_wh_heal_stream_digests_statement",
+    "_wh_carry_cut", "_wh_uncarry_restored", "wh_roll_off_carried_detail",
   };
 
   [GeneratedRegex(@"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+__SCHEMA__\.(?<name>[a-z_0-9]+)\s*\(", RegexOptions.IgnoreCase)]
