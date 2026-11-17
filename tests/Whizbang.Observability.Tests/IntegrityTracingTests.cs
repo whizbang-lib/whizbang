@@ -16,7 +16,7 @@ namespace Whizbang.Observability.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity#integrity-traces</docs>
 /// <code-under-test>src/Whizbang.Core/Observability/IntegrityTracing.cs</code-under-test>
-[NotInParallel("IntegrityTracingListener")]
+[NotInParallel]   // the listener is process-wide, and one test asserts no span starts with none listening
 public class IntegrityTracingTests {
   private static ActivityListener _listen() {
     var listener = new ActivityListener {
@@ -93,6 +93,7 @@ public class IntegrityTracingTests {
   [Test]
   public async Task ALinkWithNoSpan_CarriesTheAmbientTrace_OrNoneAsync() {
     var requestId = (Guid)TrackedGuid.New();
+    Activity.Current = null;
 
     await Assert.That(IntegrityTracing.LinkFrom(null, requestId).TraceParent).IsNull()
       .Because("with no listener and no ambient activity there is no trace to carry");
@@ -113,6 +114,7 @@ public class IntegrityTracingTests {
   [Test]
   public async Task AMalformedTraceParent_IsIgnored_AndTheSpanStartsUnderTheAmbientOneAsync() {
     using var listener = _listen();
+    Activity.Current = null;
 
     using var span = IntegrityTracing.StartRepair("origin-svc", new IntegrityTraceLink((Guid)TrackedGuid.New(), "not-a-traceparent"));
 
@@ -166,6 +168,7 @@ public class IntegrityTracingTests {
 
   [Test]
   public async Task WithNoListener_NoSpanStarts_AndNothingFailsAsync() {
+    Activity.Current = null;
     // No listener on the source: every start returns null, which the callers pass on unchanged.
     await Assert.That(IntegrityTracing.StartAuditCycle()).IsNull();
     await Assert.That(IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_DRAIN, "o", Guid.Empty)).IsNull();

@@ -100,35 +100,98 @@ public static class IntegrityTracing {
   public const string OUTCOME_DECLINED = "declined";
 #pragma warning restore CA1707
 
-#pragma warning disable RCS1163, S1186, IDE0060 // RED stub: the next commit implements these
-  /// <summary>Every attribute an integrity span carries.</summary>
-  public static IReadOnlyList<string> Attributes { get; } = [];
+  /// <summary>
+  /// Every attribute an integrity span carries (#2365): its kind, peer service, request, re-check name, counts and
+  /// outcome. None names a stream, a tenant or an event: a span says what a service did with another, not whose data it
+  /// touched, and the counts say how much.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/IntegrityTracingTests.cs:EverySpanAttribute_IsOnTheBoundedList_AndNoneNamesAStreamOrATenantAsync</tests>
+  public static IReadOnlyList<string> Attributes { get; } = [
+    ATTR_KIND, ATTR_PEER, ATTR_REQUEST_ID, ATTR_CHECK, ATTR_EVENT_TYPES, ATTR_STREAMS, ATTR_EVENTS, ATTR_OUTCOME,
+  ];
 
-  /// <summary>Starts an audit cycle span.</summary>
-  public static Activity? StartAuditCycle() => null;
+  private static ActivitySource _source => WhizbangActivitySource.Integrity;
 
-  /// <summary>Starts an audit span.</summary>
-  public static Activity? StartAudit(string kind, string? peer, IntegrityTraceLink link) => null;
+  /// <summary>Starts the span of one audit cycle: the manifest asks the audit worker sends run under it.</summary>
+  /// <returns>The span, or null when nothing listens.</returns>
+  public static Activity? StartAuditCycle() => _source.StartActivity(SPAN_AUDIT_CYCLE, ActivityKind.Internal);
 
-  /// <summary>Starts an answer span.</summary>
-  public static Activity? StartAnswer(string kind, string? peer, IntegrityTraceLink link) => null;
+  /// <summary>Starts the span of a consumer's comparison of an origin's manifest or checkpoint.</summary>
+  /// <param name="kind"><see cref="KIND_MANIFEST"/> or <see cref="KIND_CHECKPOINT"/>.</param>
+  /// <param name="peer">The origin's name.</param>
+  /// <param name="link">The link the manifest echoed from the ask; default under the ambient span.</param>
+  /// <returns>The span, or null when nothing listens.</returns>
+  public static Activity? StartAudit(string kind, string? peer, IntegrityTraceLink link) =>
+    _start(SPAN_AUDIT, ActivityKind.Internal, kind, peer, link);
 
-  /// <summary>Starts a repair request span.</summary>
-  public static Activity? StartRepairRequest(string kind, string? peer, Guid requestId) => null;
+  /// <summary>Starts the span of an origin's answer to a manifest or redelivery request, in the request's trace.</summary>
+  /// <param name="kind"><see cref="KIND_MANIFEST"/> or <see cref="KIND_REDELIVERY"/>.</param>
+  /// <param name="peer">The requester's name.</param>
+  /// <param name="link">The link the request carried.</param>
+  /// <returns>The span, or null when nothing listens.</returns>
+  public static Activity? StartAnswer(string kind, string? peer, IntegrityTraceLink link) =>
+    _start(SPAN_ANSWER, ActivityKind.Consumer, kind, peer, link);
 
-  /// <summary>Starts a repair span.</summary>
-  public static Activity? StartRepair(string? peer, IntegrityTraceLink link) => null;
+  /// <summary>Starts the span of a consumer's repair request, under the ambient span (the audit that asked, if any).</summary>
+  /// <param name="kind"><see cref="KIND_DRAIN"/>, <see cref="KIND_INLINE"/> or <see cref="KIND_OPERATOR"/>.</param>
+  /// <param name="peer">The origin's name.</param>
+  /// <param name="requestId">The request's id.</param>
+  /// <returns>The span, or null when nothing listens.</returns>
+  public static Activity? StartRepairRequest(string kind, string? peer, Guid requestId) =>
+    _start(SPAN_REPAIR_REQUEST, ActivityKind.Producer, kind, peer, new IntegrityTraceLink(requestId, null));
 
-  /// <summary>Starts a re-check span.</summary>
-  public static Activity? StartRecheck(string check) => null;
+  /// <summary>Starts the span of a consumer applying a redelivery bundle, in the trace the bundle carried.</summary>
+  /// <param name="peer">The origin's name.</param>
+  /// <param name="link">The link the bundle echoed.</param>
+  /// <returns>The span, or null when nothing listens.</returns>
+  public static Activity? StartRepair(string? peer, IntegrityTraceLink link) =>
+    _start(SPAN_REPAIR, ActivityKind.Consumer, KIND_REDELIVERY, peer, link);
 
-  /// <summary>The link a request sent under <paramref name="span"/> carries.</summary>
-  public static IntegrityTraceLink LinkFrom(Activity? span, Guid requestId) => default;
+  /// <summary>Starts the span of a re-check.</summary>
+  /// <param name="check">The re-check's name.</param>
+  /// <returns>The span, or null when nothing listens.</returns>
+  public static Activity? StartRecheck(string check) {
+    var span = _source.StartActivity(SPAN_RECHECK, ActivityKind.Internal);
+    span?.SetTag(ATTR_CHECK, check);
+    return span;
+  }
 
-  /// <summary>Records a count on the span.</summary>
-  public static void SetCount(Activity? span, string attribute, long value) { }
+  /// <summary>
+  /// The link a request sent under <paramref name="span"/> carries: its id, and the span's <c>traceparent</c>, or the
+  /// ambient one when the span was not sampled, so an unsampled integrity span still links the caller's trace.
+  /// </summary>
+  /// <param name="span">The request's span, or null.</param>
+  /// <param name="requestId">The request's id.</param>
+  /// <returns>The link.</returns>
+  public static IntegrityTraceLink LinkFrom(Activity? span, Guid requestId) =>
+    new(requestId, (span ?? Activity.Current)?.Id);
 
-  /// <summary>Records how the span ended.</summary>
-  public static void SetOutcome(Activity? span, string outcome) { }
-#pragma warning restore RCS1163, S1186, IDE0060
+  /// <summary>Records a count on the span; nothing when there is no span.</summary>
+  /// <param name="span">The span, or null.</param>
+  /// <param name="attribute">One of the count attributes.</param>
+  /// <param name="value">The count.</param>
+  public static void SetCount(Activity? span, string attribute, long value) => span?.SetTag(attribute, value);
+
+  /// <summary>Records how the span ended; nothing when there is no span.</summary>
+  /// <param name="span">The span, or null.</param>
+  /// <param name="outcome">One of the outcome values.</param>
+  public static void SetOutcome(Activity? span, string outcome) => span?.SetTag(ATTR_OUTCOME, outcome);
+
+  // A link whose traceparent parses is the parent; anything else (none, or one a foreign sender garbled) starts the span
+  // under the ambient one, so a bad link never fails the work it describes.
+  private static Activity? _start(string name, ActivityKind kind, string what, string? peer, IntegrityTraceLink link) {
+    var parent = link.TraceParent is { } traceParent && ActivityContext.TryParse(traceParent, null, out var parsed)
+      ? parsed
+      : default;
+    var span = _source.StartActivity(name, kind, parent);
+    if (span is null) {
+      return null;
+    }
+    span.SetTag(ATTR_KIND, what);
+    span.SetTag(ATTR_PEER, peer);
+    if (link.RequestId is { } requestId) {
+      span.SetTag(ATTR_REQUEST_ID, requestId.ToString());
+    }
+    return span;
+  }
 }

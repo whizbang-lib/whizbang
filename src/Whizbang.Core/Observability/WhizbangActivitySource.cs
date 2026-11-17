@@ -81,7 +81,7 @@ public static class WhizbangActivitySource {
   /// </summary>
   /// <docs>resilience/stream-integrity#integrity-traces</docs>
   /// <tests>tests/Whizbang.Observability.Tests/IntegrityTracingTests.cs:TheSource_IsWhizbangIntegrity_AndIsListedWithEveryWhizbangSourceAsync</tests>
-  public static readonly ActivitySource Integrity = new("Whizbang.Integrity.Stub", ACTIVITY_SOURCE_VERSION);
+  public static readonly ActivitySource Integrity = new(IntegrityTracing.SOURCE_NAME, ACTIVITY_SOURCE_VERSION);
 
   /// <summary>
   /// Every activity source the framework publishes, the turnkey answer to "which sources do I subscribe?"
@@ -89,7 +89,11 @@ public static class WhizbangActivitySource {
   /// </summary>
   /// <docs>operations/observability/tracing#collecting-activities</docs>
   /// <tests>tests/Whizbang.Observability.Tests/IntegrityTracingTests.cs:EveryActivitySourceWhizbangDeclares_IsOnTheListAsync</tests>
-  public static IReadOnlyList<string> All { get; } = [];
+  public static IReadOnlyList<string> All { get; } = [
+    "Whizbang.Execution", "Whizbang.Transport", "Whizbang.Hosting", "Whizbang.Tracing", IntegrityTracing.SOURCE_NAME,
+    // Whizbang.Observability's message-tag hook (OpenTelemetrySpanHook), which Core cannot reference.
+    "Whizbang.MessageTags",
+  ];
 
   /// <summary>
   /// Records a defensive exception that should never occur in normal operation.
