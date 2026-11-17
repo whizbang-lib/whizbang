@@ -3,3 +3,4 @@
 # text, and the canonical form and hashes of a reference type and rule set) and fails unless it equals the last line,
 # whose version rules-version.txt names. A rule change therefore appends a line with a new version; never edit a line.
 1.0.0 e388833f53e6501ae1d4487697ad751b979a41bb60ea77aa478fe8e3486f1c0b
+2.0.0 0cf0fd7ac6c92902163ec8deb0187b27f5e48af06ef4295ac18bf589360d26ac
