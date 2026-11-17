@@ -62,7 +62,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   /// A superseding (latest-wins) event type, keyed: a registered type, so a redelivered copy's key is read from its
   /// payload by the generated accessor, as on a real consumer (#2350).
   /// </summary>
-  internal static readonly string SUPERSEDING = Whizbang.Core.Serialization.TypeNameFormatter.Format(typeof(SupersedingProbeEmbedded));
+  internal static readonly string SUPERSEDING = Whizbang.Core.TypeNameFormatter.Format(typeof(SupersedingProbeEmbedded));
   /// <summary>An ephemeral event type.</summary>
   internal const string EPHEMERAL = "Matrix.Contracts.CursorMoved, Matrix.Contracts";
   /// <summary>A durable type that is later declared ephemeral (reclassification).</summary>
