@@ -343,6 +343,11 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await Assert.That(await _generationAsync(connection)).IsEqualTo(generation);
   }
 
+  /// <summary>
+  /// A whole-stream archive leaves a tombstone and carries the stream's digest. Named before #2363, when every archive
+  /// bumped the origin generation; the name stays because shipped migrations link to it (a link is never renamed away),
+  /// and what it asserts is the behavior since: the generation is left alone.
+  /// </summary>
   [Test]
   public async Task Write_WholeStream_LeavesATombstone_AndBumpsTheOriginGenerationAsync() {
     await using var ctx = CreateDbContext();
@@ -355,26 +360,27 @@ public class ArchiveStoreSqlTests : EFCoreTestBase {
     await _executeAsync(connection,
       "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version) " +
       $"VALUES (@id, 'P', '{ids[2]}', '{{}}'::jsonb, 1, 3)", stream);
-    // #2262: the events hold positions in this origin's lane, so the archive rewrites history a consumer may have verified.
+    // The events hold positions in this origin's lane: history a consumer may have verified.
     await _executeAsync(connection, "SELECT stamp_pending_commit_sequences(1000)");
     var generation = await _generationAsync(connection);
     var store = _store();
 
     var written = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
 
-    await Assert.That(written).IsEqualTo(new ArchiveWriteResult(ArchiveStatus.ARCHIVED, 3, 3, store.Locator, generation + 1));
-    await Assert.That(await _generationAsync(connection)).IsEqualTo(generation + 1)
-      .Because("an archive that removes positions of this origin's lane bumps the origin generation once, so integrity re-verifies instead of alarming");
+    await Assert.That(written).IsEqualTo(new ArchiveWriteResult(ArchiveStatus.ARCHIVED, 3, 3, store.Locator, generation));
+    await Assert.That(await _generationAsync(connection)).IsEqualTo(generation)
+      .Because("#2363: the archive carries the digest of what it moves, so nothing a consumer verified changed and nothing is bumped");
     await Assert.That(await _tombstoneAsync(connection, stream))
-      .IsEqualTo(("Archived", (long?)3, "postgres-table://wh_event_archive?codec=none&format=1", (long?)(generation + 1)));
+      .IsEqualTo(("Archived", (long?)3, "postgres-table://wh_event_archive?codec=none&format=1", (long?)generation));
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @id", stream)).IsEqualTo(0L)
       .Because("no event is left for a cursor to point at");
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_event_archive_cursors WHERE stream_id = @id", stream)).IsEqualTo(1L)
       .Because("the cursor is parked for a restore");
     await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_perspective_snapshots WHERE stream_id = @id", stream)).IsEqualTo(1L)
       .Because("a snapshot still describes the archived stream");
-    await Assert.That(await _scalarAsync(connection, "SELECT count(*) FROM wh_stream_digests WHERE stream_id = @id", stream)).IsEqualTo(0L)
-      .Because("no event of the stream is hot, so none of its digest buckets is left");
+    await Assert.That(await _scalarAsync(connection,
+      "SELECT count(*) FROM wh_stream_digests WHERE stream_id = @id AND carried_count = event_count AND event_count = 3", stream)).IsEqualTo(1L)
+      .Because("#2363: no event of the stream is hot, and its bucket keeps its digest with all of it carried");
   }
 
   [Test]
