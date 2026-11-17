@@ -106,7 +106,7 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
     await _sealAsync(conn, width: 2);
     await _setAsync(conn, "integrity_cut_waits_for_seal", "true", "boolean");
     await _executeAsync(conn,
-      "INSERT INTO wh_integrity_seals (origin_service_id, sealed_through) VALUES (@o, 1)", ("o", origin));
+      "INSERT INTO wh_integrity_seals (origin_service_id, sealed_through, updated_at) VALUES (@o, 1, NOW())", ("o", origin));
     var through = await _versionOfAsync(conn, ids[1]);
 
     await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo("awaiting_seal")
