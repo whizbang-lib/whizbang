@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Before, such a row was passed over by every poll's re-offer walk until acquisition re-leased it, which it does a
 /// batch at a time and not at all while the working set is full, so the walk read it again on every poll.
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/475_HeldLeasesAreRenewedByTheirOwner.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/462_HeldLeasesAreRenewedByTheirOwner.sql</code-under-test>
 /// <docs>fundamentals/work-coordinator/claim-loop#an-owner-renews-the-leases-it-let-run-out</docs>
 [Category("Integration")]
 [Category("Shard3")]

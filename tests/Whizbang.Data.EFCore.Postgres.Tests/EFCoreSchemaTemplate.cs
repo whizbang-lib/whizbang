@@ -104,7 +104,7 @@ internal static partial class EFCoreSchemaTemplate {
   /// service, so two test databases sharing it (an origin and a consumer in one test) would read each other's events
   /// as their own. Found by machine, not by reading the migrations: two databases migrated from scratch are compared
   /// column by column, date and time columns left out, and what differs has to be exactly this list and
-  /// <see cref="LocalRowKeys"/>. <c>wh_settings.setting_value</c> is here for one row, <c>archive_database_id</c> (480,
+  /// <see cref="LocalRowKeys"/>. <c>wh_settings.setting_value</c> is here for one row, <c>archive_database_id</c> (465,
   /// #2367): the database's archive identity, which the archive store's owner marker holds, so two test databases sharing
   /// it would each take the other's archived streams for their own. The comparison is per column, so any other setting a
   /// migration seeds randomly still fails it unless a statement below renews that row too.

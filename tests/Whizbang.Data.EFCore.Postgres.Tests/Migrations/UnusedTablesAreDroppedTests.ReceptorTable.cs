@@ -13,9 +13,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
 /// <para>
-/// <c>wh_receptor_processing</c> is dropped (migration 477), though migration 031 indexes it at the top level. The
+/// <c>wh_receptor_processing</c> is dropped (migration 464), though migration 031 indexes it at the top level. The
 /// bootstrap creates the table only until the drop migration has recorded its current hash: a database migrating from
-/// empty gets it in time for 031 and loses it at 477, and a pass that re-runs 031 (the drop's hash is stale then too)
+/// empty gets it in time for 031 and loses it at 464, and a pass that re-runs 031 (the drop's hash is stale then too)
 /// gets it again and loses it again. Once the drop is recorded, the bootstrap leaves it alone.
 /// </para>
 /// </summary>

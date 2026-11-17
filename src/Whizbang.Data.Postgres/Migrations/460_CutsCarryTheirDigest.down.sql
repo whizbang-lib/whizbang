@@ -1,10 +1,10 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 465_CutsCarryTheirDigest.sql (#2363): every function goes back to its last word before 465 (453 for the
+-- The reverse of 460_CutsCarryTheirDigest.sql (#2363): every function goes back to its last word before 460 (453 for the
 -- epoch fold, the type answer, the heal statement and the cut functions; 454 for store_inbox_messages), and the helpers,
 -- the removed rows, the consumer seals and the carried columns go. A digest that carried a cut is then one the heal
--- rewrites from the live events, as it did before 465.
+-- rewrites from the live events, as it did before 460.
 
 -- ── _wh_epoch_buckets: last word 336, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────

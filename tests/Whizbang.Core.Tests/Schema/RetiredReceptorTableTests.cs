@@ -29,10 +29,10 @@ public class RetiredReceptorTableTests {
 
   [Test]
   public async Task BootstrapSql_CreatesTheTableOnlyWhileTheDropsRowDoesNotRecordItsHashAsync() {
-    var sql = RetiredReceptorTable.BootstrapSql("\"svc\"", "477_ReceptorProcessingTableIsDropped.sql", "abc'd");
+    var sql = RetiredReceptorTable.BootstrapSql("\"svc\"", "464_ReceptorProcessingTableIsDropped.sql", "abc'd");
 
     await Assert.That(sql).Contains("to_regclass('\"svc\".wh_schema_migrations') IS NOT NULL");
-    await Assert.That(sql).Contains("m.file_name = '477_ReceptorProcessingTableIsDropped.sql'");
+    await Assert.That(sql).Contains("m.file_name = '464_ReceptorProcessingTableIsDropped.sql'");
     await Assert.That(sql).Contains("m.content_hash = 'abc''d'").Because("a value is written as a literal, its quotes doubled");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS \"svc\".wh_receptor_processing");
   }

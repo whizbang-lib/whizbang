@@ -1,40 +1,20 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 476_UnusedCoordinationTablesAreDropped.sql
--- Date: 2026-11-16
--- Description: The partition-assignment table is dropped, and nothing reads or writes the receptor-processing table.
---
---              wh_partition_assignments: created by the bootstrap since the first schema, read and written by nothing.
---              The claim ranks from the live instances or the published assignment (wh_published_partition_assignment,
---              203). The bootstrap no longer declares it (it would create it again on every start that runs), and this
---              migration drops it with its index.
---
---              wh_receptor_processing: nothing has written it since receptors stopped recording per-event progress, yet
---              claim_work probed it on every poll (the empty-call guard, an acquisition guard and a re-offer query, 475)
---              and claim_orphaned_receptor_work, the instance release paths, the stream purge, the statistics refresh and
---              the rewind cleanup read or wrote it. Each function is redefined whole without it, copied from its last
---              word, and claim_orphaned_receptor_work is dropped. The table itself is dropped by 477, after the
---              bootstrap stops creating it (migration 031 indexes it at the top level).
---
---              Upgrade safety: every function is replaced before anything is dropped, in this one transaction, so no
---              function in the schema names a dropped object at any point. DROP ... IF EXISTS throughout.
---
---              Number 476: the range this bundle assigned (475 to 479).
---
--- Reversal: reversible (the down file restores each function's previous definition and claim_orphaned_receptor_work,
---           and re-creates wh_partition_assignments empty, as the bootstrap of an earlier release does)
--- Dependencies: 207, 210, 162, 363, 465, 466 (the functions' last words), 026 (claim_orphaned_receptor_work)
--- Objects: wh_refresh_stale_queue_statistics, cleanup_stale_instances, deregister_instance, wh_purge_streams,
---          wh_remove_rewind_lifecycle_events_batch, wh_reap_superseded_events, claim_orphaned_receptor_work,
---          wh_partition_assignments, idx_partition_assignments_instance
--- Constants: the double-underscore tokens in this file are substituted from Migrations/constants.txt at apply time
---            (README rule 12).
+-- The reverse of 463_UnusedCoordinationTablesAreDropped.sql: each function as its last word before 463 defined it,
+-- claim_orphaned_receptor_work as 026 defined it, and wh_partition_assignments re-created empty, as an earlier
+-- release's bootstrap creates it. The table held nothing anything read, so the reverse loses nothing.
+-- Constants: the double-underscore tokens in this file are substituted from Migrations/constants.txt at apply time.
 
--- ---------------------------------------------------------------------------------------------
--- wh_refresh_stale_queue_statistics: copied from its last word (207), without wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
--- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_partition_assignments (
+  partition_number INTEGER NOT NULL PRIMARY KEY,
+  instance_id UUID NOT NULL,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_partition_assignments_instance
+  ON __SCHEMA__.wh_partition_assignments (instance_id, last_heartbeat);
+
 SELECT __SCHEMA__.drop_all_overloads('wh_refresh_stale_queue_statistics');
 
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
@@ -58,6 +38,7 @@ DECLARE
     '__SCHEMA__.wh_inbox'::REGCLASS,
     '__SCHEMA__.wh_inbox_state'::REGCLASS,
     '__SCHEMA__.wh_perspective_events'::REGCLASS,
+    '__SCHEMA__.wh_receptor_processing'::REGCLASS,
     '__SCHEMA__.wh_active_streams'::REGCLASS
   ];
   -- The advisory lock's first key: this function. The second is the table's oid, unique per schema.
@@ -108,10 +89,6 @@ COMMENT ON FUNCTION __SCHEMA__.wh_refresh_stale_queue_statistics() IS
   'transaction-scoped advisory lock and a five second lock timeout. Returns how many tables it analyzed. claim_work '
   'calls it before acquiring, so a backlog that arrived after the last analyze is planned as the backlog it is.';
 
--- ---------------------------------------------------------------------------------------------
--- cleanup_stale_instances: copied from its last word (363), without wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
--- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('cleanup_stale_instances');
 
 -- <docs>fundamentals/workers/instance-liveness</docs>
@@ -187,6 +164,12 @@ BEGIN
         lease_expiry = NULL
     WHERE assigned_instance_id = ANY(v_deleted_ids);
 
+    -- Release receptor processing leases from deleted instances
+    UPDATE __SCHEMA__.wh_receptor_processing
+    SET instance_id = NULL,
+        lease_expiry = NULL
+    WHERE instance_id = ANY(v_deleted_ids);
+
     -- Log stale instance removal to wh_log for audit trail
     INSERT INTO __SCHEMA__.wh_log (log_level, source, message_id, error_message, metadata)
     SELECT
@@ -223,9 +206,6 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.cleanup_stale_instances(TIMESTAMPTZ, TIMESTAMPTZ) IS
   'Reaps every instance the one liveness rule (wh_instance_liveness) says is not live, tombstones it in wh_instance_evictions, releases its leases and wakes the live instances. 363 (#2126): each tombstone records the reaper (the instance whose record_heartbeat ran the reap; NULL for any other caller) and the last heartbeat and liveness window the rule judged the instance by.';
 
--- ---------------------------------------------------------------------------------------------
--- deregister_instance: copied from its last word (162), without wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
 
 -- <docs>messaging/work-coordinator</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorDeepPathTests.cs:DeregisterInstanceAsync_RegisteredInstanceWithLease_ReleasesLeaseAndRemovesInstanceRowAsync</tests>
@@ -247,6 +227,10 @@ BEGIN
   -- Release all perspective event leases held by this instance
   UPDATE __SCHEMA__.wh_perspective_events SET instance_id = NULL, lease_expiry = NULL
   WHERE instance_id = p_instance_id AND processed_at IS NULL;
+
+  -- Release all receptor processing leases held by this instance
+  UPDATE __SCHEMA__.wh_receptor_processing SET instance_id = NULL, lease_expiry = NULL
+  WHERE instance_id = p_instance_id AND completed_at IS NULL;
 
   -- Release all active stream assignments held by this instance
   UPDATE __SCHEMA__.wh_active_streams SET assigned_instance_id = NULL, lease_expiry = NULL
@@ -270,9 +254,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ---------------------------------------------------------------------------------------------
--- wh_purge_streams: copied from its last word (465), without wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
 
 -- <docs>operations/infrastructure/purging-streams</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Operations/StreamPurgeTests.cs:Purge_RemovesEveryRowOfTheStreams_AndLeavesOthersAsync</tests>
@@ -363,6 +344,15 @@ BEGIN
   purged_table := 'wh_message_deduplication'; purged_rows := v_n; RETURN NEXT;
   v_counts := v_counts || jsonb_build_object(purged_table, v_n);
 
+  IF p_dry_run THEN
+    SELECT count(*) INTO v_n FROM __SCHEMA__.wh_receptor_processing rp WHERE rp.stream_id = ANY(v_ids);
+  ELSE
+    DELETE FROM __SCHEMA__.wh_receptor_processing rp WHERE rp.stream_id = ANY(v_ids);
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+  END IF;
+  purged_table := 'wh_receptor_processing'; purged_rows := v_n; RETURN NEXT;
+  v_counts := v_counts || jsonb_build_object(purged_table, v_n);
+
   -- Before the events: fk_perspective_cursors_event is ON DELETE RESTRICT.
   IF p_dry_run THEN
     SELECT count(*) INTO v_n FROM __SCHEMA__.wh_perspective_cursors c WHERE c.stream_id = ANY(v_ids);
@@ -431,11 +421,11 @@ BEGIN
   purged_table := 'wh_row_eviction_journal'; purged_rows := v_n; RETURN NEXT;
   v_counts := v_counts || jsonb_build_object(purged_table, v_n);
 
-  -- 465 (#2363): the streams' counted events are carried, not removed from the digest: their buckets stay, carrying all
+  -- 460 (#2363): the streams' counted events are carried, not removed from the digest: their buckets stay, carrying all
   -- of it, and the epochs record it as removed, so the service still answers what it received and the purge reads as
   -- nothing to another service. The buckets are the purged streams' tombstone, with their purge markers below; a
   -- redelivered event of a purged stream is refused at the inbox. A purge is the operator's decision, made in the
-  -- operator's transaction, so it never waits for the seal. Before 465 the buckets were deleted, the covering epochs
+  -- operator's transaction, so it never waits for the seal. Before 460 the buckets were deleted, the covering epochs
   -- refolded and the generation bumped.
   IF NOT p_dry_run THEN
     PERFORM __SCHEMA__._wh_carry_cut(v_ids, NULL, NOW());
@@ -542,13 +532,9 @@ BEGIN
   purged_table := 'wh_stream_purge_markers'; purged_rows := v_n; RETURN NEXT;
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION __SCHEMA__.wh_purge_streams IS
-'Operator stream purge (#1030): removes every row of the listed streams from this service''s store in the caller''s transaction, marks them purged for every perspective, and audits the batch. p_dry_run counts the same rows and changes nothing. Returns one row per table. 214: the refolded epoch range leaves out at-most-once events (flags & 32), which no epoch holds. 260: and the streams'' wh_stream_lifecycle rows (#1732). 262: and the cursors a whole-stream archive parked (#1736). 465 (#2363): carries the streams'' digests and keeps their buckets (reported as 0 rows), refolding and bumping nothing; never waits for the seal. 476: wh_receptor_processing is gone, so nothing of it is purged.';
+'Operator stream purge (#1030): removes every row of the listed streams from this service''s store in the caller''s transaction, marks them purged for every perspective, and audits the batch. p_dry_run counts the same rows and changes nothing. Returns one row per table. 214: the refolded epoch range leaves out at-most-once events (flags & 32), which no epoch holds. 260: and the streams'' wh_stream_lifecycle rows (#1732). 262: and the cursors a whole-stream archive parked (#1736). 460 (#2363): carries the streams'' digests and keeps their buckets (reported as 0 rows), refolding and bumping nothing; never waits for the seal.';
 
--- ---------------------------------------------------------------------------------------------
--- wh_remove_rewind_lifecycle_events_batch: copied from its last word (210), without wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
 
 -- <docs>fundamentals/perspectives/rewind#system-events</docs>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/RemoveRewindLifecycleEventsMigrationTests.cs:Migration210_RemovesRewindEventsFromApplicationStreams_AndLeavesTheGapsAsync</tests>
@@ -596,6 +582,7 @@ BEGIN
   DELETE FROM __SCHEMA__.wh_perspective_events p USING _rewind_cleanup_slice r WHERE p.event_id = r.event_id;
   DELETE FROM __SCHEMA__.wh_perspective_applied p USING _rewind_cleanup_slice r WHERE p.event_id = r.event_id;
   DELETE FROM __SCHEMA__.wh_lifecycle_completions l USING _rewind_cleanup_slice r WHERE l.event_id = r.event_id;
+  DELETE FROM __SCHEMA__.wh_receptor_processing p USING _rewind_cleanup_slice r WHERE p.event_id = r.event_id;
   DELETE FROM __SCHEMA__.wh_event_body b USING _rewind_cleanup_slice r WHERE b.event_id = r.event_id;
   DELETE FROM __SCHEMA__.wh_event_store e USING _rewind_cleanup_slice r WHERE e.event_id = r.event_id;
 
@@ -609,9 +596,6 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.wh_remove_rewind_lifecycle_events_batch(INT) IS
 '#1360: removes up to p_limit worklisted rewind lifecycle events from application streams, with their bodies and side rows, keeping any event still referenced. Returns 0 once the worklist is exhausted or the cleanup is already recorded as done. The runner calls it until it returns 0.';
 
--- ---------------------------------------------------------------------------------------------
--- wh_reap_superseded_events: copied from its last word (466), without wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
 
 -- <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamStartedAtSqlTests.cs:Reap_TheStreamsFirstEvent_RecordsItsBusinessTimeOnTheLedgerAsync</tests>
@@ -721,7 +705,7 @@ BEGIN
       WHERE h.event_id = es.event_id AND h.hold_until > NOW());
 
   IF v_victims IS NOT NULL THEN
-    -- 466 (#2364): the digest counts a key's slot, not its copies, and a newer copy of every victim's key stays, so
+    -- 461 (#2364): the digest counts a key's slot, not its copies, and a newer copy of every victim's key stays, so
     -- nothing is subtracted, refolded or bumped: physical deletion is timing, and the digest does not follow it. The
     -- copies left behind inherit a victim anchor's place first, so the slot is still counted where its first copy sat.
     PERFORM __SCHEMA__._wh_hand_on_slots(v_victims);
@@ -746,7 +730,7 @@ BEGIN
     -- and touching one again here would break that order.
     DELETE FROM __SCHEMA__.wh_event_destruction_hold h WHERE h.event_id = ANY(v_victims);
 
-    -- Bodies first, then pointers (rows that reference an event cascade from it on the EF Core schema).
+    -- Bodies first, then pointers (wh_receptor_processing rows cascade on the EF Core schema).
     DELETE FROM __SCHEMA__.wh_event_body eb WHERE eb.event_id = ANY(v_victims);
     DELETE FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ANY(v_victims);
     GET DIAGNOSTICS v_deleted = ROW_COUNT;
@@ -758,21 +742,50 @@ BEGIN
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION, 'ok'::TEXT;
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION __SCHEMA__.wh_reap_superseded_events(INTEGER) IS
   'Task 16 of perform_maintenance (295, #1729): deletes up to p_batch_size queued superseded events, with their bodies '
   'and their digest contribution, once a newer event of the same stream, group and key is stored and every consumer has '
   'processed them (no unprocessed perspective work, no cursor or snapshot on them, no active destruction hold, commit '
   'sequence stamped). Skipped under debug_mode. Reduces the digests as wh_truncate_stream_prefix does, refolding the '
-  'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152). 466 (#2364): deletes physically and touches no digest, seal or generation: the digest counts the key''s slot, and the copies left inherit an anchor''s place (_wh_hand_on_slots). 476: copied whole from 466; its comment no longer names wh_receptor_processing.';
+  'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152). 461 (#2364): deletes physically and touches no digest, seal or generation: the digest counts the key''s slot, and the copies left inherit an anchor''s place (_wh_hand_on_slots).';
 
--- ---------------------------------------------------------------------------------------------
--- The receptor-work claim: nothing calls it since claim_work stopped (475), and it wrote only wh_receptor_processing.
--- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_receptor_work');
 
--- ---------------------------------------------------------------------------------------------
--- wh_partition_assignments: no reader, no writer. The functions above never named it; dropped last.
--- ---------------------------------------------------------------------------------------------
-DROP INDEX IF EXISTS __SCHEMA__.idx_partition_assignments_instance;
-DROP TABLE IF EXISTS __SCHEMA__.wh_partition_assignments;
+-- <docs>operations/infrastructure/migrations#unused-tables-are-dropped</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/UnusedTablesAreDroppedTests.cs:TheDropReverses_AndAppliesAgainAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_receptor_work(
+  p_instance_id UUID,
+  p_instance_rank INTEGER,
+  p_active_instance_count INTEGER,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ
+) RETURNS TABLE(
+  processing_id UUID,
+  stream_id UUID
+) AS $$
+BEGIN
+  RETURN QUERY
+  UPDATE __SCHEMA__.wh_receptor_processing rp
+  SET instance_id = p_instance_id,
+      lease_expiry = p_lease_expiry,
+      claimed_at = p_now
+  WHERE (rp.instance_id IS NULL OR rp.lease_expiry < p_now)
+    AND rp.completed_at IS NULL
+    -- Partition-based load balancing using stream_id
+    AND (
+      rp.partition_number IS NULL
+      OR (rp.partition_number % p_active_instance_count) = p_instance_rank
+    )
+    -- Respect stream ownership
+    AND EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_active_streams ast
+      WHERE ast.stream_id = rp.stream_id
+        AND ast.assigned_instance_id = p_instance_id
+        AND ast.lease_expiry > p_now
+    )
+  RETURNING rp.id AS processing_id, rp.stream_id AS stream_id;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_receptor_work IS
+'Claims orphaned receptor processing work with expired or null leases. Uses partition-based load balancing. Respects stream ownership. Returns claimed processing IDs for Orphaned flag in orchestrator response.';

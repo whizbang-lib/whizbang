@@ -390,7 +390,7 @@ A cut happens only below this service's own seal (C). It moves the removed diges
 
 ## 9. Progress: phases 4 and 5 as built (bundle 3, branch fix/integrity-cuts-carry-2363)
 
-- **Phase 4 (#2363), migration 465.** Cuts carry: the bucket keeps its digest (the comparable digest), the removed part
+- **Phase 4 (#2363), migration 460.** Cuts carry: the bucket keeps its digest (the comparable digest), the removed part
   goes into `carried_*` columns on the bucket and into `wh_digest_epoch_removed` (one row per lane, tenant, type and
   epoch). Three deviations from the letter of 8a, each documented on the stream-integrity page:
   - the epoch's removed part is a table, not columns on `wh_digest_epochs`: a refold deletes and rewrites those rows,
@@ -401,7 +401,7 @@ A cut happens only below this service's own seal (C). It moves the removed diges
     buckets, and the inbox refuses a redelivered event of a purged stream.
   The seal gate follows `Sealing:Enabled` (written to the store by the maintenance cycle); `Sealing:CutWaitsForConsumers`
   is the off-by-default extra, fed by the seal each windowed type-level ask reports (`wh_integrity_consumer_seals`).
-- **Phase 5 (#2364), migration 466.** A superseding row counts as its key's slot, once, through the key's anchor (the
+- **Phase 5 (#2364), migration 461.** A superseding row counts as its key's slot, once, through the key's anchor (the
   oldest copy held), at its first copy's place; the reaper hands that place on to the copies it leaves
   (`supersede_slot_at`, `supersede_slot_type`) and touches no digest. One-time recompute gated on
   `superseding_slot_digests_recomputed`.

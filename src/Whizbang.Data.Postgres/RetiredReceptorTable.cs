@@ -8,7 +8,7 @@ using System.Linq;
 namespace Whizbang.Data.Postgres;
 
 /// <summary>
-/// The bootstrap's statement for <c>wh_receptor_processing</c>, a table nothing reads or writes, which migration 477
+/// The bootstrap's statement for <c>wh_receptor_processing</c>, a table nothing reads or writes, which migration 464
 /// drops: it creates the table only until that migration has recorded its current hash.
 /// </summary>
 /// <remarks>

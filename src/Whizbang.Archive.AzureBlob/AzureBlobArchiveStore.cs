@@ -349,7 +349,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   // ── The owner marker (#2367) ─────────────────────────────────────────────────────────────────────────
 
-  // The id migration 480 gave this database. A copy or a restore of the database carries it; a database migrated on its
+  // The id migration 465 gave this database. A copy or a restore of the database carries it; a database migrated on its
   // own has its own.
   private async Task<string> _databaseIdAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(

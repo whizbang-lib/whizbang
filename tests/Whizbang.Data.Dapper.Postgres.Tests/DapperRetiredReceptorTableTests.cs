@@ -11,7 +11,7 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// The Dapper driver's side of the dropped <c>wh_receptor_processing</c> (migration 477): its bootstrap creates the table
+/// The Dapper driver's side of the dropped <c>wh_receptor_processing</c> (migration 464): its bootstrap creates the table
 /// only until the drop migration has recorded its current hash, so a database migrating from empty ends without it, and
 /// a pass that runs migration 031 again (which indexes it) gets it in time and loses it again.
 /// </summary>

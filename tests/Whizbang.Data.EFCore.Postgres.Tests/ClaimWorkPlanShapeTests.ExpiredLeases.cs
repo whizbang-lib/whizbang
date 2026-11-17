@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop#an-owner-renews-the-leases-it-let-run-out</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/475_HeldLeasesAreRenewedByTheirOwner.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/462_HeldLeasesAreRenewedByTheirOwner.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/ConcurrentIndexBuild.cs</code-under-test>
 public partial class ClaimWorkPlanShapeTests {
   private const string LEASE_ORDER = "idx_inbox_state_lease_order";

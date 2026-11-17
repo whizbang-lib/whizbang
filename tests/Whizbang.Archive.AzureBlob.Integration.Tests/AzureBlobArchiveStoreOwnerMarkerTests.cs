@@ -22,7 +22,7 @@ namespace Whizbang.Archive.AzureBlob.Integration.Tests;
 
 /// <summary>
 /// #2367: one database per container. The first write claims the container with a create-only owner marker naming
-/// the database (<c>archive_database_id</c>, migration 480), and the orphan sweep runs only for the database the marker
+/// the database (<c>archive_database_id</c>, migration 465), and the orphan sweep runs only for the database the marker
 /// names. Writes and reads never depend on the marker. Two environments here are two real databases on one Azurite.
 /// </summary>
 /// <docs>operations/deployment/restoring-an-environment-with-an-archive#one-database-per-container</docs>

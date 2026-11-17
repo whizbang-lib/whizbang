@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 477_ReceptorProcessingTableIsDropped.sql: wh_receptor_processing re-created empty, with the indexes an
+-- The reverse of 464_ReceptorProcessingTableIsDropped.sql: wh_receptor_processing re-created empty, with the indexes an
 -- earlier release's bootstrap and migration 031 gave it. Nothing wrote it, so the reverse restores no rows.
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_receptor_processing (

@@ -1372,7 +1372,7 @@ public partial class DapperWorkCoordinator(
     } finally {
       __scope.Connection.Notice -= OnClaimNotice;
     }
-    // 476: the claim returns outbox, inbox and perspective_stream rows only (it no longer returns receptor work).
+    // 463: the claim returns outbox, inbox and perspective_stream rows only (it no longer returns receptor work).
     var claimed = rows.ToList();
     var perspectiveStreamIds = claimed.Where(r => r.Source == "perspective_stream").Select(r => r.StreamId).OfType<Guid>().ToList();
     if (claimed.Exists(r => r.Source is "outbox" or "inbox")) {

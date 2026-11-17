@@ -1,163 +1,18 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 466_SupersedingTypesCountTheKey.sql
--- Date: 2026-11-17
--- Description: A superseding (latest-wins) type counts its key, not each copy, so reaping older copies never changes a
---              digest, a seal or the origin generation (#2364).
---
---              The reaper used to subtract an older copy's contribution when it deleted it, refold the sealed epochs it
---              sat in and bump the generation. Reaping is timing, local to each service, so whichever service reaped
---              first looked short to the other and was sent the copy again; and every reap moved seals.
---
---                the slot       a superseding row's digest contribution is its key's slot: _wh_slot_id(stream, group,
---                               key), the group being supersede_group or, ungrouped, the event type. It is counted
---                               once, by the key's anchor: the oldest copy of the key this store holds
---                               (_wh_is_slot_anchor, the origin's order by _wh_supersedes). Which copies are held
---                               changes nothing while one is.
---                its place      the slot is counted where its first copy sat: in that copy's type bucket and, for the
---                               epochs, at that copy's lane position. When the reaper deletes an anchor, the copies it
---                               leaves inherit the anchor's place (supersede_slot_at, supersede_slot_type), so a seal
---                               never moves and a re-check still finds the slot in the epoch it was sealed in.
---                writes         the emit chains fold a new copy's slot only when the store holds no copy of its key
---                               yet (the first copy of a batch, when a batch holds several); the fold helper maps an
---                               event to its slot for every other caller (_wh_fold_stream_digests), reading the rows,
---                               which those callers have stored by then. The emit chains pass the slot already (a row
---                               a statement stores is not visible to that statement), through the helper's new
---                               p_slotted argument.
---                the reaper     deletes physically: no unfold, no refold, no bump. It hands an anchor's place to the
---                               copies it leaves first.
---                cuts           a cut carries a key's slot only when it removes every copy of the key; when a newer
---                               copy survives, the cut hands the place on instead.
---                recomputes     the heal, the epoch fold, the type answers (open window and windowed), the stream
---                               window and the seed count slots the same way.
---                upgrade        once (wh_settings 'superseding_slot_digests_recomputed'): the stored digests of every
---                               stream holding a superseding row are recomputed by the heal, the sealed epochs holding
---                               one are refolded, and, when any of this service's own epochs moved, the generation is
---                               bumped with floor 0, so consumers re-verify once, from the epochs. The pair guard
---                               (#2362) halts a pair whose two sides count differently during a rolling deploy.
---
---              What it gives up (owner decision Q1, plan section 2.4): after the open window, a service holding an older
---              copy that lost the newest one is not found by the digest; a whole key lost still is.
---
---              Cost: a superseding row costs one probe of idx_event_store_superseding_group when it is folded or
---              recomputed; every other row pays a test of supersede_key IS NULL. The two new columns are written only on
---              the copies a reap or a cut leaves, and idx_event_store_slot_at holds only those rows.
---
---              Number 466: this worker's range in the third integrity bundle.
---
--- Reversal: lossy (the functions go back to their last words; the slot columns and index are dropped; digests counted
---           by slot stay so until the heal rewrites them)
--- Dependencies: 295 and 352 (supersede_key, supersede_group, idx_event_store_superseding_group), 336 (the fold helper),
---               453 (the emit chains, the windowed answers, the seed), 454 (_wh_supersedes, the reaper), 465 (the cut
---               helpers, the heal statement, the epoch fold, the type answer)
--- Objects: supersede_slot_at, supersede_slot_type, idx_event_store_slot_at, _wh_slot_id, _wh_is_slot_anchor,
---          _wh_hand_on_slots, _wh_fold_stream_digests, _emit_event_store_chain, _emit_event_store_chain_for_inbox,
---          wh_reap_superseded_events, _wh_carry_cut, _wh_uncarry_restored, _wh_heal_stream_digests_statement,
---          _wh_epoch_buckets, compute_type_digests_epoch, compute_type_digests_epoch_window,
---          wh_compute_stream_digests_window, wh_seed_stream_digests_batch, wh_recompute_superseding_digests
--- Constants: the double-underscore tokens in this file (for example __EMPTY_UUID__) are substituted from
---            Migrations/constants.txt at apply time (README rule 12).
+-- The reverse of 461_SupersedingTypesCountTheKey.sql (#2364): every function goes back to its last word before 461 (336
+-- for the fold helper, 453 for the emit chains, the windowed answers and the seed, 454 for the reaper, 460 for the cut
+-- helpers, the heal statement, the epoch fold and the type answer), and the slot helpers, columns and index go. Digests
+-- counted by slot stay so until the heal rewrites them per copy.
 
-ALTER TABLE __SCHEMA__.wh_event_store ADD COLUMN IF NOT EXISTS supersede_slot_at BIGINT NULL;
-ALTER TABLE __SCHEMA__.wh_event_store ADD COLUMN IF NOT EXISTS supersede_slot_type TEXT NULL;
-
-COMMENT ON COLUMN __SCHEMA__.wh_event_store.supersede_slot_at IS
-  '466 (#2364): the lane position the key''s slot is counted at, inherited from a deleted older copy; NULL: this row''s own.';
-COMMENT ON COLUMN __SCHEMA__.wh_event_store.supersede_slot_type IS
-  '466 (#2364): the type bucket the key''s slot is counted in, inherited from a deleted older copy; NULL: this row''s own type.';
-
--- Keyed by lane, then the slot's type bucket (an equality a type-filtered window reads through), then its place.
-CREATE INDEX IF NOT EXISTS idx_event_store_slot_at
-  ON __SCHEMA__.wh_event_store (origin_service_id, (COALESCE(supersede_slot_type, event_type)), supersede_slot_at)
-  WHERE supersede_slot_at IS NOT NULL;
-
--- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- A key's slot: the identity a superseding row is counted as, the same on every service that holds the key.
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Emit_CopiesOfAKey_AreCountedOnce_AsTheKeysSlotAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__._wh_slot_id(p_stream_id UUID, p_group TEXT, p_key TEXT) RETURNS UUID AS $$
-  SELECT md5(p_stream_id::text || '|' || p_group || '|' || p_key)::uuid
-$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
-
-COMMENT ON FUNCTION __SCHEMA__._wh_slot_id(UUID, TEXT, TEXT) IS
-  '466 (#2364): the slot of a superseding key, md5 of stream, group and key as a uuid: what the digest counts for the key.';
-
--- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- Whether a row is its key's anchor: no older copy of its stream, group and key is held here (the origin's order where
--- both copies carry it, _wh_supersedes). One probe of idx_event_store_superseding_group.
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:AfterAReap_TheHealAndTheSealRecheckFindNoDrift_AndStillFindALossAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__._wh_is_slot_anchor(
-  p_event_id UUID, p_stream_id UUID, p_group TEXT, p_key TEXT,
-  p_origin UUID, p_origin_sequence BIGINT, p_version BIGINT) RETURNS BOOLEAN AS $$
-  SELECT NOT EXISTS (
-    SELECT 1 FROM __SCHEMA__.wh_event_store o
-    WHERE o.stream_id = p_stream_id
-      AND COALESCE(o.supersede_group, o.event_type) = p_group
-      AND o.supersede_key = p_key
-      AND o.event_id <> p_event_id
-      AND __SCHEMA__._wh_supersedes(p_origin, p_origin_sequence, p_version,
-                                   o.origin_service_id, o.origin_commit_sequence, o.version))
-$$ LANGUAGE sql STABLE;
-
-COMMENT ON FUNCTION __SCHEMA__._wh_is_slot_anchor(UUID, UUID, TEXT, TEXT, UUID, BIGINT, BIGINT) IS
-  '466 (#2364): whether no older copy of the row''s key is held here, so the row is the one that counts the key''s slot.';
-
--- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- Before rows are deleted while newer copies of their keys stay (a reap, a cut that leaves a newer copy), the copies
--- left behind inherit each deleted anchor's place: its lane position and its type bucket. A copy that already inherited
--- keeps what it has (the same place). Call it while the rows are still stored. Returns the rows that inherited.
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:AfterAReap_TheHealAndTheSealRecheckFindNoDrift_AndStillFindALossAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:AKeyOfAGroup_StaysCountedUnderItsFirstCopysType_WhenANewerCopyIsAnotherTypeAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__._wh_hand_on_slots(p_leaving UUID[]) RETURNS INTEGER AS $$
-DECLARE
-  v_rows INTEGER := 0;
-BEGIN
-  IF COALESCE(cardinality(p_leaving), 0) = 0 THEN
-    RETURN 0;
-  END IF;
-  UPDATE __SCHEMA__.wh_event_store s
-  SET supersede_slot_at = a.place, supersede_slot_type = a.slot_type
-  FROM (
-    SELECT es.stream_id, COALESCE(es.supersede_group, es.event_type) AS grp, es.supersede_key AS k,
-           COALESCE(es.supersede_slot_at,
-                    CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS place,
-           COALESCE(es.supersede_slot_type, es.event_type) AS slot_type
-    FROM __SCHEMA__.wh_event_store es
-    WHERE es.event_id = ANY(p_leaving)
-      AND es.supersede_key IS NOT NULL
-      AND __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type),
-                                        es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version)
-  ) a
-  WHERE s.stream_id = a.stream_id
-    AND COALESCE(s.supersede_group, s.event_type) = a.grp
-    AND s.supersede_key = a.k
-    AND s.event_id <> ALL(p_leaving)
-    AND s.supersede_slot_at IS NULL
-    AND s.supersede_slot_type IS NULL;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  RETURN v_rows;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION __SCHEMA__._wh_hand_on_slots(UUID[]) IS
-  '466 (#2364): before rows leave, the copies of their keys that stay inherit each leaving anchor''s lane position and type bucket, so the slot is still counted where its first copy sat.';
-
--- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- The one stream digest fold (336), with superseding rows counted as their key's slot. With p_slotted the caller passes
--- slots already (the emit chains, whose new rows the statement cannot read back); otherwise every event is read from
--- the store, and a superseding one becomes its slot when it is its key's anchor (in the anchor's type bucket) and is
--- left out when it is not. An event not in the store is folded as given.
 SELECT __SCHEMA__.drop_all_overloads('_wh_fold_stream_digests');
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:OutboxEmitChain_FoldsEveryLaneAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:OutboxEmitChain_FoldingIntoARowWithoutIdLanes_KeepsThemNullAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:TruncateStreamPrefix_SubtractsEveryLaneOfTheTruncatedEventsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:SeedStreamDigestsBatch_FoldsEveryLaneOfTheSeededStreamsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestFoldHelperSqlTests.cs</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Emit_CopiesOfAKey_AreCountedOnce_AsTheKeysSlotAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_fold_stream_digests(
   p_origins UUID[],
   p_tenants TEXT[],
@@ -165,16 +20,10 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._wh_fold_stream_digests(
   p_streams UUID[],
   p_event_ids UUID[],
   p_mode TEXT,
-  p_now TIMESTAMPTZ,
-  p_slotted BOOLEAN DEFAULT FALSE
+  p_now TIMESTAMPTZ
 ) RETURNS INTEGER AS $$
 DECLARE
   v_rows INTEGER := 0;
-  v_origins UUID[] := p_origins;
-  v_tenants TEXT[] := p_tenants;
-  v_types TEXT[] := p_types;
-  v_streams UUID[] := p_streams;
-  v_ids UUID[] := p_event_ids;
 BEGIN
   IF p_mode IS NULL OR p_mode NOT IN ('fold', 'unfold', 'seed') THEN
     RAISE EXCEPTION '_wh_fold_stream_digests: unknown mode %', p_mode;
@@ -188,26 +37,6 @@ BEGIN
      OR cardinality(p_streams) IS DISTINCT FROM cardinality(p_event_ids) THEN
     RAISE EXCEPTION '_wh_fold_stream_digests: % event ids but % origins, % tenants, % types and % streams must pair by position',
       cardinality(p_event_ids), cardinality(p_origins), cardinality(p_tenants), cardinality(p_types), cardinality(p_streams);
-  END IF;
-
-  -- 466 (#2364): a superseding row counts as its key's slot, once, through its key's anchor.
-  IF NOT p_slotted AND EXISTS (
-    SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ANY(p_event_ids) AND es.supersede_key IS NOT NULL) THEN
-    SELECT array_agg(u.o ORDER BY u.n), array_agg(u.t ORDER BY u.n),
-           array_agg(CASE WHEN es.supersede_key IS NULL THEN u.ty ELSE COALESCE(es.supersede_slot_type, es.event_type) END ORDER BY u.n),
-           array_agg(u.s ORDER BY u.n),
-           array_agg(CASE WHEN es.supersede_key IS NULL THEN u.e
-                          ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END
-                     ORDER BY u.n)
-    INTO v_origins, v_tenants, v_types, v_streams, v_ids
-    FROM unnest(p_origins, p_tenants, p_types, p_streams, p_event_ids) WITH ORDINALITY AS u(o, t, ty, s, e, n)
-    LEFT JOIN __SCHEMA__.wh_event_store es ON es.event_id = u.e
-    WHERE es.supersede_key IS NULL
-       OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type),
-                                        es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version);
-    IF COALESCE(cardinality(v_ids), 0) = 0 THEN
-      RETURN 0;
-    END IF;
   END IF;
 
   IF p_mode = 'unfold' THEN
@@ -225,7 +54,7 @@ BEGIN
              bit_xor(__SCHEMA__._wh_digest_lane(m.event_id, 2)) AS id_lo,
              bit_xor(__SCHEMA__._wh_digest_lane(m.event_id, 3)) AS id_hi,
              COUNT(*)::int AS n
-      FROM unnest(v_origins, v_tenants, v_types, v_streams, v_ids)
+      FROM unnest(p_origins, p_tenants, p_types, p_streams, p_event_ids)
         AS m(origin_service_id, scope_tenant, event_type, stream_id, event_id)
       GROUP BY 1, 2, 3, 4
     ) s
@@ -235,7 +64,7 @@ BEGIN
       AND d.stream_id = s.stream_id
       -- An index condition on idx_stream_digests_stream (301) the generic plan can always use: the join keys alone
       -- leave it free to scan the table when it misjudges the size of the set.
-      AND d.stream_id = ANY(v_streams);
+      AND d.stream_id = ANY(p_streams);
     GET DIAGNOSTICS v_rows = ROW_COUNT;
     RETURN v_rows;
   END IF;
@@ -249,7 +78,7 @@ BEGIN
          p_now,
          bit_xor(__SCHEMA__._wh_digest_lane(m.event_id, 2)),
          bit_xor(__SCHEMA__._wh_digest_lane(m.event_id, 3))
-  FROM unnest(v_origins, v_tenants, v_types, v_streams, v_ids)
+  FROM unnest(p_origins, p_tenants, p_types, p_streams, p_event_ids)
     AS m(origin_service_id, scope_tenant, event_type, stream_id, event_id)
   GROUP BY 1, 2, 3, 4
   ORDER BY 1, 2, 3, 4
@@ -266,13 +95,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._wh_fold_stream_digests(UUID[], TEXT[], TEXT[], UUID[], UUID[], TEXT, TIMESTAMPTZ, BOOLEAN) IS
+COMMENT ON FUNCTION __SCHEMA__._wh_fold_stream_digests(UUID[], TEXT[], TEXT[], UUID[], UUID[], TEXT, TIMESTAMPTZ) IS
   '336 (#2106): the one stream digest fold. Folds (''fold''), takes out (''unfold'') or writes where absent (''seed'') '
   'a set of events, every lane together (hash lanes, id lanes, count), buckets in key order; a NULL id lane stays NULL. '
-  'Every function that writes wh_stream_digests calls it. 466 (#2364): a superseding event counts as its key''s slot, '
-  'once, through the key''s anchor, in the anchor''s type bucket; p_slotted: the caller passes slots already.';
+  'Every function that writes wh_stream_digests calls it.';
 
--- ── _emit_event_store_chain: last word 453, copied whole, folding a superseding copy as its key's slot (466) ──
+
+-- ── _emit_event_store_chain: last word 391, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
 -- <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
@@ -314,8 +143,6 @@ COMMENT ON FUNCTION __SCHEMA__._wh_fold_stream_digests(UUID[], TEXT[], TEXT[], U
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:OutboxEmitChain_FoldsEveryLaneAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:OutboxEmitChain_FoldingIntoARowWithoutIdLanes_KeepsThemNullAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Emit_CopiesOfAKey_AreCountedOnce_AsTheKeysSlotAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
   p_outbox_message_ids UUID[],
   p_instance_id UUID,
@@ -546,29 +373,10 @@ BEGIN
     -- always runs (a CTE that writes nothing runs only when read).
     SELECT __SCHEMA__._wh_fold_stream_digests(
       array_agg(__EMPTY_UUID__::uuid), array_agg(COALESCE(c.scope::jsonb ->> 't', '')), array_agg(c.event_type),
-      array_agg(c.stream_id),
-      -- 466 (#2364): a superseding copy counts as its key's slot, once: only when the store holds no copy of its key yet,
-      -- and only the first such copy of this batch. The slot is passed already: the rows this statement stores are not
-      -- visible to it, so the helper could not read them back.
-      array_agg(CASE WHEN c.supersede_key IS NULL THEN c.message_id
-                     ELSE __SCHEMA__._wh_slot_id(c.stream_id, COALESCE(c.supersede_group, c.event_type), c.supersede_key) END),
-      'fold', p_now, TRUE) AS folded
+      array_agg(c.stream_id), array_agg(c.message_id), 'fold', p_now) AS folded
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
     WHERE __DIGEST_ELIGIBLE__(c)
-      AND (c.supersede_key IS NULL
-           OR (NOT EXISTS (
-                 SELECT 1 FROM __SCHEMA__.wh_event_store o
-                 WHERE o.stream_id = c.stream_id
-                   AND COALESCE(o.supersede_group, o.event_type) = COALESCE(c.supersede_group, c.event_type)
-                   AND o.supersede_key = c.supersede_key)
-               AND NOT EXISTS (
-                 SELECT 1 FROM computed c2
-                 JOIN stored_events se2 ON se2.event_id = c2.message_id
-                 WHERE c2.stream_id = c.stream_id
-                   AND COALESCE(c2.supersede_group, c2.event_type) = COALESCE(c.supersede_group, c.event_type)
-                   AND c2.supersede_key = c.supersede_key
-                   AND se2.version < se.version)))
   ),
   -- 260 (#1732): the stream lifecycle ledger. One row per stream this call stored a Sourced event on, in the same
   -- statement as the copy: one set-based upsert per batch, grouped by stream (never a write per event), in stream id
@@ -743,7 +551,7 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145).';
 
--- ── _emit_event_store_chain_for_inbox: last word 453, copied whole, folding a superseding copy as its key's slot (466) ──
+-- ── _emit_event_store_chain_for_inbox: last word 411, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- _emit_event_store_chain_for_inbox: copied from its last word (391), with the held-back refund.
 -- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
@@ -777,8 +585,6 @@ COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ
 -- <docs>fundamentals/work-coordinator/claim-loop#a-held-back-stream-is-claimed-whole</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HeldBackStreamsClaimSqlTests.cs:Claim_ARowHeldBackBehindAPredecessorAPeerHolds_IsNotChargedAnAttemptAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HeldBackStreamsClaimSqlTests.cs:Claim_AHeldBackRowAcquiredByAnEarlierClaim_IsNotRefundedAgainAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Emit_CopiesOfAKey_AreCountedOnce_AsTheKeysSlotAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -1156,29 +962,10 @@ BEGIN
     -- always runs (a CTE that writes nothing runs only when read).
     SELECT __SCHEMA__._wh_fold_stream_digests(
       array_agg(COALESCE(c.origin_service_id, __EMPTY_UUID__::uuid)), array_agg(COALESCE(c.scope::jsonb ->> 't', '')), array_agg(c.event_type),
-      array_agg(c.stream_id),
-      -- 466 (#2364): a superseding copy counts as its key's slot, once: only when the store holds no copy of its key yet,
-      -- and only the first such copy of this batch. The slot is passed already: the rows this statement stores are not
-      -- visible to it, so the helper could not read them back.
-      array_agg(CASE WHEN c.supersede_key IS NULL THEN c.message_id
-                     ELSE __SCHEMA__._wh_slot_id(c.stream_id, COALESCE(c.supersede_group, c.event_type), c.supersede_key) END),
-      'fold', p_now, TRUE) AS folded
+      array_agg(c.stream_id), array_agg(c.message_id), 'fold', p_now) AS folded
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
     WHERE __DIGEST_ELIGIBLE__(c)
-      AND (c.supersede_key IS NULL
-           OR (NOT EXISTS (
-                 SELECT 1 FROM __SCHEMA__.wh_event_store o
-                 WHERE o.stream_id = c.stream_id
-                   AND COALESCE(o.supersede_group, o.event_type) = COALESCE(c.supersede_group, c.event_type)
-                   AND o.supersede_key = c.supersede_key)
-               AND NOT EXISTS (
-                 SELECT 1 FROM computed c2
-                 JOIN stored_events se2 ON se2.event_id = c2.message_id
-                 WHERE c2.stream_id = c.stream_id
-                   AND COALESCE(c2.supersede_group, c2.event_type) = COALESCE(c.supersede_group, c.event_type)
-                   AND c2.supersede_key = c.supersede_key
-                   AND se2.version < se.version)))
   ),
   -- 260 (#1732): the stream lifecycle ledger. One row per stream this call stored a Sourced event on, in the same
   -- statement as the copy: one set-based upsert per batch, grouped by stream (never a write per event), in stream id
@@ -1418,7 +1205,7 @@ COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMP
   '411 (#2120): a row the calling claim leased (lease_expiry = p_lease_expiry) that this pass held back is refunded the attempt the claim counted. Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 367: a pass whose lock pass finds no candidate only stamps, and the collective routing runs only when a stored event is collective. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145).';
 
 
--- ── wh_reap_superseded_events: last word 454, copied whole: deletes physically, hands slots on, touches no digest (466) ──
+-- ── wh_reap_superseded_events: last word 453, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamStartedAtSqlTests.cs:Reap_TheStreamsFirstEvent_RecordsItsBusinessTimeOnTheLedgerAsync</tests>
@@ -1441,8 +1228,6 @@ COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMP
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Reap_AnEventSupersededByAnotherTypeOfItsGroup_IsDeleted_TheNewestIsKeptAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Reap_AQueuedEventWhoseOnlyNewerEventIsOutsideItsGroup_IsKeptAsync</tests>
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Reap_DeletesOlderCopies_AndLeavesTheDigestTheSealsAndTheGenerationAsTheyWereAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_reap_superseded_events(p_batch_size INTEGER DEFAULT 5000)
 RETURNS TABLE(task_name TEXT, rows_affected BIGINT, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE
@@ -1451,9 +1236,14 @@ DECLARE
   v_candidates UUID[];
   v_streams UUID[];
   v_victims UUID[];
+  v_lanes UUID[];
+  v_mins BIGINT[];
+  v_maxs BIGINT[];
+  v_i INTEGER;
   v_deleted BIGINT := 0;
   c_task CONSTANT TEXT := 'reap_superseded_events';
   c_flag_superseding CONSTANT INTEGER := 128;  -- EventFlags.Superseding (1 << 7)
+  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
   c_flags_state_based CONSTANT INTEGER := 24;  -- EventFlags.Ephemeral (1 << 3) | EventFlags.Compacted (1 << 4)
 BEGIN
   -- debug_mode keeps every event for forensics, as every other reaper does.
@@ -1530,10 +1320,31 @@ BEGIN
       WHERE h.event_id = es.event_id AND h.hold_until > NOW());
 
   IF v_victims IS NOT NULL THEN
-    -- 466 (#2364): the digest counts a key's slot, not its copies, and a newer copy of every victim's key stays, so
-    -- nothing is subtracted, refolded or bumped: physical deletion is timing, and the digest does not follow it. The
-    -- copies left behind inherit a victim anchor's place first, so the slot is still counted where its first copy sat.
-    PERFORM __SCHEMA__._wh_hand_on_slots(v_victims);
+    -- The sequence range of the fold-relevant victims, per lane, for the epoch refold after the delete (as 263).
+    SELECT array_agg(t.lane), array_agg(t.mn), array_agg(t.mx)
+    INTO v_lanes, v_mins, v_maxs
+    FROM (
+      SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS lane,
+             MIN(CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS mn,
+             MAX(CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS mx
+      FROM __SCHEMA__.wh_event_store es
+      WHERE es.event_id = ANY(v_victims)
+        AND __DIGEST_ELIGIBLE__(es)
+      GROUP BY 1
+    ) t
+    WHERE t.mn IS NOT NULL;
+
+    -- Subtract the victims from wh_stream_digests before they go, as the prefix truncate does (263): XOR is
+    -- self-inverse, so folding the same hashes again removes them. Only rows a fold ever added are subtracted.
+    PERFORM __SCHEMA__._wh_fold_stream_digests(
+      array_agg(COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid)), array_agg(COALESCE(es.scope ->> 't', '')),
+      array_agg(es.event_type), array_agg(es.stream_id), array_agg(es.event_id), 'unfold', NOW())
+    FROM __SCHEMA__.wh_event_store es
+    WHERE es.event_id = ANY(v_victims)
+      AND __DIGEST_ELIGIBLE__(es);
+
+    DELETE FROM __SCHEMA__.wh_stream_digests d
+    WHERE d.stream_id = ANY(v_streams) AND d.event_count <= 0;
 
     -- 358 (#2152): a victim that is its stream's first event (version 0 or 1) leaves its business time on the stream's
     -- ledger row, so a rebuild that writes the stream's row afresh still dates it at the stream's start. Written once:
@@ -1561,6 +1372,15 @@ BEGIN
     GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
     DELETE FROM __SCHEMA__.wh_superseded_events q WHERE q.event_id = ANY(v_victims);
+
+    -- Refold the sealed epochs that covered the victims, then bump the generation once, so consumers reset their
+    -- seals and re-verify instead of alarming on a deliberate change (093).
+    IF v_lanes IS NOT NULL THEN
+      FOR v_i IN 1 .. array_length(v_lanes, 1) LOOP
+        PERFORM __SCHEMA__._wh_refold_epochs_covering(v_lanes[v_i], v_mins[v_i], v_maxs[v_i]);
+      END LOOP;
+      PERFORM __SCHEMA__._wh_bump_origin_generation();
+    END IF;
   END IF;
 
   RETURN QUERY SELECT c_task, v_deleted,
@@ -1573,9 +1393,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_reap_superseded_events(INTEGER) IS
   'and their digest contribution, once a newer event of the same stream, group and key is stored and every consumer has '
   'processed them (no unprocessed perspective work, no cursor or snapshot on them, no active destruction hold, commit '
   'sequence stamped). Skipped under debug_mode. Reduces the digests as wh_truncate_stream_prefix does, refolding the '
-  'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152). 466 (#2364): deletes physically and touches no digest, seal or generation: the digest counts the key''s slot, and the copies left inherit an anchor''s place (_wh_hand_on_slots).';
+  'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152).';
 
--- ── _wh_carry_cut and _wh_uncarry_restored: last word 465, copied whole, counting a superseding key as its slot (466) ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Carries the events of the streams (at or below p_through_version; NULL: whole streams) that the digest counts, which
 -- the caller is about to remove: their contribution moves into their buckets' carried part (the bucket's digest stays;
@@ -1585,7 +1404,6 @@ COMMENT ON FUNCTION __SCHEMA__.wh_reap_superseded_events(INTEGER) IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Truncate_CarriesWhatItRemoves_TheDigestStaysAndNothingIsRefoldedOrBumpedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:ArchiveWhole_KeepsTheBucketCarried_AndARestoreTakesItBack_NothingBumpedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Purge_KeepsTheBucketCarried_AndARedeliveryOfThePurgedStreamIsRefusedAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_carry_cut(p_stream_ids UUID[], p_through_version BIGINT, p_now TIMESTAMPTZ)
 RETURNS INTEGER AS $$
 DECLARE
@@ -1593,23 +1411,13 @@ DECLARE
   v_epochs INTEGER := 0;   -- the removed rows written; read so both inserts run before the function returns
 BEGIN
   WITH ev AS (
-    -- 466 (#2364): a superseding key counts as its slot, once, at its first copy's place. A cut carries it only when it
-    -- removes every copy of the key; when a newer copy stays, the slot stays counted and its place is handed on below.
     SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS lane, COALESCE(es.scope ->> 't', '') AS tenant,
-           CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END AS ty, es.stream_id AS s, CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END AS event_id,
-           COALESCE(es.supersede_slot_at,
-                    CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS pos
+           es.event_type AS ty, es.stream_id AS s, es.event_id,
+           CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END AS pos
     FROM __SCHEMA__.wh_event_store es
     WHERE es.stream_id = ANY(p_stream_ids)
       AND (p_through_version IS NULL OR es.version <= p_through_version)
       AND __DIGEST_ELIGIBLE__(es)
-      AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
-      AND (es.supersede_key IS NULL OR p_through_version IS NULL OR NOT EXISTS (
-        SELECT 1 FROM __SCHEMA__.wh_event_store o
-        WHERE o.stream_id = es.stream_id
-          AND COALESCE(o.supersede_group, o.event_type) = COALESCE(es.supersede_group, es.event_type)
-          AND o.supersede_key = es.supersede_key
-          AND o.version > p_through_version))
   ),
   removed AS (
     INSERT INTO __SCHEMA__.wh_digest_epoch_removed AS r
@@ -1654,24 +1462,17 @@ BEGIN
     RETURNING 1
   )
   SELECT (SELECT COUNT(*) FROM carried)::int, (SELECT COUNT(*) FROM removed)::int INTO v_rows, v_epochs;
-
-  -- 466 (#2364): a prefix that removes a key's anchor while a newer copy stays hands the anchor's place on to it.
-  IF p_through_version IS NOT NULL THEN
-    PERFORM __SCHEMA__._wh_hand_on_slots(ARRAY(
-      SELECT es.event_id FROM __SCHEMA__.wh_event_store es
-      WHERE es.stream_id = ANY(p_stream_ids) AND es.version <= p_through_version AND es.supersede_key IS NOT NULL));
-  END IF;
   RETURN v_rows;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_carry_cut(UUID[], BIGINT, TIMESTAMPTZ) IS
-  '465 (#2363): moves the digest contribution of the counted events a cut is about to remove into their buckets'' carried part and their epochs'' removed rows. The bucket''s digest is unchanged. Returns the buckets carried into.';
+  '460 (#2363): moves the digest contribution of the counted events a cut is about to remove into their buckets'' carried part and their epochs'' removed rows. The bucket''s digest is unchanged. Returns the buckets carried into.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Takes restored events back out of what was carried for them: out of their buckets' carried part and their epochs'
 -- removed rows. Only when every bucket they belong to carries at least as many events as come back; otherwise (a stream
--- archived before 465, which carried nothing) it changes nothing and returns false, and the caller folds them in.
+-- archived before 460, which carried nothing) it changes nothing and returns false, and the caller folds them in.
 -- <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:ArchiveWhole_KeepsTheBucketCarried_AndARestoreTakesItBack_NothingBumpedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Restore_OfAStreamArchivedBeforeCutsCarried_FoldsItBackAsBeforeAsync</tests>
@@ -1690,9 +1491,9 @@ BEGIN
     SELECT 1
     FROM (
       SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS lane, COALESCE(es.scope ->> 't', '') AS tenant,
-             CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END AS ty, es.stream_id AS s, COUNT(*)::int AS n
+             es.event_type AS ty, es.stream_id AS s, COUNT(*)::int AS n
       FROM __SCHEMA__.wh_event_store es
-      WHERE es.event_id = ANY(p_event_ids) AND __DIGEST_ELIGIBLE__(es) AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
+      WHERE es.event_id = ANY(p_event_ids) AND __DIGEST_ELIGIBLE__(es)
       GROUP BY 1, 2, 3, 4
     ) b
     LEFT JOIN __SCHEMA__.wh_stream_digests d
@@ -1704,11 +1505,10 @@ BEGIN
 
   WITH ev AS (
     SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS lane, COALESCE(es.scope ->> 't', '') AS tenant,
-           CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END AS ty, es.stream_id AS s, CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END AS event_id,
-           COALESCE(es.supersede_slot_at,
-                    CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS pos
+           es.event_type AS ty, es.stream_id AS s, es.event_id,
+           CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END AS pos
     FROM __SCHEMA__.wh_event_store es
-    WHERE es.event_id = ANY(p_event_ids) AND __DIGEST_ELIGIBLE__(es) AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
+    WHERE es.event_id = ANY(p_event_ids) AND __DIGEST_ELIGIBLE__(es)
   ),
   buckets AS (
     UPDATE __SCHEMA__.wh_stream_digests d
@@ -1750,9 +1550,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_uncarry_restored(UUID[], TIMESTAMPTZ) IS
-  '465 (#2363): takes restored events out of their buckets'' carried part and their epochs'' removed rows; false (and nothing changed) when a bucket carries fewer than come back, so the caller folds them in as before 465.';
+  '460 (#2363): takes restored events out of their buckets'' carried part and their epochs'' removed rows; false (and nothing changed) when a bucket carries fewer than come back, so the caller folds them in as before 460.';
 
--- ── _wh_heal_stream_digests_statement: last word 465, copied whole, counting a superseding key as its slot (466) ──
+
+-- ── _wh_heal_stream_digests_statement: last word 453, copied whole, comparing with the live fold plus the carried part (460) ──
 -- The heal statement for a named batch (p_named) or the whole store, with $1 the streams, $2 the settle window and
 -- $3 whether to fill id lanes never computed. One text, planned and run as written.
 -- <docs>resilience/stream-integrity#the-heal-is-linear-in-its-batch</docs>
@@ -1761,8 +1562,6 @@ COMMENT ON FUNCTION __SCHEMA__._wh_uncarry_restored(UUID[], TIMESTAMPTZ) IS
 -- <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Heal_FindsACarriedBucketTrue_AndStillFindsAnUnaccountedLossAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Heal_ABucketWhoseWholeStreamWasCut_IsKept_NotReportedAsAPhantomAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:AfterAReap_TheHealAndTheSealRecheckFindNoDrift_AndStillFindALossAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_heal_stream_digests_statement(p_named BOOLEAN)
 RETURNS TEXT AS $$
 DECLARE
@@ -1774,18 +1573,16 @@ DECLARE
 BEGIN
   RETURN format($q$
     WITH recomputed AS (
-      -- 466 (#2364): a superseding key counts as its slot, once (its anchor), in its first copy's type bucket.
       SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS o, COALESCE(es.scope ->> 't', '') AS t,
-             CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END AS ty, es.stream_id AS s,
-             bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 0)) AS lo,
-             bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 1)) AS hi,
-             bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 2)) AS ilo,
-             bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 3)) AS ihi,
+             es.event_type AS ty, es.stream_id AS s,
+             bit_xor(__SCHEMA__._wh_digest_lane(es.event_id, 0)) AS lo,
+             bit_xor(__SCHEMA__._wh_digest_lane(es.event_id, 1)) AS hi,
+             bit_xor(__SCHEMA__._wh_digest_lane(es.event_id, 2)) AS ilo,
+             bit_xor(__SCHEMA__._wh_digest_lane(es.event_id, 3)) AS ihi,
              COUNT(*)::int AS n
       FROM __SCHEMA__.wh_event_store es
       WHERE %1$s
         AND __DIGEST_ELIGIBLE__(es)
-        AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
         AND es.created_at < NOW() - $2
       GROUP BY 1, 2, 3, 4
     ),
@@ -1795,13 +1592,13 @@ BEGIN
              d.carried_lo, d.carried_hi, d.carried_count, d.carried_id_lo, d.carried_id_hi,
              (d.carried_count <> 0 OR d.carried_lo <> 0 OR d.carried_hi <> 0) AS carries
       FROM __SCHEMA__.wh_stream_digests d
-      -- 465 (#2363): a bucket whose carried detail rolled off cannot be recomputed from its events: left alone.
+      -- 460 (#2363): a bucket whose carried detail rolled off cannot be recomputed from its events: left alone.
       WHERE %2$s AND d.updated_at < NOW() - $2 AND d.carried_lo IS NOT NULL
     ),
     -- One comparison of the two sets, as a FULL JOIN: PostgreSQL runs a full join only as a hash or merge join, never
     -- as a nested loop, so its cost stays linear whatever the planner believes about either set (#2337). A bucket on
     -- both sides is compared; one only stored has no events behind it; one only recomputed has no bucket yet.
-    -- 465 (#2363): what the stored digest should be is the live fold plus the carried part, so a bucket a cut carried
+    -- 460 (#2363): what the stored digest should be is the live fold plus the carried part, so a bucket a cut carried
     -- is compared with both, and one whose whole stream was cut (no live events, a carried part) is no phantom.
     expected AS (
       SELECT st.o, st.t, st.ty, st.s, st.digest_lo, st.digest_hi, st.event_count, st.id_lo, st.id_hi,
@@ -1870,7 +1667,8 @@ COMMENT ON FUNCTION __SCHEMA__._wh_heal_stream_digests_statement(BOOLEAN) IS
   '446 (#2337): the statement _wh_heal_stream_digests runs, for a named batch or the whole store: $1 streams, $2 settle '
   'window, $3 fill id lanes. Separate so it can be planned on its own.';
 
--- ── _wh_epoch_buckets: last word 465, copied whole, counting a superseding key as its slot (466) ──
+
+-- ── _wh_epoch_buckets: last word 453, copied whole, with the epoch's removed row folded in (460) ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#what-is-digested</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditDigestLaneSqlTests.cs:Reconciliation_AuditTraffic_OriginAndSubscriberAnswerTheSameAsync</tests>
@@ -1878,8 +1676,6 @@ COMMENT ON FUNCTION __SCHEMA__._wh_heal_stream_digests_statement(BOOLEAN) IS
 -- <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:EpochRecheck_AfterACut_FindsNoDrift_AndStillFindsADamagedSealAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Refold_OfAnEpochACutTouched_KeepsTheRemovedPartInTheSealAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:AfterAReap_TheHealAndTheSealRecheckFindNoDrift_AndStillFindALossAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_epoch_buckets(
   p_lane  UUID,
   p_epoch BIGINT,
@@ -1897,30 +1693,16 @@ BEGIN
     RETURN QUERY
     SELECT u.t, u.ty, bit_xor(u.lo), bit_xor(u.hi), SUM(u.n)::int
     FROM (
-      -- 466 (#2364): a superseding key counts as its slot, once (its anchor), where its first copy sat: a row that
-      -- inherited a place (supersede_slot_at) counts there, read through idx_event_store_slot_at, and nowhere else.
-      SELECT COALESCE(es.scope ->> 't', '') AS t, (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text AS ty,
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 0) AS lo,
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 1) AS hi,
+      SELECT COALESCE(es.scope ->> 't', '') AS t, es.event_type::text AS ty,
+             __SCHEMA__._wh_digest_lane(es.event_id, 0) AS lo,
+             __SCHEMA__._wh_digest_lane(es.event_id, 1) AS hi,
              1 AS n
       FROM __SCHEMA__.wh_event_store es
       WHERE es.origin_service_id IS NULL
         AND es.commit_sequence >= v_from AND es.commit_sequence < v_to
-        AND es.supersede_slot_at IS NULL
         AND __DIGEST_ELIGIBLE__(es)  -- 216 (#1492)
-        AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
       UNION ALL
-      SELECT COALESCE(es.scope ->> 't', ''), (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text,
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 0),
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 1),
-             1
-      FROM __SCHEMA__.wh_event_store es
-      WHERE es.origin_service_id IS NULL
-        AND es.supersede_slot_at >= v_from AND es.supersede_slot_at < v_to
-        AND __DIGEST_ELIGIBLE__(es)
-        AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
-      UNION ALL
-      -- 465 (#2363): what a cut removed from this epoch still counts in its fold.
+      -- 460 (#2363): what a cut removed from this epoch still counts in its fold.
       SELECT r.scope_tenant, r.event_type, r.removed_lo, r.removed_hi, r.removed_count
       FROM __SCHEMA__.wh_digest_epoch_removed r
       WHERE r.origin_service_id = p_lane AND r.epoch_id = p_epoch
@@ -1930,30 +1712,16 @@ BEGIN
     RETURN QUERY
     SELECT u.t, u.ty, bit_xor(u.lo), bit_xor(u.hi), SUM(u.n)::int
     FROM (
-      -- 466 (#2364): a superseding key counts as its slot, once (its anchor), where its first copy sat: a row that
-      -- inherited a place (supersede_slot_at) counts there, read through idx_event_store_slot_at, and nowhere else.
-      SELECT COALESCE(es.scope ->> 't', '') AS t, (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text AS ty,
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 0) AS lo,
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 1) AS hi,
+      SELECT COALESCE(es.scope ->> 't', '') AS t, es.event_type::text AS ty,
+             __SCHEMA__._wh_digest_lane(es.event_id, 0) AS lo,
+             __SCHEMA__._wh_digest_lane(es.event_id, 1) AS hi,
              1 AS n
       FROM __SCHEMA__.wh_event_store es
       WHERE es.origin_service_id = p_lane
         AND es.origin_commit_sequence >= v_from AND es.origin_commit_sequence < v_to
-        AND es.supersede_slot_at IS NULL
         AND __DIGEST_ELIGIBLE__(es)  -- 216 (#1492)
-        AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
       UNION ALL
-      SELECT COALESCE(es.scope ->> 't', ''), (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text,
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 0),
-             __SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 1),
-             1
-      FROM __SCHEMA__.wh_event_store es
-      WHERE es.origin_service_id = p_lane
-        AND es.supersede_slot_at >= v_from AND es.supersede_slot_at < v_to
-        AND __DIGEST_ELIGIBLE__(es)
-        AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
-      UNION ALL
-      -- 465 (#2363): what a cut removed from this epoch still counts in its fold.
+      -- 460 (#2363): what a cut removed from this epoch still counts in its fold.
       SELECT r.scope_tenant, r.event_type, r.removed_lo, r.removed_hi, r.removed_count
       FROM __SCHEMA__.wh_digest_epoch_removed r
       WHERE r.origin_service_id = p_lane AND r.epoch_id = p_epoch
@@ -1963,7 +1731,7 @@ BEGIN
 END;
 $$;
 
--- ── compute_type_digests_epoch: last word 465, copied whole, counting a superseding key as its slot (466) ──
+-- ── compute_type_digests_epoch: last word 453, copied whole, with the open window's removed rows (460) ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#unstamped-history</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EpochServedTypeDigestSqlTests.cs:LocalLane_AnUnstampedRow_IsLeftOutOfTheOpenWindowUntilItIsStampedAsync</tests>
@@ -1972,7 +1740,6 @@ $$;
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditDigestLaneSqlTests.cs:Reconciliation_AuditTraffic_OriginAndSubscriberAnswerTheSameAsync</tests>
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:TypeAnswer_IsTheSameBeforeAndAfterACut_SealedOrOpenAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Reap_DeletesOlderCopies_AndLeavesTheDigestTheSealsAndTheGenerationAsTheyWereAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.compute_type_digests_epoch(
   p_origin_lane    UUID,          -- NULL = the local lane (this service's own emissions)
   p_event_types    TEXT[],        -- NULL = all types
@@ -2023,28 +1790,24 @@ BEGIN
     -- sequence, and once it has one it folds where that sequence puts it, so it never falls through the crack.
     -- A received row keeps the NULL-sequence branch: it can lack the origin's sequence for good (published
     -- before its stamp, or received before 087), and the open window is the only place it can ever fold.
-    -- 466 (#2364): a superseding key counts as its slot, once, at the place its first copy sat.
-    SELECT COALESCE(es.scope ->> 't', '') AS b_tenant, CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END AS b_type,
-           bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 0)) AS lo,
-           bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, 1)) AS hi,
+    SELECT COALESCE(es.scope ->> 't', '') AS b_tenant, es.event_type AS b_type,
+           bit_xor(__SCHEMA__._wh_digest_lane(es.event_id, 0)) AS lo,
+           bit_xor(__SCHEMA__._wh_digest_lane(es.event_id, 1)) AS hi,
            COUNT(*)::bigint AS cnt
     FROM __SCHEMA__.wh_event_store es
     WHERE ((p_origin_lane IS NULL AND es.origin_service_id IS NULL)
            OR es.origin_service_id = p_origin_lane)
       AND (CASE WHEN p_origin_lane IS NULL
-                THEN COALESCE(es.supersede_slot_at, es.commit_sequence) IS NOT NULL
-                     AND COALESCE(es.supersede_slot_at, es.commit_sequence) >= v_open_from
-                ELSE COALESCE(es.supersede_slot_at, es.origin_commit_sequence) IS NULL
-                     OR COALESCE(es.supersede_slot_at, es.origin_commit_sequence) >= v_open_from
+                THEN es.commit_sequence IS NOT NULL AND es.commit_sequence >= v_open_from
+                ELSE es.origin_commit_sequence IS NULL OR es.origin_commit_sequence >= v_open_from
            END)
-      AND (v_types IS NULL OR CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END = ANY(v_types))
+      AND (v_types IS NULL OR es.event_type = ANY(v_types))
       AND __DIGEST_ELIGIBLE__(es)  -- 216 (#1492)
-      AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
       AND es.created_at < p_now - make_interval(secs => p_settle_seconds)
     GROUP BY 1, 2
   ),
   open_removed AS (
-    -- 465 (#2363): what a cut removed above the frontier (or with no position) still counts in the open window.
+    -- 460 (#2363): what a cut removed above the frontier (or with no position) still counts in the open window.
     SELECT r.scope_tenant AS b_tenant, r.event_type AS b_type,
            bit_xor(r.removed_lo) AS lo, bit_xor(r.removed_hi) AS hi, SUM(r.removed_count)::bigint AS cnt
     FROM __SCHEMA__.wh_digest_epoch_removed r
@@ -2060,14 +1823,13 @@ BEGIN
 END;
 $$;
 
--- ── compute_type_digests_epoch_window: last word 453, copied whole, counting a superseding key as its slot (466) ──
+
+-- ── compute_type_digests_epoch_window: last word 336, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#windowed-manifests</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestLaneReadTests.cs:TypeDigestWindow_ReadsTheWindow_NotTheLaneAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditDigestLaneSqlTests.cs:Reconciliation_AuditTraffic_OriginAndSubscriberAnswerTheSameAsync</tests>
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Reap_DeletesOlderCopies_AndLeavesTheDigestTheSealsAndTheGenerationAsTheyWereAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.compute_type_digests_epoch_window(
   p_origin_lane    UUID,          -- NULL = the local lane
   p_event_types    TEXT[],        -- NULL = all types
@@ -2122,31 +1884,22 @@ BEGIN
     -- 332 (#2080): one branch per lane, each with the window as a direct range on its own indexed column, so the read
     -- is the window's rows (idx_event_store_commit_sequence for the local lane, the 155 lane index for an origin's)
     -- instead of the whole lane filtered through a CASE no index can serve. Exactly one branch is live per call.
-    -- 466 (#2364): a row that inherited its key's place (supersede_slot_at) is read at that place, through
-    -- idx_event_store_slot_at, and not at its own.
     SELECT es.*, es.commit_sequence AS lane_seq
     FROM __SCHEMA__.wh_event_store es
     WHERE p_origin_lane IS NULL AND es.origin_service_id IS NULL
       AND es.commit_sequence >= p_since AND es.commit_sequence < p_until
-      AND es.supersede_slot_at IS NULL
     UNION ALL
     SELECT es.*, es.origin_commit_sequence AS lane_seq
     FROM __SCHEMA__.wh_event_store es
     WHERE p_origin_lane IS NOT NULL AND es.origin_service_id = p_origin_lane
       AND es.origin_commit_sequence >= p_since AND es.origin_commit_sequence < p_until
-      AND es.supersede_slot_at IS NULL
-    UNION ALL
-    SELECT es.*, es.supersede_slot_at AS lane_seq
-    FROM __SCHEMA__.wh_event_store es
-    WHERE ((p_origin_lane IS NULL AND es.origin_service_id IS NULL) OR es.origin_service_id = p_origin_lane)
-      AND es.supersede_slot_at >= p_since AND es.supersede_slot_at < p_until
   ),
   live_fold AS (
     -- The window minus the sealed run: the low fringe [since, e_lo*width) and the tail
     -- [(e_hi+1)*width, until), or the whole window when no epoch fits (e_lo > e_hi).
-    SELECT COALESCE(l.scope ->> 't', '') AS b_tenant, CASE WHEN l.supersede_key IS NULL THEN l.event_type ELSE COALESCE(l.supersede_slot_type, l.event_type) END AS b_type,
-           bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN l.supersede_key IS NULL THEN l.event_id ELSE __SCHEMA__._wh_slot_id(l.stream_id, COALESCE(l.supersede_group, l.event_type), l.supersede_key) END, 0)) AS lo,
-           bit_xor(__SCHEMA__._wh_digest_lane(CASE WHEN l.supersede_key IS NULL THEN l.event_id ELSE __SCHEMA__._wh_slot_id(l.stream_id, COALESCE(l.supersede_group, l.event_type), l.supersede_key) END, 1)) AS hi,
+    SELECT COALESCE(l.scope ->> 't', '') AS b_tenant, l.event_type AS b_type,
+           bit_xor(__SCHEMA__._wh_digest_lane(l.event_id, 0)) AS lo,
+           bit_xor(__SCHEMA__._wh_digest_lane(l.event_id, 1)) AS hi,
            COUNT(*)::bigint AS cnt
     FROM lane l
     WHERE l.lane_seq IS NOT NULL
@@ -2154,9 +1907,8 @@ BEGIN
       AND (v_e_lo > v_e_hi
            OR l.lane_seq < v_e_lo * v_width
            OR l.lane_seq >= (v_e_hi + 1) * v_width)
-      AND (v_types IS NULL OR CASE WHEN l.supersede_key IS NULL THEN l.event_type ELSE COALESCE(l.supersede_slot_type, l.event_type) END = ANY(v_types))
+      AND (v_types IS NULL OR l.event_type = ANY(v_types))
       AND __DIGEST_ELIGIBLE__(l)  -- 216 (#1492)
-      AND (l.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(l.event_id, l.stream_id, COALESCE(l.supersede_group, l.event_type), l.supersede_key, l.origin_service_id, l.origin_commit_sequence, l.version))
       AND l.created_at < p_now - make_interval(secs => p_settle_seconds)
     GROUP BY 1, 2
   )
@@ -2170,13 +1922,12 @@ $$;
 COMMENT ON FUNCTION __SCHEMA__.compute_type_digests_epoch_window(UUID, TEXT[], BIGINT, BIGINT, TIMESTAMPTZ, INTEGER) IS
 'Windowed type-level fold [p_since, p_until): fully-contained sealed epochs answer from their seal, fringes fold live. Caller pre-clamps p_until at integrity_settled_max. 214: the live fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 332 (#2080): the window is a direct range on the lane''s indexed sequence column, one branch per lane, so a call reads its window, not the lane.';
 
--- ── wh_compute_stream_digests_window: last word 453, copied whole, counting a superseding key as its slot (466) ──
+-- ── wh_compute_stream_digests_window: last word 347, copied whole ──
 -- <docs>resilience/stream-integrity#windowed-manifests</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestTypeIndexTests.cs:TypeFilteredWindow_ReadsThroughAnIndexConditionOnTheType_UnderAGenericPlanAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestTypeIndexTests.cs:TheRead_PlansEachCallAgainstItsOwnWindow_WhateverTheCallersPlanModeAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WindowedDigestLaneReadTests.cs:ManifestStreamWindow_ReadsTheWindow_NotTheLaneAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EpochWindowedDigestSqlTests.cs:StreamWindow_OnlyEventsInsideTheWindowContributeAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_compute_stream_digests_window(
   p_origin_lane    UUID,          -- NULL = the local lane
   p_event_types    TEXT[],        -- NULL = all types
@@ -2205,38 +1956,22 @@ BEGIN
   WITH win AS (
     -- One branch per lane (332), each with the window as a direct range on its own indexed column. Exactly one is live
     -- per call; under the custom plan the other is pruned and the type list is a constant the planner can index.
-    -- 466 (#2364): a superseding key counts as its slot, once, at its first copy's place and in its type bucket.
-    SELECT CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END AS w_event, es.stream_id AS w_stream, (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text AS w_type,
+    SELECT es.event_id AS w_event, es.stream_id AS w_stream, es.event_type::text AS w_type,
            COALESCE(es.scope ->> 't', '') AS w_tenant
     FROM __SCHEMA__.wh_event_store es
     WHERE p_origin_lane IS NULL AND es.origin_service_id IS NULL
       AND es.commit_sequence >= p_since AND es.commit_sequence < p_until
-      AND es.supersede_slot_at IS NULL
       AND (v_types IS NULL OR es.event_type = ANY(v_types))
       AND __DIGEST_ELIGIBLE__(es)
-      AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
       AND es.created_at < v_settled
       AND (p_resume_after IS NULL OR es.stream_id > p_resume_after)
     UNION ALL
-    SELECT CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, es.stream_id, (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text, COALESCE(es.scope ->> 't', '')
+    SELECT es.event_id, es.stream_id, es.event_type::text, COALESCE(es.scope ->> 't', '')
     FROM __SCHEMA__.wh_event_store es
     WHERE p_origin_lane IS NOT NULL AND es.origin_service_id = p_origin_lane
       AND es.origin_commit_sequence >= p_since AND es.origin_commit_sequence < p_until
-      AND es.supersede_slot_at IS NULL
       AND (v_types IS NULL OR es.event_type = ANY(v_types))
       AND __DIGEST_ELIGIBLE__(es)
-      AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
-      AND es.created_at < v_settled
-      AND (p_resume_after IS NULL OR es.stream_id > p_resume_after)
-    UNION ALL
-    SELECT CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END, es.stream_id, (CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END)::text, COALESCE(es.scope ->> 't', '')
-    FROM __SCHEMA__.wh_event_store es
-    WHERE ((p_origin_lane IS NULL AND es.origin_service_id IS NULL) OR es.origin_service_id = p_origin_lane)
-      AND es.supersede_slot_at >= p_since AND es.supersede_slot_at < p_until
-      -- A row with an inherited place carries a key, so its bucket type is this expression, which the index holds.
-      AND (v_types IS NULL OR COALESCE(es.supersede_slot_type, es.event_type) = ANY(v_types))
-      AND __DIGEST_ELIGIBLE__(es)
-      AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
       AND es.created_at < v_settled
       AND (p_resume_after IS NULL OR es.stream_id > p_resume_after)
   ),
@@ -2263,7 +1998,7 @@ $$;
 COMMENT ON FUNCTION __SCHEMA__.wh_compute_stream_digests_window(UUID, TEXT[], BIGINT, BIGINT, UUID, INTEGER, TIMESTAMPTZ, INTEGER) IS
 'Windowed stream-level fold, every lane from _wh_digest_lane (336) [p_since, p_until), one page of whole streams after p_resume_after (#2107). Caller pre-clamps p_until at integrity_settled_max and asks for one stream past its page bound as the sentinel. Plans each call against its own window and types (force_custom_plan), so a sparse type is read through an index on the type rather than filtered from every event in the window. Leaves out ephemeral (flags & 8) and at-most-once (flags & 32) events and audit records.';
 
--- ── wh_seed_stream_digests_batch: last word 453, copied whole, seeding a superseding key as its slot (466) ──
+-- ── wh_seed_stream_digests_batch: last word 336, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>operations/infrastructure/migrations#batched-regions</docs>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationWorklistBatchTests.cs:TheStreamDigestSeedClaimsEachStreamExactlyOnceAsync</tests>
@@ -2299,18 +2034,16 @@ BEGIN
   -- which the periodic sweep then reports as corruption.
   -- 336 (#2106): the same projection and predicate, folded through the one helper; 'seed' writes a bucket only
   -- where none exists, as ON CONFLICT DO NOTHING did.
-  -- 466 (#2364): a superseding key seeds as its slot, once, in its first copy's type bucket (passed slotted).
   SELECT __SCHEMA__._wh_fold_stream_digests(
     array_agg(COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid)),
-    array_agg(COALESCE(es.scope ->> 't', '')), array_agg(CASE WHEN es.supersede_key IS NULL THEN es.event_type ELSE COALESCE(es.supersede_slot_type, es.event_type) END), array_agg(es.stream_id),
-    array_agg(CASE WHEN es.supersede_key IS NULL THEN es.event_id ELSE __SCHEMA__._wh_slot_id(es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key) END), 'seed', NOW(), TRUE)
+    array_agg(COALESCE(es.scope ->> 't', '')), array_agg(es.event_type), array_agg(es.stream_id),
+    array_agg(es.event_id), 'seed', NOW())
   INTO v_rows
   FROM __SCHEMA__.wh_event_store es
   LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
   WHERE es.stream_id IN (SELECT t.stream_id FROM __SCHEMA__.wh_stream_digest_seed_todo t
                          WHERE t.seq > v_from AND t.seq <= v_to)
     AND __DIGEST_ELIGIBLE__(es)
-    AND (es.supersede_key IS NULL OR __SCHEMA__._wh_is_slot_anchor(es.event_id, es.stream_id, COALESCE(es.supersede_group, es.event_type), es.supersede_key, es.origin_service_id, es.origin_commit_sequence, es.version))
     AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1;
 
   UPDATE __SCHEMA__.wh_stream_digest_seed_cursor SET last_seq = v_to WHERE only_row;
@@ -2321,63 +2054,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SET enable_seqscan = off;
 
--- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
--- The one-time recompute: what a superseding type counts changed meaning (a key's slot, not each copy). The stored
--- digests of every stream holding a superseding row are recomputed by the heal, and every sealed epoch holding one is
--- refolded; a refold of this service's own lane notes the rewrite, so the generation is bumped once and consumers
--- re-verify from that point. Returns the epochs refolded.
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:TheUpgrade_RecountsStoredDigestsAndSealsByTheKey_AndBumpsTheGenerationOnceAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_recompute_superseding_digests() RETURNS INTEGER AS $$
-DECLARE
-  v_streams UUID[];
-  v_lane UUID;
-  v_epoch BIGINT;
-  v_width BIGINT;
-  v_refolded INTEGER := 0;
-BEGIN
-  SELECT array_agg(DISTINCT es.stream_id) INTO v_streams
-  FROM __SCHEMA__.wh_event_store es WHERE es.supersede_key IS NOT NULL;
-  IF v_streams IS NULL THEN
-    RETURN 0;
-  END IF;
 
-  PERFORM 1 FROM __SCHEMA__._wh_heal_stream_digests(v_streams, INTERVAL '0 seconds', false);
-
-  FOR v_lane, v_epoch, v_width IN
-    SELECT DISTINCT f.origin_service_id,
-           CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END / f.epoch_width,
-           f.epoch_width
-    FROM __SCHEMA__.wh_event_store es
-    JOIN __SCHEMA__.wh_digest_epoch_frontiers f
-      ON f.origin_service_id = COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid)
-    WHERE es.supersede_key IS NOT NULL
-      AND CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END IS NOT NULL
-      AND CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END / f.epoch_width
-          <= f.closed_through_epoch
-    ORDER BY 1, 2
-  LOOP
-    PERFORM __SCHEMA__._wh_fold_digest_epoch(v_lane, v_epoch, v_width, NOW());
-    v_refolded := v_refolded + 1;
-  END LOOP;
-
-  PERFORM __SCHEMA__._wh_bump_origin_generation();
-  RETURN v_refolded;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION __SCHEMA__.wh_recompute_superseding_digests() IS
-  '466 (#2364): once, on upgrade: heals the stored digests of every stream holding a superseding row and refolds the sealed epochs holding one, so both count a key''s slot; bumps the generation once when this service''s own epochs moved.';
-
-DO $once$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_settings s WHERE s.setting_key = 'superseding_slot_digests_recomputed') THEN
-    PERFORM __SCHEMA__.wh_recompute_superseding_digests();
-    INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
-    VALUES ('superseding_slot_digests_recomputed', 'true', 'boolean',
-            'Set when migration 466 recounted superseding digests by key slot (#2364). Gates that one-time recompute.',
-            NOW(), 'migration:466_SupersedingTypesCountTheKey')
-    ON CONFLICT (setting_key) DO NOTHING;
-  END IF;
-END
-$once$;
+SELECT __SCHEMA__.drop_all_overloads('wh_recompute_superseding_digests');
+SELECT __SCHEMA__.drop_all_overloads('_wh_hand_on_slots');
+SELECT __SCHEMA__.drop_all_overloads('_wh_is_slot_anchor');
+SELECT __SCHEMA__.drop_all_overloads('_wh_slot_id');
+DROP INDEX IF EXISTS __SCHEMA__.idx_event_store_slot_at;
+-- RECLAIM: not required. The dropped columns are NULL or zero on every row this reversal reaches unless a cut or a
+--          reap wrote them, and a NULL takes no heap bytes; where they hold values, run pg_repack on wh_event_store after the
+--          reversal to return the space.
+ALTER TABLE __SCHEMA__.wh_event_store DROP COLUMN IF EXISTS supersede_slot_type;  -- RECLAIM: as noted above
+ALTER TABLE __SCHEMA__.wh_event_store DROP COLUMN IF EXISTS supersede_slot_at;  -- RECLAIM: as noted above
+DELETE FROM __SCHEMA__.wh_settings WHERE setting_key = 'superseding_slot_digests_recomputed';

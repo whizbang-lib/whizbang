@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 465_CutsCarryTheirDigest.sql
+-- Migration: 460_CutsCarryTheirDigest.sql
 -- Date: 2026-11-16
 -- Description: A cut carries the digest of what it removes, so truncating, archiving or purging history never makes a
 --              service look short or long to another (#2363).
@@ -57,8 +57,6 @@
 --              window. Nothing grows with events: the removed rows are bounded by (lane, tenant, type, epoch), and the
 --              carried columns live on rows that already exist.
 --
---              Number 465: this worker's range in the third integrity bundle.
---
 -- Reversal: lossy (the functions go back to their last words; the carried columns, the removed rows and the consumer
 --           seals are dropped, so a digest that carried a cut becomes one a heal will rewrite from the live events)
 -- Dependencies: 087 (wh_stream_digests), 092 (wh_digest_epochs, wh_integrity_seals), 297 (truncated_through_version),
@@ -79,17 +77,17 @@ ALTER TABLE __SCHEMA__.wh_stream_digests ADD COLUMN IF NOT EXISTS carried_id_hi 
 ALTER TABLE __SCHEMA__.wh_stream_digests ADD COLUMN IF NOT EXISTS carried_at TIMESTAMPTZ NULL;
 
 COMMENT ON COLUMN __SCHEMA__.wh_stream_digests.carried_lo IS
-  '465 (#2363): XOR of hash lane 0 of the events a cut removed from this bucket; the digest still includes them. NULL once the detail rolled off (wh_roll_off_carried_detail).';
+  '460 (#2363): XOR of hash lane 0 of the events a cut removed from this bucket; the digest still includes them. NULL once the detail rolled off (wh_roll_off_carried_detail).';
 COMMENT ON COLUMN __SCHEMA__.wh_stream_digests.carried_hi IS
-  '465 (#2363): XOR of hash lane 1 of the events a cut removed from this bucket. NULL once the detail rolled off.';
+  '460 (#2363): XOR of hash lane 1 of the events a cut removed from this bucket. NULL once the detail rolled off.';
 COMMENT ON COLUMN __SCHEMA__.wh_stream_digests.carried_count IS
-  '465 (#2363): how many removed events the bucket carries. NULL once the detail rolled off.';
+  '460 (#2363): how many removed events the bucket carries. NULL once the detail rolled off.';
 COMMENT ON COLUMN __SCHEMA__.wh_stream_digests.carried_id_lo IS
-  '465 (#2363): XOR of id lane 2 of the events a cut removed from this bucket. NULL once the detail rolled off.';
+  '460 (#2363): XOR of id lane 2 of the events a cut removed from this bucket. NULL once the detail rolled off.';
 COMMENT ON COLUMN __SCHEMA__.wh_stream_digests.carried_id_hi IS
-  '465 (#2363): XOR of id lane 3 of the events a cut removed from this bucket. NULL once the detail rolled off.';
+  '460 (#2363): XOR of id lane 3 of the events a cut removed from this bucket. NULL once the detail rolled off.';
 COMMENT ON COLUMN __SCHEMA__.wh_stream_digests.carried_at IS
-  '465 (#2363): when a cut last carried events into this bucket; the resting period of the carried detail runs from it.';
+  '460 (#2363): when a cut last carried events into this bucket; the resting period of the carried detail runs from it.';
 
 CREATE INDEX IF NOT EXISTS idx_stream_digests_carried_at
   ON __SCHEMA__.wh_stream_digests (carried_at)
@@ -108,7 +106,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_digest_epoch_removed (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_digest_epoch_removed IS
-  '465 (#2363): per (lane, tenant, type, epoch), the XOR fold and count of the events a cut removed. An epoch''s fold is its surviving events plus this, so a cut never moves a seal. Bounded by lanes, tenants, types and epochs, never by events.';
+  '460 (#2363): per (lane, tenant, type, epoch), the XOR fold and count of the events a cut removed. An epoch''s fold is its surviving events plus this, so a cut never moves a seal. Bounded by lanes, tenants, types and epochs, never by events.';
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_integrity_consumer_seals (
   requester_service TEXT        PRIMARY KEY,
@@ -117,7 +115,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_integrity_consumer_seals (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_integrity_consumer_seals IS
-  '465 (#2363): per consumer service, the seal it reported with its last windowed manifest request: how far it has verified this service''s history. Read by the cut gate only when integrity_cut_waits_for_consumers is on. Bounded by consumer services.';
+  '460 (#2363): per consumer service, the seal it reported with its last windowed manifest request: how far it has verified this service''s history. Read by the cut gate only when integrity_cut_waits_for_consumers is on. Bounded by consumer services.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- The epoch width a lane folds by: pinned on its frontier at its first closure, the configured width before that.
@@ -131,7 +129,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._wh_epoch_width(p_lane UUID) RETURNS BIGIN
 $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_epoch_width(UUID) IS
-  '465 (#2363): the epoch width of a lane: its frontier''s pinned width, else integrity_epoch_width, else 100000.';
+  '460 (#2363): the epoch width of a lane: its frontier''s pinned width, else integrity_epoch_width, else 100000.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Whether a cut of the streams (at or below p_through_version; NULL: whole streams) must wait for the seal. Only when
@@ -185,7 +183,7 @@ END;
 $$ LANGUAGE plpgsql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_cut_awaits_seal(UUID[], BIGINT) IS
-  '465 (#2363): whether a cut of the streams must wait: integrity_cut_waits_for_seal on and an event the digest counts at or above its lane''s sealed frontier, a received one at or above this service''s seal for its origin, or (integrity_cut_waits_for_consumers) a local one at or above the lowest seal a consumer reported in 7 days.';
+  '460 (#2363): whether a cut of the streams must wait: integrity_cut_waits_for_seal on and an event the digest counts at or above its lane''s sealed frontier, a received one at or above this service''s seal for its origin, or (integrity_cut_waits_for_consumers) a local one at or above the lowest seal a consumer reported in 7 days.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Carries the events of the streams (at or below p_through_version; NULL: whole streams) that the digest counts, which
@@ -259,12 +257,12 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_carry_cut(UUID[], BIGINT, TIMESTAMPTZ) IS
-  '465 (#2363): moves the digest contribution of the counted events a cut is about to remove into their buckets'' carried part and their epochs'' removed rows. The bucket''s digest is unchanged. Returns the buckets carried into.';
+  '460 (#2363): moves the digest contribution of the counted events a cut is about to remove into their buckets'' carried part and their epochs'' removed rows. The bucket''s digest is unchanged. Returns the buckets carried into.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Takes restored events back out of what was carried for them: out of their buckets' carried part and their epochs'
 -- removed rows. Only when every bucket they belong to carries at least as many events as come back; otherwise (a stream
--- archived before 465, which carried nothing) it changes nothing and returns false, and the caller folds them in.
+-- archived before 460, which carried nothing) it changes nothing and returns false, and the caller folds them in.
 -- <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:ArchiveWhole_KeepsTheBucketCarried_AndARestoreTakesItBack_NothingBumpedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Restore_OfAStreamArchivedBeforeCutsCarried_FoldsItBackAsBeforeAsync</tests>
@@ -342,7 +340,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_uncarry_restored(UUID[], TIMESTAMPTZ) IS
-  '465 (#2363): takes restored events out of their buckets'' carried part and their epochs'' removed rows; false (and nothing changed) when a bucket carries fewer than come back, so the caller folds them in as before 465.';
+  '460 (#2363): takes restored events out of their buckets'' carried part and their epochs'' removed rows; false (and nothing changed) when a bucket carries fewer than come back, so the caller folds them in as before 460.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Records the seal a consumer reported with a windowed manifest request: how far it has verified this service's history.
@@ -358,7 +356,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_record_consumer_seal(
 $$ LANGUAGE sql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_record_consumer_seal(TEXT, BIGINT, TIMESTAMPTZ) IS
-  '465 (#2363): records the seal a consumer reported; rewrites the row only when the seal moved or the report is an hour newer.';
+  '460 (#2363): records the seal a consumer reported; rewrites the row only when the seal moved or the report is an hour newer.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Clears the per-stream carried detail whose last cut is older than p_older_than, at most p_batch buckets. The bucket's
@@ -388,9 +386,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_roll_off_carried_detail(INTERVAL, INTEGER) IS
-  '465 (#2363): the resting period of carried detail: clears the carried columns of up to p_batch buckets whose last cut is older than p_older_than, oldest first. The bucket''s digest stays.';
+  '460 (#2363): the resting period of carried detail: clears the carried columns of up to p_batch buckets whose last cut is older than p_older_than, oldest first. The bucket''s digest stays.';
 
--- ── _wh_epoch_buckets: last word 453, copied whole, with the epoch's removed row folded in (465) ──
+-- ── _wh_epoch_buckets: last word 453, copied whole, with the epoch's removed row folded in (460) ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#what-is-digested</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditDigestLaneSqlTests.cs:Reconciliation_AuditTraffic_OriginAndSubscriberAnswerTheSameAsync</tests>
@@ -424,7 +422,7 @@ BEGIN
         AND es.commit_sequence >= v_from AND es.commit_sequence < v_to
         AND __DIGEST_ELIGIBLE__(es)  -- 216 (#1492)
       UNION ALL
-      -- 465 (#2363): what a cut removed from this epoch still counts in its fold.
+      -- 460 (#2363): what a cut removed from this epoch still counts in its fold.
       SELECT r.scope_tenant, r.event_type, r.removed_lo, r.removed_hi, r.removed_count
       FROM __SCHEMA__.wh_digest_epoch_removed r
       WHERE r.origin_service_id = p_lane AND r.epoch_id = p_epoch
@@ -443,7 +441,7 @@ BEGIN
         AND es.origin_commit_sequence >= v_from AND es.origin_commit_sequence < v_to
         AND __DIGEST_ELIGIBLE__(es)  -- 216 (#1492)
       UNION ALL
-      -- 465 (#2363): what a cut removed from this epoch still counts in its fold.
+      -- 460 (#2363): what a cut removed from this epoch still counts in its fold.
       SELECT r.scope_tenant, r.event_type, r.removed_lo, r.removed_hi, r.removed_count
       FROM __SCHEMA__.wh_digest_epoch_removed r
       WHERE r.origin_service_id = p_lane AND r.epoch_id = p_epoch
@@ -453,7 +451,7 @@ BEGIN
 END;
 $$;
 
--- ── compute_type_digests_epoch: last word 453, copied whole, with the open window's removed rows (465) ──
+-- ── compute_type_digests_epoch: last word 453, copied whole, with the open window's removed rows (460) ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>resilience/stream-integrity#unstamped-history</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EpochServedTypeDigestSqlTests.cs:LocalLane_AnUnstampedRow_IsLeftOutOfTheOpenWindowUntilItIsStampedAsync</tests>
@@ -529,7 +527,7 @@ BEGIN
     GROUP BY 1, 2
   ),
   open_removed AS (
-    -- 465 (#2363): what a cut removed above the frontier (or with no position) still counts in the open window.
+    -- 460 (#2363): what a cut removed above the frontier (or with no position) still counts in the open window.
     SELECT r.scope_tenant AS b_tenant, r.event_type AS b_type,
            bit_xor(r.removed_lo) AS lo, bit_xor(r.removed_hi) AS hi, SUM(r.removed_count)::bigint AS cnt
     FROM __SCHEMA__.wh_digest_epoch_removed r
@@ -545,7 +543,7 @@ BEGIN
 END;
 $$;
 
--- ── _wh_heal_stream_digests_statement: last word 453, copied whole, comparing with the live fold plus the carried part (465) ──
+-- ── _wh_heal_stream_digests_statement: last word 453, copied whole, comparing with the live fold plus the carried part (460) ──
 -- The heal statement for a named batch (p_named) or the whole store, with $1 the streams, $2 the settle window and
 -- $3 whether to fill id lanes never computed. One text, planned and run as written.
 -- <docs>resilience/stream-integrity#the-heal-is-linear-in-its-batch</docs>
@@ -584,13 +582,13 @@ BEGIN
              d.carried_lo, d.carried_hi, d.carried_count, d.carried_id_lo, d.carried_id_hi,
              (d.carried_count <> 0 OR d.carried_lo <> 0 OR d.carried_hi <> 0) AS carries
       FROM __SCHEMA__.wh_stream_digests d
-      -- 465 (#2363): a bucket whose carried detail rolled off cannot be recomputed from its events: left alone.
+      -- 460 (#2363): a bucket whose carried detail rolled off cannot be recomputed from its events: left alone.
       WHERE %2$s AND d.updated_at < NOW() - $2 AND d.carried_lo IS NOT NULL
     ),
     -- One comparison of the two sets, as a FULL JOIN: PostgreSQL runs a full join only as a hash or merge join, never
     -- as a nested loop, so its cost stays linear whatever the planner believes about either set (#2337). A bucket on
     -- both sides is compared; one only stored has no events behind it; one only recomputed has no bucket yet.
-    -- 465 (#2363): what the stored digest should be is the live fold plus the carried part, so a bucket a cut carried
+    -- 460 (#2363): what the stored digest should be is the live fold plus the carried part, so a bucket a cut carried
     -- is compared with both, and one whose whole stream was cut (no live events, a carried part) is no phantom.
     expected AS (
       SELECT st.o, st.t, st.ty, st.s, st.digest_lo, st.digest_hi, st.event_count, st.id_lo, st.id_hi,
@@ -659,7 +657,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_heal_stream_digests_statement(BOOLEAN) IS
   '446 (#2337): the statement _wh_heal_stream_digests runs, for a named batch or the whole store: $1 streams, $2 settle '
   'window, $3 fill id lanes. Separate so it can be planned on its own.';
 
--- ── wh_truncate_stream_prefix: last word 453, copied whole: carries instead of subtracting, waits for the seal, writes the floor (465) ──
+-- ── wh_truncate_stream_prefix: last word 453, copied whole: carries instead of subtracting, waits for the seal, writes the floor (460) ──
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
@@ -775,7 +773,7 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 465 (#2363), (5) Seal gate: a cut removes only history this service has sealed (_wh_cut_awaits_seal). Asked
+  -- 460 (#2363), (5) Seal gate: a cut removes only history this service has sealed (_wh_cut_awaits_seal). Asked
   -- for above the seal, it removes nothing and the caller asks again later.
   IF __SCHEMA__._wh_cut_awaits_seal(ARRAY[p_stream_id], p_through_version) THEN
     RETURN QUERY SELECT 'awaiting_seal'::TEXT, 0::BIGINT;
@@ -796,9 +794,9 @@ BEGIN
     ON CONFLICT (event_id) DO NOTHING;
   END IF;
 
-  -- 465 (#2363): the counted events about to go are carried, not subtracted: their contribution moves into the
+  -- 460 (#2363): the counted events about to go are carried, not subtracted: their contribution moves into the
   -- stream bucket's carried part and their epochs' removed rows, so the bucket's digest, every seal and the origin
-  -- generation stay as they were (before 465: unfold, drop emptied buckets, refold the covering epochs, bump).
+  -- generation stay as they were (before 460: unfold, drop emptied buckets, refold the covering epochs, bump).
   PERFORM __SCHEMA__._wh_carry_cut(ARRAY[p_stream_id], p_through_version, NOW());
 
   -- Migration 212 (#1486): snapshots a rewind could restore and then not replay. Kept: a snapshot at or
@@ -879,7 +877,7 @@ BEGIN
   WHERE es.stream_id = p_stream_id AND es.version <= p_through_version;
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
-  -- 465 (#2363): the stream's floor: nothing at or below it is held here any more, so no repair asks below it
+  -- 460 (#2363): the stream's floor: nothing at or below it is held here any more, so no repair asks below it
   -- and none is stored below it. Only moves forward, as the end-of-life cut's record does (297).
   PERFORM __SCHEMA__.wh_set_stream_truncated_through(p_stream_id, p_through_version);
 
@@ -888,7 +886,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_truncate_stream_prefix(UUID, BIGINT, BOOLEAN) IS
-'Gated prefix truncate of one stream through a version (close_stream until 240, #1731). Refuses with debug_skipped, blocked (unprocessed work in the range), no_carry_forward (no event above the truncate point), held (an active destruction hold in the range) or cursor_behind (a cursor in the range whose perspective still owes the boundary event). On truncated it re-anchors cursors in the range onto the boundary event, removes snapshots a rewind could no longer replay from, removes processed work rows and lapsed holds of the truncated events, and keeps their deduplication entries (#1486). At-most-once events (flags & 32), never folded, are never subtracted (214), nor are the digest-exempt types (the audit records, 216), so a prefix of only those refolds nothing and leaves the origin generation alone (263, #1891). 358: records the business time of the stream''s first event, when the prefix holds it, on the stream''s ledger row (first_event_at, #2152). 465 (#2363): carries the removed events'' digest (the bucket''s carried part, the epochs'' removed rows) instead of subtracting, refolding and bumping; returns awaiting_seal when the cut reaches history not sealed here (_wh_cut_awaits_seal); records the stream''s floor (truncated_through_version).';
+'Gated prefix truncate of one stream through a version (close_stream until 240, #1731). Refuses with debug_skipped, blocked (unprocessed work in the range), no_carry_forward (no event above the truncate point), held (an active destruction hold in the range) or cursor_behind (a cursor in the range whose perspective still owes the boundary event). On truncated it re-anchors cursors in the range onto the boundary event, removes snapshots a rewind could no longer replay from, removes processed work rows and lapsed holds of the truncated events, and keeps their deduplication entries (#1486). At-most-once events (flags & 32), never folded, are never subtracted (214), nor are the digest-exempt types (the audit records, 216), so a prefix of only those refolds nothing and leaves the origin generation alone (263, #1891). 358: records the business time of the stream''s first event, when the prefix holds it, on the stream''s ledger row (first_event_at, #2152). 460 (#2363): carries the removed events'' digest (the bucket''s carried part, the epochs'' removed rows) instead of subtracting, refolding and bumping; returns awaiting_seal when the cut reaches history not sealed here (_wh_cut_awaits_seal); records the stream''s floor (truncated_through_version).';
 
 -- ── wh_archive_stream: last word 299, copied whole ──
 -- <docs>fundamentals/events/archive-store#writing-an-archive</docs>
@@ -1051,7 +1049,7 @@ BEGIN
       RETURN;
     END IF;
 
-    -- 465 (#2363): seal gate. A whole-stream archive removes only history this service has sealed; asked for above
+    -- 460 (#2363): seal gate. A whole-stream archive removes only history this service has sealed; asked for above
     -- the seal it moves nothing and the caller asks again later. A prefix waits inside the truncate.
     IF __SCHEMA__._wh_cut_awaits_seal(ARRAY[p_stream_id], NULL) THEN
       RETURN QUERY SELECT 'awaiting_seal'::TEXT, 0::BIGINT, NULL::BIGINT, v_generation;
@@ -1077,8 +1075,8 @@ BEGIN
     ON CONFLICT (stream_id, perspective_name) DO UPDATE SET cursor_row = EXCLUDED.cursor_row, archived_at = NOW();
     DELETE FROM __SCHEMA__.wh_perspective_cursors c WHERE c.stream_id = p_stream_id;
 
-    -- 465 (#2363): every counted event of the stream is carried, not removed from the digest: the stream's buckets keep
-    -- their digest with all of it carried, and the epochs record it as removed. Nothing is refolded (before 465: the
+    -- 460 (#2363): every counted event of the stream is carried, not removed from the digest: the stream's buckets keep
+    -- their digest with all of it carried, and the epochs record it as removed. Nothing is refolded (before 460: the
     -- buckets were deleted, the covering epochs refolded and the generation bumped).
     PERFORM __SCHEMA__._wh_carry_cut(ARRAY[p_stream_id], NULL, NOW());
 
@@ -1098,8 +1096,8 @@ BEGIN
     GET DIAGNOSTICS v_count = ROW_COUNT;
   END IF;
 
-  -- 465 (#2363): an archive carries what it moves, so it rewrites nothing a consumer verified and bumps nothing (before
-  -- 465 every archive bumped the generation). The generation it returns is the current one.
+  -- 460 (#2363): an archive carries what it moves, so it rewrites nothing a consumer verified and bumps nothing (before
+  -- 460 every archive bumped the generation). The generation it returns is the current one.
   SELECT (s.setting_value)::bigint INTO v_generation
   FROM __SCHEMA__.wh_settings s WHERE s.setting_key = 'integrity_origin_generation';
 
@@ -1144,7 +1142,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_archive_stream(UUID, BIGINT, TEXT) IS
-'Archives a stream into wh_event_archive and removes it from the hot store in one transaction (#1736). A prefix (p_through_version given) runs wh_truncate_stream_prefix with all its guards and returns its refusal unchanged; the whole stream (NULL) refuses with blocked or held, parks its cursors in wh_event_archive_cursors and leaves a tombstone (wh_stream_lifecycle state Archived, last_version, archive_locator). Every archive bumps the origin generation. Returns nothing_to_archive when the batch names no hot event, debug_skipped under debug_mode. 271: refuses a prefix through a version below 1 (not_past_first_version) and one that reaches the newest snapshot any perspective holds for the stream (snapshot_in_range), and marks the snapshots an archive covers with how far it reaches (archived_through_version) (#1738). 299: a whole-stream archive drops or archives the stream''s perspective rows by each perspective''s policy (_wh_dispose_archived_stream_rows, #1739). 465 (#2363): carries what it moves instead of deleting the buckets, refolding and bumping, so no archive bumps the generation any more; a whole stream returns awaiting_seal above the seal.';
+'Archives a stream into wh_event_archive and removes it from the hot store in one transaction (#1736). A prefix (p_through_version given) runs wh_truncate_stream_prefix with all its guards and returns its refusal unchanged; the whole stream (NULL) refuses with blocked or held, parks its cursors in wh_event_archive_cursors and leaves a tombstone (wh_stream_lifecycle state Archived, last_version, archive_locator). Every archive bumps the origin generation. Returns nothing_to_archive when the batch names no hot event, debug_skipped under debug_mode. 271: refuses a prefix through a version below 1 (not_past_first_version) and one that reaches the newest snapshot any perspective holds for the stream (snapshot_in_range), and marks the snapshots an archive covers with how far it reaches (archived_through_version) (#1738). 299: a whole-stream archive drops or archives the stream''s perspective rows by each perspective''s policy (_wh_dispose_archived_stream_rows, #1739). 460 (#2363): carries what it moves instead of deleting the buckets, refolding and bumping, so no archive bumps the generation any more; a whole stream returns awaiting_seal above the seal.';
 
 -- ── wh_restore_archived_stream: last word 336, copied whole ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1171,7 +1169,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_archive_stream(UUID, BIGINT, TEXT) IS
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_restore_archived_stream(p_stream_id UUID)
 RETURNS TABLE(restore_status TEXT, events_restored BIGINT, origin_generation BIGINT) AS $$
 DECLARE
-  v_legacy BOOLEAN;   -- 465: restoring a stream archived before cuts carried
+  v_legacy BOOLEAN;   -- 460: restoring a stream archived before cuts carried
   v_generation BIGINT;
   v_ids UUID[];
   v_lanes UUID[];
@@ -1246,8 +1244,8 @@ BEGIN
     AND a.event_data IS NOT NULL AND a.metadata IS NOT NULL
   ON CONFLICT DO NOTHING;
 
-  -- 465 (#2363): the restored events are taken back out of what their archive carried, so every bucket's digest and every
-  -- seal stays as it was. A stream archived before 465 carried nothing: its events fold back in, its covering epochs
+  -- 460 (#2363): the restored events are taken back out of what their archive carried, so every bucket's digest and every
+  -- seal stays as it was. A stream archived before 460 carried nothing: its events fold back in, its covering epochs
   -- refold and the generation is bumped below, as before.
   v_legacy := NOT __SCHEMA__._wh_uncarry_restored(v_ids, NOW());
   IF v_legacy THEN
@@ -1337,9 +1335,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_restore_archived_stream(UUID) IS
-'Puts a stream''s archived events back into the hot store at their original versions and commit positions, refolds their digests and sealed epochs, returns parked cursors, marks the stream Active (266: Sealed when it was sealed, #1733), deletes the archived copy and bumps the origin generation (#1736). Refuses with version_conflict when a hot event holds an archived version; nothing_archived when there is nothing to restore. 271: completes the stream''s restore request, makes its AwaitingRestore dead letters due and clears its snapshots'' archive marks, on a restore and on a nothing_archived of a stream no longer archived (#1738). 299: returns the perspective rows the archive moved out of their tables (#1739). 465 (#2363): takes the restored events back out of what their archive carried; only a stream archived before 465 folds them in, refolds and bumps.';
+'Puts a stream''s archived events back into the hot store at their original versions and commit positions, refolds their digests and sealed epochs, returns parked cursors, marks the stream Active (266: Sealed when it was sealed, #1733), deletes the archived copy and bumps the origin generation (#1736). Refuses with version_conflict when a hot event holds an archived version; nothing_archived when there is nothing to restore. 271: completes the stream''s restore request, makes its AwaitingRestore dead letters due and clears its snapshots'' archive marks, on a restore and on a nothing_archived of a stream no longer archived (#1738). 299: returns the perspective rows the archive moved out of their tables (#1739). 460 (#2363): takes the restored events back out of what their archive carried; only a stream archived before 460 folds them in, refolds and bumps.';
 
--- ── wh_purge_streams: last word 453, copied whole: carries the streams' digests and keeps their buckets (465) ──
+-- ── wh_purge_streams: last word 453, copied whole: carries the streams' digests and keeps their buckets (460) ──
 -- <docs>operations/infrastructure/purging-streams</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Operations/StreamPurgeTests.cs:Purge_RemovesEveryRowOfTheStreams_AndLeavesOthersAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Operations/StreamPurgeTests.cs:DryRun_CountsWhatWouldGo_AndChangesNothingAsync</tests>
@@ -1508,11 +1506,11 @@ BEGIN
   purged_table := 'wh_row_eviction_journal'; purged_rows := v_n; RETURN NEXT;
   v_counts := v_counts || jsonb_build_object(purged_table, v_n);
 
-  -- 465 (#2363): the streams' counted events are carried, not removed from the digest: their buckets stay, carrying all
+  -- 460 (#2363): the streams' counted events are carried, not removed from the digest: their buckets stay, carrying all
   -- of it, and the epochs record it as removed, so the service still answers what it received and the purge reads as
   -- nothing to another service. The buckets are the purged streams' tombstone, with their purge markers below; a
   -- redelivered event of a purged stream is refused at the inbox. A purge is the operator's decision, made in the
-  -- operator's transaction, so it never waits for the seal. Before 465 the buckets were deleted, the covering epochs
+  -- operator's transaction, so it never waits for the seal. Before 460 the buckets were deleted, the covering epochs
   -- refolded and the generation bumped.
   IF NOT p_dry_run THEN
     PERFORM __SCHEMA__._wh_carry_cut(v_ids, NULL, NOW());
@@ -1621,9 +1619,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_purge_streams IS
-'Operator stream purge (#1030): removes every row of the listed streams from this service''s store in the caller''s transaction, marks them purged for every perspective, and audits the batch. p_dry_run counts the same rows and changes nothing. Returns one row per table. 214: the refolded epoch range leaves out at-most-once events (flags & 32), which no epoch holds. 260: and the streams'' wh_stream_lifecycle rows (#1732). 262: and the cursors a whole-stream archive parked (#1736). 465 (#2363): carries the streams'' digests and keeps their buckets (reported as 0 rows), refolding and bumping nothing; never waits for the seal.';
+'Operator stream purge (#1030): removes every row of the listed streams from this service''s store in the caller''s transaction, marks them purged for every perspective, and audits the batch. p_dry_run counts the same rows and changes nothing. Returns one row per table. 214: the refolded epoch range leaves out at-most-once events (flags & 32), which no epoch holds. 260: and the streams'' wh_stream_lifecycle rows (#1732). 262: and the cursors a whole-stream archive parked (#1736). 460 (#2363): carries the streams'' digests and keeps their buckets (reported as 0 rows), refolding and bumping nothing; never waits for the seal.';
 
--- ── store_inbox_messages: last word 454, copied whole, with a redelivered event of a purged stream refused (465) ──
+-- ── store_inbox_messages: last word 454, copied whole, with a redelivered event of a purged stream refused (460) ──
 -- <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredOlderCopy_IsNeverStored_IsRecordedSatisfied_AndNoPerspectiveSeesItAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredCopyNewerThanTheHeldOne_IsRestoredAsBeforeAsync</tests>
@@ -1770,7 +1768,7 @@ BEGIN
     -- the first time, by any path (a live receive out of the origin's order, an integrity or an operator redelivery),
     -- and for a repair child deduplication remembers and the store lost. Newer is the origin's order
     -- (_wh_supersedes); without the origin's sequence on both copies nothing is refused, as before.
-    -- 465 (#2363): a purged stream stays purged. Its digest is carried and its purge marker is its tombstone, so a
+    -- 460 (#2363): a purged stream stays purged. Its digest is carried and its purge marker is its tombstone, so a
     -- redelivered event of it (repair or operator traffic) is refused, settled with the reason, whether deduplication
     -- remembers it or not (the purge removed its deduplication rows).
     IF v_msg.restore_if_missing
@@ -1968,4 +1966,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 465 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error.';
+  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error.';

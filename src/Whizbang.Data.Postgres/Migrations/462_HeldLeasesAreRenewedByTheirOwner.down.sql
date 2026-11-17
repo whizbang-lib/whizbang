@@ -1,53 +1,10 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 475_HeldLeasesAreRenewedByTheirOwner.sql
--- Date: 2026-11-16
--- Description: The claim renews the inbox leases an instance let run out on streams it still owns (#2345).
---
---              An instance holds inbox rows its drain has not reached; while its working set is full their leases run
---              out. Acquisition re-leases expired rows a batch at a time (charging an attempt) and not at all while the
---              working set is full (390), so until it reached them every poll's re-offer walk read each one and passed
---              over it: an expired lease is a time test no key of the held-lanes index can skip.
---
---              Owner decision (2026-11-16, on #2345): work is spread by a deterministic distribution, so the claim
---              renews and re-offers its own expired rows while it still owns the stream under acquisition's rule, with
---              no stealing: the stream's ledger lease is its own and live, or the row's partition falls to its rank
---              and no live peer holds the stream. claim_work (copied from its last word, 390) now, after the inbox
---              acquisition and before the one ledger pass:
---                - reads this instance's pending rows whose lease ran out, oldest lease first, a claim window of them
---                  (eight batches), through idx_inbox_state_lease_order;
---                - keeps those on a stream it still owns, by the rule above;
---                - locks them SKIP LOCKED and renews their lease to the claim's, charging no attempt and recording no
---                  failure (the row waited; it did not fail);
---                - adds their streams to the ledger pass, so a stream whose rows it holds under a live lease is its
---                  stream in the ledger.
---              A row whose stream it no longer owns (the instance count changed and the partition falls to a peer, or a
---              live peer holds the stream) is left to acquisition, as before. The re-offer walk below is unchanged: a
---              renewed row has a live lease, so it lands on it and offers it instead of passing over it.
---
---              The index (built concurrently after the migrations, ConcurrentIndexBuild) is keyed on the lease's
---              expiry and replaces idx_inbox_state_expired, whose leading priority key made every read of the leases
---              that ran out (this renewal, acquisition's two expired lanes and the claim's expired guard) read every
---              held row of the band; keyed on the expiry they read only the leases that ran out, in the order the
---              lanes take them. The table keeps its index count. Until it is built, the old index serves.
---
---              The claim also stops reading the receptor-processing table, which nothing writes: its empty-call probe,
---              its acquisition guard and claim_orphaned_receptor_work call, and its re-offer query each found nothing on
---              every poll they ran. The claim returns no 'receptor' rows (no coordinator read them). 476 removes the
---              table's other readers.
---
---              Number 475: the range this bundle assigned (475 to 479).
---
--- Reversal: reversible (390's definition restores the function; a renewed lease is a lease like any other)
--- Dependencies: 390 (claim_work's last word), 202 (wh_lease_claimed_streams), 317 (the liveness rule)
--- Objects: claim_work
--- Constants: the double-underscore tokens in this file (for example __CATEGORY_OUTBOX__) are substituted from
---            Migrations/constants.txt at apply time (README rule 12).
+-- The reverse of 462_HeldLeasesAreRenewedByTheirOwner.sql (#2345): claim_work as 390 defined it, without the owner's
+-- renewal of its expired inbox leases. A lease already renewed stays renewed; it runs out like any other.
+-- Constants: the double-underscore tokens in this file are substituted from Migrations/constants.txt at apply time.
 
--- ---------------------------------------------------------------------------------------------
--- claim_work: copied from its last word (390), with the owner's renewal of its expired inbox leases.
--- ---------------------------------------------------------------------------------------------
 -- Exactly one overload per framework function (OverloadGuardsCoverEveryDefinitionSiteTests).
 SELECT __SCHEMA__.drop_all_overloads('claim_work');
 
@@ -108,19 +65,6 @@ SELECT __SCHEMA__.drop_all_overloads('claim_work');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Rank_ADirectPeerWithoutItsLock_IsCountedInsideOneBeatAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Rank_APeerInsideItsOwnWindow_IsCountedPastTheOldThirtySecondCutoffAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LivenessRuleReadersSqlTests.cs:Caller_LiveByTheRule_IsNotAskedToReRegisterAsync</tests>
--- <docs>fundamentals/work-coordinator/claim-loop#an-owner-renews-the-leases-it-let-run-out</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_AHeldRowWhoseLeaseRanOut_OnAStreamItsRankOwns_IsRenewedAndOffered_WithoutAnAttemptAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_ARenewedStream_IsLeasedInTheLedgerToTheRenewingInstanceAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_EveryExpiredRowOfARenewedStream_IsRenewedAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_AHeldRowWhoseLeaseIsLive_KeepsItsLeaseAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_PastTheAcquisitionBound_TheRestOfItsExpiredRowsAreRenewed_NotChargedAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_RenewsAtMostTheClaimWindow_OldestLeaseFirstAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_WhenTheInstanceCountChanged_AndThePartitionFallsToALivePeer_LeavesTheRowToAcquisitionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_WhenThePartitionFallsToAPeer_ButTheHoldersLedgerLeaseIsLive_RenewsTheRowAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_WhenALivePeerHoldsTheStream_LeavesTheRowAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnerLeaseRenewalSqlTests.cs:Claim_WithStealingAllowed_TheRenewalStillDoesNotSteal_AcquisitionDoesAsBeforeAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkPlanShapeTests.ExpiredLeases.cs:ClaimWork_HeldRowsWhoseLeaseRanOut_AreRenewed_AndTheNextPollDoesNotPassOverThemAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkPlanShapeTests.ExpiredLeases.cs:ClaimWork_RenewingExpiredLeases_ReadsThemThroughTheLeaseOrderIndexAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   p_instance_id UUID,
   p_service_name TEXT,
@@ -165,7 +109,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   -- is re-offered as before, and every other acquisition is untouched.
   p_acquire_inbox BOOLEAN DEFAULT TRUE
 ) RETURNS TABLE(
-  source VARCHAR(20),           -- __CATEGORY_OUTBOX__ | __CATEGORY_INBOX__ | 'perspective_stream'
+  source VARCHAR(20),           -- __CATEGORY_OUTBOX__ | __CATEGORY_INBOX__ | 'receptor' | __CATEGORY_PERSPECTIVE__
   work_id UUID,
   work_stream_id UUID,
   partition_number INTEGER,
@@ -199,13 +143,14 @@ BEGIN
   -- at each poll, never kept from a poll that found them empty.
   -- Empty-call short-circuit: cheap indexed EXISTS lookups on partial indexes.
   -- Each LIMIT 1 against an existing partial index is sub-millisecond when buffer-cached.
+  -- Note: wh_receptor_processing uses completed_at (not processed_at) for the "is done" semantic.
   -- 115: coalesce-pending rows are not claim-pump work, they wait for the coalesce worker.
 
 
   v_has_any_work := EXISTS (SELECT 1 FROM __SCHEMA__.wh_outbox WHERE processed_at IS NULL AND coalesce_group IS NULL LIMIT 1)
                  OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_inbox_state WHERE processed_at IS NULL LIMIT 1)
-                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NULL LIMIT 1);
-  -- 475: no probe of the receptor-processing table. Nothing writes it, so the probe found nothing on every poll.
+                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NULL LIMIT 1)
+                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_receptor_processing WHERE completed_at IS NULL LIMIT 1);
 
   IF NOT v_has_any_work THEN
     RETURN;  -- empty result set; orphan-claim sub-functions never invoked
@@ -218,6 +163,7 @@ BEGIN
   PERFORM __SCHEMA__.wh_refresh_stale_queue_statistics();
 
   -- Non-empty path: claim outbox work and return it.
+  -- Inbox / receptor / perspective claim + return land in subsequent TDD cycles.
   DECLARE
     v_now TIMESTAMPTZ := NOW();
     v_lease_expiry TIMESTAMPTZ := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
@@ -233,6 +179,7 @@ BEGIN
     -- can be derived from ROW_COUNT instead of four fresh COUNT(*) queries.
     v_outbox_rows INTEGER := 0;
     v_inbox_rows INTEGER := 0;
+    v_receptor_rows INTEGER := 0;
     v_perspective_rows INTEGER := 0;
     -- 171: the outbox acquisition's row bound and what it actually leased, for the full notice.
     v_outbox_bound INTEGER := COALESCE(p_max_outbox_rows, p_max_streams);
@@ -480,75 +427,6 @@ BEGIN
       ) a;
     END IF;
 
-    -- 475 (#2345): this instance's inbox rows whose lease ran out, on streams it still owns, are renewed and offered
-    -- again by the walk below; before, the walk passed over each of them on every poll until acquisition re-leased it.
-    -- Ownership is acquisition's rule without stealing: the stream's ledger lease is this instance's and live, or the
-    -- row's partition falls to its rank and no live peer holds the stream (the instance count changing moves the
-    -- partition, and a stream a peer drains is the peer's). Anything else is left to acquisition, as before. No
-    -- attempt is charged and no failure recorded: the row waited, it did not fail. Read oldest lease first through
-    -- idx_inbox_state_lease_order, a claim window at a time, so the cost follows the batch; locked SKIP LOCKED, so
-    -- the renewal never waits; and the streams join the one ledger pass below, so a stream whose rows this instance
-    -- holds under a live lease is its stream in the ledger.
-    IF EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_inbox_state
-      WHERE lease_expiry < v_now
-        AND processed_at IS NULL
-        AND instance_id IS NOT NULL
-        AND instance_id = p_instance_id
-      LIMIT 1
-    ) THEN
-      WITH expired AS (
-        SELECT i.ctid AS row_ctid, i.stream_id, i.partition_number
-        FROM __SCHEMA__.wh_inbox_state i
-        WHERE i.lease_expiry < v_now
-          AND i.processed_at IS NULL
-          AND i.instance_id IS NOT NULL
-          AND i.instance_id = p_instance_id
-        ORDER BY i.lease_expiry, i.received_at, i.message_id
-        LIMIT GREATEST(p_max_streams, COALESCE(p_max_rows, 0), 1) * 8
-      ),
-      owned AS (
-        SELECT e.row_ctid
-        FROM expired e
-        WHERE EXISTS (
-                SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-                WHERE ast.stream_id = e.stream_id
-                  AND ast.assigned_instance_id = p_instance_id
-                  AND ast.lease_expiry > v_now)
-           OR ((e.partition_number IS NULL OR (e.partition_number % v_count) = v_rank)
-               AND NOT EXISTS (
-                 SELECT 1
-                 FROM __SCHEMA__.wh_active_streams ast
-                 JOIN __SCHEMA__.wh_service_instances si ON si.instance_id = ast.assigned_instance_id
-                 WHERE ast.stream_id = e.stream_id
-                   AND ast.assigned_instance_id <> p_instance_id
-                   AND ast.lease_expiry > v_now
-                   AND __SCHEMA__.wh_instance_liveness(si, si.instance_id IN (SELECT h.instance_id FROM __SCHEMA__.wh_direct_alive_lock_holders() h))))
-      ),
-      -- By row address, so the lock and the write each reach exactly the rows the window read (a TID scan), never
-      -- the table. A row another session changed since this statement's snapshot no longer matches its address
-      -- under the lock and is skipped, as SKIP LOCKED skips one it holds: the next poll looks again.
-      locked AS (
-        SELECT i.ctid AS row_ctid
-        FROM __SCHEMA__.wh_inbox_state i
-        WHERE i.ctid = ANY (ARRAY(SELECT o.row_ctid FROM owned o))
-          AND i.instance_id = p_instance_id
-          AND i.processed_at IS NULL
-          AND i.lease_expiry < v_now
-        FOR UPDATE OF i SKIP LOCKED
-      ),
-      renewed AS (
-        UPDATE __SCHEMA__.wh_inbox_state i
-        SET lease_expiry = v_lease_expiry
-        WHERE i.ctid = ANY (ARRAY(SELECT l.row_ctid FROM locked l))
-        RETURNING i.stream_id AS r_stream_id, i.partition_number AS r_partition_number
-      )
-      SELECT v_ledger_streams || COALESCE(array_agg(r.r_stream_id), '{}'),
-             v_ledger_partitions || COALESCE(array_agg(r.r_partition_number), '{}')
-      INTO v_ledger_streams, v_ledger_partitions
-      FROM renewed r;
-    END IF;
-
     -- Claim orphaned perspective events, same predicate shape on
     -- wh_perspective_events.
     -- 158: two index probes; see the outbox guard above.
@@ -581,6 +459,19 @@ BEGIN
         COALESCE(p_max_rows, GREATEST(COALESCE(p_max_perspective_streams, p_max_streams), 1) * 8),
         TRUE
       ) a;
+    END IF;
+
+    -- Claim orphaned receptor work, wh_receptor_processing uses completed_at
+    -- (not processed_at) for the "is done" semantic.
+    IF EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_receptor_processing
+      WHERE completed_at IS NULL
+        AND (instance_id IS NULL OR lease_expiry < v_now)
+      LIMIT 1
+    ) THEN
+      PERFORM __SCHEMA__.claim_orphaned_receptor_work(
+        p_instance_id, v_rank, v_count, v_lease_expiry, v_now
+      );
     END IF;
 
     -- 202 (#1256): the stream ledger for every stream the acquisitions above leased work on, in ONE stream_id
@@ -892,6 +783,37 @@ BEGIN
     -- v0.661: the category's row count feeds the drain-mode hint at the end.
     v_inbox_rows := GREATEST(p_max_streams, 0) - v_remaining;
 
+    -- Return receptor work owned by this instance.
+    -- Receptor work uses `id` as the work_id (not message_id) and `completed_at` as the "done" marker.
+    -- Most fields are NULL, receptors carry their state in dedicated columns the worker reads
+    -- directly via the work_id; the row here just signals "this receptor needs attention".
+    RETURN QUERY
+    SELECT
+      'receptor'::VARCHAR(20)       AS source,
+      rp.id                         AS work_id,
+      rp.stream_id                  AS work_stream_id,
+      rp.partition_number,
+      NULL::VARCHAR(200)            AS destination,
+      NULL::VARCHAR(500)            AS message_type,
+      NULL::VARCHAR(500)            AS envelope_type,
+      NULL::TEXT                    AS message_data,
+      NULL::JSONB                   AS metadata,
+      rp.status::INTEGER,
+      rp.attempts,
+      false                         AS is_newly_stored,
+      false                         AS is_orphaned,
+      NULL::VARCHAR(200)            AS perspective_name,
+      NULL::INTEGER                 AS priority,
+      NULL::TIMESTAMPTZ             AS received_at
+    FROM __SCHEMA__.wh_receptor_processing rp
+    WHERE rp.instance_id = p_instance_id
+      AND rp.lease_expiry > v_now
+      AND rp.completed_at IS NULL
+    LIMIT p_max_streams;
+
+    -- v0.661: see outbox block above.
+    GET DIAGNOSTICS v_receptor_rows = ROW_COUNT;
+
     -- Return perspective work as one row per distinct stream owned by this instance, most urgent
     -- bucket first, oldest event first within a bucket, a batch of streams.
     -- 158: the poll is priced by the batch, never by the holdings. The streams an instance holds are
@@ -994,7 +916,7 @@ BEGIN
       SELECT k.kind
       FROM (VALUES (c_source_outbox), (c_source_inbox), (__CATEGORY_PERSPECTIVE__)) AS k(kind)
     WHERE (k.kind = c_source_outbox AND v_outbox_rows > 0)
-       OR (k.kind = c_source_inbox AND v_inbox_rows > 0)
+       OR (k.kind = c_source_inbox AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
        -- 133: the perspective watermark must reflect DRAINABLE progress, not merely a
        -- claimed Stored-but-fence-held row. claim_work returns a perspective_stream row for
        -- any leased unprocessed perspective_event, but a row whose underlying event is still
@@ -1061,6 +983,7 @@ BEGIN
     -- LIMIT. ROW_COUNT after each RETURN QUERY gives us that for free.
     IF v_outbox_rows = p_max_streams
        OR v_inbox_rows = p_max_streams
+       OR v_receptor_rows = p_max_streams
        OR v_perspective_rows = p_max_streams THEN
       RAISE NOTICE 'whizbang.has_more=true';
     END IF;
@@ -1084,8 +1007,8 @@ END;
 -- inside the command timeout with the empty-table plans. Planning per call costs milliseconds.
 $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
 COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, INTEGER, BOOLEAN, INTEGER, BOOLEAN, INTERVAL, INTEGER, INTERVAL, INTEGER, INTEGER, BIGINT, BIGINT, BOOLEAN, TEXT, BOOLEAN) IS
-  'The claim poll: acquires orphaned and unowned work for an instance (outbox, inbox, perspective events) and '
-  'returns what it holds. 196: never writes the caller''s registration. 202: the acquisitions defer the '
+  'The claim poll: acquires orphaned and unowned work for an instance (outbox, inbox, perspective events, receptor '
+  'work) and returns what it holds. 196: never writes the caller''s registration. 202: the acquisitions defer the '
   'stream ledger, and it is written once for every stream they leased (wh_lease_claimed_streams), in one stream_id '
   'pass after the last queue row is locked. 203: a cached partition assignment (epoch, revision) that is still '
   'published and unexpired supplies the rank and member count; otherwise the claim ranks itself and raises '
@@ -1098,7 +1021,4 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, IN
   'a held event the store pass left unstored, which the drain cannot fetch. 367: a re-offer walk runs only for a lane '
   'the instance holds a pending row in, read for every lane of both walks in one statement before them. 390: '
   'p_acquire_inbox = FALSE leases no new inbox row on the poll (the caller''s inbox working set is at its byte '
-  'budget); held inbox is re-offered as before. 475: the inbox rows this instance holds whose lease ran out, on '
-  'streams it still owns (its live ledger lease, or its rank''s partition with no live peer holding the stream), are '
-  'renewed without an attempt, a claim window at a time, and offered again; their streams join the ledger pass. The '
-  'receptor-processing table, which nothing writes, is no longer read.';
+  'budget); held inbox is re-offered as before.';

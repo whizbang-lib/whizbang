@@ -1320,7 +1320,7 @@ END $$;
       // take its table's lock to find it already there.
       await dbContext.Database.ExecuteSqlRawAsync(
         Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(coreInfrastructureSchema), cancellationToken);
-      // 477: wh_receptor_processing is created only until its drop has recorded the hash it has now, so migration 031,
+      // 464: wh_receptor_processing is created only until its drop has recorded the hash it has now, so migration 031,
       // which indexes it, finds it whenever it runs, and no pass after the drop creates it again.
       if (Whizbang.Data.Postgres.RetiredReceptorTable.FindDropMigration(GetMigrationScripts().Select(m => m.Name)) is { } drop) {
         await dbContext.Database.ExecuteSqlRawAsync(Whizbang.Data.Postgres.RetiredReceptorTable.BootstrapSql(
@@ -1709,7 +1709,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <summary>The ledger, as the reversal recorder names it (#2122).</summary>
   private const string _ledgerName = @"__QUOTED_SCHEMA__.wh_schema_migrations";
 
-  /// <summary>The context's schema, quoted, as the retired-table bootstrap writes it (477).</summary>
+  /// <summary>The context's schema, quoted, as the retired-table bootstrap writes it (464).</summary>
   private const string _quotedSchema = @"__QUOTED_SCHEMA__";
 
   /// <summary>The placeholder the library's reverse scripts carry, spelled so the generator leaves it alone.</summary>
