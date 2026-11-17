@@ -28,7 +28,13 @@ namespace Whizbang.Archive.AzureBlob;
 /// moves the batch into <c>wh_event_archive</c> and leaves the tombstone; the store uploads the staged rows as objects,
 /// writes one manifest row per object, removes the staged rows and only then commits. A failure anywhere before the
 /// commit rolls the whole archive back, so the stream stays fully hot; an object already uploaded is named by no
-/// manifest row, and a retry writes the same bytes under the same name (the name carries the content hash).
+/// manifest row, and a retry finds the same bytes under the same name (the name carries the content hash).
+/// </para>
+/// <para>
+/// #2367: an object is written once and never updated, and the store never purges, so a database and its storage can be
+/// restored to the same point in time. Every object write is create-only; the one delete is the plain blob delete, so
+/// with soft delete on a deleted object stays recoverable for the account's retention period. For storage without soft
+/// delete, <see cref="AzureBlobArchiveOptions.DeleteAfter"/> delays every queued deletion and turns on the orphan sweep.
 /// </para>
 /// <para>
 /// A read, a restore and a delete go through the manifest only, never a listing of the container, and every object is
@@ -48,10 +54,31 @@ namespace Whizbang.Archive.AzureBlob;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
+/// <docs>operations/deployment/restoring-an-environment-with-an-archive#why-it-is-consistent</docs>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreImmutabilityTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
 public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <summary>The store name written in this store's locators.</summary>
   public const string STORE_NAME = "azure-blob";
+
+  /// <summary>
+  /// The name of the object that claims a container for one database (#2367): written create-only by the first write,
+  /// holding the database's <c>archive_database_id</c>, and never updated. Only the orphan sweep depends on it.
+  /// </summary>
+  public const string OWNER_MARKER_NAME = "whizbang-archive-owner";
+
+  /// <summary>Why an orphan sweep refused to run: the <c>reason</c> tag of the refusal metric and the log.</summary>
+  public static class SweepRefusal {
+    /// <summary>The database never wrote to the configured location, so it names nothing there.</summary>
+    public const string UNKNOWN_LOCATION = "unknown_location";
+
+    /// <summary>The container's owner marker names another database.</summary>
+    public const string FOREIGN_MARKER = "foreign_marker";
+
+    /// <summary>The container has no owner marker this database could claim, or its marker could not be read.</summary>
+    public const string MARKER_UNCLAIMABLE = "marker_unclaimable";
+  }
 
   // The emit chains', the direct append's and the table store's per-stream key (262), so nothing is appended to a
   // stream while its archive moves, and a restore or delete never interleaves with a write of the same stream.
@@ -70,7 +97,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private readonly string _prefix;
   private readonly ILogger _logger;
   private readonly bool _verifyLocation;
+  private readonly TimeSpan? _deleteAfter;
+  private readonly TimeProvider _clock;
   private int _containerReady;
+  private long _lastSweepTicks = long.MinValue;
 
   // Reads, restores and deletes look the configured location up and never create it; a write creates it.
   private const bool CREATE = true;
@@ -81,14 +111,18 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <param name="container">The container the objects are written to.</param>
   /// <param name="options">The compression quality, the chunk size and the access tier.</param>
   /// <param name="logger">Logs each outcome, and each object a restore or delete could not remove.</param>
-  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, or the access
-  /// tier is not Hot, Cool or Cold.</exception>
+  /// <param name="timeProvider">The clock a deletion delay and the orphan sweep measure age on; the system clock when
+  /// <see langword="null"/>.</param>
+  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, the access
+  /// tier is not Hot, Cool or Cold, or the deletion delay is not above zero.</exception>
   /// <exception cref="ArgumentException">The connection name is empty or contains <c>;</c> or <c>=</c>.</exception>
   public AzureBlobArchiveStore(
       PostgresArchiveConnection database,
       BlobContainerClient container,
       AzureBlobArchiveOptions options,
-      ILogger<AzureBlobArchiveStore>? logger = null) {
+      ILogger<AzureBlobArchiveStore>? logger = null,
+      TimeProvider? timeProvider = null,
+      ArchiveSweepMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(database);
     ArgumentNullException.ThrowIfNull(container);
     ArgumentNullException.ThrowIfNull(options);
@@ -101,6 +135,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     }
     if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
       throw new ArgumentOutOfRangeException(nameof(options), options.AccessTier, refusal);
+    }
+    if (AzureBlobArchiveOptions.RefusalForDeleteAfter(options.DeleteAfter) is { } delayRefusal) {
+      throw new ArgumentOutOfRangeException(nameof(options), options.DeleteAfter, delayRefusal);
     }
     if (!AzureBlobArchiveOptions.IsLogicalName(options.ConnectionName)) {
       // Never echoed: a value that looks like a connection string may be one.
@@ -115,6 +152,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
     _verifyLocation = options.VerifyLocation;
+    _deleteAfter = options.DeleteAfter;
+    _clock = timeProvider ?? TimeProvider.System;
+    Metrics = metrics;
     ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
   }
 
@@ -126,6 +166,12 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <docs>fundamentals/events/archive-store#archive-locations</docs>
   /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs</tests>
   public ArchiveLocation ConfiguredLocation { get; }
+
+  /// <summary>The clock a deletion delay and the orphan sweep measure age on.</summary>
+  internal TimeProvider Clock => _clock;
+
+  /// <summary>Where the sweep counts its refusals, when the host registers <c>WhizbangMetrics</c>.</summary>
+  internal ArchiveSweepMetrics? Metrics { get; }
 
   /// <summary>
   /// Acknowledges that the objects of a location now live where this store is configured (a database copied or
@@ -193,7 +239,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     await _lockStreamAsync(connection, transaction, batch.StreamId, cancellationToken).ConfigureAwait(false);
     var recorded = await _manifestAsync(connection, transaction, batch.StreamId, fromVersion: 0, cancellationToken).ConfigureAwait(false);
     await _checkLocationAsync(connection, transaction, batch.StreamId, "write", recorded, cancellationToken).ConfigureAwait(false);
-    await _ensureContainerAsync(cancellationToken).ConfigureAwait(false);
+    await _ensureContainerAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
     var moved = await _moveIntoStagingAsync(connection, transaction, batch, cancellationToken).ConfigureAwait(false);
     if (!moved.Archived) {
@@ -287,11 +333,56 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   // ── Writing ──────────────────────────────────────────────────────────────────────────────────────────
 
-  private async Task _ensureContainerAsync(CancellationToken cancellationToken) {
+  // The container, created when it does not exist, and claimed for this database by its owner marker (#2367). A write
+  // never depends on the marker: a container another database claimed, or one that cannot be claimed, is logged and the
+  // write goes on; only the orphan sweep is refused.
+  private async Task _ensureContainerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken) {
     if (Volatile.Read(ref _containerReady) == 0) {
       _ = await _container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+      var databaseId = await _databaseIdAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+      if (await _claimAsync(databaseId, cancellationToken).ConfigureAwait(false) is { } refusal) {
+        LogContainerNotClaimed(_logger, ConfiguredLocation.Container, refusal);
+      }
       Volatile.Write(ref _containerReady, 1);
     }
+  }
+
+  // ── The owner marker (#2367) ─────────────────────────────────────────────────────────────────────────
+
+  // The id migration 480 gave this database. A copy or a restore of the database carries it; a database migrated on its
+  // own has its own.
+  private async Task<string> _databaseIdAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand(
+      $"SELECT setting_value FROM {_prefix}wh_settings WHERE setting_key = 'archive_database_id'", connection, transaction);
+    return (string)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+  }
+
+  // Claims the container for the database (a create-only marker holding its id), or reads the marker already there and
+  // compares. Null when the container is this database's; otherwise why it cannot be shown to be. Never updates a marker.
+  private async Task<string?> _claimAsync(string databaseId, CancellationToken cancellationToken) {
+    var marker = _container.GetBlobClient(OWNER_MARKER_NAME);
+    try {
+      _ = await marker.UploadAsync(BinaryData.FromString(databaseId),
+        new BlobUploadOptions { Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All } }, cancellationToken).ConfigureAwait(false);
+      return null;
+    } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
+      // Claimed already: by this database (an earlier write or process), or by another.
+    } catch (RequestFailedException ex) {
+      LogMarkerUnavailable(_logger, ex, ConfiguredLocation.Container);
+      return SweepRefusal.MARKER_UNCLAIMABLE;
+    }
+    try {
+      var owner = (await marker.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToString();
+      return string.Equals(owner, databaseId, StringComparison.Ordinal) ? null : SweepRefusal.FOREIGN_MARKER;
+    } catch (RequestFailedException ex) {
+      LogMarkerUnavailable(_logger, ex, ConfiguredLocation.Container);
+      return SweepRefusal.MARKER_UNCLAIMABLE;
+    }
+  }
+
+  private void _refuseSweep(string reason) {
+    LogSweepRefused(_logger, ConfiguredLocation.Container, reason);
+    Metrics?.SweepsRefused.Add(1, new KeyValuePair<string, object?>("reason", reason));
   }
 
   // wh_archive_stream (262): the guards, the copy into wh_event_archive, the truncate, the generation bump and the
@@ -341,16 +432,31 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     var bytes = ArchiveChunk.Encode(chunk, ArchiveCompression.Brotli, _quality);
     var sha256 = ArchiveChunk.Sha256(bytes);
     var name = ArchiveChunk.ObjectName(streamId, chunk[0].Version, chunk[^1].Version, sha256, ArchiveCompression.Brotli);
-    // Overwrites an object of the same name: the name carries the content hash, so it can only be these same bytes,
-    // left by an earlier attempt whose transaction never committed.
+    var row = new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, name, bytes.LongLength, sha256, LocationId: null, Recorded: null);
+    // #2367: create only. An archived object is written once and never updated, so a database and its storage can be
+    // restored to the same point in time: the write is refused by storage when any object already holds the name.
     var upload = new BlobUploadOptions {
       // The service checks the request's bytes against this hash, so an object is stored exactly as it was sent.
       TransferValidation = new UploadTransferValidationOptions { ChecksumAlgorithm = StorageChecksumAlgorithm.MD5 },
-      // #1897: the configured tier, or none (the account's default).
+      // #1897: the configured tier, or none (the account's default). Set here, at creation, and never changed after.
       AccessTier = _accessTier,
+      Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
     };
-    _ = await _container.GetBlobClient(name).UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
-    return new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, name, bytes.LongLength, sha256, LocationId: null, Recorded: null);
+    var blob = _container.GetBlobClient(name);
+    try {
+      _ = await blob.UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
+    } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
+      // The name carries the content hash, so the object already there is these bytes, left by an earlier attempt whose
+      // transaction never committed, or by the same events archived before a restore whose delete has not run. It is
+      // kept as it is and checked against the bytes this write encoded (the hash covers the length): anything else under
+      // the name refuses the write.
+      var existing = (await blob.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
+      var existingSha256 = ArchiveChunk.Sha256(existing);
+      if (!string.Equals(existingSha256, sha256, StringComparison.Ordinal)) {
+        throw ArchiveObjectCorruptedException.ForExistingObject(streamId, name, bytes.LongLength, existing.LongLength, sha256, existingSha256);
+      }
+    }
+    return row;
   }
 
   // One row per object: its location and its path from the stream (353), never a locator naming a container.
@@ -499,6 +605,135 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     return _drainAsync(streamId: null, maxObjects, cancellationToken);
   }
 
+  /// <summary>How often the maintenance step sweeps the container for orphaned objects, when a deletion delay is set.</summary>
+  public static readonly TimeSpan OrphanSweepInterval = TimeSpan.FromDays(1);
+
+  /// <summary>
+  /// Deletes, when <see cref="AzureBlobArchiveOptions.DeleteAfter"/> is set, every object in the configured container
+  /// that no manifest row and no queued deletion names and that storage created at least that long ago: an object
+  /// written after the point a database was restored to, or one whose write never committed. Off (no delay), it does
+  /// nothing and never reaches storage.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many objects were confirmed deleted.</returns>
+  /// <docs>operations/deployment/restoring-an-environment-with-an-archive#the-orphan-sweep</docs>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+  public async Task<int> SweepOrphanedObjectsAsync(CancellationToken cancellationToken = default) {
+    if (_deleteAfter is not { } delay) {
+      return 0;
+    }
+    string databaseId;
+    await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
+      // A database that never wrote to the configured location (a copy not yet repointed) names nothing in it, so a sweep
+      // would delete every object there: it deletes nothing.
+      if (await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false) is null) {
+        _refuseSweep(SweepRefusal.UNKNOWN_LOCATION);
+        return 0;
+      }
+      databaseId = await _databaseIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false);
+    }
+    // One database per container: a container another database owns, or one this database cannot show it owns, holds
+    // objects this database does not name and must not delete.
+    if (await _claimAsync(databaseId, cancellationToken).ConfigureAwait(false) is { } refusal) {
+      _refuseSweep(refusal);
+      return 0;
+    }
+    var cutoff = _clock.GetUtcNow() - delay;
+    var deleted = 0;
+    await foreach (var page in _container.GetBlobsAsync(cancellationToken: cancellationToken).AsPages().ConfigureAwait(false)) {
+      var old = new List<(string Name, Guid Stream)>();
+      foreach (var item in page.Values) {
+        if (item.Properties.CreatedOn.GetValueOrDefault(DateTimeOffset.MaxValue) <= cutoff && StreamOf(item.Name) is { } stream) {
+          old.Add((item.Name, stream));
+        }
+      }
+      foreach (var (name, stream) in await _unnamedAsync(old, cancellationToken).ConfigureAwait(false)) {
+        if (await _deleteOrphanAsync(name, stream, cancellationToken).ConfigureAwait(false)) {
+          deleted++;
+        }
+      }
+    }
+    LogSweep(_logger, deleted, delay);
+    return deleted;
+  }
+
+  // The maintenance step's sweep: at most once per OrphanSweepInterval in this process, and only with a delay set.
+  internal Task<int> SweepOrphanedObjectsIfDueAsync(CancellationToken cancellationToken) {
+    if (_deleteAfter is null) {
+      return Task.FromResult(0);
+    }
+    var now = _clock.GetUtcNow().UtcTicks;
+    var last = Interlocked.Read(ref _lastSweepTicks);
+    if (last != long.MinValue && now - last < OrphanSweepInterval.Ticks) {
+      return Task.FromResult(0);
+    }
+    Interlocked.Exchange(ref _lastSweepTicks, now);
+    return SweepOrphanedObjectsAsync(cancellationToken);
+  }
+
+  // The stream an object belongs to, when its name is one this store writes ({stream}/{first}-{last}-{sha256}.jsonl.br):
+  // anything else in the container is never touched.
+  internal static Guid? StreamOf(string name) {
+    var slash = name.IndexOf('/', StringComparison.Ordinal);
+    return slash > 0 && name.IndexOf('/', slash + 1) < 0 && ArchiveChunk.TryReadCompression(name, out _)
+      && Guid.TryParseExact(name.AsSpan(0, slash), "D", out var stream)
+      ? stream
+      : null;
+  }
+
+  // The names among these that no manifest row and no queued deletion names, in any location.
+  private async Task<List<(string Name, Guid Stream)>> _unnamedAsync(List<(string Name, Guid Stream)> old, CancellationToken cancellationToken) {
+    var unnamed = new List<(string Name, Guid Stream)>();
+    if (old.Count == 0) {
+      return unnamed;
+    }
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand(
+      "SELECT c.name, c.stream_id FROM unnest($1::text[], $2::uuid[]) AS c(name, stream_id) " +
+      $"WHERE NOT EXISTS (SELECT 1 FROM {_prefix}wh_archive_manifest m WHERE m.stream_id = c.stream_id AND m.relative_path = c.name) " +
+      $"AND NOT EXISTS (SELECT 1 FROM {_prefix}wh_archive_object_deletions q WHERE q.stream_id = c.stream_id AND q.relative_path = c.name)",
+      connection);
+    command.Parameters.AddWithValue(old.ConvertAll(o => o.Name).ToArray());
+    command.Parameters.AddWithValue(old.ConvertAll(o => o.Stream).ToArray());
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      unnamed.Add((reader.GetString(0), reader.GetGuid(1)));
+    }
+    return unnamed;
+  }
+
+  // One orphan, under its stream's lock and only while still unnamed: a write holds that lock from before its upload until
+  // its manifest rows commit. A busy lock, or a name a write took meanwhile, leaves the object for a later sweep.
+  private async Task<bool> _deleteOrphanAsync(string name, Guid streamId, CancellationToken cancellationToken) {
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    await using (var claim = new NpgsqlCommand(
+        "SELECT pg_try_advisory_xact_lock(hashtext($2)) " +
+        $"AND NOT EXISTS (SELECT 1 FROM {_prefix}wh_archive_manifest WHERE stream_id = $3 AND relative_path = $1) " +
+        $"AND NOT EXISTS (SELECT 1 FROM {_prefix}wh_archive_object_deletions WHERE stream_id = $3 AND relative_path = $1)",
+        connection, transaction)) {
+      claim.Parameters.AddWithValue(name);
+      claim.Parameters.AddWithValue(STREAM_LOCK_PREFIX + streamId.ToString("D"));
+      claim.Parameters.AddWithValue(streamId);
+      if (!(bool)(await claim.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!) {
+        return false;
+      }
+    }
+    try {
+      _ = await _deleteObjectAsync(name, cancellationToken).ConfigureAwait(false);
+    } catch (RequestFailedException ex) {
+      LogOrphanNotDeleted(_logger, ex, name, streamId);
+      return false;
+    }
+    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    return true;
+  }
+
+  // #2367: the store's one delete. The ordinary blob delete: never a permanent delete, never snapshots or versions, so with
+  // soft delete on the object stays recoverable for the account's retention period. An object already gone counts.
+  private Task<Response<bool>> _deleteObjectAsync(string relativePath, CancellationToken cancellationToken) =>
+    _container.GetBlobClient(relativePath).DeleteIfExistsAsync(cancellationToken: cancellationToken);
+
   private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
     var due = new List<(string RelativePath, Guid StreamId, long Location)>();
     await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
@@ -515,11 +750,15 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       await using var command = new NpgsqlCommand(
         $"SELECT relative_path, stream_id, location_id FROM {_prefix}wh_archive_object_deletions " +
         "WHERE location_id = COALESCE($3, location_id) AND relative_path IS NOT NULL AND next_attempt_at <= NOW() " +
-        "AND ($1::uuid IS NULL OR stream_id = $1) ORDER BY next_attempt_at, relative_path LIMIT $2",
+        "AND ($1::uuid IS NULL OR stream_id = $1) AND ($4::timestamptz IS NULL OR queued_at <= $4) " +
+        "ORDER BY next_attempt_at, relative_path LIMIT $2",
         connection);
       command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid, Value = (object?)streamId ?? DBNull.Value });
       command.Parameters.AddWithValue(maxObjects);
       command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bigint, Value = (object?)only ?? DBNull.Value });
+      // #2367: with a deletion delay, only deletions queued at least that long ago are due.
+      object dueBefore = _deleteAfter is { } delay ? _clock.GetUtcNow() - delay : DBNull.Value;
+      command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.TimestampTz, Value = dueBefore });
       await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         due.Add((reader.GetString(0), reader.GetGuid(1), reader.GetInt64(2)));
@@ -555,8 +794,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     var confirmed = false;
     string? error = null;
     try {
-      // DeleteIfExists: an object that is already gone counts as deleted.
-      _ = await _container.GetBlobClient(relativePath).DeleteIfExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+      _ = await _deleteObjectAsync(relativePath, cancellationToken).ConfigureAwait(false);
       confirmed = true;
       sql = $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE relative_path = $1 AND location_id = $2";
     } catch (RequestFailedException ex) {
@@ -681,6 +919,26 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Archive object {RelativePath} of stream {StreamId} could not be deleted; it stays queued and is retried after a backoff")]
   static partial void LogObjectNotDeleted(ILogger logger, Exception exception, string relativePath, Guid streamId);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Archive orphan sweep: {Deleted} object(s) no manifest row or queued deletion names, older than {DeleteAfter}, deleted")]
+  static partial void LogSweep(ILogger logger, int deleted, TimeSpan deleteAfter);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Orphaned archive object {RelativePath} of stream {StreamId} could not be deleted; the next sweep tries again")]
+  static partial void LogOrphanNotDeleted(ILogger logger, Exception exception, string relativePath, Guid streamId);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Archive orphan sweep refused for container {Container} ({Reason}): nothing was deleted. The sweep runs only for the database the container's owner marker names; give each database its own container")]
+  static partial void LogSweepRefused(ILogger logger, string container, string reason);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Archive container {Container} is not claimed for this database ({Reason}); archive writes go on, and its orphan sweep is refused. A foreign_marker means another database claimed it first, and its own sweep cannot see this database's objects: give each database its own container")]
+  static partial void LogContainerNotClaimed(ILogger logger, string container, string reason);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "The owner marker of archive container {Container} could not be written or read")]
+  static partial void LogMarkerUnavailable(ILogger logger, Exception exception, string container);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Archive location {FromLocationId} repointed by an operator to {Configured}; its records now name location {LocationId}")]
