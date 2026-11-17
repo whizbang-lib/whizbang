@@ -57,7 +57,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
     # runner (16 minutes observed); the artifact upload follows it.
-    timeout-minutes: 35
+    timeout-minutes: 50
 
     steps:
       - name: Checkout
@@ -88,7 +88,9 @@ jobs:
           VERSION: ${{ inputs.version }}
           RUN_ANALYZERS: ${{ inputs.run-analyzers }}
         run: |
-          BUILD_ARGS=(--no-restore --configuration Release)
+          # One build node and no -mt: the libraries build net10.0 and net11.0, and with two nodes the hosted runner ran
+          # out of memory and was shut down mid-build in the merge queue (#2135), as the other full builds were.
+          BUILD_ARGS=(--no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
           # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
           if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi

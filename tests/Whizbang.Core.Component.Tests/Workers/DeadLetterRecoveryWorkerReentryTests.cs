@@ -106,6 +106,32 @@ public class DeadLetterRecoveryWorkerReentryTests {
     await Assert.That(worker.TotalRecovered).IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// The other two ways a stored envelope cannot re-enter on this build hold the row the same way: an envelope that
+  /// names another message (InvalidOperationException) and a host whose serializer options describe no envelope at
+  /// all (NotSupportedException).
+  /// </summary>
+  [Test]
+  [Arguments("another-message")]
+  [Arguments("no-envelope-metadata")]
+  public async Task AStoredEnvelopeThatCannotReEnter_IsHeldForReview_NotRetriedAsync(string why) {
+    var fake = new ReadingFakeStore();
+    var entry = _entry(DeadLetterSourceTable.BROKER);
+    var wire = why == "another-message" ? _wire((Guid)TrackedGuid.New()) : _wire(entry.SourceId);
+    fake.Redelivery = new DeadLetterRedelivery(entry.DeadLetterId, DeadLetterSourceTable.BROKER, entry.SourceId, EVENT_TYPE, wire);
+    fake.Batches.Enqueue([entry]);
+    var options = why == "no-envelope-metadata"
+      ? new JsonSerializerOptions { TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine() }
+      : null;
+
+    var worker = await _scanOnceAsync(fake, registerCoordinator: true, partitionCount: null, jsonOptions: options);
+
+    await Assert.That(fake.HoldCalls).IsEquivalentTo([entry.DeadLetterId]);
+    await Assert.That(fake.Stored).IsEmpty();
+    await Assert.That(fake.ScheduleCalls).IsEmpty();
+    await Assert.That(worker.TotalHeld).IsEqualTo(1L);
+  }
+
   [Test]
   public async Task WithoutAWorkCoordinator_TheAttemptIsScheduledAgainAsync() {
     var fake = new ReadingFakeStore();
@@ -144,8 +170,12 @@ public class DeadLetterRecoveryWorkerReentryTests {
     }, options.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
   }
 
-  private static async Task<DeadLetterRecoveryWorker> _scanOnceAsync(FakeStore fake, bool registerCoordinator, int? partitionCount) {
+  private static async Task<DeadLetterRecoveryWorker> _scanOnceAsync(
+      FakeStore fake, bool registerCoordinator, int? partitionCount, JsonSerializerOptions? jsonOptions = null) {
     var services = new ServiceCollection();
+    if (jsonOptions is not null) {
+      services.AddSingleton(jsonOptions);
+    }
     services.AddSingleton<IDeadLetterRecoveryService>(fake);
     if (registerCoordinator) {
       services.AddSingleton<IWorkCoordinator>(fake);

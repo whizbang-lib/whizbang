@@ -920,6 +920,7 @@ Describe 'Which class each ci.yml job takes' {
     $script:Expected = [ordered]@{
       'build'                  = 'compile'
       'analyzers'              = 'compile'
+      'compile-net10'          = 'compile'
       'format'                 = 'any-os'
       'noop-rebuild'           = 'any-os'
       'unit-tests'             = 'any-os'
@@ -940,6 +941,7 @@ Describe 'Which class each ci.yml job takes' {
   It 'routes <Job> through the <Class> class' -ForEach @(
     @{ Job = 'build'; Class = 'compile' }
     @{ Job = 'analyzers'; Class = 'compile' }
+    @{ Job = 'compile-net10'; Class = 'compile' }
     @{ Job = 'format'; Class = 'any-os' }
     @{ Job = 'noop-rebuild'; Class = 'any-os' }
     @{ Job = 'unit-tests'; Class = 'any-os' }

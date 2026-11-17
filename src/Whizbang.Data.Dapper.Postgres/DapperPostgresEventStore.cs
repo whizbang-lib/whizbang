@@ -507,6 +507,7 @@ public partial class DapperPostgresEventStore(
   /// <docs>fundamentals/events/archive-store#read-through</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_DecodesAStoredRow_AndSkipsATypeTheReaderDoesNotFoldAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowThatCannotBeRead_IsSkipped_AndTheRestAreKeptAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowWhoseMessageIdIsNotAGuid_IsSkipped_AndTheRestAreKeptAsync</tests>
   public override List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
     ArgumentNullException.ThrowIfNull(streamEvents);
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);

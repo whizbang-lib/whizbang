@@ -20,6 +20,10 @@
     <!-- receptors for one command (dispatcher fan-out, competing-consumer scenarios) inside a -->
     <!-- single compilation that is not one service. -->
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
+    <!-- .NET 11 marks IStartupValidator obsolete in favor of IAsyncStartupValidator, which .NET 10 lacks.
+         Tests run the options validation the host runs at startup through IStartupValidator so the same
+         code compiles for net10.0 and net11.0 (#2135); move to IAsyncStartupValidator when net10.0 is dropped. -->
+    <NoWarn>$(NoWarn);SYSLIB0066</NoWarn>
   </PropertyGroup>
 
   <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): test code that cannot verify anything is a
