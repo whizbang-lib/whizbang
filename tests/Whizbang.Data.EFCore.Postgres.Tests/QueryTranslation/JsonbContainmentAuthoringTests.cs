@@ -397,6 +397,7 @@ public sealed class JsonbContainmentAuthoringTests : IDisposable {
   [Arguments("list")]
   [Arguments("static Enumerable.Contains")]
   [Arguments("guid values")]
+  [Arguments("projected after paging")]
   public async Task SetMembership_ReachesTheIndexAsync(string spelling) {
     var array = new[] { "a", "b" };
     var list = new List<string> { "a", "b" };
@@ -408,6 +409,8 @@ public sealed class JsonbContainmentAuthoringTests : IDisposable {
       "list" => rows.Where(x => list.Contains(x.Data.Code)).ToQueryString(),
       "static Enumerable.Contains" => rows.Where(x => array.Contains(x.Data.Code)).ToQueryString(),
       "guid values" => rows.Where(x => ids.Contains(x.Data.Owner)).ToQueryString(),
+      // A filter after paging stays on the projected model rather than moving beneath the projection.
+      "projected after paging" => rows.Select(r => r.Data).Skip(0).Where(m => list.Contains(m.Code)).ToQueryString(),
       _ => throw new InvalidOperationException(spelling),
     };
 
