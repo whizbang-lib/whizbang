@@ -4,7 +4,6 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Whizbang.Core.Workers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -12,7 +11,8 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Rules;
+using Whizbang.Core.Workers;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Tests.Messaging;
 

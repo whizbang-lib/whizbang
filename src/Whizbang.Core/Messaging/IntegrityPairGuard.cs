@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Rules;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Messaging;
 

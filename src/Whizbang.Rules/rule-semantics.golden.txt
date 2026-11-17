@@ -1,0 +1,5 @@
+# The rules library's version track (#2343): one line per released rules version, "<version> <semantics hash>".
+# RuleSemanticsGoldenTests computes the hash of what the rules mean today (both versions, the SQL eligibility rule's
+# text, and the canonical form and hashes of a reference type and rule set) and fails unless it equals the last line,
+# whose version rules-version.txt names. A rule change therefore appends a line with a new version; never edit a line.
+1.0.0 e388833f53e6501ae1d4487697ad751b979a41bb60ea77aa478fe8e3486f1c0b

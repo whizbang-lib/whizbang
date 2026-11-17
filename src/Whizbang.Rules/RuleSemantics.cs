@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-namespace Whizbang.Core.Rules;
+namespace Whizbang.Rules;
 
 /// <summary>
 /// The versions of the eligibility rules that are not declared per type (#2362): what a digest means, and the SQL

@@ -6,8 +6,8 @@ using TUnit.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Rules;
 using Whizbang.Core.SystemEvents;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Tests.Messaging;
 

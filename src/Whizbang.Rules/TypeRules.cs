@@ -3,7 +3,7 @@
 
 using System.Globalization;
 
-namespace Whizbang.Core.Rules;
+namespace Whizbang.Rules;
 
 /// <summary>
 /// The declared eligibility rules of one event type (#2362): the fields that decide whether an event of the type should

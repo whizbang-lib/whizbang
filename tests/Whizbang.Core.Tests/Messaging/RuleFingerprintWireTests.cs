@@ -4,8 +4,8 @@
 using System.Text.Json;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Rules;
 using Whizbang.Core.Serialization;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Tests.Messaging;
 

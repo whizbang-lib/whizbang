@@ -5,8 +5,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Rules;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Rules;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

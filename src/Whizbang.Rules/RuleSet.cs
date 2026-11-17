@@ -4,7 +4,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace Whizbang.Core.Rules;
+namespace Whizbang.Rules;
 
 /// <summary>
 /// The eligibility rules one service applies to a set of event types (#2362): the rule-semantics version, the SQL

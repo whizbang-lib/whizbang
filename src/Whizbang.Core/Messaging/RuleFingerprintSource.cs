@@ -4,8 +4,8 @@
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Lifecycle;
-using Whizbang.Core.Rules;
 using Whizbang.Core.SystemEvents;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Messaging;
 

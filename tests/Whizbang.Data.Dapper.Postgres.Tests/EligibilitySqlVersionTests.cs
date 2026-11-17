@@ -6,8 +6,8 @@ using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Rules;
 using Whizbang.Data.Postgres;
+using Whizbang.Rules;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -24,11 +24,11 @@ public class EligibilitySqlVersionTests {
     [1] = "c3b2cbadd898f6460cd55ce17963be5c8b9331e4bc3f73d8d926da651d79eb5c",
   };
 
-  private static readonly string[] _ruleTokens = ["__DIGEST_ELIGIBLE__", "__INTEGRITY_COUNTED__", "__DIGEST_EXEMPT_TYPES__"];
-
   [Test]
   public async Task TheEligibilityConstants_MatchTheGoldenHashOfTheirVersionAsync() {
-    var text = string.Concat(_ruleTokens.Select(t => $"{t}={MigrationConstants.Tokens[t]}\n"));
+    var text = $"__DIGEST_ELIGIBLE__={EligibilitySql.DIGEST_ELIGIBLE}\n"
+      + $"__INTEGRITY_COUNTED__={EligibilitySql.INTEGRITY_COUNTED}\n"
+      + $"__DIGEST_EXEMPT_TYPES__={EligibilitySql.DIGEST_EXEMPT_TYPES}\n";
     var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
     await Assert.That(_goldenByVersion.ContainsKey(RuleSemantics.ELIGIBILITY_SQL_VERSION)).IsTrue()
@@ -36,5 +36,17 @@ public class EligibilitySqlVersionTests {
     await Assert.That(hash).IsEqualTo(_goldenByVersion[RuleSemantics.ELIGIBILITY_SQL_VERSION])
       .Because("the SQL eligibility rule changed: bump RuleSemantics.ELIGIBILITY_SQL_VERSION and record the new hash, "
         + "so a mixed pair halts instead of comparing digests folded two ways");
+  }
+
+  /// <summary>
+  /// #2343: the rules library holds the SQL rule's source; the migrations read the same text from constants.txt, which
+  /// every substitution path (the runtime provider, the generated DbContext, the migration lint) reads. The two must
+  /// say the same, so neither can change alone.
+  /// </summary>
+  [Test]
+  public async Task TheMigrationConstants_AreTheRulesLibrarysSourceAsync() {
+    await Assert.That(MigrationConstants.Tokens["__DIGEST_ELIGIBLE__"]).IsEqualTo(EligibilitySql.DIGEST_ELIGIBLE);
+    await Assert.That(MigrationConstants.Tokens["__INTEGRITY_COUNTED__"]).IsEqualTo(EligibilitySql.INTEGRITY_COUNTED);
+    await Assert.That(MigrationConstants.Tokens["__DIGEST_EXEMPT_TYPES__"]).IsEqualTo(EligibilitySql.DIGEST_EXEMPT_TYPES);
   }
 }

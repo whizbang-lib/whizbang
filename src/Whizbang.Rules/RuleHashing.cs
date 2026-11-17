@@ -4,7 +4,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Whizbang.Core.Rules;
+namespace Whizbang.Rules;
 
 /// <summary>The hash the rule fingerprint uses (#2362): SHA-256 of the UTF-8 text, as 16 lowercase hex digits.</summary>
 /// <docs>resilience/stream-integrity#rule-fingerprint</docs>

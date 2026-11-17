@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Whizbang.Core.Rules;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Messaging;
 

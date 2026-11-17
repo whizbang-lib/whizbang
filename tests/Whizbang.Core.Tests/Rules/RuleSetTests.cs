@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using TUnit.Core;
-using Whizbang.Core.Rules;
+using Whizbang.Rules;
 
 namespace Whizbang.Core.Tests.Rules;
 
