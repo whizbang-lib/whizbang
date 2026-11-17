@@ -89,8 +89,10 @@ jobs:
           RUN_ANALYZERS: ${{ inputs.run-analyzers }}
         run: |
           # One build node and no -mt: the libraries build net10.0 and net11.0, and with two nodes the hosted runner ran
-          # out of memory and was shut down mid-build in the merge queue (#2135), as the other full builds were.
-          BUILD_ARGS=(--no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false)
+          # out of memory and was shut down mid-build in the merge queue (#2135), as the other full builds were. No shared
+          # compiler server either (UseSharedCompilation=false): it lives for the whole build and keeps every project's
+          # references cached, and with it a one-node build was still shut down. Each project's compiler exits with it.
+          BUILD_ARGS=(--no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
           # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
           if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi

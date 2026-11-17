@@ -203,7 +203,7 @@ jobs:
         run: dotnet restore Whizbang.Analysis.slnx
 
       - name: Build (analyzed)
-        run: dotnet build Whizbang.Analysis.slnx --no-restore --configuration Release -maxcpucount:1 -nodeReuse:false -mt:false -p:WhizbangReleaseTargetFrameworks=net11.0
+        run: dotnet build Whizbang.Analysis.slnx --no-restore --configuration Release -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false -mt:false -p:WhizbangReleaseTargetFrameworks=net11.0
 
       # The scanner's state for the End step: .sonarqube (its configuration, the per-project file lists and
       # the analyzers' reports), the scanner version, and this checkout's path, which the state's files name
