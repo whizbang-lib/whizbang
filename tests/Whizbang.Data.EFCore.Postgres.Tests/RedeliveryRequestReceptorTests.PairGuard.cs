@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -99,8 +100,10 @@ public partial class RedeliveryRequestReceptorTests {
 
     await Assert.That(coordinator.Requests).IsEmpty().Because("nothing is selected for a halted pair");
     await Assert.That(transport.Published).IsEmpty();
-    await Assert.That(ignored).IsEquivalentTo([(1L, (string?)"pair_halted")])
-      .Because("the counter is passive, so it reports its running total when observed: one refusal, for a halted pair");
+    await Assert.That(ignored.Single(m => m.Reason == "pair_halted").Value).IsEqualTo(1L)
+      .Because("the passive counter's pair_halted series, observed after the refusal, counts the one refusal");
+    await Assert.That(ignored.Where(m => m.Reason != "pair_halted").All(m => m.Value == 0)).IsTrue()
+      .Because("no other series counted it");
 
     await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
     await Assert.That(coordinator.Requests).IsNotEmpty().Because("positive control: the same request with matching rules is served");
