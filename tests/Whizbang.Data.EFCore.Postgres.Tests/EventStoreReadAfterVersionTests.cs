@@ -63,6 +63,13 @@ public class EventStoreReadAfterVersionTests : EFCoreTestBase {
     var (one, two) = ((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
     var oneIds = await _appendHighestIdFirstAsync(store, one, offsetSeconds: 0);
     var twoIds = await _appendHighestIdFirstAsync(store, two, offsetSeconds: 10);
+    // A type the batch does not ask for, above every anchor: read past, never returned.
+    await store.AppendAsync(two, new MessageEnvelope<OrderShippedEvent> {
+      MessageId = MessageId.From(Guid.CreateVersion7(_minted.AddSeconds(30))),
+      Payload = new OrderShippedEvent { OrderId = two, TrackingNumber = "t" },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = [],
+    });
 
     // Stream one asked after version 2 and after version 1: the earliest by version is version 1, whose id is the highest.
     var read = await store.ReadPolymorphicManyAsync([(one, oneIds[1]), (one, oneIds[0]), (two, twoIds[1])], _types);

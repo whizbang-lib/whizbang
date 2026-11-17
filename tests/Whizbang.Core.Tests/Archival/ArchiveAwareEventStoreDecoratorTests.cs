@@ -339,7 +339,23 @@ public class ArchiveAwareEventStoreDecoratorTests {
 
     await Assert.That(read.Select(_n)).IsEquivalentTo([3, 4, 5, 6])
       .Because("the snapshot holds everything through version 2; versions 3 and 4 are archived, 5 and 6 hot");
-    await Assert.That(hot.LastFromEventId).IsEqualTo(snapshotEvent);
+    await Assert.That(hot.LastFromEventId).IsNull()
+      .Because("the hot events are placed by the snapshot's version: the hot store may no longer hold its event (#2379)");
+  }
+
+  /// <summary>
+  /// The hot events are placed after the snapshot by its version, never its id (#2379): the hot store may still hold the
+  /// snapshot's event and those before it, and their ids say nothing about where they sit in the stream.
+  /// </summary>
+  [Test]
+  public async Task ThroughArchive_HotEventsAtOrBelowTheSnapshotsVersion_AreNotReadAsync() {
+    var hot = new HotStore();
+    hot.Add(_stream, 1, 4);
+    var store = new ArchiveAwareEventStoreDecorator(hot, new ArchiveFake(), readThrough: false);
+
+    var read = await _listAsync(store.ReadPolymorphicThroughArchiveAsync(_stream, hot.Hot[1].MessageId.Value, afterVersion: 2, _types));
+
+    await Assert.That(read.Select(_n)).IsEquivalentTo([3, 4]);
   }
 
   [Test]
