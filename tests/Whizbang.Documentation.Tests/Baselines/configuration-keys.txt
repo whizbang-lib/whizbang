@@ -179,6 +179,7 @@ Whizbang:Offloads:AzureBlob:*:ContainerName
 Whizbang:Offloads:AzureBlob:*:DefaultAccessTier
 Whizbang:Offloads:AzureBlob:*:MaxDownloadBytes
 Whizbang:OperationalRetention:BatchSize
+Whizbang:OperationalRetention:CarriedDetail
 Whizbang:OperationalRetention:Default
 Whizbang:OperationalRetention:Deliveries
 Whizbang:OperationalRetention:Enabled
@@ -376,6 +377,7 @@ Whizbang:StreamIntegrity:RepairProgressWindowMinutes
 Whizbang:StreamIntegrity:RepairReceptorLookback
 Whizbang:StreamIntegrity:RepairRequestBackoffSeconds
 Whizbang:StreamIntegrity:RepairTopic
+Whizbang:StreamIntegrity:Sealing:CutWaitsForConsumers
 Whizbang:StreamIntegrity:Sealing:Enabled
 Whizbang:StreamIntegrity:Sealing:EpochWidth
 Whizbang:StreamIntegrity:Sealing:MaxClosuresPerCycle

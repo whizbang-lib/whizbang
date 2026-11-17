@@ -168,6 +168,13 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var windowCapped = false;
     var nothingSettledAbove = false;
 
+    if (message.Windowed && message.Level == ManifestLevel.Types && !message.Recheck) {
+      // #2363: a type-level audit asks from the consumer's seal, so the ask reports how far that consumer has verified
+      // this service's history; a cut of local history may wait for it (Sealing:CutWaitsForConsumers).
+      await coordinator.RecordConsumerSealAsync(message.RequesterService, message.SinceSequence, cancellationToken)
+        .ConfigureAwait(false);
+    }
+
     if (message.Windowed) {
       // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
       // cost is the open window, not the store. A null result means the engine cannot window —

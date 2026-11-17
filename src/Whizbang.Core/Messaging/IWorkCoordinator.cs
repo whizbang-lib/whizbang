@@ -2967,6 +2967,51 @@ public interface IWorkCoordinator {
     CloseDigestEpochsAsync(settleSeconds, maxEpochs, cancellationToken);
 
   /// <summary>
+  /// #2363: whether a cut (a truncate, close the books, an archive, an end-of-life cut) waits until the history it removes
+  /// is sealed here, and, for this service's own history, until every consumer reported having verified it. Written to
+  /// the store's <c>integrity_cut_waits_for_seal</c> and <c>integrity_cut_waits_for_consumers</c> settings, only when
+  /// they change. The maintenance cycle writes them from <see cref="SealingOptions.Enabled"/> and
+  /// <see cref="SealingOptions.CutWaitsForConsumers"/>, so turning sealing off never leaves a cut waiting for a seal that
+  /// cannot come. Default: nothing to write, for engines whose cuts carry no digest.
+  /// </summary>
+  /// <param name="waitForSeal">A cut waits for this service's seal.</param>
+  /// <param name="waitForConsumers">A cut of this service's own history also waits for every consumer's reported seal.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the settings are written.</returns>
+  /// <docs>resilience/stream-integrity#a-cut-waits-for-the-seal</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestCoordinatorTests.cs:Coordinator_SetCutGatesAsync_WritesBothSettings_AndAChangeAsync</tests>
+  Task SetCutGatesAsync(bool waitForSeal, bool waitForConsumers, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2363: records the seal a consumer reported with a windowed manifest request (its <c>SinceSequence</c>): how far it
+  /// has verified this service's history. Read by the cut gate when <see cref="SealingOptions.CutWaitsForConsumers"/> is
+  /// on. Default: nothing to record.
+  /// </summary>
+  /// <param name="requesterService">The consumer service that asked.</param>
+  /// <param name="sealedThrough">The exclusive end of what it has verified.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the seal is recorded.</returns>
+  /// <docs>resilience/stream-integrity#a-cut-waits-for-the-seal</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestCoordinatorTests.cs:Coordinator_RecordConsumerSealAsync_RecordsWhatTheConsumerVerifiedAsync</tests>
+  Task RecordConsumerSealAsync(string requesterService, long sealedThrough, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2363: the resting period of carried detail. Clears the per-stream carried part of up to
+  /// <paramref name="batchSize"/> digest buckets whose last cut is older than <paramref name="olderThan"/>; the bucket's
+  /// digest stays, and the epochs keep what was removed. Default: nothing to clear.
+  /// </summary>
+  /// <param name="olderThan">The <see cref="Whizbang.Core.Workers.OperationalCategory.CarriedDetail"/> resting period.</param>
+  /// <param name="batchSize">Buckets cleared at most.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The buckets cleared.</returns>
+  /// <docs>resilience/stream-integrity#carried-detail-rests-then-rolls-off</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestCoordinatorTests.cs:Coordinator_RollOffCarriedDetailAsync_ClearsOnlyDetailPastItsRestAsync</tests>
+  Task<int> RollOffCarriedDetailAsync(TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) =>
+    Task.FromResult(0);
+
+  /// <summary>
   /// The lane's SETTLED maximum sequence — the watermark ceiling for negotiated-scope answers
   /// (#80-B). An answer must never claim coverage of an unsettled sequence, or the asker could
   /// seal over an in-flight delivery. Null = unsupported (engines without sequence lanes) or
