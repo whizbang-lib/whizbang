@@ -39,15 +39,20 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
 
   /// <summary>A source over the catalog and the stream lifecycle settings.</summary>
   /// <param name="catalog">The message-type catalog.</param>
-  /// <param name="lifecycle">The stream lifecycle settings, or null when none are configured.</param>
-  public CatalogRuleFingerprintSource(IMessageTypeCatalog catalog, IOptions<StreamLifecycleOptions>? lifecycle = null) {
+  /// <param name="lifecycle">
+  /// The stream lifecycle settings. Required: an end-of-life action is part of a type's rules, so a source built without
+  /// them would fingerprint every type as having none and halt a pair whose peer read its settings (WHIZ501).
+  /// </param>
+  public CatalogRuleFingerprintSource(IMessageTypeCatalog catalog, IOptions<StreamLifecycleOptions> lifecycle) {
     ArgumentNullException.ThrowIfNull(catalog);
-    _hashes = new(() => RulesOf(catalog, lifecycle?.Value).ToDictionary(r => r.Key, r => r.Value.Hash(), StringComparer.Ordinal),
+    ArgumentNullException.ThrowIfNull(lifecycle);
+    _hashes = new(() => RulesOf(catalog, lifecycle.Value).ToDictionary(r => r.Key, r => r.Value.Hash(), StringComparer.Ordinal),
       LazyThreadSafetyMode.ExecutionAndPublication);
   }
 
   /// <summary>The source for a host without a catalog: it knows no type, so it shares none and compares only versions.</summary>
-  public static IRuleFingerprintSource Empty { get; } = new CatalogRuleFingerprintSource(NullMessageTypeCatalog.Instance);
+  public static IRuleFingerprintSource Empty { get; } =
+    new CatalogRuleFingerprintSource(NullMessageTypeCatalog.Instance, Options.Create(new StreamLifecycleOptions()));
 
   /// <inheritdoc />
   public RuleSet RulesFor(IEnumerable<string>? eventTypes) {

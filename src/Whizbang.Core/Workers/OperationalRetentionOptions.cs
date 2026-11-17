@@ -130,6 +130,7 @@ public sealed class OperationalRetentionOptions {
   /// <param name="category">The category.</param>
   /// <returns>The resting period.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs:TheDefaultAndACategoryOverride_BindFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs:ACategoryThisReleaseDoesNotDefine_RestsForTheDefault_NotAnotherCategorysOverrideAsync</tests>
   public TimeSpan RetentionFor(OperationalCategory category) => _override(category) ?? Default;
 
   /// <summary>Every category with its resting period.</summary>
@@ -151,7 +152,9 @@ public sealed class OperationalRetentionOptions {
     OperationalCategory.RecheckRuns => RecheckRuns,
     OperationalCategory.Queues => Queues,
     OperationalCategory.CarriedDetail => CarriedDetail,
-    _ => MaintenanceRuns,
+    OperationalCategory.MaintenanceRuns => MaintenanceRuns,
+    // A value this release does not define has no override of its own, so it rests for the default.
+    _ => null,
   };
 }
 

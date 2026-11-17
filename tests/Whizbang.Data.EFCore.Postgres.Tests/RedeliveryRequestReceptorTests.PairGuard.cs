@@ -95,10 +95,12 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = _otherRules, RequesterService = "damaged-svc", Topic = "inbox" });
+    listener.RecordObservableInstruments();
 
     await Assert.That(coordinator.Requests).IsEmpty().Because("nothing is selected for a halted pair");
     await Assert.That(transport.Published).IsEmpty();
-    await Assert.That(ignored).IsEquivalentTo([(1L, (string?)"pair_halted")]);
+    await Assert.That(ignored).IsEquivalentTo([(1L, (string?)"pair_halted")])
+      .Because("the counter is passive, so it reports its running total when observed: one refusal, for a halted pair");
 
     await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
     await Assert.That(coordinator.Requests).IsNotEmpty().Because("positive control: the same request with matching rules is served");

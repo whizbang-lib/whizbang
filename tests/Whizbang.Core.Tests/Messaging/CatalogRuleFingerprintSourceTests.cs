@@ -82,7 +82,7 @@ public class CatalogRuleFingerprintSourceTests {
     await Assert.That(withPolicy.RulesFor([_placed]).TypeHashes[_placed]).IsNotEqualTo(without.RulesFor([_placed]).TypeHashes[_placed]);
     await Assert.That(CatalogRuleFingerprintSource.Empty.RulesFor([_placed]).TypeHashes).IsEmpty();
     await Assert.That(() => new CatalogRuleFingerprintSource(null!, Options.Create(lifecycle))).Throws<ArgumentNullException>();
-    await Assert.That(() => new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), null)).Throws<ArgumentNullException>()
+    await Assert.That(() => new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), null!)).Throws<ArgumentNullException>()
       .Because("the lifecycle settings are a required dependency: a construction site that drops them fails loudly");
     await Assert.That(() => CatalogRuleFingerprintSource.RulesOf(null!, null)).Throws<ArgumentNullException>();
     await Assert.That(RuleTypeName.Of("global::Contracts.Placed, Contracts ")).IsEqualTo("Contracts.Placed");

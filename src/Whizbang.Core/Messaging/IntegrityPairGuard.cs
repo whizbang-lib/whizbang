@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -195,6 +196,7 @@ public sealed partial class IntegrityPairGuard {
             + "semantics {LocalSemantics}, eligibility SQL {LocalSql}, fingerprint {LocalFingerprint}; the peer runs "
             + "{PeerSemantics}, {PeerSql}, {PeerFingerprint}. Types whose rules differ: [{DifferingTypes}]. Nothing is "
             + "compared, repaired or redelivered for the pair until its rules match; it resumes on its own")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method: the parameters are the structured log template's placeholders, both sides' versions and fingerprints, and grouping them would lose them as separate structured fields.")]
   static partial void LogPairHalted(ILogger logger, string peer, IntegrityPairSide side, string reason,
     int localSemantics, int localSql, string localFingerprint, int? peerSemantics, int? peerSql, string? peerFingerprint,
     string differingTypes);

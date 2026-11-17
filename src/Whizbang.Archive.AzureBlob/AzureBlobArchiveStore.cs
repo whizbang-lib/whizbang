@@ -643,7 +643,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     await foreach (var page in _container.GetBlobsAsync(cancellationToken: cancellationToken).AsPages().ConfigureAwait(false)) {
       var old = new List<(string Name, Guid Stream)>();
       foreach (var item in page.Values) {
-        if (item.Properties.CreatedOn.GetValueOrDefault(DateTimeOffset.MaxValue) <= cutoff && StreamOf(item.Name) is { } stream) {
+        if (IsPastDelay(item.Properties.CreatedOn, cutoff) && StreamOf(item.Name) is { } stream) {
           old.Add((item.Name, stream));
         }
       }
@@ -670,6 +670,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     Interlocked.Exchange(ref _lastSweepTicks, now);
     return SweepOrphanedObjectsAsync(cancellationToken);
   }
+
+  // Whether storage created an object at or before the cutoff. An object storage reports no creation time for is never old
+  // enough: the sweep cannot show it outlived the delay, so it keeps it.
+  internal static bool IsPastDelay(DateTimeOffset? createdOn, DateTimeOffset cutoff) => (createdOn ?? DateTimeOffset.MaxValue) <= cutoff;
 
   // The stream an object belongs to, when its name is one this store writes ({stream}/{first}-{last}-{sha256}.jsonl.br):
   // anything else in the container is never touched.
