@@ -275,11 +275,6 @@ DECLARE
   v_table TEXT;
   v_n BIGINT;
   v_counts JSONB := '{}'::jsonb;
-  v_lanes UUID[];
-  v_mins BIGINT[];
-  v_maxs BIGINT[];
-  v_i INTEGER;
-  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
 BEGIN
   -- The empty stream id is "no stream": purging it would reach every streamless row.
   IF __EMPTY_UUID__::uuid = ANY(p_stream_ids) THEN
@@ -426,32 +421,17 @@ BEGIN
   purged_table := 'wh_row_eviction_journal'; purged_rows := v_n; RETURN NEXT;
   v_counts := v_counts || jsonb_build_object(purged_table, v_n);
 
-  -- The sealed epochs covering the fold-relevant events refold AFTER the delete, and their ranges are
-  -- unknowable once the rows are gone (the same capture close_stream makes).
+  -- 465 (#2363): the streams' counted events are carried, not removed from the digest: their buckets stay, carrying all
+  -- of it, and the epochs record it as removed, so the service still answers what it received and the purge reads as
+  -- nothing to another service. The buckets are the purged streams' tombstone, with their purge markers below; a
+  -- redelivered event of a purged stream is refused at the inbox. A purge is the operator's decision, made in the
+  -- operator's transaction, so it never waits for the seal. Before 465 the buckets were deleted, the covering epochs
+  -- refolded and the generation bumped.
   IF NOT p_dry_run THEN
-    SELECT array_agg(t.lane), array_agg(t.mn), array_agg(t.mx)
-    INTO v_lanes, v_mins, v_maxs
-    FROM (
-      SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS lane,
-             MIN(CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS mn,
-             MAX(CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS mx
-      FROM __SCHEMA__.wh_event_store es
-      WHERE es.stream_id = ANY(v_ids)
-        AND __DIGEST_ELIGIBLE__(es)
-      GROUP BY 1
-    ) t
-    WHERE t.mn IS NOT NULL;
+    PERFORM __SCHEMA__._wh_carry_cut(v_ids, NULL, NOW());
   END IF;
-
-  -- Every event of the streams goes, so every digest bucket and ledger row of the streams goes with them.
-  IF p_dry_run THEN
-    SELECT count(*) INTO v_n FROM __SCHEMA__.wh_stream_digests sd WHERE sd.stream_id = ANY(v_ids);
-  ELSE
-    DELETE FROM __SCHEMA__.wh_stream_digests sd WHERE sd.stream_id = ANY(v_ids);
-    GET DIAGNOSTICS v_n = ROW_COUNT;
-  END IF;
-  purged_table := 'wh_stream_digests'; purged_rows := v_n; RETURN NEXT;
-  v_counts := v_counts || jsonb_build_object(purged_table, v_n);
+  purged_table := 'wh_stream_digests'; purged_rows := 0; RETURN NEXT;
+  v_counts := v_counts || jsonb_build_object(purged_table, 0);
 
   IF p_dry_run THEN
     SELECT count(*) INTO v_n FROM __SCHEMA__.wh_integrity_ledger il WHERE il.stream_id = ANY(v_ids);
@@ -537,15 +517,6 @@ BEGIN
   purged_table := 'wh_stream_lifecycle'; purged_rows := v_n; RETURN NEXT;
   v_counts := v_counts || jsonb_build_object(purged_table, v_n);
 
-  -- Refold what the delete touched, then bump the generation ONCE so consumers reset their seals and
-  -- re-verify instead of alarming on a deliberate change.
-  IF v_lanes IS NOT NULL THEN
-    FOR v_i IN 1 .. array_length(v_lanes, 1) LOOP
-      PERFORM __SCHEMA__._wh_refold_epochs_covering(v_lanes[v_i], v_mins[v_i], v_maxs[v_i]);
-    END LOOP;
-    PERFORM __SCHEMA__._wh_bump_origin_generation();
-  END IF;
-
   -- A purged stream stays purged: mark it for every perspective, so a later event is skipped, not applied.
   v_n := COALESCE(array_length(v_ids, 1), 0);
   IF NOT p_dry_run THEN
@@ -561,9 +532,8 @@ BEGIN
   purged_table := 'wh_stream_purge_markers'; purged_rows := v_n; RETURN NEXT;
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION __SCHEMA__.wh_purge_streams IS
-'Operator stream purge (#1030): removes every row of the listed streams from this service''s store in the caller''s transaction, marks them purged for every perspective, and audits the batch. p_dry_run counts the same rows and changes nothing. Returns one row per table. 214: the refolded epoch range leaves out at-most-once events (flags & 32), which no epoch holds. 260: and the streams'' wh_stream_lifecycle rows (#1732). 262: and the cursors a whole-stream archive parked (#1736).';
+'Operator stream purge (#1030): removes every row of the listed streams from this service''s store in the caller''s transaction, marks them purged for every perspective, and audits the batch. p_dry_run counts the same rows and changes nothing. Returns one row per table. 214: the refolded epoch range leaves out at-most-once events (flags & 32), which no epoch holds. 260: and the streams'' wh_stream_lifecycle rows (#1732). 262: and the cursors a whole-stream archive parked (#1736). 465 (#2363): carries the streams'' digests and keeps their buckets (reported as 0 rows), refolding and bumping nothing; never waits for the seal.';
 
 
 -- <docs>fundamentals/perspectives/rewind#system-events</docs>
@@ -656,14 +626,9 @@ DECLARE
   v_candidates UUID[];
   v_streams UUID[];
   v_victims UUID[];
-  v_lanes UUID[];
-  v_mins BIGINT[];
-  v_maxs BIGINT[];
-  v_i INTEGER;
   v_deleted BIGINT := 0;
   c_task CONSTANT TEXT := 'reap_superseded_events';
   c_flag_superseding CONSTANT INTEGER := 128;  -- EventFlags.Superseding (1 << 7)
-  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
   c_flags_state_based CONSTANT INTEGER := 24;  -- EventFlags.Ephemeral (1 << 3) | EventFlags.Compacted (1 << 4)
 BEGIN
   -- debug_mode keeps every event for forensics, as every other reaper does.
@@ -740,31 +705,10 @@ BEGIN
       WHERE h.event_id = es.event_id AND h.hold_until > NOW());
 
   IF v_victims IS NOT NULL THEN
-    -- The sequence range of the fold-relevant victims, per lane, for the epoch refold after the delete (as 263).
-    SELECT array_agg(t.lane), array_agg(t.mn), array_agg(t.mx)
-    INTO v_lanes, v_mins, v_maxs
-    FROM (
-      SELECT COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid) AS lane,
-             MIN(CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS mn,
-             MAX(CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence ELSE es.origin_commit_sequence END) AS mx
-      FROM __SCHEMA__.wh_event_store es
-      WHERE es.event_id = ANY(v_victims)
-        AND __DIGEST_ELIGIBLE__(es)
-      GROUP BY 1
-    ) t
-    WHERE t.mn IS NOT NULL;
-
-    -- Subtract the victims from wh_stream_digests before they go, as the prefix truncate does (263): XOR is
-    -- self-inverse, so folding the same hashes again removes them. Only rows a fold ever added are subtracted.
-    PERFORM __SCHEMA__._wh_fold_stream_digests(
-      array_agg(COALESCE(es.origin_service_id, __EMPTY_UUID__::uuid)), array_agg(COALESCE(es.scope ->> 't', '')),
-      array_agg(es.event_type), array_agg(es.stream_id), array_agg(es.event_id), 'unfold', NOW())
-    FROM __SCHEMA__.wh_event_store es
-    WHERE es.event_id = ANY(v_victims)
-      AND __DIGEST_ELIGIBLE__(es);
-
-    DELETE FROM __SCHEMA__.wh_stream_digests d
-    WHERE d.stream_id = ANY(v_streams) AND d.event_count <= 0;
+    -- 466 (#2364): the digest counts a key's slot, not its copies, and a newer copy of every victim's key stays, so
+    -- nothing is subtracted, refolded or bumped: physical deletion is timing, and the digest does not follow it. The
+    -- copies left behind inherit a victim anchor's place first, so the slot is still counted where its first copy sat.
+    PERFORM __SCHEMA__._wh_hand_on_slots(v_victims);
 
     -- 358 (#2152): a victim that is its stream's first event (version 0 or 1) leaves its business time on the stream's
     -- ledger row, so a rebuild that writes the stream's row afresh still dates it at the stream's start. Written once:
@@ -792,28 +736,18 @@ BEGIN
     GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
     DELETE FROM __SCHEMA__.wh_superseded_events q WHERE q.event_id = ANY(v_victims);
-
-    -- Refold the sealed epochs that covered the victims, then bump the generation once, so consumers reset their
-    -- seals and re-verify instead of alarming on a deliberate change (093).
-    IF v_lanes IS NOT NULL THEN
-      FOR v_i IN 1 .. array_length(v_lanes, 1) LOOP
-        PERFORM __SCHEMA__._wh_refold_epochs_covering(v_lanes[v_i], v_mins[v_i], v_maxs[v_i]);
-      END LOOP;
-      PERFORM __SCHEMA__._wh_bump_origin_generation();
-    END IF;
   END IF;
 
   RETURN QUERY SELECT c_task, v_deleted,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION, 'ok'::TEXT;
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION __SCHEMA__.wh_reap_superseded_events(INTEGER) IS
   'Task 16 of perform_maintenance (295, #1729): deletes up to p_batch_size queued superseded events, with their bodies '
   'and their digest contribution, once a newer event of the same stream, group and key is stored and every consumer has '
   'processed them (no unprocessed perspective work, no cursor or snapshot on them, no active destruction hold, commit '
   'sequence stamped). Skipped under debug_mode. Reduces the digests as wh_truncate_stream_prefix does, refolding the '
-  'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152).';
+  'covering sealed epochs and bumping the origin generation once when it removed folded history. 352: a group is the stored supersede_group, or the event type for an ungrouped row (#2124). 358: records the business time of a victim that is its stream''s first event on the stream''s ledger row (first_event_at, #2152). 466 (#2364): deletes physically and touches no digest, seal or generation: the digest counts the key''s slot, and the copies left inherit an anchor''s place (_wh_hand_on_slots).';
 
 SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_receptor_work');
 
