@@ -58,15 +58,15 @@ public class DapperArchiveRestoreRedriveTests : PostgresTestBase {
       .Because("the dead-letter recovery worker redrives through this service, and the driver registers none");
     var due = await recovery!.FetchDueAsync(100);
     await Assert.That(due.Select(e => (e.DeadLetterId, e.FailureReason)))
-      .Contains((deadLetter.Value, MessageFailureReason.AwaitingRestore))
+      .Contains((deadLetter.GetValueOrDefault(), MessageFailureReason.AwaitingRestore))
       .Because("the restore made the stream's awaiting dead letter due");
-    await Assert.That(await recovery.RecoverAsync(deadLetter.Value)).IsTrue();
+    await Assert.That(await recovery.RecoverAsync(deadLetter.GetValueOrDefault())).IsTrue();
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_outbox WHERE message_id = @write", new { write }))
       .IsEqualTo(1L).Because("the write re-enters the outbox it was refused from, now that its stream is back");
     await Assert.That(await conn.ExecuteScalarAsync<int>(
-        "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id", new { id = deadLetter.Value }))
+        "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id", new { id = deadLetter.GetValueOrDefault() }))
       .IsEqualTo((int)DeadLetterRecoveryStatus.Recovering)
       .Because("the outbox store claims the dead letter as it stores the write; its completion settles it");
   }

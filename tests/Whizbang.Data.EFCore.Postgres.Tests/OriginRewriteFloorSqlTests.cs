@@ -218,6 +218,11 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
       .Because("sealing a new epoch folds what was already there; nothing a consumer verified changed");
   }
 
+  /// <summary>
+  /// Named before #2363, when a truncate of this origin's own history bumped the generation and recorded how far it
+  /// reached; the name stays because shipped migrations link to it. Since #2363 a truncate carries what it removes, so
+  /// neither a received stream's truncate nor a local one moves the generation or records a rewrite.
+  /// </summary>
   [Test]
   public async Task Truncate_OfAReceivedStream_LeavesTheGenerationAlone_AndOfALocalStream_RecordsItsFloorAsync() {
     await using var conn = await _openAsync();
@@ -236,9 +241,10 @@ public class OriginRewriteFloorSqlTests : EFCoreTestBase {
       .Because("the superseding reaper, the truncate and the purge run on received lanes all day; none of it is this origin's history");
 
     await Assert.That(await _truncateAsync(conn, local, 2)).IsEqualTo("truncated");
-    await Assert.That(await _generationAsync(conn)).IsEqualTo(before + 1);
-    await Assert.That(await _recordedFloorAsync(conn, before + 1)).IsEqualTo(60L)
-      .Because("the truncate removed local positions 60 and 70; nothing below 60 changed");
+    await Assert.That(await _generationAsync(conn)).IsEqualTo(before)
+      .Because("#2363: the truncate carries local positions 60 and 70, so nothing a consumer verified changed");
+    await Assert.That(await _recordedFloorAsync(conn, before + 1)).IsNull()
+      .Because("#2363: no rewrite is recorded, because none happened");
   }
 
   [Test]

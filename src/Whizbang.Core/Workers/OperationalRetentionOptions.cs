@@ -34,6 +34,13 @@ public enum OperationalCategory {
 
   /// <summary>Per-run maintenance records and logs.</summary>
   MaintenanceRuns = 7,
+
+  /// <summary>
+  /// The per-stream detail of what cuts carried (#2363): the carried part of a stream's digest bucket, kept so a recent
+  /// cut can be investigated and the bucket re-checked, then cleared. The bucket's digest and the epochs' removed rows
+  /// stay.
+  /// </summary>
+  CarriedDetail = 8,
 }
 
 /// <summary>
@@ -101,6 +108,10 @@ public sealed class OperationalRetentionOptions {
   /// <docs>operations/infrastructure/operational-retention#categories</docs>
   public TimeSpan? MaintenanceRuns { get; set; }
 
+  /// <summary>The <see cref="OperationalCategory.CarriedDetail"/> resting period (<c>Whizbang:OperationalRetention:CarriedDetail</c>); null for <see cref="Default"/>.</summary>
+  /// <docs>operations/infrastructure/operational-retention#categories</docs>
+  public TimeSpan? CarriedDetail { get; set; }
+
   /// <summary>
   /// Rows removed per table per batch (<c>Whizbang:OperationalRetention:BatchSize</c>, default 1,000), so one statement
   /// never holds locks or writes WAL in proportion to a backlog. Must be at least 1.
@@ -139,6 +150,7 @@ public sealed class OperationalRetentionOptions {
     OperationalCategory.PairHistory => PairHistory,
     OperationalCategory.RecheckRuns => RecheckRuns,
     OperationalCategory.Queues => Queues,
+    OperationalCategory.CarriedDetail => CarriedDetail,
     _ => MaintenanceRuns,
   };
 }

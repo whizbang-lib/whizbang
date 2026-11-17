@@ -519,10 +519,17 @@ public sealed partial class MaintenanceWorker(
   private async Task _closeDigestEpochsAsync(
       IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, CancellationToken ct) {
-    if (integrity is not { Sealing.Enabled: true }) {
+    if (integrity is null) {
       return;
     }
     try {
+      // #2363: a cut waits for the seal only while sealing runs, so turning sealing off never leaves cuts waiting for a
+      // seal that cannot come. Written every cycle; the store rewrites a setting only when it changed.
+      await coordinator.SetCutGatesAsync(integrity.Sealing.Enabled, integrity.Sealing.CutWaitsForConsumers, ct)
+        .ConfigureAwait(false);
+      if (!integrity.Sealing.Enabled) {
+        return;
+      }
       var closed = await coordinator.CloseDigestEpochsAsync(
         integrity.AuditSettleWindowMinutes * 60, integrity.Sealing.MaxClosuresPerCycle, integrity.Sealing.EpochWidth, ct);
       if (closed > 0) {
@@ -561,6 +568,16 @@ public sealed partial class MaintenanceWorker(
       }
     }
     metrics?.UpdateOperationalRetention(reading);
+    // #2363: the carried detail of cuts rests like every operational record, then rolls off. It is columns on digest
+    // buckets that stay, not rows the table sweep removes, so it has its own bounded pass.
+    var carriedRest = options.RetentionFor(OperationalCategory.CarriedDetail);
+    for (var batch = 0; batch < options.MaxBatchesPerCycle; batch++) {
+      var cleared = await coordinator.RollOffCarriedDetailAsync(carriedRest, options.BatchSize, ct).ConfigureAwait(false);
+      metrics?.RecordOperationalRowsExpired(OperationalCategory.CarriedDetail, cleared);
+      if (cleared < options.BatchSize) {
+        break;
+      }
+    }
   }
 
   /// <summary>

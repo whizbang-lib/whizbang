@@ -2724,6 +2724,47 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task SetCutGatesAsync(bool waitForSeal, bool waitForConsumers, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // #2363: one statement for both settings, and a row is rewritten only when its value changed, so a maintenance
+      // cycle that changes nothing writes nothing.
+      var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
+      cmd.CommandText =
+        $"INSERT INTO {settings} (setting_key, setting_value, value_type, description) VALUES " +
+        "('integrity_cut_waits_for_seal', @p_seal, 'boolean', 'A cut removes only history sealed here (Whizbang:StreamIntegrity:Sealing:Enabled).'), " +
+        "('integrity_cut_waits_for_consumers', @p_consumers, 'boolean', 'A cut of local history also waits for every consumer''s reported seal (Whizbang:StreamIntegrity:Sealing:CutWaitsForConsumers).') " +
+        "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value " +
+        $"WHERE {settings}.setting_value IS DISTINCT FROM EXCLUDED.setting_value";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_seal", waitForSeal ? "true" : "false"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_consumers", waitForConsumers ? "true" : "false"));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task RecordConsumerSealAsync(string requesterService, long sealedThrough, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrEmpty(requesterService);
+    return _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_record_consumer_seal")}(@p_requester, @p_sealed, NOW())";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_requester", requesterService));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_sealed", sealedThrough));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task<int> RollOffCarriedDetailAsync(TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+      cmd.CommandText = $"SELECT {BuildSchemaQualifiedName(schema, "wh_roll_off_carried_detail")}(@p_older::interval, @p_batch)";
+#pragma warning restore S2077
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_older", $"{(long)olderThan.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_batch", Math.Max(1, batchSize)));
+      return ScalarResult.IntOrZero(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<long?> GetIntegritySettledMaxAsync(
     Guid? originServiceId, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {
@@ -2845,20 +2886,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Bounded by the chunk: stream_id = ANY(named set). A NULL origin sequence never satisfies
       // a window comparison, so windowed folds naturally exclude unsequenced rows — matching the
       // answer side; a null window includes them (full history).
+      var digestId = DigestRuleSql.DigestIdEs(schema);
+      // #2363: an unwindowed (full history) fold adds what cuts carried, as the bucket does; a window never reaches below
+      // a cut, which removes only sealed, verified history.
       cmd.CommandText = $"""
-        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
-               COUNT(*)::int,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
-        FROM {schema}.wh_event_store es
-        WHERE es.origin_service_id = @p_origin
-          AND es.stream_id = ANY(@p_streams::uuid[])
-          AND ((@p_since::bigint) IS NULL OR es.origin_commit_sequence >= @p_since)
-          AND ((@p_until::bigint) IS NULL OR es.origin_commit_sequence < @p_until)
-          AND {DigestRuleSql.EligibleEs}
-          AND es.created_at < NOW() - @p_settle::interval
+        SELECT f.tenant, f.event_type, f.stream_id, bit_xor(f.lo), bit_xor(f.hi), SUM(f.n)::int, bit_xor(f.ilo), bit_xor(f.ihi)
+        FROM (
+          SELECT COALESCE(es.scope->>'t', '') AS tenant, {DigestRuleSql.DIGEST_TYPE_ES} AS event_type, es.stream_id,
+                 {schema}._wh_digest_lane({digestId}, 0) AS lo,
+                 {schema}._wh_digest_lane({digestId}, 1) AS hi,
+                 1 AS n,
+                 {schema}._wh_digest_lane({digestId}, 2) AS ilo,
+                 {schema}._wh_digest_lane({digestId}, 3) AS ihi
+          FROM {schema}.wh_event_store es
+          WHERE es.origin_service_id = @p_origin
+            AND es.stream_id = ANY(@p_streams::uuid[])
+            AND ((@p_since::bigint) IS NULL OR es.origin_commit_sequence >= @p_since)
+            AND ((@p_until::bigint) IS NULL OR es.origin_commit_sequence < @p_until)
+            AND {DigestRuleSql.EligibleEs}
+            AND {DigestRuleSql.SlotCountsEs(schema)}
+            AND es.created_at < NOW() - @p_settle::interval
+          UNION ALL
+          {CarriedDigestSql(schema, "d.origin_service_id = @p_origin AND d.stream_id = ANY(@p_streams::uuid[]) AND (@p_since::bigint) IS NULL AND (@p_until::bigint) IS NULL", byType: false)}
+        ) f
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
         """;
@@ -4634,19 +4684,28 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // flavor folds rows RECEIVED from that origin. Ephemeral (mode-excluded) and at-most-once
       // occurrences are excluded, matching Phase B. The settle window keeps in-flight deliveries
       // out of both sides' digests.
+      var digestId = DigestRuleSql.DigestIdEs(schema);
+      // #2363: a recomputed answer is the live fold plus what cuts carried, the same comparable digest the bucket stores,
+      // so a stream this service cut answers exactly as it did before the cut.
       cmd.CommandText = $"""
-        SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, es.stream_id,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 0)) AS digest_lo,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 1)) AS digest_hi,
-               COUNT(*)::int,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 2)) AS id_lo,
-               bit_xor({schema}._wh_digest_lane(es.event_id, 3)) AS id_hi
-        FROM {schema}.wh_event_store es
-        WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
-               OR es.origin_service_id = @p_origin)
-          AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
-          AND {DigestRuleSql.EligibleEs}
-          AND es.created_at < NOW() - @p_settle::interval
+        SELECT f.tenant, f.event_type, f.stream_id, bit_xor(f.lo), bit_xor(f.hi), SUM(f.n)::int, bit_xor(f.ilo), bit_xor(f.ihi)
+        FROM (
+          SELECT COALESCE(es.scope->>'t', '') AS tenant, {DigestRuleSql.DIGEST_TYPE_ES} AS event_type, es.stream_id,
+                 {schema}._wh_digest_lane({digestId}, 0) AS lo,
+                 {schema}._wh_digest_lane({digestId}, 1) AS hi,
+                 1 AS n,
+                 {schema}._wh_digest_lane({digestId}, 2) AS ilo,
+                 {schema}._wh_digest_lane({digestId}, 3) AS ihi
+          FROM {schema}.wh_event_store es
+          WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
+                 OR es.origin_service_id = @p_origin)
+            AND ((@p_types::text[]) IS NULL OR {DigestRuleSql.DIGEST_TYPE_ES} IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
+            AND {DigestRuleSql.EligibleEs}
+            AND {DigestRuleSql.SlotCountsEs(schema)}
+            AND es.created_at < NOW() - @p_settle::interval
+          UNION ALL
+          {CarriedDigestSql(schema, "d.origin_service_id = COALESCE(@p_origin::uuid, '00000000-0000-0000-0000-000000000000'::uuid)", byType: true)}
+        ) f
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
         """;
@@ -4863,6 +4922,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
   }
+
+  /// <summary>
+  /// The carried part of the stream digest buckets a recomputed fold adds to its live events (#2363): what cuts removed
+  /// here, which the bucket's digest still counts. One row per bucket that carries anything, in the recomputed fold's
+  /// columns (tenant, type, stream, the four lanes as lo, hi, ilo, ihi, and the count as n). A bucket whose carried detail
+  /// rolled off (NULL) adds nothing: its digest is no longer the live fold plus a known part.
+  /// </summary>
+  /// <param name="schema">The validated schema name.</param>
+  /// <param name="predicate">The buckets to read, as a condition on <c>d</c>.</param>
+  /// <param name="byType">Whether to apply the <c>@p_types</c> filter, normalized as the live fold applies it.</param>
+  /// <returns>The SELECT, ready to UNION ALL with the live fold.</returns>
+  /// <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestCoordinatorTests.cs</tests>
+#pragma warning disable S2077, RCS1158 // Validated schema constant, every value bound; shared by every generic instantiation.
+  internal static string CarriedDigestSql(string schema, string predicate, bool byType) =>
+    "SELECT d.scope_tenant, d.event_type, d.stream_id, d.carried_lo, d.carried_hi, d.carried_count, " +
+    "d.carried_id_lo, d.carried_id_hi " +
+    $"FROM {schema}.wh_stream_digests d " +
+    $"WHERE {predicate} AND d.carried_count <> 0" +
+    (byType
+      ? $" AND ((@p_types::text[]) IS NULL OR d.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))"
+      : "");
+#pragma warning restore S2077, RCS1158
 
   /// <summary>
   /// The windowed stream-digest query <see cref="ComputeStreamDigestsWindowedAsync"/> runs: one page of whole streams

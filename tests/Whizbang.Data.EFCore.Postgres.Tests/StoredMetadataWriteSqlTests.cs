@@ -91,7 +91,7 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     await Assert.That(dapper.RootElement.GetProperty("pri").GetInt32()).IsEqualTo(7);
     var slimHop = dapper.RootElement.GetProperty("hops").EnumerateArray().Single();
     await Assert.That(slimHop.TryGetProperty("si", out _)).IsFalse().Because("the Dapper form's hop list, hops, is reduced too");
-    using var staged = JsonDocument.Parse((await _stagedAsync(conn, plain)).Value.Metadata);
+    using var staged = JsonDocument.Parse((await _stagedAsync(conn, plain)).GetValueOrDefault().Metadata);
     await Assert.That(staged.RootElement.GetProperty("dc").GetProperty("m").GetInt32()).IsEqualTo(1)
       .Because("the staged form is the metadata exactly as it was written");
   }
@@ -239,9 +239,9 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
 
     var staged = await _stagedAsync(conn, id);
     await Assert.That(staged.HasValue).IsTrue().Because("the Linked form stages the full form");
-    await Assert.That(staged.Value.RouteId).IsEqualTo(routeId);
-    await Assert.That(staged.Value.EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
-    await Assert.That(await _jsonEqualAsync(conn, staged.Value.Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
+    await Assert.That(staged.GetValueOrDefault().RouteId).IsEqualTo(routeId);
+    await Assert.That(staged.GetValueOrDefault().EventType).IsEqualTo(RouteNormalizer.TypeNamePart(eventType));
+    await Assert.That(await _jsonEqualAsync(conn, staged.GetValueOrDefault().Metadata, "Hops", StoredMetadataCorpus.HopsJson(hops))).IsTrue()
       .Because("the staged form keeps every hop as written");
   }
 

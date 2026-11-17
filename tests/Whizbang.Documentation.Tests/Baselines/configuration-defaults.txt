@@ -242,6 +242,7 @@ Whizbang:StreamIntegrity:RepairProgressGaugeEnabled=true
 Whizbang:StreamIntegrity:RepairProgressWindowMinutes=60
 Whizbang:StreamIntegrity:RepairReceptorLookback=7.00:00:00
 Whizbang:StreamIntegrity:RepairRequestBackoffSeconds=300
+Whizbang:StreamIntegrity:Sealing:CutWaitsForConsumers=false
 Whizbang:StreamIntegrity:Sealing:Enabled=true
 Whizbang:StreamIntegrity:Sealing:EpochWidth=100000
 Whizbang:StreamIntegrity:Sealing:MaxClosuresPerCycle=64

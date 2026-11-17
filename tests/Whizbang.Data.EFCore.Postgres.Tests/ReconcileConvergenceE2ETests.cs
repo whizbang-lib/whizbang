@@ -118,8 +118,8 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     }
 
     // ── the two sides: real coordinators, real receptors, capture transports ────────────────
-    var originTransport = new CaptureTransport();
-    var consumerTransport = new CaptureTransport();
+    var originTransport = new IntegrityWireTransport();
+    var consumerTransport = new IntegrityWireTransport();
     var originId2 = await _localServiceIdAsync(DbContextOptions, jsonOptions);
     var consumerOptions = new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,   // the loop under test repairs; ReportOnly is the default
@@ -241,7 +241,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   /// is exactly what the transport receive path (covered by its own suites) does.
   /// </summary>
   private async Task _pumpUntilQuietAsync(
-      CaptureTransport originTransport, CaptureTransport consumerTransport,
+      IntegrityWireTransport originTransport, IntegrityWireTransport consumerTransport,
       IntegrityManifestRequestReceptor originRequestReceptor,
       RedeliveryRequestReceptor originRedeliveryReceptor,
       IntegrityManifestReceptor consumerManifestReceptor,
@@ -358,15 +358,15 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
 
   private static ServiceProvider _buildProvider(
       DbContextOptions<WorkCoordinationDbContext> dbOptions, JsonSerializerOptions jsonOptions,
-      CaptureTransport transport, string serviceName, StreamIntegrityOptions options,
+      IntegrityWireTransport transport, string serviceName, StreamIntegrityOptions options,
       IntegrityGapTracker? tracker) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(dbOptions), jsonOptions));
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IDispatcher>(new CaptureDispatcher());
+    services.AddSingleton<IDispatcher>(new IntegrityWireDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
-    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
+    services.AddSingleton<IServiceInstanceProvider>(new IntegrityWireInstance(serviceName));
     services.AddSingleton(Options.Create(options));
     services.AddSingleton<IIntegrityRepairLedger>(new IntegrityRepairLedger());
     // The consumer consumes the probe type (#2058: only what the receive boundary keeps is compared).
@@ -384,84 +384,4 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     (T)JsonSerializer.Deserialize(
       ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(T)))!;
-
-  private sealed class CaptureTransport : ITransport {
-    public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
-    public bool IsInitialized => true;
-    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
-    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-      lock (Published) {
-        Published.Add((envelope, destination, envelopeType));
-      }
-      return Task.CompletedTask;
-    }
-    public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
-  }
-
-  private sealed class CaptureDispatcher : IDispatcher {
-    public List<object> Published { get; } = [];
-
-    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
-      Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new Receipt());
-    }
-
-    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) => PublishAsync(eventData);
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotSupportedException();
-    public Task<IDeliveryReceipt> SendAsync(object message) => throw new NotSupportedException();
-    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull => throw new NotSupportedException();
-    public Task<IDeliveryReceipt> SendAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotSupportedException();
-    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, Whizbang.Core.Dispatch.DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) => throw new NotSupportedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask LocalInvokeAsync(object message) => throw new NotSupportedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
-    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotSupportedException();
-    public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotSupportedException();
-    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) => throw new NotSupportedException();
-    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
-    public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotSupportedException();
-    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
-    public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
-    public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotSupportedException();
-    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
-    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
-    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
-    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
-
-    private sealed class Receipt : IDeliveryReceipt {
-      public MessageId MessageId => MessageId.New();
-      public CorrelationId? CorrelationId => null;
-      public MessageId? CausationId => null;
-      public DateTimeOffset Timestamp => DateTimeOffset.UtcNow;
-      public string Destination => "test";
-      public DeliveryStatus Status => DeliveryStatus.Delivered;
-      public IReadOnlyDictionary<string, JsonElement> Metadata => new Dictionary<string, JsonElement>();
-      public Guid? StreamId => null;
-    }
-  }
-
-  private sealed class InstanceProvider(string name) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = Guid.NewGuid();
-    public string ServiceName => name;
-    public string HostName => "e2e-host";
-    public int ProcessId => 1;
-    public ServiceInstanceInfo ToInfo() => new() {
-      InstanceId = InstanceId,
-      ServiceName = name,
-      HostName = HostName,
-      ProcessId = ProcessId,
-    };
-  }
 }

@@ -33,6 +33,15 @@ public class MaintenanceWorkerOperationalRetentionTests {
       return Task.FromResult(Results[Math.Min(Calls.Count, Results.Count) - 1]);
     }
 
+    /// <summary>#2363: every carried-detail roll-off call, and what each returns, in order; the last repeats.</summary>
+    public List<(TimeSpan OlderThan, int BatchSize)> RollOffs { get; } = [];
+    public List<int> Cleared { get; init; } = [0];
+
+    public Task<int> RollOffCarriedDetailAsync(TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) {
+      RollOffs.Add((olderThan, batchSize));
+      return Task.FromResult(Cleared[Math.Min(RollOffs.Count, Cleared.Count) - 1]);
+    }
+
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
@@ -162,5 +171,37 @@ public class MaintenanceWorkerOperationalRetentionTests {
       .Because("a category's oldest age is its oldest table's, and an empty table has none to report");
     await Assert.That(helper.GetByName("whizbang.maintenance.operational_rows").All(m => m.Tags.Keys.All(k => k == "category")))
       .IsTrue().Because("the category is the only attribute: no table, stream or tenant");
+  }
+
+  [Test]
+  [NotInParallel("Metrics")]
+  public async Task TheCycle_RollsOffCarriedDetail_WithItsOwnRest_InBoundedBatches_AndCountsItAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+    var coordinator = new SweepCoordinator { Cleared = [5, 5, 2] };
+    var worker = _build(coordinator,
+      new OperationalRetentionOptions { CarriedDetail = TimeSpan.FromDays(3), BatchSize = 5, MaxBatchesPerCycle = 10 }, metrics);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.RollOffs.Count).IsEqualTo(3)
+      .Because("#2363: a full batch means more may be due; a short one means the carried detail past its rest is cleared");
+    await Assert.That(coordinator.RollOffs.All(r => r.OlderThan == TimeSpan.FromDays(3) && r.BatchSize == 5)).IsTrue()
+      .Because("the carried detail rests for its own category's period");
+    await Assert.That(helper.GetByName("whizbang.maintenance.operational_rows_expired")
+      .Where(m => m.Tags.TryGetValue("category", out var c) && c == "CarriedDetail").Sum(m => m.Value)).IsEqualTo(12d);
+  }
+
+  [Test]
+  public async Task TheCarriedDetailRollOff_NeverRunsMoreBatchesThanTheCapAsync() {
+    var coordinator = new SweepCoordinator { Cleared = [10] };
+    var worker = _build(coordinator, new OperationalRetentionOptions { BatchSize = 10, MaxBatchesPerCycle = 2 });
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.RollOffs.Count).IsEqualTo(2);
+    await Assert.That(coordinator.RollOffs[0].OlderThan).IsEqualTo(TimeSpan.FromDays(14))
+      .Because("with no override the carried detail rests for the default period");
   }
 }
