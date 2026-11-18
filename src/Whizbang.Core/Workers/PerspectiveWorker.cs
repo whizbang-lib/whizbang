@@ -364,7 +364,6 @@ public partial class PerspectiveWorker(
   // same pending task back on every iteration, and its signal stays raised until the loop consumes
   // it, so a signal landing while every loop is busy still wakes the next iteration.
   private readonly Whizbang.Core.Async.WakeSignal _perspectiveWake = new();
-  private bool _perspectiveSignalSubscribed;
 
   /// <summary>Number of parked wake waiters the consumer loop currently holds: 0 or 1, never more.</summary>
   internal int PendingWakeWaiters => _perspectiveWake.PendingWaiters;
@@ -380,10 +379,6 @@ public partial class PerspectiveWorker(
   /// <inheritdoc />
   /// <remarks>Once the worker has stopped it waits for the detached lifecycle stages it started (#1721).</remarks>
   public override async Task StopAsync(CancellationToken cancellationToken) {
-    if (_perspectiveSignalSubscribed) {
-      _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
-      _perspectiveSignalSubscribed = false;
-    }
     foreach (var wake in _collectiveHoldWakes.Values) {
       wake.Timer.Dispose();
     }
@@ -592,20 +587,35 @@ public partial class PerspectiveWorker(
     IServiceProvider ScopedProvider);
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// The perspective NOTIFY handler is added and removed here, by the run that owns it. The host runs this method on a
+  /// thread of its own, so a StopAsync that removed the handler could run while this was still adding it and leave it
+  /// attached to a listener that outlives the worker; removing it in this method's own <c>finally</c> leaves none.
+  /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    // Slice 7a: hook the perspective NOTIFY signal so we wake on every new
+    // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
+    var listensForSignals = _perspectiveNotificationListener.IsConfigured;
+    if (listensForSignals) {
+      _perspectiveNotificationListener.OnSignal += _onPerspectiveSignal;
+    }
+    try {
+      await _runAsync(stoppingToken).ConfigureAwait(false);
+    } finally {
+      if (listensForSignals) {
+        _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
+      }
+    }
+  }
+
+  /// <summary>The worker's run: startup repair, then the consumer loops until stopped.</summary>
+  private async Task _runAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
     // EVERYTHING below touches the database — registry initialization, orphan-lifecycle
     // reconcile, rewind repair, the drain loop. The host starts this worker at Accept commands
     // (#1636), so none of it begins before migrations have completed and the instance's row
     // says it is eligible for work.
-
-    // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
-    // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
-    if (_perspectiveNotificationListener.IsConfigured && !_perspectiveSignalSubscribed) {
-      _perspectiveNotificationListener.OnSignal += _onPerspectiveSignal;
-      _perspectiveSignalSubscribed = true;
-    }
 
     var isPerspectiveHost = await _initializePerspectiveRegistryAsync();
     StartupRewindSet? startupRewinds = null;

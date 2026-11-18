@@ -272,6 +272,45 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public void Fire(WorkSignalCategory category) => _onSignal?.Invoke(category);
   }
 
+  /// <summary>
+  /// A listener whose subscription does not return until the test releases it, so ExecuteAsync can be held between
+  /// adding its handler and anything it does after.
+  /// </summary>
+  private sealed class HeldSubscribeNotificationListener : IWorkNotificationListener, IDisposable {
+    private readonly ManualResetEventSlim _release = new(initialState: false);
+    private readonly Lock _gate = new();
+    private Action<WorkSignalCategory>? _onSignal;
+    /// <summary>How many handlers are attached now.</summary>
+    public int SubscriberCount {
+      get {
+        lock (_gate) {
+          return _onSignal?.GetInvocationList().Length ?? 0;
+        }
+      }
+    }
+    public bool IsHealthy => true;
+    public DateTimeOffset? LastSignalAt => null;
+    /// <summary>Completes once the worker has entered the subscription and is held there.</summary>
+    public TaskCompletionSource Subscribing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public event Action<WorkSignalCategory>? OnSignal {
+      add {
+        lock (_gate) {
+          _onSignal += value;
+        }
+        Subscribing.TrySetResult();
+        _release.Wait();
+      }
+      remove {
+        lock (_gate) {
+          _onSignal -= value;
+        }
+      }
+    }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
+    public void ReleaseSubscribe() => _release.Set();
+    public void Dispose() => _release.Dispose();
+  }
+
   // ============================================================
   // Helpers
   // ============================================================
@@ -928,5 +967,35 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     // Firing after stop must be a no-op (handler already detached).
     listener.Fire(WorkSignalCategory.Perspective);
+  }
+
+  /// <summary>
+  /// StopAsync can run while ExecuteAsync is still subscribing: the host runs ExecuteAsync on its own thread, so a stop
+  /// that lands between the subscription and whatever records it must still leave no handler behind. The listener here
+  /// holds ExecuteAsync inside the subscription until StopAsync has begun, which is that interleaving every time.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task NotificationListener_StopDuringSubscribe_LeavesNoHandlerAsync(CancellationToken cancellationToken) {
+    using var listener = new HeldSubscribeNotificationListener();
+    var fx = _build(new StartupCoordinator(), _registryWithOnePerspective(),
+      options: new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+      },
+      notificationListener: listener);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    // ExecuteAsync is now inside the subscription, held there.
+    await listener.Subscribing.Task.WaitAsync(cancellationToken);
+
+    var stopping = fx.Worker.StopAsync(CancellationToken.None);
+    listener.ReleaseSubscribe();
+    await stopping.WaitAsync(cancellationToken);
+
+    await Assert.That(listener.SubscriberCount).IsEqualTo(0)
+      .Because("a stop that lands while the worker is subscribing must still leave no handler on the listener");
   }
 }
