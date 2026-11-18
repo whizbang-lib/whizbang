@@ -201,11 +201,11 @@ the 20 and 30 minute suites, 15 for the 45 minute ones): a module with no test a
 the tests still running, writes `dotnet_<pid>_hang.dmp` and the test list `dotnet_<pid>_hang.log` to its
 `TestResults` (the process is `dotnet` under `dotnet test`), and is killed, so the suite fails with a dump instead of holding the job until its limit
 cancels it with nothing to show (#2402). The suite uploads them as `hangdump-<suite>-<attempt>` when it
-fails or is cancelled; open the dump with `dotnet-dump analyze` (`clrstack -all`, `dumpasync`).
+fails or is canceled; open the dump with `dotnet-dump analyze` (`clrstack -all`, `dumpasync`).
 
 The timeout counts time with no test activity, not the module's whole run, so it stays far above any wait
 a passing test makes and at most half the job's limit, so a module that starts late still dumps and uploads
-before the job is cancelled. `.github/scripts/tests/TestSuiteHangDump.Tests.ps1` fails a suite that does
+before the job is canceled. `.github/scripts/tests/TestSuiteHangDump.Tests.ps1` fails a suite that does
 not pass the timeout, passes one outside those bounds, or does not upload the dump, and runs a module whose
 test never completes (`shapes/HangRunner`) under `dotnet test` to prove the dump fires. That proof matters: at
 2.0.2 the extension accepted the options under `dotnet test` and never dumped; 2.2.3 does. 2.3.2 and later

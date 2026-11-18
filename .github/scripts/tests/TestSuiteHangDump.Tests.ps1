@@ -3,8 +3,8 @@
 
 #Requires -Modules Pester
 
-# A test module that hangs used to hold its suite until the job's own limit cancelled it (#2402): no result, no
-# dump, nothing naming the test, and the cancelled suite then aborted the coverage and Sonar jobs after it. Every
+# A test module that hangs used to hold its suite until the job's own limit canceled it (#2402): no result, no
+# dump, nothing naming the test, and the canceled suite then aborted the coverage and Sonar jobs after it. Every
 # suite now runs its modules with the testing platform's hang dump (Run-Tests.ps1 -HangDumpTimeout): after that
 # long with no test activity a module prints the tests still running, writes <process>_<pid>_hang.dmp and the
 # test list <process>_<pid>_hang.log to its TestResults (the process is `dotnet` under `dotnet test`), and is
@@ -14,7 +14,7 @@
 # 88 s was dumped by a 45 s timeout only when one test then ran 55 s with nothing else moving). So it is checked
 # against the job, not the suites' durations: at least 5 minutes, far above any wait a passing test makes, and at
 # most half the job's limit, so a hang in a module that starts late still dumps, and uploads, before the job is
-# cancelled. The suites are derived from the files, so a new reusable-test-*.yml is checked as well.
+# canceled. The suites are derived from the files, so a new reusable-test-*.yml is checked as well.
 
 BeforeDiscovery {
   $root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
@@ -79,11 +79,11 @@ Describe 'Every test suite takes a hang dump (#2402)' {
       }
     }
 
-    It 'uploads the hang dumps and their test lists after the last test run, when the job fails or is cancelled' {
+    It 'uploads the hang dumps and their test lists after the last test run, when the job fails or is canceled' {
       $upload = @($Steps | Where-Object { $_.Uses -like 'actions/upload-artifact@*' -and ($_.Text -join "`n") -match '_hang\.dmp' })
       $upload.Count | Should -Be 1
       $upload[0].If | Should -Match 'failure\(\)'
-      $upload[0].If | Should -Match 'cancelled\(\)'
+      $upload[0].If | Should -Match 'cancelled\(\)' # review-checks:allow (GitHub expression function name)
       $text = $upload[0].Text -join "`n"
       foreach ($glob in 'tests/**/TestResults/*_hang.dmp', 'tests/**/TestResults/*_hang.log', 'samples/**/TestResults/*_hang.dmp', 'samples/**/TestResults/*_hang.log') {
         $text | Should -Match ([regex]::Escape($glob))

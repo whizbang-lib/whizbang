@@ -106,7 +106,7 @@ jobs:
       # A module with no test activity for the hang dump timeout above prints the tests still running, writes
       # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log to its TestResults (the process is
       # `dotnet` under `dotnet test`) and is killed, so the run fails with time left to upload them (#2402).
-      # Cancelled too: a dump taken just before the job limit is still kept.
+      # Canceled too: a dump taken just before the job limit is still kept.
       - name: Upload hang dumps
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
