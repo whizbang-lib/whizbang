@@ -264,8 +264,20 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     /// <summary>Completes when the worker hooks OnSignal — the subscription happens inside
     /// ExecuteAsync, so tests must await this instead of racing StartAsync's return.</summary>
     public TaskCompletionSource Subscribed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Holds ExecuteAsync inside the subscribe accessor until <see cref="StopRequested"/> is set.</summary>
+    public bool HoldSubscriptionUntilStop { get; init; }
+    public ManualResetEventSlim StopRequested { get; } = new();
     public event Action<WorkSignalCategory>? OnSignal {
-      add { _onSignal += value; SubscriberCount++; Subscribed.TrySetResult(); }
+      add {
+        _onSignal += value;
+        SubscriberCount++;
+        Subscribed.TrySetResult();
+        // When a test holds the subscription, the worker's ExecuteAsync stays inside this accessor (the handler
+        // is attached, the worker has not yet recorded it) until the test has asked the worker to stop.
+        if (HoldSubscriptionUntilStop) {
+          SpinWait.SpinUntil(() => StopRequested.IsSet);
+        }
+      }
       remove { _onSignal -= value; SubscriberCount--; }
     }
     public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
@@ -928,5 +940,30 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     // Firing after stop must be a no-op (handler already detached).
     listener.Fire(WorkSignalCategory.Perspective);
+  }
+
+  // Since .NET 10 the host runs ExecuteAsync on the thread pool, so StopAsync can arrive while ExecuteAsync is still
+  // attaching the NOTIFY handler: the handler is on the event, the worker has not yet recorded that it is. StopAsync
+  // must still detach it, or the handler leaks and wakes a stopped worker.
+  [Test]
+  [Timeout(30000)]
+  public async Task NotificationListener_StopWhileSubscribing_StillUnsubscribesAsync(CancellationToken cancellationToken) {
+    var listener = new FakeNotificationListener { HoldSubscriptionUntilStop = true };
+    var fx = _build(new StartupCoordinator(), _registryWithOnePerspective(),
+      options: new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+      },
+      notificationListener: listener);
+
+    await fx.Worker.StartAsync(cancellationToken);
+    await listener.Subscribed.Task.WaitAsync(cancellationToken);
+
+    listener.StopRequested.Set();
+    await fx.Worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(listener.SubscriberCount).IsEqualTo(0)
+      .Because("a handler attached while StopAsync ran must still be detached once the worker has stopped.");
   }
 }

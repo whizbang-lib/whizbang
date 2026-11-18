@@ -364,7 +364,9 @@ public partial class PerspectiveWorker(
   // same pending task back on every iteration, and its signal stays raised until the loop consumes
   // it, so a signal landing while every loop is busy still wakes the next iteration.
   private readonly Whizbang.Core.Async.WakeSignal _perspectiveWake = new();
-  private bool _perspectiveSignalSubscribed;
+  // 1 while _onPerspectiveSignal is attached to the NOTIFY listener. Written by ExecuteAsync (thread pool) and
+  // StopAsync (the host), so it is read and cleared with Interlocked.
+  private int _perspectiveSignalSubscribed;
 
   /// <summary>Number of parked wake waiters the consumer loop currently holds: 0 or 1, never more.</summary>
   internal int PendingWakeWaiters => _perspectiveWake.PendingWaiters;
@@ -380,16 +382,23 @@ public partial class PerspectiveWorker(
   /// <inheritdoc />
   /// <remarks>Once the worker has stopped it waits for the detached lifecycle stages it started (#1721).</remarks>
   public override async Task StopAsync(CancellationToken cancellationToken) {
-    if (_perspectiveSignalSubscribed) {
-      _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
-      _perspectiveSignalSubscribed = false;
-    }
+    _unsubscribePerspectiveSignal();
     foreach (var wake in _collectiveHoldWakes.Values) {
       wake.Timer.Dispose();
     }
     _collectiveHoldWakes.Clear();
     await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    // Again once ExecuteAsync has finished: the host runs it on the thread pool, so StopAsync can arrive while it is
+    // still attaching the handler, after the check above and before the flag is set. Without this the handler leaks
+    // and keeps waking a stopped worker.
+    _unsubscribePerspectiveSignal();
     await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  private void _unsubscribePerspectiveSignal() {
+    if (Interlocked.Exchange(ref _perspectiveSignalSubscribed, 0) == 1) {
+      _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
+    }
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
@@ -602,9 +611,9 @@ public partial class PerspectiveWorker(
 
     // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
     // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
-    if (_perspectiveNotificationListener.IsConfigured && !_perspectiveSignalSubscribed) {
+    if (_perspectiveNotificationListener.IsConfigured && Volatile.Read(ref _perspectiveSignalSubscribed) == 0) {
       _perspectiveNotificationListener.OnSignal += _onPerspectiveSignal;
-      _perspectiveSignalSubscribed = true;
+      Volatile.Write(ref _perspectiveSignalSubscribed, 1);
     }
 
     var isPerspectiveHost = await _initializePerspectiveRegistryAsync();
