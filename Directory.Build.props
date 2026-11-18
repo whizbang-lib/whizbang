@@ -213,6 +213,15 @@
     <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)TypeNaming.OutsideLibrary.globalconfig" />
   </ItemGroup>
 
+  <!-- Hang dumps (#2402). Every test module a suite runs can take a hang dump: Run-Tests.ps1 -HangDumpTimeout
+       passes `dotnet test` the platform's hang dump options, and a module without this extension would reject
+       them as unknown. Keyed on WhizbangTestType, which every suite selects projects by, so a new test project
+       gets it without anyone remembering to add it (MSBuild evaluates item conditions after every property,
+       the project's own included). Benchmarks run under BenchmarkDotNet, not the testing platform. -->
+  <ItemGroup Condition="'$(WhizbangTestType)' != '' and '$(WhizbangTestType)' != 'Benchmark'">
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+  </ItemGroup>
+
   <!-- Analyzers. SonarAnalyzer is here so Sonar's own rules fail the build locally and in CI
        rather than only surfacing on the SonarCloud scan, where they are found far later. -->
   <ItemGroup>

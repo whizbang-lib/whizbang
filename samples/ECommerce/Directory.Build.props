@@ -41,6 +41,12 @@
     <DefineConstants Condition="'$(TransportProvider)' == 'AzureServiceBus'">AZURESERVICEBUS</DefineConstants>
   </PropertyGroup>
 
+  <!-- Hang dumps (#2402), as in the root Directory.Build.props: every test module a suite runs accepts
+       Run-Tests.ps1 -HangDumpTimeout's options. This file does not import the parent props, so it is repeated here. -->
+  <ItemGroup Condition="'$(WhizbangTestType)' != '' and '$(WhizbangTestType)' != 'Benchmark'">
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+  </ItemGroup>
+
   <!-- Analyzers. This file does not import the parent Directory.Build.props, so the root's analyzer
        ItemGroup does not reach these projects and each one has to be named here. A sample is code
        people copy, so it is held to the same rules as the library it demonstrates. -->

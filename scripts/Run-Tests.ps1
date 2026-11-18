@@ -69,6 +69,15 @@
     duration, a warning is displayed. After 2x this timeout, the test run is terminated.
     Set to 0 to disable hang detection.
 
+.PARAMETER HangDumpTimeout
+    Gives every test module the testing platform's hang dump (--hangdump --hangdump-timeout): after this long
+    with no test activity a module writes a dump (dotnet_<pid>_hang.dmp, with the test list in
+    dotnet_<pid>_hang.log, in its TestResults), names the tests still running, and is killed, so a hang fails
+    the run instead of holding it until a job limit cancels it (#2402). A whole number with s, m or h, e.g. 10m.
+    Empty (the default) takes no dump. Every test project references Microsoft.Testing.Extensions.HangDump
+    through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 does
+    (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
+
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
     (postgres, rabbitmq, servicebus, mssql containers). Default: $true.
@@ -271,6 +280,8 @@ param(
                           # Shell-friendly alternative to -FailFast:$false (which breaks
                           # in zsh because $false expands to empty).
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
+    [ValidatePattern('^[1-9][0-9]*[smh]$', ErrorMessage = '-HangDumpTimeout "{0}" is not a whole number of seconds, minutes or hours, such as 10m.')]
+    [string]$HangDumpTimeout = "",  # CI: hang dump after this long with no test activity (e.g. 10m); empty for none
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
                               # (MTP --coverage, cobertura) inside the normal `dotnet test` run.
@@ -423,9 +434,20 @@ if ($NoFailFast) {
 
 # -Coverage runs each project through its own `dotnet run` and writes a report; -ModuleCoverage
 # adds collection to the single `dotnet test` run. Combined, the second would silently not apply.
-if ($Coverage -and $ModuleCoverage) {
-    Write-Error "-Coverage and -ModuleCoverage are alternatives; pass one."
+# A refused combination of parameters, named. Not Write-Error: under the error trap below and
+# $ErrorActionPreference = Stop it prints only "ScriptHalted", and the message is lost.
+function Exit-RefusedParameters([string]$Message) {
+    if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$Message" } else { Write-Host $Message -ForegroundColor Red }
     exit 1
+}
+
+if ($Coverage -and $ModuleCoverage) {
+    Exit-RefusedParameters "-Coverage and -ModuleCoverage are alternatives; pass one."
+}
+
+# -Coverage runs each project through its own `dotnet run`, which the hang dump options below never reach.
+if ($Coverage -and $HangDumpTimeout) {
+    Exit-RefusedParameters "-HangDumpTimeout and -Coverage cannot be combined: -Coverage runs each project on its own, without the hang dump."
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -1077,6 +1099,15 @@ try {
         $testArgs += "cobertura,coverage"
         $testArgs += "--coverage-settings"
         $testArgs += (Join-Path $repoRoot "codecoverage.config")
+    }
+
+    # The platform's hang dump for every test module (#2402). After HangDumpTimeout with no test activity a module
+    # dumps itself, names the tests still running and is killed, so a hang fails here with a dump to upload instead
+    # of holding the run until the job's own limit cancels it, which writes nothing.
+    if ($HangDumpTimeout) {
+        $testArgs += "--hangdump"
+        $testArgs += "--hangdump-timeout"
+        $testArgs += $HangDumpTimeout
     }
 
     # Coverage mode: Run projects in parallel with unique output paths per project
