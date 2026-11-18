@@ -109,6 +109,22 @@ public class AzureServiceBusReceiveDiagnosticsTests {
     await _assertRedeliveredOnceAsync(logger, message.MessageId, _testMessageType, 5);
   }
 
+  /// <summary>With Warning off the unsettled line is neither written nor formatted; the delivery is still abandoned.</summary>
+  [Test]
+  public async Task ReturnedUnsettled_WithWarningOff_WritesAndFormatsNothingAsync() {
+    var logger = new LevelRecordingLogger(LogLevel.Error);
+    var (transport, client) = _createTransport(enableSessions: true, logger);
+    var subscription = await transport.SubscribeBatchAsync((_, _) => Task.CompletedTask, _destination(), new TransportBatchOptions());
+    await subscription.PauseAsync();
+    var receiver = new RecordingTransportSessionReceiver();
+
+    await client.LastSessionProcessor!.RaiseSessionMessageAsync(AsbTransportTestData.SessionArgs(
+      AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope(), deliveryCount: 1), receiver));
+
+    await Assert.That(receiver.Abandoned).Count().IsEqualTo(1);
+    await Assert.That(logger.CalledBelowMinimum(UNSETTLED)).IsEqualTo(0);
+  }
+
   // ========================================
   // UNSETTLED: a failed handler gives the delivery back for redelivery
   // ========================================
@@ -295,6 +311,26 @@ public class AzureServiceBusReceiveDiagnosticsTests {
 
     await Assert.That(logger.Count(LogLevel.Information, REDELIVERED)).IsEqualTo(0);
     await Assert.That(logger.CalledBelowMinimum(REDELIVERED)).IsEqualTo(0);
+  }
+
+  // ========================================
+  // THE TYPE A LINE NAMES
+  // ========================================
+
+  /// <summary>
+  /// An EnvelopeType property that is empty, or not a string at all, names no type: the line says "unknown" rather than
+  /// printing a blank or a value that is not a type name.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments(42)]
+  public async Task MessageTypeOf_EnvelopeTypeEmptyOrNotAString_IsUnknownAsync(object envelopeType) {
+    var message = Azure.Messaging.ServiceBus.ServiceBusModelFactory.ServiceBusReceivedMessage(
+      body: BinaryData.FromString("{}"),
+      messageId: Guid.CreateVersion7().ToString(),
+      properties: new Dictionary<string, object> { ["EnvelopeType"] = envelopeType });
+
+    await Assert.That(AsbReceiveLog.MessageTypeOf(message)).IsEqualTo(AsbReceiveLog.UNKNOWN_TYPE);
   }
 
   // ========================================

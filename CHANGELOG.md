@@ -779,6 +779,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **Service Bus deliveries explain themselves in the logs (#2406).** Every delivery the transport gives back to the
+  broker without completing or dead-lettering it is a Warning naming the message id, its type, the subscription, the
+  delivery count and the reason (a paused or disposed subscription, or a failed handler); a paused subscription used to
+  abandon silently. Every delivery handed to the handler is a Debug line with its id and delivery count, and a delivery
+  that arrives with a delivery count above 1 is one Information line naming it. Together they tell "the handler never
+  saw this delivery" from "the handler saw it and did not settle it" for a message the broker dead-letters with
+  MaxDeliveryCountExceeded. With a level off, its line costs one level check and allocates nothing.
 - **The perspective worker's cooldown cache reports when it goes over its cap (#1828).** `RecentlyProcessedEventCache.OnCapacityExceeded` (`Action<int>`, the resident count) is raised when an insert takes
   the cache past `MaxEntries`, before it evicts. Each raise is followed by evicting entries still inside their TTL, so
   a steady stream of raises means `MaxEntries` is too small for the drain. It costs nothing below the cap.

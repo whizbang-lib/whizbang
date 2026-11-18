@@ -403,6 +403,47 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   }
 
   /// <summary>
+  /// A delivery has arrived (#2406). One past the first is an Information line naming it, so a message whose earlier
+  /// deliveries were lost before reaching this code is visible before the broker dead-letters it.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-diagnostics</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:Redelivery_HandledNormally_WritesOneInformationLineNamingItAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:FirstDelivery_WritesNoRedeliveryLineAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:Redelivery_WithInformationOff_WritesAndFormatsNothingAsync</tests>
+  private void _recordArrival(ServiceBusReceivedMessage message, TransportDestination destination) {
+    if (message.DeliveryCount > 1 && _logger.IsEnabled(LogLevel.Information)) {
+      var messageType = AsbReceiveLog.MessageTypeOf(message);
+      var subscription = _subscriptionOf(destination);
+      AsbReceiveLog.Redelivered(_logger, message.MessageId, messageType, destination.Address, subscription,
+        message.DeliveryCount);
+    }
+  }
+
+  /// <summary>A delivery is handed to the handler (#2406): a Debug line with its id and delivery count.</summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:SessionBatch_HandsADeliveryToTheHandler_LogsItsIdAndDeliveryCountAtDebugAsync</tests>
+  private void _logHandedToHandler(ServiceBusReceivedMessage message, TransportDestination destination) {
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var subscription = _subscriptionOf(destination);
+      AsbReceiveLog.HandedToHandler(_logger, message.MessageId, message.DeliveryCount, destination.Address, subscription);
+    }
+  }
+
+  /// <summary>
+  /// A delivery goes back to the broker neither completed nor dead-lettered (#2406): a Warning naming it and the reason.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:SessionBatch_PausedSubscription_LogsUnsettledWarningNamingTheMessageAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:NonSessionBatch_HandlerFails_LogsUnsettledWarningNamingTheMessageAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:ReturnedUnsettled_WithWarningOff_WritesAndFormatsNothingAsync</tests>
+  private void _logReturnedUnsettled(ServiceBusReceivedMessage message, TransportDestination destination, string reason) {
+    if (_logger.IsEnabled(LogLevel.Warning)) {
+      var messageType = AsbReceiveLog.MessageTypeOf(message);
+      var subscription = _subscriptionOf(destination);
+      AsbReceiveLog.ReturnedUnsettled(_logger, message.MessageId, messageType, destination.Address, subscription,
+        message.DeliveryCount, reason);
+    }
+  }
+
+  /// <summary>
   /// The subscription a destination names: its routing key, or the configured default subscription
   /// when it carries none. Every receive path, log line and session key reads it through here, so the
   /// fallback is decided in one place.
@@ -1064,6 +1105,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
     sessionProcessor.ProcessMessageAsync += args => {
       LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      _recordArrival(args.Message, destination);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
     };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
@@ -1317,6 +1359,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     AzureServiceBusSubscription subscription
   ) {
     if (!subscription.IsActive) {
+      _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
       await _safeAbandonAsync(args);
       return;
     }
@@ -1327,6 +1370,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         return;
       }
 
+      _logHandedToHandler(args.Message, destination);
       await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
       // #1720: a raw receptor runs once the handler has stored the message, never instead of storing it.
       await _invokeRawReceptorAsync(decision, args.CancellationToken);
@@ -1411,7 +1455,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     // Non-blocking: enqueue to collector, return immediately
     processor.ProcessMessageAsync += args => {
       LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      _recordArrival(args.Message, destination);
       if (!subscription.IsActive) {
+        _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
         return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       }
       collector.Enqueue(new PendingServiceBusMessage(args));
@@ -1466,6 +1512,10 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     var (transportMessages, successfulArgs) = await _deserializePendingBatchAsync(batch, destination);
     if (transportMessages.Count == 0) {
       return;
+    }
+
+    foreach (var (args, _) in successfulArgs) {
+      _logHandedToHandler(args.Message, destination);
     }
 
     try {
@@ -1571,13 +1621,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
         sessionProcessor.ProcessMessageAsync += async args => {
           LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+          _recordArrival(args.Message, destination);
           if (!subscription.IsActive) {
-            _logger.LogWarning(
-              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              destination.Address,
-              _subscriptionOf(destination)
-            );
+            _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
             await _safeAbandonAsync(args);
             return;
           }
@@ -1613,13 +1659,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
         processor.ProcessMessageAsync += async args => {
           LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+          _recordArrival(args.Message, destination);
           if (!subscription.IsActive) {
-            _logger.LogWarning(
-              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              destination.Address,
-              _subscriptionOf(destination)
-            );
+            _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
             await _safeAbandonAsync(args);
             return;
           }
@@ -1673,6 +1715,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         return; // Not a readable envelope: dead-lettered at the broker by _deserializeReceivedMessageAsync
       }
 
+      _logHandedToHandler(args.Message, destination);
       await handler(envelope, envelopeTypeName, args.CancellationToken);
       // #1720: a raw receptor runs once the handler has stored the message, never instead of storing it.
       await _invokeRawReceptorAsync(decision, args.CancellationToken);
@@ -1705,6 +1748,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         return;
       }
 
+      _logHandedToHandler(args.Message, destination);
       await handler(envelope, envelopeTypeName, args.CancellationToken);
       await _invokeRawReceptorAsync(decision, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
@@ -1942,6 +1986,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     if (deliveryCount >= _options.MaxDeliveryAttempts) {
       await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
     } else {
+      _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.HANDLER_FAILED);
       await _safeAbandonAsync(args);
     }
   }
@@ -1991,6 +2036,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
+      _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.HANDLER_FAILED);
       await _safeAbandonAsync(args);
     }
   }
