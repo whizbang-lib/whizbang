@@ -29,9 +29,9 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
 
   [Test]
   public async Task LogIterationError_NamesResolutionSourceAndKeyAsync() {
-    // Deliberately-bad connection string with credentials so the resolver
-    // picks DirectKey, but the host won't resolve — the open call inside
-    // ExecuteAsync's iteration throws, hitting the catch → LogIterationError.
+    // A direct connection string with credentials, so the resolver picks DirectKey. The iteration fails inside the loop,
+    // at the election, so the catch logs LogIterationError without any network call: a failure that waits on a host
+    // name failing to resolve is as late as the runner's DNS makes it, and on a Windows runner that outlasted the wait.
     var badDirect = "Host=__whizbang-nonexistent-host__;Database=x;Username=u;Password=p;Timeout=2;Command Timeout=2";
     var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       ["ConnectionStrings:test-db-direct"] = badDirect,
@@ -54,7 +54,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       bus,
       logger,
-      dutyElector: new GrantingElector(),
+      dutyElector: new UnreachableElector(),
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -132,13 +132,13 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       bus,
       logger,
-      dutyElector: new GrantingElector(),
+      dutyElector: new UnreachableElector(),
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
     // The first iteration runs after the start-up diagnostics, where the warning was written, so its failure is the
-    // signal that the warning would have been logged by now.
+    // signal that the warning would have been logged by now. It fails at the election, with no network call.
     await logger.IterationFailedTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
@@ -188,6 +188,15 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
           break;
       }
     }
+  }
+
+  /// <summary>
+  /// An elector that cannot be reached: every vote throws, so each iteration of the stamper's loop fails at once and is
+  /// logged as an iteration failure, with no connection opened and nothing left to the network's timing.
+  /// </summary>
+  private sealed class UnreachableElector : Whizbang.Core.Startup.IDutyElector {
+    public Task<Whizbang.Core.Startup.DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) =>
+      Task.FromException<Whizbang.Core.Startup.DutyAttempt>(new InvalidOperationException("the role's store could not be reached"));
   }
 
   /// <summary>Grants the stamper role at once (#2044: the stamper leads only through an elector).</summary>
