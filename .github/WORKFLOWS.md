@@ -120,7 +120,7 @@ It runs `.github/scripts/Select-CiRunner.ps1` once per run, on a GitHub-hosted r
 before the picker. The picker job and each of its steps continue on error, it is not one of the gate's
 needs, and every output and every consumer defaults to `ubuntu-latest`, so a picker that fails, times
 out or never runs leaves CI unchanged and never turns `Gate · CI result` red. Each run's job summary has
-a table saying which tier each class got and why every higher tier was skipped.
+a table saying which tier each class got and, for a GitHub-hosted class, why the pool was skipped.
 
 **Tiers, per job class; the first whose every check passes wins.**
 
@@ -130,11 +130,8 @@ a table saying which tier each class got and why every higher tier was skipped.
    repository in (visibility "all", or "selected" with this repository selected), allows public
    repositories, and is not restricted to selected workflows; an online, idle runner carries every label
    of the class; and this repository's jobs already queued for those runners leave one spare.
-2. **Blacksmith.** `CI_BLACKSMITH_RUNNER` (or the class's own variable) names a label that fits the class,
-   and the run is trusted, or it is a fork or Dependabot pull request and `CI_BLACKSMITH_FORKS` is `true`.
-   When `CI_BLACKSMITH_MAX_QUEUED` is above 0, fewer than that many jobs are already queued for the label.
-3. **`ubuntu-latest`.** Anything else: a missing token, an unset or malformed variable, an API error, a
-   timeout (10 seconds a request, 60 for the whole picker), or an unexpected response.
+2. **`ubuntu-latest`.** Anything else: an untrusted run, a missing token, an API error, a timeout (10
+   seconds a request, 60 for the whole picker), or an unexpected response.
 
 **Job classes.**
 
@@ -169,13 +166,6 @@ runner group is `Default` unless the `RUNNER_POOL_GROUP` variable names another.
 |---|---|
 | `RUNNER_POOL_DISABLED` | `true` turns the self-hosted tier off without touching the secrets |
 | `RUNNER_POOL_GROUP` | The runner group holding the pool. Default `Default` |
-| `CI_BLACKSMITH_RUNNER` | The Blacksmith label every class uses, for example `blacksmith-4vcpu-ubuntu-2404`. Unset: no Blacksmith tier |
-| `CI_BLACKSMITH_RUNNER_COMPILE`, `_LINUX`, `_ANALYZE`, `_LINUX_DOCKER`, `_ANY_OS` | A label for one class, over `CI_BLACKSMITH_RUNNER` |
-| `CI_BLACKSMITH_FORKS` | `true` lets fork and Dependabot pull requests use Blacksmith (it is billed). Default: they run GitHub-hosted |
-| `CI_BLACKSMITH_MAX_QUEUED` | Above 0: skip Blacksmith when that many of this repository's jobs are already queued for the label. Default 0, not checked |
-
-A Blacksmith label must be a plain label; for a Linux class it must be an `ubuntu` label, and for an
-X64 class not an `-arm` one. A label that does not fit skips the tier for that class only.
 
 **One-time setup for the self-hosted tier (owner).** All three are needed; until then the tier is skipped.
 
