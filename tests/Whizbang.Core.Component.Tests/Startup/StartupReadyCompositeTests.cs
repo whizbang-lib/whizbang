@@ -457,7 +457,7 @@ public class StartupReadyCompositeTests {
 
   /// <summary>
   /// A stop while waiting ends the wait; it is not a probe (#2387). The probe delay shares the
-  /// stopping token, so on a stop it completes at once, cancelled. Counting that as a probe spun
+  /// stopping token, so on a stop it completes at once, canceled. Counting that as a probe spun
   /// the loop through three "probes" in no time and logged "Startup is not ready after 0s" after the
   /// host had already been told to stop. The contributor here ignores cancellation, as a slow one
   /// can, so only the probe can notice the stop; it answers once anything says "not ready", which

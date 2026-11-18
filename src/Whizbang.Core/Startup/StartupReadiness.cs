@@ -179,7 +179,7 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
         await wait.ConfigureAwait(false);   // propagate faults/cancellation
         return;
       }
-      // The probe shares the stopping token, so a stop completes it at once, cancelled. That is the
+      // The probe shares the stopping token, so a stop completes it at once, canceled. That is the
       // stop, not a probe: awaiting it throws, and StartedAsync leaves quietly. Counting it instead
       // spun the loop with no delay and narrated "not ready after 0s" after the stop (#2387).
       await winner.ConfigureAwait(false);
