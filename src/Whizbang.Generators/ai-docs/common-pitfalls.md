@@ -390,7 +390,11 @@ no warning.
   (`-p:EmitCompilerGeneratedFiles=true`, then size `obj/generated/<generator>`). Generated output several times the
   size of the code it serves is the signal.
 - CI runs every full-solution build under `.github/scripts/Invoke-BuildWithinMemory.ps1`, which fails a build whose
-  memory passes 12 GB, so growth is caught as a failed check rather than a hung runner.
+  memory passes 13 GB, so growth is caught as a failed check rather than a hung runner.
+- Measure a single project in isolation too, but do not trust it alone: the compiler server is shared by every
+  project in a build and, under server GC, holds what one compile grew to while it runs the next. Removing the copies
+  took the EF Core test project from 18.9 GB to 7.9 GB on its own, yet the full build only from 20.6 GB to 19.3 GB
+  until the build steps set `DOTNET_GCConserveMemory=7` (12.8 GB).
 
 ---
 

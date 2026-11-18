@@ -938,10 +938,15 @@ jobs:
       # are analyzed for net11.0 alone: they build net10.0 too, the same source twice, which doubles the memory
       # without adding a finding, and the net10.0 compile job below already proves net10.0 builds.
       - name: Build every project with the analyzers on
+        env:
+          # The compiler server runs server GC and holds on to what one project's compile grew to while it compiles the
+          # next, so the largest test projects stack: a cold full build peaked at 19.3 GB. Told to conserve memory it
+          # compacts instead, and the same build peaked at 12.8 GB (#2388).
+          DOTNET_GCConserveMemory: '7'
         run: |
           BUILD_COMMAND="$RUNNER_TEMP/build-command"
           printf '%s\n' dotnet build --no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:WhizbangReleaseTargetFrameworks=net11.0 > "$BUILD_COMMAND"
-          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 12288 -CommandFile "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile "$BUILD_COMMAND"
 
   # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day the tests, samples and tools target
   # net11.0 only (the libraries build both), so a .NET 11-only API in them would otherwise surface first on a
@@ -983,10 +988,15 @@ jobs:
       # node: with two, the hosted runner ran out of memory and was shut down mid-build ("The runner has received a
       # shutdown signal") on three runs in a row, as the quality build did (#2135).
       - name: Build every project for net10.0
+        env:
+          # The compiler server runs server GC and holds on to what one project's compile grew to while it compiles the
+          # next, so the largest test projects stack: a cold full build peaked at 19.3 GB. Told to conserve memory it
+          # compacts instead, and the same build peaked at 12.8 GB (#2388).
+          DOTNET_GCConserveMemory: '7'
         run: |
           BUILD_COMMAND="$RUNNER_TEMP/build-command"
           printf '%s\n' dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false > "$BUILD_COMMAND"
-          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 12288 -CommandFile "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile "$BUILD_COMMAND"
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an

@@ -42,11 +42,11 @@
 
 .EXAMPLE
     printf '%s\n' dotnet build --no-restore -maxcpucount:1 > build-command
-    pwsh .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 12288 -CommandFile build-command
+    pwsh .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile build-command
 #>
 
 param(
-    [Parameter()] [long]$BudgetMb = 12288,
+    [Parameter()] [long]$BudgetMb = 13312,
     [Parameter()] [double]$IntervalSeconds = 2,
     [Parameter()] [string[]]$Command = @(),
     [Parameter()] [string]$CommandFile = '',

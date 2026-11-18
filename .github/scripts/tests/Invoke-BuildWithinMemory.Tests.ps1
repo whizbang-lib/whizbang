@@ -115,4 +115,12 @@ Describe 'the CI builds' {
     $guarded.Count | Should -Be $builds
     $runs.Count | Should -Be $builds
   }
+
+  # The compiler server runs server GC and keeps what one project's compile grew to while it compiles the next; a
+  # cold full build peaked at 19.3 GB that way, and at 12.8 GB with the GC told to conserve memory (#2388).
+  It 'tells the compiler server''s GC to conserve memory on every full-solution build in <file>' -ForEach @(
+      @{ file = 'reusable-build.yml'; builds = 1 }, @{ file = 'ci.yml'; builds = 2 }) {
+    $lines = Get-Content (Join-Path -Path $PSScriptRoot -ChildPath "../../workflows/$file")
+    @($lines | Where-Object { $_ -match "^\s*DOTNET_GCConserveMemory: '7'\s*$" }).Count | Should -Be $builds
+  }
 }
