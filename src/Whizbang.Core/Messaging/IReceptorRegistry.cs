@@ -149,8 +149,8 @@ public interface IReceptorRegistry {
   /// registries with no compiled receptors; the source-generated registry lists its own.
   /// </remarks>
   /// <returns>The ids; empty when nothing is compiled in.</returns>
-  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheGeneratedRegistry_ListsTheReceptorsCompiledIntoItAsync</tests>
-  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorRegistryContributionTests.cs:AnImplementationWithoutCompiledReceptors_ListsNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheGeneratedRegistry_ListsTheReceptorsCompiledIntoItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs:AnImplementationWithoutCompiledReceptors_ListsNoneAsync</tests>
   IReadOnlyCollection<string> GetCompiledReceptorIds() => [];
 }
 

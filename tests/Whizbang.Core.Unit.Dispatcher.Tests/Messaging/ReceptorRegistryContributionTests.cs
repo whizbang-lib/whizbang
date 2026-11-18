@@ -220,8 +220,8 @@ public class ReceptorRegistryContributionTests {
   [Test]
   public async Task TheGeneratedRegistry_ListsTheReceptorsCompiledIntoItAsync() {
     var services = new ServiceCollection();
-    services.AddSingleton<Whizbang.Core.Unit.Messaging.Tests.Generated.GeneratedReceptorRegistry>();
-    services.AddReceptorRegistryContribution<Whizbang.Core.Unit.Messaging.Tests.Generated.GeneratedReceptorRegistry>();
+    services.AddSingleton<Whizbang.Core.Unit.Dispatcher.Tests.Generated.GeneratedReceptorRegistry>();
+    services.AddReceptorRegistryContribution<Whizbang.Core.Unit.Dispatcher.Tests.Generated.GeneratedReceptorRegistry>();
     await using var provider = services.BuildServiceProvider();
 
     var ids = provider.GetRequiredService<IReceptorRegistry>().GetCompiledReceptorIds();

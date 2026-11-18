@@ -40,7 +40,7 @@ public class RoutingOptionsExcludedEventTypesTests {
     var options = new RoutingOptions().ExcludeEventType(eventType);
 
     await Assert.That(options.ExcludedEventTypes)
-      .IsEquivalentTo(["Whizbang.Core.Tests.Routing.ExcludedEventFixtures.Container+NestedNoisyEvent, Whizbang.Core.Tests"]);
+      .IsEquivalentTo(["Whizbang.Core.Tests.Routing.ExcludedEventFixtures.Container+NestedNoisyEvent, Whizbang.Core.Unit.Workers.Tests"]);
   }
 
   [Test]
