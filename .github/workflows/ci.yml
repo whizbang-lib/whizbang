@@ -981,8 +981,19 @@ jobs:
       # shutdown signal") on three runs in a row, as the quality build did (#2135). No shared compiler server
       # (UseSharedCompilation=false): it outlives every project and caches their references, and with it a one-node build
       # was still shut down. The analyzers build above and the compile and quality builds do the same.
+      # The shutdowns kept coming with one node and no compiler server, so the step logs memory, disk and the largest
+      # processes every 30s: the log streams live, so the last sample before a shutdown says what ran out.
       - name: Build every project for net10.0
-        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false
+        run: |
+          (while sleep 30; do
+            echo "::group::resources $(date -u +%H:%M:%S)"
+            free -m | sed -n 2,3p; df -h / | tail -1
+            ps -eo rss=,comm= --sort=-rss | head -4 | awk '{printf "  %6d MB %s\n", $1/1024, $2}'
+            echo "::endgroup::"
+          done) &
+          MONITOR=$!
+          trap 'kill $MONITOR 2>/dev/null' EXIT
+          dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
