@@ -96,6 +96,8 @@ internal enum RequiredMemberReading {
 /// <param name="JsonName">The name from the property's <c>[JsonPropertyName]</c>, or <see langword="null"/> when it has none and is serialized under <paramref name="Name"/>.</param>
 /// <param name="IgnoreCondition">The <c>JsonIgnoreCondition</c> member name from a conditional <c>[JsonIgnore]</c> (for example <c>WhenWritingNull</c>), or <see langword="null"/> when the property is always written.</param>
 /// <param name="IsRequired">True when the property is declared required: a <c>required</c> or <c>[JsonRequired]</c> member whose type does not admit null. Whether a document missing it is refused depends on the declaring type's <see cref="JsonMessageTypeInfo.RequiredMembers"/>.</param>
+/// <param name="IsRequiredKeyword">True when the property carries the C# <see langword="required"/> keyword, whatever its type: a construction must set it, so it stays in the generated object initializer (#2374).</param>
+/// <param name="InitAccessorOwner">For an init-only property, the fully qualified type that declares its init accessor, when generated code can call that accessor through <c>[UnsafeAccessor]</c> (the type and every type containing it are non-generic classes); <see langword="null"/> otherwise (#2374).</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPropertyNameTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
@@ -107,7 +109,9 @@ internal sealed record PropertyInfo(
     bool CanWrite,
     string? JsonName = null,
     string? IgnoreCondition = null,
-    bool IsRequired = false
+    bool IsRequired = false,
+    bool IsRequiredKeyword = false,
+    string? InitAccessorOwner = null
 ) {
   /// <summary>The name the property is written and read under: its <c>[JsonPropertyName]</c> when present, its C# name otherwise.</summary>
   public string WireName => JsonName ?? Name;

@@ -89,4 +89,19 @@ public class IntegrityCheckpointWireSerializationTests {
     await Assert.That(back.OwnedDomains).IsEmpty()
       .Because("the field is additive: an origin built before it announces no domains, and claims nothing");
   }
+
+  [Test]
+  public async Task IntegrityCheckpoint_WithOwnedDomainsNull_ReadsAsEmptyAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var origin = TrackedGuid.New().Value;
+    var json = $$"""
+      {"CheckpointStreamId":"{{origin}}","OriginServiceId":"{{origin}}","OriginServiceName":"svc",
+       "FromCommitSequence":1,"ToCommitSequence":2,"Buckets":[],"OwnedDomains":null}
+      """;
+
+    var back = (IntegrityCheckpoint)JsonSerializer.Deserialize(json, options.GetTypeInfo(typeof(IntegrityCheckpoint)))!;
+
+    await Assert.That(back.OwnedDomains).IsEmpty()
+      .Because("a payload that holds null for the field claims no domains, the same as one without it");
+  }
 }
