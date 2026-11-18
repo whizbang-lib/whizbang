@@ -32,6 +32,13 @@ public sealed class RedeliveryAnswerPublication {
   private readonly bool _stateOnly;
   private (CompositeEnvelopePlan<RedeliveryEvent> Plan, RedeliveryAnswerWindow Window)? _held;
 
+  /// <summary>
+  /// The answer is to a request for a whole type (#2341), stamped on each of its bundles: only such an answer can mark a
+  /// type lane.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#only-a-whole-type-answer-marks-the-type-lane</docs>
+  public bool AnswersWholeType { get; init; }
+
   internal RedeliveryAnswerPublication(RedeliveryPump pump, string topic, string? target, Guid originServiceId, bool stateOnly) {
     _pump = pump;
     _topic = topic;

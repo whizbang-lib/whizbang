@@ -226,6 +226,8 @@ public sealed class RedeliveryPump(
   /// <param name="target">Directed-message target, or null to broadcast.</param>
   /// <param name="originServiceId">This origin's service id.</param>
   /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
+  /// <param name="answersWholeType">True when the answer is to a request for a whole type (#2341); see
+  /// <see cref="BeginAnswer"/>.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of composites published.</returns>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
@@ -239,9 +241,10 @@ public sealed class RedeliveryPump(
       string? target,
       Guid originServiceId = default,
       bool stateOnly = false,
+      bool answersWholeType = false,
       CancellationToken cancellationToken = default) {
     // #2311: the whole answer is this one publish, so its last bundle says the answer ends there.
-    var answer = BeginAnswer(topic, target, originServiceId, stateOnly);
+    var answer = BeginAnswer(topic, target, answersWholeType, originServiceId, stateOnly);
     var published = await answer.PublishAsync(events, answeredWindow, cancellationToken).ConfigureAwait(false);
     return published + await answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
   }
@@ -254,14 +257,18 @@ public sealed class RedeliveryPump(
   /// </summary>
   /// <param name="topic">Wire topic.</param>
   /// <param name="target">Directed-message target, or null to broadcast.</param>
+  /// <param name="answersWholeType">True when the request named no streams and no events, so the answer covers the
+  /// whole of each type it carries (#2341). Only such an answer can mark a type lane as one repair cannot change; it is
+  /// required so that no caller can leave it to a default.</param>
   /// <param name="originServiceId">This origin's service id.</param>
   /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
   /// <returns>The answer to publish into.</returns>
   /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
-  public RedeliveryAnswerPublication BeginAnswer(string topic, string? target, Guid originServiceId = default, bool stateOnly = false) {
+  public RedeliveryAnswerPublication BeginAnswer(
+      string topic, string? target, bool answersWholeType, Guid originServiceId = default, bool stateOnly = false) {
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
-    return new RedeliveryAnswerPublication(this, topic, target, originServiceId, stateOnly);
+    return new RedeliveryAnswerPublication(this, topic, target, originServiceId, stateOnly) { AnswersWholeType = answersWholeType };
   }
 
   /// <summary>

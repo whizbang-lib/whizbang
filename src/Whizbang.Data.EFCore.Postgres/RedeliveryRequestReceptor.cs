@@ -157,7 +157,7 @@ public sealed partial class RedeliveryRequestReceptor(
       RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
     // #2311: every selection publishes into one answer, whose last bundle says the answer ends with it.
     var tally = new OrdinaryTally {
-      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly),
+      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, answersWholeType: false, serve.OriginServiceId, message.StateOnly),
     };
     if (message.EventIds is { Count: > 0 } named) {
       // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
@@ -286,7 +286,7 @@ public sealed partial class RedeliveryRequestReceptor(
     var composites = 0;
     var exhausted = false;
     // #2311: the window's pages publish into one answer, whose last bundle says the answer ends with it.
-    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly);
+    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, answersWholeType: false, serve.OriginServiceId, message.StateOnly);
     while (selected < serve.MaxEvents) {
       var want = Math.Min(serve.PageSize, serve.MaxEvents - selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {

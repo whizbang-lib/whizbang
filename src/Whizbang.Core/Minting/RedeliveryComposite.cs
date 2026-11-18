@@ -181,6 +181,31 @@ public sealed class RedeliveryComposite
   /// <docs>resilience/stream-integrity#integrity-traces</docs>
   public string? TraceParent { get; init; }
 
+  /// <summary>
+  /// The answer this bundle belongs to (#2340), the same on every bundle of one answer. Null from an origin that
+  /// predates the field, and on a bundle that answers no request.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  public Guid? AnswerId { get; init; }
+
+  /// <summary>The bundle's place in its answer, counting from 0 in the order the origin published (#2340).</summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  public int AnswerBundleIndex { get; init; }
+
+  /// <summary>
+  /// How many bundles the answer has (#2340): set only on its last bundle, so the receiver knows when every bundle of
+  /// the answer has committed, whatever order they commit in.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  public int? AnswerBundleCount { get; init; }
+
+  /// <summary>
+  /// The answer is to a request for a whole type (#2341): it named no streams and no events. Only such an answer can mark
+  /// a type lane; an answer to a request for named streams leaves the type lane as it was.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#only-a-whole-type-answer-marks-the-type-lane</docs>
+  public bool AnswersWholeType { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
 
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;
