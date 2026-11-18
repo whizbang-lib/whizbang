@@ -981,19 +981,30 @@ jobs:
       # shutdown signal") on three runs in a row, as the quality build did (#2135). No shared compiler server
       # (UseSharedCompilation=false): it outlives every project and caches their references, and with it a one-node build
       # was still shut down. The analyzers build above and the compile and quality builds do the same.
-      # The shutdowns kept coming with one node and no compiler server, so the step logs memory, disk and the largest
-      # processes every 30s: the log streams live, so the last sample before a shutdown says what ran out.
+      # The shutdowns and timeouts kept coming with one node and no compiler server, so the step samples load, memory,
+      # disk and the largest processes every 30s into a file. A timed-out or shut-down job's log is not kept, so the
+      # step has its own timeout below the job's and the next step uploads the samples whatever happened.
       - name: Build every project for net10.0
+        timeout-minutes: 38
         run: |
           (while sleep 30; do
-            echo "::group::resources $(date -u +%H:%M:%S)"
-            free -m | sed -n 2,3p; df -h / | tail -1
-            ps -eo rss=,comm= --sort=-rss | head -4 | awk '{printf "  %6d MB %s\n", $1/1024, $2}'
-            echo "::endgroup::"
+            { echo "== $(date -u +%H:%M:%S) load $(cut -d' ' -f1-3 /proc/loadavg)"
+              free -m | sed -n 2,3p; df -h / | tail -1
+              ps -eo rss=,pcpu=,comm= --sort=-rss | head -4 | awk '{printf "  %6d MB %5s%% %s\n", $1/1024, $2, $3}'
+            } >> "$RUNNER_TEMP/resources.log"
           done) &
           MONITOR=$!
           trap 'kill $MONITOR 2>/dev/null' EXIT
           dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Upload the resource samples
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compile-net10-resources
+          path: ${{ runner.temp }}/resources.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
