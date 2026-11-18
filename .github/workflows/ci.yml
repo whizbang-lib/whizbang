@@ -938,7 +938,7 @@ jobs:
       # are analyzed for net11.0 alone: they build net10.0 too, the same source twice, which doubles the memory
       # without adding a finding, and the net10.0 compile job below already proves net10.0 builds.
       - name: Build every project with the analyzers on
-        run: dotnet build --no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false -p:WhizbangReleaseTargetFrameworks=net11.0
+        run: dotnet build --no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:WhizbangReleaseTargetFrameworks=net11.0
 
   # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day the tests, samples and tools target
   # net11.0 only (the libraries build both), so a .NET 11-only API in them would otherwise surface first on a
@@ -978,33 +978,9 @@ jobs:
 
       # The release build, narrowed to net10.0: the generators and analyzers keep their own netstandard2.0. One build
       # node: with two, the hosted runner ran out of memory and was shut down mid-build ("The runner has received a
-      # shutdown signal") on three runs in a row, as the quality build did (#2135). No shared compiler server
-      # (UseSharedCompilation=false): it outlives every project and caches their references, and with it a one-node build
-      # was still shut down. The analyzers build above and the compile and quality builds do the same.
-      # The shutdowns and timeouts kept coming with one node and no compiler server, so the step samples load, memory,
-      # disk and the largest processes every 30s into a file. A timed-out or shut-down job's log is not kept, so the
-      # step has its own timeout below the job's and the next step uploads the samples whatever happened.
+      # shutdown signal") on three runs in a row, as the quality build did (#2135).
       - name: Build every project for net10.0
-        timeout-minutes: 38
-        run: |
-          (while sleep 30; do
-            { echo "== $(date -u +%H:%M:%S) load $(cut -d' ' -f1-3 /proc/loadavg)"
-              free -m | sed -n 2,3p; df -h / | tail -1
-              ps -eo rss=,pcpu=,comm= --sort=-rss | head -4 | awk '{printf "  %6d MB %5s%% %s\n", $1/1024, $2, $3}'
-            } >> "$RUNNER_TEMP/resources.log"
-          done) &
-          MONITOR=$!
-          trap 'kill $MONITOR 2>/dev/null' EXIT
-          dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false -p:UseSharedCompilation=false
-
-      - name: Upload the resource samples
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: compile-net10-resources
-          path: ${{ runner.temp }}/resources.log
-          if-no-files-found: ignore
-          retention-days: 7
+        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
