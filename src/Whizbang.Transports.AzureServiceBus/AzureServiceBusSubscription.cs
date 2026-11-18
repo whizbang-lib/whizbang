@@ -136,10 +136,17 @@ public sealed class AzureServiceBusSubscription : ISubscription {
     }
 
     IsActive = false;
+    Paused?.Invoke();
     _stopping = _stopReceivingAsync();
     _logger.LogInformation("Paused Service Bus subscription: its processor stops taking sessions and messages until it is resumed");
     return Task.CompletedTask;
   }
+
+  /// <summary>Called when the subscription is paused: the transport takes it off the receive-liveness watch (#2406).</summary>
+  internal Action? Paused { get; set; }
+
+  /// <summary>Called when the subscription is resumed: the transport watches it again from a fresh window (#2406).</summary>
+  internal Action? Resumed { get; set; }
 
   // The processor's stop in progress, started by the last pause; a resume waits for it before starting the processor.
   private Task _stopping = Task.CompletedTask;
@@ -168,6 +175,7 @@ public sealed class AzureServiceBusSubscription : ISubscription {
 
     await _stopping.ConfigureAwait(false);
     IsActive = true;
+    Resumed?.Invoke();
     await (_processor?.StartProcessingAsync() ?? _sessionProcessor!.StartProcessingAsync()).ConfigureAwait(false);
     _logger.LogInformation("Resumed Service Bus subscription: its processor takes sessions and messages again");
   }

@@ -16,7 +16,7 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// instance burned redeliveries and the delivery limit instead of leaving the queue to the instances that are running.
 /// Paused, the consumer is canceled; resumed, a consumer is started again.
 /// </summary>
-/// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
+/// <docs>messaging/transports/rabbitmq#paused-subscriptions</docs>
 [Timeout(10_000)]
 public class RabbitMQPausedSubscriptionTests {
   /// <summary>A paused batch subscription cancels its consumer, so the broker hands it no more deliveries.</summary>
@@ -88,6 +88,25 @@ public class RabbitMQPausedSubscriptionTests {
 
     await Assert.That(channel.CanceledTags).Count().IsEqualTo(1);
     await Assert.That(channel.IsDisposed).IsTrue();
+  }
+
+  /// <summary>
+  /// A subscription with no consumer tag has no consumer to cancel: pausing and resuming it touch no consumer.
+  /// </summary>
+  [Test]
+  public async Task WithoutAConsumerTag_PauseAndResume_TouchNoConsumerAsync(CancellationToken cancellationToken) {
+    var channel = new RecordingChannel();
+    var restarts = 0;
+    using var subscription = new RabbitMQSubscription(channel, "no-tag-queue") {
+      RestartConsuming = () => { restarts++; return Task.FromResult("unused"); },
+    };
+
+    await subscription.PauseAsync();
+    await subscription.ResumeAsync();
+
+    await Assert.That(channel.CanceledTags).IsEmpty();
+    await Assert.That(restarts).IsEqualTo(0);
+    await Assert.That(subscription.IsActive).IsTrue();
   }
 
   private static async Task<(RecordingChannel Channel, List<IReadOnlyList<TransportMessage>> Batches, ISubscription Subscription)>

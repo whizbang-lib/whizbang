@@ -403,6 +403,18 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   }
 
   /// <summary>
+  /// Takes a subscription off the receive-liveness watch while it is paused and puts it back, with a fresh window, when
+  /// it is resumed (#2406): a subscription paused on purpose is not a stall.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs:SessionSubscription_PausedPastTheSilenceThreshold_IsNotRecoveredAndTakesNoSessionsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:SessionBatch_ResumedAfterAPause_StartsItsProcessorAndHandlesDeliveriesAsync</tests>
+  private void _watchWhileActive(AzureServiceBusSubscription subscription, string topicName, string subscriptionName) {
+    subscription.Paused = () => LivenessWatchdog?.Pause(topicName, subscriptionName);
+    subscription.Resumed = () => LivenessWatchdog?.Resume(topicName, subscriptionName);
+  }
+
+  /// <summary>
   /// A delivery has arrived (#2406). One past the first is an Information line naming it, so a message whose earlier
   /// deliveries were lost before reaching this code is visible before the broker dead-letters it.
   /// </summary>
@@ -1102,6 +1114,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   ) {
     var sessionProcessor = _createGovernedSessionProcessor(topicName, subscriptionName, destination);
     var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
+    _watchWhileActive(subscription, topicName, subscriptionName);
 
     sessionProcessor.ProcessMessageAsync += args => {
       LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
@@ -1451,6 +1464,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
     var processor = Client.CreateProcessor(topicName, subscriptionName, processorOptions);
     var subscription = new AzureServiceBusSubscription(processor, _logger);
+    _watchWhileActive(subscription, topicName, subscriptionName);
 
     // Non-blocking: enqueue to collector, return immediately
     processor.ProcessMessageAsync += args => {
@@ -1618,6 +1632,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         var sessionProcessor = _createGovernedSessionProcessor(topicName, subscriptionName, destination);
 
         subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
+        _watchWhileActive(subscription, topicName, subscriptionName);
 
         sessionProcessor.ProcessMessageAsync += async args => {
           LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
@@ -1656,6 +1671,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         );
 
         subscription = new AzureServiceBusSubscription(processor, _logger);
+        _watchWhileActive(subscription, topicName, subscriptionName);
 
         processor.ProcessMessageAsync += async args => {
           LivenessWatchdog?.RecordActivity(topicName, subscriptionName);

@@ -1437,7 +1437,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages keep arriving (all of an origin's integrity checkpoints share one) stayed on the standing-down instance
   while every message in it burned to the dead-letter queue with `MaxDeliveryCountExceeded`. Pausing now stops the
   processor, so nothing is taken or counted and another instance takes the session at once; resuming starts it
-  again, and a namespace-throttle pause that ends while the subscription is paused leaves it stopped.
+  again, and a namespace-throttle pause that ends while the subscription is paused leaves it stopped. The
+  receive-liveness watchdog no longer treats a paused subscription's silence as a stall: it neither counts it nor
+  re-subscribes it, and watches it again from a fresh silence window once it is resumed. RabbitMQ had the same defect
+  (a paused consumer stayed on the queue and nacked every delivery with requeue, raising its delivery count): pausing
+  now cancels the consumer and resuming starts one again.
 - **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
   longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
   state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
