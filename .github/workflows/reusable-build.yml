@@ -94,7 +94,13 @@ jobs:
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
           # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
           if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi
-          dotnet build "${BUILD_ARGS[@]}"
+          # A hosted runner has 16 GB, and a build that needs more hangs until the job times out with no log (#2388).
+          # The guard samples every dotnet process while the build runs and fails a build whose peak passes 12 GB, so
+          # growth shows up as a failed check while there is still room to find it. The command goes through a file,
+          # one argument a line, because pwsh -File would split an argument such as -mt:false.
+          BUILD_COMMAND="$RUNNER_TEMP/build-command"
+          printf '%s\n' dotnet build "${BUILD_ARGS[@]}" > "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 12288 -CommandFile "$BUILD_COMMAND"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
       # stays off the build -> test-suites critical path.
