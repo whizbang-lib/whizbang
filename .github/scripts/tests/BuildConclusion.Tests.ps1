@@ -21,7 +21,13 @@ BeforeAll {
   }
 }
 
-Describe 'build-conclusion.jq' {
+# The step runs in bash on Linux runners, which carry jq. The pipeline tests also run on the Windows pool,
+# which does not, so the filter's own cases skip there; the wiring check below runs everywhere.
+BeforeDiscovery {
+  $script:NoJq = -not (Get-Command -Name jq -ErrorAction SilentlyContinue)
+}
+
+Describe 'build-conclusion.jq' -Skip:$NoJq {
   It 'reads the Compile job when a skipped Compile net10.0 job is listed first (#2385)' {
     $jobs = @(
       @{ name = 'Build · Compile net10.0'; conclusion = 'skipped' },
@@ -58,8 +64,10 @@ Describe 'build-conclusion.jq' {
     $jobs = @(@{ name = 'Build · Compile net10.0'; conclusion = 'skipped' })
     Get-BuildConclusion $jobs | Should -Be 'pending'
   }
+}
 
-  It 'is the filter the coverage wait step uses' {
+Describe 'The coverage wait step' {
+  It 'uses build-conclusion.jq' {
     $workflow = Get-Content -Raw (Join-Path $PSScriptRoot '..' '..' 'workflows' 'reusable-quality.yml')
     $workflow | Should -Match 'jq -r -f \.github/scripts/build-conclusion\.jq'
     $workflow | Should -Not -Match 'startswith\("Build · Compile"\)'
