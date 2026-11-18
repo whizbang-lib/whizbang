@@ -341,6 +341,9 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
 
     await processor.RaiseErrorAsync(_serviceBusyErrorArgs());
     await pauseFailed.Task;
+    // The failure is logged before the pause's finally releases its single-flight claim. A second throttle raised in
+    // between would find the claim still held and be ignored, so wait for the pause itself to end (#2390).
+    await transport.ThrottlePause;
 
     await Assert.That(logger.Contains(LogLevel.Error, "Throttle pause/resume failed for inbox/throttle-sub")).IsTrue()
       .Because("the failure diagnostic must name the topic/subscription — an operator needs to know WHICH consumer is stuck");

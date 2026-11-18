@@ -475,7 +475,7 @@ public class SubscriptionBackfillWorkerTests {
   [Test]
   [Timeout(30_000)]
   public async Task ExecuteAsync_AFailingTick_IsLogged_AndTheLoopGoesOnAsync(CancellationToken testToken) {
-    var clock = new FakeTimeProvider(_now);
+    var clock = new PeriodRecordingClock(_now);
     var (worker, coordinator, _) = _build(_options(), [_cursor(_orders, "orders-svc", PLACED)], clock: clock);
     coordinator.FailReadsRemaining = 1;
 
@@ -483,6 +483,10 @@ public class SubscriptionBackfillWorkerTests {
     try {
       clock.Advance(TimeSpan.FromSeconds(1));
       await coordinator.FirstReadFailed.Task.WaitAsync(testToken);
+      // The failed read signals before the loop finishes the tick. The loop then sets the timer's period, which restarts
+      // the timer from the clock's current time. Advancing before that would let the reset push the next tick past the
+      // advanced time, so no tick ever comes. Wait for the reset, then advance.
+      await clock.Changed.WaitAsync(testToken);
       clock.Advance(TimeSpan.FromSeconds(10));
       await coordinator.FirstMark.Task.WaitAsync(testToken);
     } finally {
