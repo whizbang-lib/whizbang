@@ -436,6 +436,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task DrainRowEvictionJournalAsync_WithoutProviderSupport_DrainsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var drained = await coordinator.DrainRowEvictionJournalAsync();
+
+    await Assert.That(drained).IsEmpty()
+      .Because("a store with no row-eviction journal has nothing to cascade, so the maintenance cascade ends at once");
+  }
+
+  [Test]
   public async Task VerifyDigestTableAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
