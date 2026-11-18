@@ -176,7 +176,7 @@ public partial class RedeliveryWindowAnswerTests {
     await Assert.That(serializer.Composites).Count().IsEqualTo(3).Because("precondition: one bundle per stream");
     foreach (var bundle in serializer.Composites) {
       // #2311: whether more of the answer follows is asserted on its own; here only the window.
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(from, to));
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false, Part = null }).IsEqualTo(new RedeliveryAnswerWindow(from, to));
     }
   }
 
@@ -249,7 +249,7 @@ public partial class RedeliveryWindowAnswerTests {
     await Assert.That(serializer.Composites).IsNotEmpty();
     foreach (var bundle in serializer.Composites) {
       // #2311: whether more of the answer follows is asserted on its own; here only the window.
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false, Part = null }).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
     }
   }
 
@@ -266,7 +266,7 @@ public partial class RedeliveryWindowAnswerTests {
     await _receptor(sp).HandleAsync(_window(TrackedGuid.New().Value, window: 1, from: null, max: 100));
 
     // #2311: whether more of the answer follows is asserted on its own; here only each page's window.
-    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false }))
+    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false, Part = null }))
       .IsEquivalentTo(new RedeliveryAnswerWindow[] { new(null, 2), new(2, 4), new(4, null) });
   }
 

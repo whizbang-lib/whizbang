@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Minting;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
 
@@ -31,21 +32,26 @@ public sealed class RedeliveryAnswerPublication {
   private readonly Guid _originServiceId;
   private readonly bool _stateOnly;
   private (CompositeEnvelopePlan<RedeliveryEvent> Plan, RedeliveryAnswerWindow Window)? _held;
+  // #2340: the answer's id, the same on every one of its bundles, and the place the next bundle published takes.
+  private readonly Guid _answerId = TrackedGuid.New().Value;
+  private int _nextIndex;
+
+  internal RedeliveryAnswerPublication(
+      RedeliveryPump pump, string topic, string? target, Guid originServiceId, bool stateOnly, bool answersWholeType) {
+    _pump = pump;
+    _topic = topic;
+    _target = target;
+    _originServiceId = originServiceId;
+    _stateOnly = stateOnly;
+    AnswersWholeType = answersWholeType;
+  }
 
   /// <summary>
   /// The answer is to a request for a whole type (#2341), stamped on each of its bundles: only such an answer can mark a
   /// type lane.
   /// </summary>
   /// <docs>resilience/stream-integrity#only-a-whole-type-answer-marks-the-type-lane</docs>
-  public bool AnswersWholeType { get; init; }
-
-  internal RedeliveryAnswerPublication(RedeliveryPump pump, string topic, string? target, Guid originServiceId, bool stateOnly) {
-    _pump = pump;
-    _topic = topic;
-    _target = target;
-    _originServiceId = originServiceId;
-    _stateOnly = stateOnly;
-  }
+  public bool AnswersWholeType { get; }
 
   /// <summary>
   /// Publishes one selection of the answer: the bundle held back from the previous selection first, then every bundle
@@ -66,11 +72,11 @@ public sealed class RedeliveryAnswerPublication {
     var plans = _pump.PlanBundles(events, _topic, _target, _originServiceId, answeredWindow);
     var published = 0;
     if (_held is { } held) {
-      await _publishAsync(held.Plan, (RedeliveryComposite)held.Plan.Composite, cancellationToken).ConfigureAwait(false);
+      await _publishAsync(held.Plan, held.Window, bundleCount: null, cancellationToken).ConfigureAwait(false);
       published++;
     }
     for (var i = 0; i < plans.Count - 1; i++) {
-      await _publishAsync(plans[i], (RedeliveryComposite)plans[i].Composite, cancellationToken).ConfigureAwait(false);
+      await _publishAsync(plans[i], answeredWindow, bundleCount: null, cancellationToken).ConfigureAwait(false);
       published++;
     }
     _held = (plans[plans.Count - 1], answeredWindow);
@@ -89,12 +95,19 @@ public sealed class RedeliveryAnswerPublication {
       return 0;
     }
     _held = null;
-    await _publishAsync(held.Plan, _pump.LastOfAnswer(held.Plan, _originServiceId, held.Window), cancellationToken)
-      .ConfigureAwait(false);
+    // #2340: the last bundle's place plus one is the number of bundles the answer has.
+    await _publishAsync(held.Plan, held.Window, bundleCount: _nextIndex + 1, cancellationToken).ConfigureAwait(false);
     return 1;
   }
 
+  /// <summary>
+  /// Publishes one bundle of the answer with its place in it (#2340): the next index, and on the last bundle the count.
+  /// </summary>
   private Task _publishAsync(
-      CompositeEnvelopePlan<RedeliveryEvent> plan, RedeliveryComposite composite, CancellationToken cancellationToken) =>
-    _pump.PublishBundleAsync(plan, composite, _topic, _target, _stateOnly, cancellationToken);
+      CompositeEnvelopePlan<RedeliveryEvent> plan, RedeliveryAnswerWindow window, int? bundleCount,
+      CancellationToken cancellationToken) {
+    var part = new RedeliveryAnswerPart(_answerId, _nextIndex++, bundleCount, AnswersWholeType);
+    return _pump.PublishBundleAsync(plan, _pump.AnswerBundle(plan, _originServiceId, window, part), _topic, _target,
+      _stateOnly, cancellationToken);
+  }
 }

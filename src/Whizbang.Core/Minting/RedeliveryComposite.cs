@@ -217,10 +217,15 @@ public sealed class RedeliveryComposite
       ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) {
         PartialStreamIds = AnsweredPartialStreamIds,
         Continues = AnswerContinues,
+        // #2340, #2341: the bundle's place in its answer; none from an origin that predates it.
+        Part = _answerPart(),
       }
       : null;
 
   Whizbang.Core.Observability.IntegrityTraceLink IIdentityPreservingComposite.TraceLink => new(RequestId, TraceParent);
+
+  private RedeliveryAnswerPart? _answerPart() =>
+    AnswerId is { } answerId ? new RedeliveryAnswerPart(answerId, AnswerBundleIndex, AnswerBundleCount, AnswersWholeType) : null;
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 

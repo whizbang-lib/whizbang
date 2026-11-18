@@ -1788,7 +1788,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   /// <remarks>An unchanged bucket the answered window did not cover is answered and not marked (357, #2143), and so is one
   /// of a stream the bundle carried only in part (410, #2149). A type lane is marked only by the answer's last bundle (431,
-  /// #2311).</remarks>
+  /// #2311), and, for a bundle that names its answer, only once every bundle of the answer has committed, and only for an
+  /// answer to a whole-type request (530, #2340, #2341).</remarks>
   public async Task<IntegrityBundleAnswer?> IntegrityRecordBundleAnswerAsync(
       Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
       RedeliveryAnswerWindow? answeredWindow, DateTimeOffset now, CancellationToken cancellationToken = default) {
@@ -1821,8 +1822,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       // #2311 (431): a bundle more of whose answer follows leaves the type lane waiting when it changed nothing.
       cmd.Parameters.AddWithValue("p_answer_continues", answeredWindow is { Continues: true });
+      // #2340, #2341 (530): the bundle's answer and place in it, judged with the rest of the answer once all of it is in;
+      // an answer to named streams marks no type lane.
+      _bindAnswerPart(cmd, answeredWindow?.Part);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_partial_streams,@p_answer_continues)";
+      cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, absent_count, refused_truncated_count, adoptable_count, marked FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences,@p_now,@p_answer_window_known,@p_answer_from,@p_answer_to,@p_partial_streams,@p_answer_continues,@p_answer_id,@p_bundle_index,@p_bundle_count,@p_answers_whole_type)";
 #pragma warning restore S2077
       int present = 0, absent = 0, refused = 0, adoptable = 0;
       var markedRefused = new List<IntegrityRepairLedger.DivergenceKey>();
@@ -1853,6 +1857,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore CA1848
       return null;
     }
+  }
+
+  /// <summary>Binds the bundle's place in its answer (#2340, 530); all null, and not whole-type, when it names none.</summary>
+  private static void _bindAnswerPart(Npgsql.NpgsqlCommand cmd, RedeliveryAnswerPart? part) {
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_answer_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)part?.AnswerId ?? DBNull.Value });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_index", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)part?.BundleIndex ?? DBNull.Value });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_bundle_count", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)part?.BundleCount ?? DBNull.Value });
+    cmd.Parameters.AddWithValue("p_answers_whole_type", part is { WholeType: true });
   }
 
   /// <inheritdoc />
