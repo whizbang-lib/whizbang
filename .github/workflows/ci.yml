@@ -138,9 +138,8 @@ jobs:
   # Runner selection (#1762)
   #
   # Chooses where the build, test and analysis jobs run, per job class: an idle machine in the team's
-  # self-hosted pool (trusted runs only), then Blacksmith when the CI_BLACKSMITH_RUNNER variable names a
-  # label, then ubuntu-latest. The rules are .github/scripts/Select-CiRunner.ps1, tested by script-tests;
-  # setup, the label convention and the variables are in .github/WORKFLOWS.md, "Runner selection".
+  # self-hosted pool (trusted runs only), else ubuntu-latest. The rules are
+  # .github/scripts/Select-CiRunner.ps1, tested by script-tests; setup, the label convention and the variables are in .github/WORKFLOWS.md, "Runner selection".
   #
   # This job can never hold CI up or turn it red. Every step continues on error, the job does too, it is not
   # in ci-result's needs, and every output defaults to "ubuntu-latest" when the step wrote nothing. Each
@@ -156,7 +155,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
-      actions: read   # this repository's queued jobs, counted against the pool and the Blacksmith limit
+      actions: read   # this repository's queued jobs, counted against the pool
     env:
       HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
     outputs:
@@ -196,14 +195,6 @@ jobs:
         env:
           RUNNER_POOL_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ github.token }}
-          CI_BLACKSMITH_RUNNER: ${{ vars.CI_BLACKSMITH_RUNNER }}
-          CI_BLACKSMITH_RUNNER_ANY_OS: ${{ vars.CI_BLACKSMITH_RUNNER_ANY_OS }}
-          CI_BLACKSMITH_RUNNER_LINUX: ${{ vars.CI_BLACKSMITH_RUNNER_LINUX }}
-          CI_BLACKSMITH_RUNNER_COMPILE: ${{ vars.CI_BLACKSMITH_RUNNER_COMPILE }}
-          CI_BLACKSMITH_RUNNER_ANALYZE: ${{ vars.CI_BLACKSMITH_RUNNER_ANALYZE }}
-          CI_BLACKSMITH_RUNNER_LINUX_DOCKER: ${{ vars.CI_BLACKSMITH_RUNNER_LINUX_DOCKER }}
-          CI_BLACKSMITH_FORKS: ${{ vars.CI_BLACKSMITH_FORKS }}
-          CI_BLACKSMITH_MAX_QUEUED: ${{ vars.CI_BLACKSMITH_MAX_QUEUED }}
           EVENT: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}

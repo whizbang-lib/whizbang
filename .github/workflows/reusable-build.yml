@@ -178,7 +178,7 @@ jobs:
           # drops hidden files unless told otherwise. The mapping names THIS job's checkout, so every
           # test job that downloads the build rewrites it first with
           # .github/scripts/Update-CoverageSourceRoots.ps1, whatever runner it lands on: a GitHub-hosted
-          # build and Blacksmith suites check out at different paths (#1948), and
+          # build and self-hosted suites check out at different paths (#1948), and
           # TestSuiteSourceRoots.Tests.ps1 fails a suite that skips it. The only other hidden files
           # under these paths are obj/'s generated AssemblyAttributes sources.
           include-hidden-files: true
