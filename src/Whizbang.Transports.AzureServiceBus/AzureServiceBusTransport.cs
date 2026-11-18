@@ -2075,6 +2075,10 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   }
 
   [LoggerMessage(Level = LogLevel.Information,
+    Message = "Throttle pause for {TopicName}/{SubscriptionName} ended while the subscription is paused, so its processor stays stopped until it is resumed")]
+  private static partial void LogThrottlePauseEndedWhilePaused(ILogger logger, string topicName, string subscriptionName);
+
+  [LoggerMessage(Level = LogLevel.Information,
     Message = "Throttle pause for {TopicName}/{SubscriptionName} ended by transport disposal; the processor stays stopped")]
   private static partial void LogThrottlePauseEndedByDisposal(ILogger logger, Exception ended, string topicName, string subscriptionName);
 
@@ -2143,6 +2147,13 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         try {
           await stopProcessingAsync();
           await Task.Delay(pause, _timeProvider, pauseStopped);
+          // A subscription paused meanwhile stays stopped until it is resumed (#2406): restarting it here would put a
+          // standing-down instance back to taking deliveries it can only hand back.
+          if (!subscription.IsActive) {
+            var pausedSubscription = _subscriptionOf(destination);
+            LogThrottlePauseEndedWhilePaused(_logger, destination.Address, pausedSubscription);
+            return;
+          }
           await startProcessingAsync();
           if (_logger.IsEnabled(LogLevel.Information)) {
             _logger.LogInformation(
