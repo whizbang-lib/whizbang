@@ -120,7 +120,7 @@ public class PerspectiveRebuilderFailedStreamsTests {
     await Assert.That(built.Runner.Rebuilt).IsEquivalentTo([good1, good2])
       .Because("the streams that did rebuild are kept, as they always were");
     var failed = built.Dispatcher.Published.OfType<PerspectiveRebuildFailed>().Single();
-    await Assert.That(failed.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(failed.StreamsProcessedBeforeFailure).IsEqualTo(2);
     await Assert.That(failed.Error).IsEqualTo(result.Error);
     await Assert.That(built.Dispatcher.Published.OfType<PerspectiveRebuildCompleted>()).IsEmpty();
   }

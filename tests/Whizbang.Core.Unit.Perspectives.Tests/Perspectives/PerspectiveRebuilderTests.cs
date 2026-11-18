@@ -284,8 +284,9 @@ public class PerspectiveRebuilderTests {
     // Act
     var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
 
-    // Assert — should still succeed overall, but only 2 streams processed
-    await Assert.That(result.Success).IsTrue();
+    // Assert — the other streams still rebuild, but a failed stream is not a clean success (#2376)
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.StreamsFailed).IsEqualTo(1);
     await Assert.That(result.StreamsProcessed).IsEqualTo(2);
     await Assert.That(runner.RunCount).IsEqualTo(3); // All 3 attempted
   }
@@ -416,8 +417,9 @@ public class PerspectiveRebuilderTests {
     // Act
     var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
 
-    // Assert
-    await Assert.That(result.Success).IsTrue();
+    // Assert — the failed stream is reported (#2376), and its cursor is not completed
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.StreamsFailed).IsEqualTo(1);
     await Assert.That(result.StreamsProcessed).IsEqualTo(2);
     await Assert.That(completer.CompletionsReceived.Count).IsEqualTo(2);
     await Assert.That(completer.CompletionsReceived.Any(c => c.StreamId == streams[1])).IsFalse();
