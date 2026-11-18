@@ -4705,6 +4705,11 @@ public partial class PerspectiveWorker(
     // S3267: Multi-statement loop body — LINQ would reduce readability
 #pragma warning disable S3267
     foreach (var workItem in group) {
+      // Guid.Empty is the "no work id" sentinel: it names no row to complete, and recording it in the
+      // dedup cache would make the filter drop every later empty-id item as already processed.
+      if (workItem.WorkId == Guid.Empty) {
+        continue;
+      }
       _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
         EventWorkId = workItem.WorkId,
         StatusFlags = (int)PerspectiveProcessingStatus.Completed
