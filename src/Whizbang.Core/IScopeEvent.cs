@@ -23,7 +23,7 @@ namespace Whizbang.Core;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/scoping#scope-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/IScopeEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/IScopeEventTests.cs</tests>
 public interface IScopeEvent : IEvent {
   /// <summary>
   /// The proposed new scope for the perspective row.

@@ -31,9 +31,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_RecordInvocationThenTryGet_ReturnsRecordedValueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_TryGetPriorInvocation_ReturnsNullForUnseenReceptorAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_PriorInvocationIsReturnedRegardlessOfStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_RecordInvocationThenTryGet_ReturnsRecordedValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_TryGetPriorInvocation_ReturnsNullForUnseenReceptorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IReceptorDedupStoreContractTests.cs:Contract_PriorInvocationIsReturnedRegardlessOfStageAsync</tests>
 public interface IReceptorDedupStore {
   /// <summary>
   /// Returns a prior <see cref="ReceptorInvocationRecord"/> for <paramref name="receptorId"/>
@@ -63,10 +63,10 @@ public interface IReceptorDedupStore {
   /// for every service, since it cannot be placed.
   /// </remarks>
   /// <docs>fundamentals/receptors/exactly-once-firing#once-per-service</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordFromAnotherService_ReturnsNullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordFromThisService_ReturnsItAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_NoServiceName_ReturnsARecordFromAnyServiceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordNamingNoService_CountsForEveryServiceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordFromAnotherService_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordFromThisService_ReturnsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_NoServiceName_ReturnsARecordFromAnyServiceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordNamingNoService_CountsForEveryServiceAsync</tests>
   ValueTask<ReceptorInvocationRecord?> TryGetPriorInvocationAsync(
     IMessageEnvelope envelope,
     string receptorId,

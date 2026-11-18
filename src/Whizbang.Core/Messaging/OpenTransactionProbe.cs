@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// a raw connection the framework does not know of is not seen.
 /// </remarks>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamAffinityBatchBufferTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Messaging/StreamAffinityBatchBufferTests.cs</tests>
 internal static class OpenTransactionProbe {
   /// <summary>Whether <paramref name="scope"/> holds a database transaction open.</summary>
   /// <param name="scope">The publisher's scope.</param>

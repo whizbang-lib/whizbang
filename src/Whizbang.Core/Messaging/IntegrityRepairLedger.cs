@@ -24,8 +24,8 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryIntegrityRepairLedgerContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryIntegrityRepairLedgerContractTests.cs</tests>
 public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger.DEFAULT_MAX_ENTRIES)
   : IIntegrityRepairLedger {
   private const int DEFAULT_MAX_ENTRIES = 10_000;
@@ -40,8 +40,8 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
     /// equivalence assertion, a serializer, a deep comparer) recurse without end.</remarks>
     /// <returns>The type-level key of this key's (origin, tenant, type).</returns>
     /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKey_TypeLane_KeepsTheBucketAtTheTypeLevelAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKeys_CompareStructurally_WithoutRecursingAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKey_TypeLane_KeepsTheBucketAtTheTypeLevelAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs:DivergenceKeys_CompareStructurally_WithoutRecursingAsync</tests>
     public DivergenceKey ToTypeLane() => new(OriginServiceId, TenantScope, EventType, Guid.Empty);
   }
 

@@ -58,7 +58,7 @@ three `IStartupStep`s through `TryAddEnumerable` with descriptors typed by imple
 no-op and two *different* steps sharing a name still trip the resolver. `AddHostedService<T>` is
 already `TryAddEnumerable` under the hood; a test documents that.
 
-Tests: `tests/Whizbang.Core.Tests/Workers/WorkerPipelineIdempotencyTests.cs`.
+Tests: `tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerPipelineIdempotencyTests.cs`.
 
 ### B. #636 owned + subscribed namespace is refused
 

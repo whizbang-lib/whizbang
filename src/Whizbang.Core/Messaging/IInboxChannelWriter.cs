@@ -74,7 +74,7 @@ public interface IInboxChannelWriter {
   /// </summary>
   /// <param name="heldBytes">The held total at or below which acquisition resumes; a negative value is read as zero.</param>
   /// <docs>fundamentals/work-coordinator/per-stream-drain#working-set-budget</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs:AcquisitionIsDeferred_WhileHeldIsAboveTheMark_AndResumesOnTheRemovalThatReachesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs:AcquisitionIsDeferred_WhileHeldIsAboveTheMark_AndResumesOnTheRemovalThatReachesItAsync</tests>
   void DeferInboxAcquisitionUntilHeldAtMost(long heldBytes) { }
 
   /// <summary>

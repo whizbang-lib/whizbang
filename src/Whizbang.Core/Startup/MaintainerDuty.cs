@@ -27,7 +27,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/MaintainerDutyTests.cs</tests>
 public static class MaintainerDuty {
   /// <summary>
   /// True when this instance's run permit is open and it holds the maintainer duty, or role assignment does not manage
@@ -36,10 +36,10 @@ public static class MaintainerDuty {
   /// <param name="services">The provider the duty loop (<see cref="DutyHolderWorker"/>) is registered in, if any.</param>
   /// <returns>Whether this instance should do the maintainer's work now.</returns>
   /// <docs>operations/startup/capabilities-and-duties</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WithTheMaintainerDutyAssigned_OnlyItsHolderHasATurnAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WithoutRoleAssignment_EveryInstanceHasATurnAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WithADutyLoopThatDoesNotManageTheMaintainerDuty_EveryInstanceHasATurnAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/MaintainerDutyTests.cs:WhileTheRunPermitIsClosed_NoInstanceHasATurnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/MaintainerDutyTests.cs:WithTheMaintainerDutyAssigned_OnlyItsHolderHasATurnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/MaintainerDutyTests.cs:WithoutRoleAssignment_EveryInstanceHasATurnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/MaintainerDutyTests.cs:WithADutyLoopThatDoesNotManageTheMaintainerDuty_EveryInstanceHasATurnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/MaintainerDutyTests.cs:WhileTheRunPermitIsClosed_NoInstanceHasATurnAsync</tests>
   public static bool IsThisInstancesTurn(IServiceProvider services) {
     ArgumentNullException.ThrowIfNull(services);
     if (services.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>() is { IsRunning: false }) {

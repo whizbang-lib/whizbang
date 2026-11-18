@@ -131,7 +131,7 @@ public interface IDutyWorkHandler {
 /// is simply skipped, exactly as before owed work existed. Role assignment supplies the real store.
 /// </summary>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineRunnerOweTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupPipelineRunnerOweTests.cs</tests>
 public sealed class NullPendingDutyWorkStore : IPendingDutyWorkStore, INullDefault {
   private NullPendingDutyWorkStore() { }
 

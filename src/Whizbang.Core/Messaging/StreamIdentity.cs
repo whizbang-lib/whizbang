@@ -33,9 +33,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/stream-identity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionSitesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionSitesTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/StreamResolutionSourceGuardTests.cs</tests>
 internal static class StreamIdentity {
   /// <summary>The hop metadata key a producer names a message's stream under.</summary>
@@ -44,7 +44,7 @@ internal static class StreamIdentity {
   /// <summary>The stream a hop's metadata names, or null when it names none (no key, not a string, not a GUID).</summary>
   /// <param name="metadata">A hop's metadata.</param>
   /// <returns>The stream, or null.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:FromHopMetadata_NoParsableStream_YieldsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:FromHopMetadata_NoParsableStream_YieldsNothingAsync</tests>
   internal static Guid? FromHopMetadata(IReadOnlyDictionary<string, JsonElement>? metadata) =>
     metadata is not null
     && metadata.TryGetValue(HOP_KEY, out var element)
@@ -56,7 +56,7 @@ internal static class StreamIdentity {
   /// <summary>The stream a message's first hop names, or null.</summary>
   /// <param name="envelope">The message.</param>
   /// <returns>The stream, or null.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:FromHops_ReadsTheFirstHopOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:FromHops_ReadsTheFirstHopOnlyAsync</tests>
   internal static Guid? FromHops(IMessageEnvelope envelope) =>
     FromHopMetadata(envelope.Hops is { Count: > 0 } hops ? hops[0].Metadata : null);
 
@@ -66,7 +66,7 @@ internal static class StreamIdentity {
   /// </summary>
   /// <param name="envelope">The message.</param>
   /// <returns>The stream.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:Of_WithoutAHopStream_IsTheMessageIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:Of_WithoutAHopStream_IsTheMessageIdAsync</tests>
   internal static Guid Of(IMessageEnvelope envelope) => FromHops(envelope) ?? envelope.MessageId.Value;
 
   /// <summary>
@@ -77,7 +77,7 @@ internal static class StreamIdentity {
   /// <param name="source">The composite's envelope.</param>
   /// <param name="streamIds">Reads a <c>[StreamId]</c>; when null, only <see cref="CompositeEventBase.StreamId"/> is read.</param>
   /// <returns>The stream.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:OfComposite_PrefersTheHopThenItsOwnStreamThenTheEnvelopeIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:OfComposite_PrefersTheHopThenItsOwnStreamThenTheEnvelopeIdAsync</tests>
   internal static Guid OfComposite(ICompositeEvent composite, IMessageEnvelope source, IStreamIdExtractor? streamIds) =>
     FromHops(source)
     ?? _named(composite, streamIds)
@@ -94,7 +94,7 @@ internal static class StreamIdentity {
   /// <param name="source">The composite's envelope.</param>
   /// <param name="streamIds">Reads a <c>[StreamId]</c>.</param>
   /// <returns>The stream.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:OfFanoutChild_PrefersRecordedThenPayloadThenCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:OfFanoutChild_PrefersRecordedThenPayloadThenCompositeAsync</tests>
   internal static Guid OfFanoutChild(
       Guid? recorded, object? payload, ICompositeEvent composite, IMessageEnvelope source, IStreamIdExtractor? streamIds) =>
     _nonEmpty(recorded) ?? (payload is null ? null : _named(payload, streamIds)) ?? OfComposite(composite, source, streamIds);
@@ -111,15 +111,15 @@ internal static class StreamIdentity {
   /// <param name="message">The message.</param>
   /// <param name="streamIds">Reads a <c>[StreamId]</c>; the generated registry's when null.</param>
   /// <returns>The metadata, or null.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:HopMetadataFor_NamesThePayloadsStreamOrNothingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:HopMetadataFor_NamesThePayloadsStreamOrNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs</tests>
   internal static Dictionary<string, JsonElement>? HopMetadataFor(object message, IStreamIdExtractor? streamIds) =>
     _named(message, streamIds ?? Registry.StreamIdExtractorRegistry.GetComposite()) is { } streamId ? HopMetadata(streamId) : null;
 
   /// <summary>Hop metadata naming <paramref name="streamId"/>, read back by <see cref="FromHopMetadata"/>.</summary>
   /// <param name="streamId">The stream.</param>
   /// <returns>The metadata.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:HopMetadata_IsReadBackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIdentityTests.cs:HopMetadata_IsReadBackAsync</tests>
   internal static Dictionary<string, JsonElement> HopMetadata(Guid streamId) {
     // AOT-safe: a GUID's text needs no escaping, so the JSON string is built and parsed, not serialized.
     using var document = JsonDocument.Parse("\"" + streamId.ToString("D") + "\"");

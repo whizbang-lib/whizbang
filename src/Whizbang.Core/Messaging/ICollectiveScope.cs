@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveScope_ScopeKind_DiscriminatesResolverLookupAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveScope_ScopeKind_DiscriminatesResolverLookupAsync</tests>
 public interface ICollectiveScope {
   /// <summary>
   /// Stable string discriminator that selects the

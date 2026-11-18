@@ -54,7 +54,7 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
 public sealed class SystemDispatcherBuilder {
   private readonly IDispatcher _dispatcher;
   private readonly string? _actualPrincipal;
@@ -102,7 +102,7 @@ public sealed class SystemDispatcherBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#cross-tenant-operations</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync</tests>
   public DispatcherSecurityBuilder ForAllTenants() {
     return new DispatcherSecurityBuilder(
         _dispatcher,
@@ -137,7 +137,7 @@ public sealed class SystemDispatcherBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#tenant-scoped-system-operations</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForTenant_SetsExplicitTenantIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForTenant_SetsExplicitTenantIdAsync</tests>
   public DispatcherSecurityBuilder ForTenant(string tenantId) {
     ArgumentNullException.ThrowIfNull(tenantId);
     ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
@@ -172,7 +172,7 @@ public sealed class SystemDispatcherBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#preserve-ambient-tenant</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_KeepTenant_PreservesAmbientTenantIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_KeepTenant_PreservesAmbientTenantIdAsync</tests>
   public DispatcherSecurityBuilder KeepTenant() {
     if (string.IsNullOrEmpty(_ambientTenantId)) {
       throw new InvalidOperationException(

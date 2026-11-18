@@ -36,7 +36,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveScopeBaseRoutingTests.cs:CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveScopeBaseRoutingTests.cs:CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync</tests>
 public abstract record CollectiveEventBase : ICollectiveEvent {
   /// <summary>
   /// The collective event's stream id. Without an <see cref="OrderingKey"/> it is auto-generated at dispatch (each
@@ -71,7 +71,7 @@ public abstract record CollectiveEventBase : ICollectiveEvent {
   /// Setting it moves the event onto its key's stream: <see cref="StreamId"/> then reads the derived id whatever the
   /// dispatcher mints, so every collective sharing the key, of any type, lands on one stream.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs:WithAnOrderingKey_TheStreamIsDerivedFromTheScopeAndTheKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveOrderingKeyTests.cs:WithAnOrderingKey_TheStreamIsDerivedFromTheScopeAndTheKeyAsync</tests>
   public string? OrderingKey { get; init; }
 
   /// <inheritdoc/>
@@ -81,13 +81,13 @@ public abstract record CollectiveEventBase : ICollectiveEvent {
   /// written exactly as before. The wire name is pinned, because the store writes the link under it (migration 190,
   /// <c>{p,predecessorId}</c>) whatever naming the payload serializer would otherwise use.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs:Serialization_TheLinkFields_HaveTheNamesTheStoreWritesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs:Serialization_TheLinkFields_HaveTheNamesTheStoreWritesAsync</tests>
   [JsonPropertyName("predecessorId")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public Guid? PredecessorId { get; set; }
 
   /// <inheritdoc/>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs:Serialization_TheLinkFields_HaveTheNamesTheStoreWritesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs:Serialization_TheLinkFields_HaveTheNamesTheStoreWritesAsync</tests>
   [JsonPropertyName("predecessorType")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? PredecessorType { get; set; }

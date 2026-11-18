@@ -50,6 +50,10 @@
     <!-- Testing support: internal test hooks
          (e.g., PgSharedNotifyConnection.RegistryForTesting + IsConnectionOpenForTesting). -->
     <InternalsVisibleTo Include="Whizbang.Core.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Dispatcher.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Messaging.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Perspectives.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Workers.Tests" />
     <InternalsVisibleTo Include="Whizbang.Core.Component.Tests" />
     <InternalsVisibleTo Include="Whizbang.Core.Integration.Tests" />
     <InternalsVisibleTo Include="Whizbang.Data.Postgres.Tests" />

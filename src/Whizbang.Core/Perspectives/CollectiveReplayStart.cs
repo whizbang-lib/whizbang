@@ -16,13 +16,13 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="AfterEventId">The event the replay starts after (the snapshot's), or null for a replay from the stream's start.</param>
 /// <param name="AfterCommitSequence">That event's commit sequence, or null when it carries none.</param>
 /// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AReplayFromTheStart_FollowsEveryCollectiveAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesCommitSequences_WhenBothCarryOneAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesMessageIds_WhenTheCollectiveCarriesNoCommitSequenceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesMessageIds_WhenItCarriesNoCommitSequenceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_RefusesANullCollectiveAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_FromASnapshotThatRecordsItsCollectives_FollowsTheStampedCollectivesAboveTheMark_OnlyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_FromASnapshotThatRecordsItsCollectives_FollowsAnUnstampedCollective_WhateverItsIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AReplayFromTheStart_FollowsEveryCollectiveAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesCommitSequences_WhenBothCarryOneAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesMessageIds_WhenTheCollectiveCarriesNoCommitSequenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_ComparesMessageIds_WhenItCarriesNoCommitSequenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_RefusesANullCollectiveAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_FromASnapshotThatRecordsItsCollectives_FollowsTheStampedCollectivesAboveTheMark_OnlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AStart_FromASnapshotThatRecordsItsCollectives_FollowsAnUnstampedCollective_WhateverItsIdAsync</tests>
 public sealed record CollectiveReplayStart(string? TenantId, Guid? AfterEventId = null, long? AfterCommitSequence = null) {
   /// <summary>
   /// The commit sequence through which every collective of the row was complete (applied in full) when the snapshot the

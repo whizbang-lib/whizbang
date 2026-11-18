@@ -16,7 +16,7 @@ namespace Whizbang.Core.Capabilities;
 /// (<see cref="LogVerdict"/>), which names every feature that requires it and the setting that turned it on.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityReportTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityReportTests.cs</tests>
 public static partial class CapabilityReport {
   /// <summary>The usable capabilities, one indented line each.</summary>
   /// <param name="statuses">The statuses to report.</param>

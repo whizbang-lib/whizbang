@@ -18,7 +18,7 @@ namespace Whizbang.Core.Capabilities;
 /// <see cref="ICapabilityProvider"/>, so a host gets the probe, the verdict and the gauge with no wiring.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#adding-a-capability-provider</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
 public static class CapabilityServiceCollectionExtensions {
   /// <summary>
   /// Registers, once per container, the <see cref="ICapabilityRegistry"/> over every registered
@@ -79,7 +79,7 @@ public static class CapabilityServiceCollectionExtensions {
 /// assignments: no reflection reaches the AOT path. A host without configuration keeps the code values.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
 internal sealed class ConfigureCapabilityOptions(IConfiguration? configuration) : IConfigureOptions<CapabilityOptions> {
   public void Configure(CapabilityOptions options) {
     if (configuration is null) {

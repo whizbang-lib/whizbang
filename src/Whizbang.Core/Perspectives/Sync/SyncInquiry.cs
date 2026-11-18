@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
 public sealed record SyncInquiry {
   /// <summary>
   /// Gets the stream ID to check.
@@ -83,8 +83,8 @@ public sealed record SyncInquiry {
   /// </remarks>
   /// <value>Default: <c>false</c>.</value>
   /// <docs>fundamentals/perspectives/perspective-sync#explicit-event-tracking</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiry_WithIncludeProcessedEventIdsTrue_StoresValueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiry_DefaultIncludeProcessedEventIds_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiry_WithIncludeProcessedEventIdsTrue_StoresValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiry_DefaultIncludeProcessedEventIds_IsFalseAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ResolveSyncInquiriesSqlTests.cs:ResolveSyncInquiries_ReturnsPendingAndProcessedCountsAsync</tests>
   public bool IncludeProcessedEventIds { get; init; }
 
@@ -107,7 +107,7 @@ public sealed record SyncInquiry {
   /// </remarks>
   /// <value>Default: <c>false</c>.</value>
   /// <docs>fundamentals/perspectives/perspective-sync#cross-scope-sync</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/CrossScopeRealScenarioTests.cs:CrossScope_SyncInquiry_ShouldHaveDiscoverPendingFromOutboxTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/CrossScopeRealScenarioTests.cs:CrossScope_SyncInquiry_ShouldHaveDiscoverPendingFromOutboxTrueAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ResolveSyncInquiriesSqlTests.cs:ResolveSyncInquiries_ReturnsPendingAndProcessedCountsAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorGuardAndGateTests.cs:ResolveSyncInquiriesAsync_TwoInquiries_ReturnsPerInquiryCountsAsync</tests>
   public bool DiscoverPendingFromOutbox { get; init; }

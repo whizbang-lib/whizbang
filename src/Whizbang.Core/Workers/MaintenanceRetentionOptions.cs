@@ -18,8 +18,8 @@ namespace Whizbang.Core.Workers;
 /// <para>Negative values are rejected at startup; zero is allowed and keeps nothing past the current cycle.</para>
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBindingTests.cs</tests>
 public sealed class MaintenanceRetentionOptions {
   /// <summary>
   /// Days a message id stays in the deduplication ledger (<c>wh_message_deduplication</c>). Publishes
@@ -108,7 +108,7 @@ public sealed class MaintenanceRetentionOptions {
   /// dead letter of its collective, and after that a rewind folds that collective in full again.
   /// </remarks>
   /// <docs>fundamentals/workers/maintenance-steps#ledger-retention</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_HonorsTheConfiguredHorizonAsync</tests>
   public int? CollectiveApplyProgressDays { get; set; }
 
@@ -135,7 +135,7 @@ public sealed class MaintenanceRetentionOptions {
   /// </summary>
   /// <remarks>Exits are rare, so rows past the window are removed by the next exit's write, not by the sweep.</remarks>
   /// <docs>operations/startup/instance-exits#the-exit-record</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceExitRecordSqlTests.cs:AWrite_RemovesRowsOlderThanTheConfiguredRetentionAsync</tests>
   public int? InstanceExitDays { get; set; }
 
@@ -156,8 +156,8 @@ public sealed class MaintenanceRetentionOptions {
   /// </para>
   /// </remarks>
   /// <docs>operations/infrastructure/maintenance#completed-inbox-purge-is-bounded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PurgesAtMostTheBatchOfCompletedInboxRows_AndTheRestOnTheNextCycleAsync</tests>
   public int? CompletedInboxPurgeBatchSize { get; set; }
 
@@ -173,8 +173,8 @@ public sealed class MaintenanceRetentionOptions {
   /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
   /// </remarks>
   /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
   public int? CompletedOutboxPurgeBatchSize { get; set; }
 
@@ -190,8 +190,8 @@ public sealed class MaintenanceRetentionOptions {
   /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
   /// </remarks>
   /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
   public int? CompletedPerspectiveEventPurgeBatchSize { get; set; }
 
@@ -207,8 +207,8 @@ public sealed class MaintenanceRetentionOptions {
   /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
   /// </remarks>
   /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
   public int? DeduplicationPurgeBatchSize { get; set; }
 
@@ -224,8 +224,8 @@ public sealed class MaintenanceRetentionOptions {
   /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
   /// </remarks>
   /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
   public int? StuckInboxPurgeBatchSize { get; set; }
 }

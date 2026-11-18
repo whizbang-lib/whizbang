@@ -18,7 +18,7 @@ namespace Whizbang.Core.Lifecycle;
 /// <param name="Data">The row's model payload JSON.</param>
 /// <param name="Reason">Which sweep selected it: <c>ttl</c> (expiry ladder) or <c>cap</c> (per-scope overflow).</param>
 /// <docs>fundamentals/perspectives/pre-destruction-holds#guards</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
 public sealed record PerspectiveRowDestructionTarget(
   string ClrTypeName,
   string TableName,
@@ -50,7 +50,7 @@ public enum PerspectiveRowDispositionKind {
 /// <param name="Kind">The disposition.</param>
 /// <param name="DeferUntil">The re-offer instant, when <paramref name="Kind"/> is <see cref="PerspectiveRowDispositionKind.Defer"/>.</param>
 /// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
 public readonly record struct PerspectiveRowDecision(
   PerspectiveRowDispositionKind Kind,
   DateTimeOffset? DeferUntil = null) {
@@ -84,7 +84,7 @@ public readonly record struct PerspectiveRowDecision(
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/pre-destruction-holds#guards</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
 public interface IPerspectiveRowDestructionGuard {
   /// <summary>The perspective model types this guard protects.</summary>
   IReadOnlyCollection<Type> GuardedModels { get; }

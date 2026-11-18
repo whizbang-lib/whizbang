@@ -2449,7 +2449,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// which the worker counts and retries.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:ARowThatMovesWhileARewindReplays_EndsWithTheCorrectionAndTheNewerEventAsync</tests>
   private async Task<PerspectiveCursorCompletion> _replayCheckedAsync(
       Guid streamId,
@@ -3014,7 +3014,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// anything is written, and the caller folds the stream in full.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
   private async Task<PerspectiveCursorCompletion?> _replayLastEventOnlyAsync(
       Guid streamId,
       string perspectiveName,

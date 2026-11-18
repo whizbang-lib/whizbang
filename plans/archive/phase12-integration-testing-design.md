@@ -505,10 +505,10 @@ Azure Service Bus Emulator is **not available** as a simple Testcontainer. Optio
 - `src/Whizbang.Data.Dapper.Postgres/DapperPostgresOutbox.cs` - JSONB adapter integration
 - `src/Whizbang.Data.Dapper.Postgres/EventEnvelopeJsonbAdapter.cs` - Made public
 - `src/Whizbang.Data.Dapper.Sqlite/DapperSqliteOutbox.cs` - JSONB adapter integration
-- `tests/Whizbang.Core.Tests/Messaging/OutboxContractTests.cs` - Updated for IMessageEnvelope
-- `tests/Whizbang.Core.Tests/Messaging/OutboxMessageTests.cs` - Updated for JSONB fields
-- `tests/Whizbang.Core.Tests/Messaging/OutboxPublisherTests.cs` - Updated for new interface
-- `tests/Whizbang.Core.Tests/Messaging/InMemoryOutboxTests.cs` - Added adapter
+- `tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OutboxContractTests.cs` - Updated for IMessageEnvelope
+- `tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OutboxMessageTests.cs` - Updated for JSONB fields
+- `tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OutboxPublisherTests.cs` - Updated for new interface
+- `tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryOutboxTests.cs` - Added adapter
 - `tests/Whizbang.Data.Tests/DapperOutboxTests.cs` - Added adapter
 - `tests/Whizbang.Data.Postgres.Tests/DapperPostgresOutboxTests.cs` - Added adapter
 

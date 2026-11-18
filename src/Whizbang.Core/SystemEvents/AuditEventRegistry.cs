@@ -15,7 +15,7 @@ namespace Whizbang.Core.SystemEvents;
 /// registered; register it here by hand, or make it internal or public.
 /// </remarks>
 /// <docs>fundamentals/events/system-events#audit-decisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEventRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditEventRegistryTests.cs</tests>
 public static class AuditEventRegistry {
   private static readonly ConcurrentDictionary<Type, AuditEventAttribute> _byType = new();
 

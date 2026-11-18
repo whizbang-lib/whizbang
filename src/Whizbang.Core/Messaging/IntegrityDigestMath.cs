@@ -63,7 +63,7 @@ public static class IntegrityDigestMath {
   /// null when it holds none.</param>
   /// <returns>The verdict and the held fold.</returns>
   /// <docs>resilience/stream-integrity#events-held-without-an-origin-sequence</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/HeldWithoutOriginSequenceTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeldWithoutOriginSequenceTests.cs</tests>
   public static HeldWindowPlacement PlaceHeld(StreamDigest origin, StreamDigest? placed, StreamDigest? sequenceless) {
     ArgumentNullException.ThrowIfNull(origin);
     if (_sameFold(origin, placed)) {
@@ -101,7 +101,7 @@ public static class IntegrityDigestMath {
   /// holds none.</param>
   /// <returns>The missing event's id, or null.</returns>
   /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SingleMissingEventTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SingleMissingEventTests.cs</tests>
   public static Guid? SingleMissingEventId(StreamDigest origin, StreamDigest? held) {
     ArgumentNullException.ThrowIfNull(origin);
     if (origin.IdLo is not long originLo || origin.IdHi is not long originHi

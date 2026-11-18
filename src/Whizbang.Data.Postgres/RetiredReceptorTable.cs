@@ -29,7 +29,7 @@ namespace Whizbang.Data.Postgres;
 /// <docs>operations/infrastructure/migrations#unused-tables-are-dropped</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/UnusedTablesAreDroppedTests.ReceptorTable.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRetiredReceptorTableTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Schema/RetiredReceptorTableTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/RetiredReceptorTableTests.cs</tests>
 public static class RetiredReceptorTable {
   /// <summary>The drop migration's name after its number, so the lookup survives a renumbering. A driver names a
   /// migration with or without its <c>.sql</c> extension, so the extension is not part of it.</summary>

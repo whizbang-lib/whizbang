@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// must still rethrow it.
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
 public interface IReceptorFailureSink {
   /// <summary>
   /// Records that a receptor threw at a stage. The invoker goes on to the next receptor.

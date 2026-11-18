@@ -10,7 +10,7 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <typeparam name="TModel">The log entry model type to store</typeparam>
 /// <docs>fundamentals/perspectives/temporal</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ITemporalPerspectiveStoreTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Temporal perspectives create an append-only log of all events.

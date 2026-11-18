@@ -22,7 +22,7 @@ namespace Whizbang.Core.Messaging;
 /// catalog is indexed once at construction, so a check is one dictionary probe and a comparison.
 /// </remarks>
 /// <docs>fundamentals/messages/payload-size-limit</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
 public sealed partial class MessagePayloadLimits {
   private readonly WhizbangCoreOptions _options;
   private readonly IMessagePayloadSizeHook[] _hooks;

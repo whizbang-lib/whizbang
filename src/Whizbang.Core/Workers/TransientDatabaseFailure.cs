@@ -28,7 +28,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/transient-database-failures</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransientDatabaseFailureTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransientDatabaseFailureTests.cs</tests>
 public sealed class TransientDatabaseFailure {
 #pragma warning disable CA1707
   /// <summary>Two transactions each waited on a lock the other held; the server ended one.</summary>
@@ -65,8 +65,8 @@ public sealed class TransientDatabaseFailure {
   /// <see cref="SqlState"/> as a log line writes it: the SQLSTATE, or <c>none</c> when the provider
   /// reported none, so the field is never blank in a structured log.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransientDatabaseFailureTests.cs:SqlStateOrNone_NoSqlState_NoneAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransientDatabaseFailureTests.cs:SqlStateOrNone_SqlState_ItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransientDatabaseFailureTests.cs:SqlStateOrNone_NoSqlState_NoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransientDatabaseFailureTests.cs:SqlStateOrNone_SqlState_ItAsync</tests>
   internal string SqlStateOrNone => SqlState ?? "none";
 
   /// <summary>The database exception the classification was read from.</summary>

@@ -74,7 +74,7 @@ public sealed class TransportSubscriptionBuilder {
   /// <param name="logger">Receives the excluded-event-types warnings and the effective exclusions; null discards
   /// them.</param>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_ExcludedType_IsOnlyOnItsOwnTopicAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_ExcludedType_IsOnlyOnItsOwnTopicAsync</tests>
   public TransportSubscriptionBuilder(
       IOptions<RoutingOptions> routingOptions,
       EventSubscriptionDiscovery discovery,
@@ -103,7 +103,7 @@ public sealed class TransportSubscriptionBuilder {
   /// converges the subscription to it; an empty list means deliver every event on the topic.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_NothingExcluded_EveryDestinationCarriesAnEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_NothingExcluded_EveryDestinationCarriesAnEmptyListAsync</tests>
   public static string ExcludedEventSubjectsMetadataKey => EXCLUDED_EVENT_SUBJECTS_METADATA_KEY;
 
   /// <summary>Backing constant for <see cref="ExcludedEventSubjectsMetadataKey"/>.</summary>
@@ -148,8 +148,8 @@ public sealed class TransportSubscriptionBuilder {
   /// </summary>
   /// <returns>All inbox transport destinations; empty if no inbox strategy is configured.</returns>
   /// <docs>fundamentals/dispatcher/routing#transport-subscription-builder</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_SharedTopicStrategy_BitIdenticalToSingularPathAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_MultiSubscriptionStrategy_BuildsOneDestinationPerSubscriptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_SharedTopicStrategy_BitIdenticalToSingularPathAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_MultiSubscriptionStrategy_BuildsOneDestinationPerSubscriptionAsync</tests>
   public IReadOnlyList<TransportDestination> BuildInboxDestinations() {
     // DI-resolved strategy wins; options is the fallback (plan-flagged fix: the strategy
     // was read off options only, silently ignoring a DI-registered override). The fallback is
@@ -193,8 +193,8 @@ public sealed class TransportSubscriptionBuilder {
   /// <returns>List of event transport destinations.</returns>
   /// <exception cref="InvalidOperationException">Thrown when an excluded event type is one this service consumes
   /// (#2175).</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_ExcludedType_IsOnlyOnItsOwnTopicAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildDestinations_ExcludedTypeThisServiceConsumes_FailsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildEventDestinations_ExcludedType_IsOnlyOnItsOwnTopicAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderExcludedEventTypesTests.cs:BuildDestinations_ExcludedTypeThisServiceConsumes_FailsAsync</tests>
   public IReadOnlyList<TransportDestination> BuildEventDestinations() {
     var eventNamespaces = _discovery.DiscoverEventNamespaces();
     var destinations = new List<TransportDestination>();
@@ -300,7 +300,7 @@ public static class TransportSubscriptionBuilderExtensions {
   /// <param name="serviceNameResolver">Resolves the service name (broker subscription/queue
   /// names derive from it).</param>
   /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderTests.cs:AddTransportSubscriptionBuilder_MakesTopologyManifestResolvableAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderTests.cs:AddTransportSubscriptionBuilder_MakesTopologyManifestResolvableAsync</tests>
   internal static void TryAddTopologyManifest(
       IServiceCollection services,
       Func<IServiceProvider, string> serviceNameResolver) {

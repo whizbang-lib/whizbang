@@ -37,7 +37,7 @@ public enum TimestampKind {
   /// <see cref="TimeProvider"/>. The stored copy, and so the one the transport delivers, carries it.
   /// Only fires for messages that get an outbox copy (not local-only dispatch).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherQueuedAtStampTests.cs:Dispatch_WritesOutboxCopy_StampsQueuedAtFromTheTimeProviderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherQueuedAtStampTests.cs:Dispatch_WritesOutboxCopy_StampsQueuedAtFromTheTimeProviderAsync</tests>
   QueuedAt = 1,
 
   /// <summary>

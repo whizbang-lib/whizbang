@@ -7,7 +7,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// Where an event stands for one perspective, as the applied-event ledger records it.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AppliedEventStatusTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AppliedEventStatusTests.cs</tests>
 public enum AppliedEventState {
   /// <summary>The event is not in the local event store yet (an inbound event is stored when its inbox row is claimed).</summary>
   NotArrived = 0,
@@ -34,7 +34,7 @@ public enum AppliedEventState {
 /// <param name="StreamId">The stream, when the event is named by position.</param>
 /// <param name="StreamPosition">The event's per-stream version in the local event store (1 for the first event).</param>
 /// <docs>fundamentals/perspectives/perspective-sync#cross-service</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AppliedEventStatusTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AppliedEventStatusTests.cs</tests>
 public sealed record AppliedEventInquiry(
     string PerspectiveName,
     Guid? EventId,
@@ -47,7 +47,7 @@ public sealed record AppliedEventInquiry(
 /// <param name="State">Where the event stands for the perspective.</param>
 /// <param name="EventId">The event's id, resolved from the stream and position when the inquiry named it that way.</param>
 /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AppliedEventStatusTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AppliedEventStatusTests.cs</tests>
 public readonly record struct AppliedEventStatus(AppliedEventState State, Guid? EventId) {
   /// <summary>True when there is nothing left to wait for: the event was applied, or the perspective has nothing to apply.</summary>
   public bool IsSettled => State is AppliedEventState.Applied or AppliedEventState.NotApplicable;

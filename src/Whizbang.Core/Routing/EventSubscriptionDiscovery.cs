@@ -49,8 +49,8 @@ public sealed class EventSubscriptionDiscovery {
   /// <param name="registry">The compile-time event namespace registry.</param>
   /// <param name="runtimeSubscriptions">Events consumed through receptors registered at startup.</param>
   /// <docs>fundamentals/dispatcher/routing#runtime-event-subscriptions</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscription_SubscribesToTheEventsTopicAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:Constructor_NullRuntimeSubscriptions_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscription_SubscribesToTheEventsTopicAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:Constructor_NullRuntimeSubscriptions_ThrowsAsync</tests>
   public EventSubscriptionDiscovery(
       IOptions<RoutingOptions> routingOptions,
       IEventNamespaceRegistry registry,
@@ -70,10 +70,10 @@ public sealed class EventSubscriptionDiscovery {
   /// <exception cref="InvalidOperationException">Thrown when a manually subscribed namespace is also
   /// owned and not absorbed — see <see cref="RoutingOptions.ThrowIfSubscribedNamespaceIsOwned"/>.</exception>
   /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ManualSubscriptionOnOwnedNamespace_ThrowsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeAndCompileTimeConsumersOfOneTopic_SubscribeOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscriptionOnAnOwnedNamespace_IsLeftOutLikeACompileTimeOneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ManualSubscriptionOnOwnedNamespace_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeAndCompileTimeConsumersOfOneTopic_SubscribeOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscriptionOnAnOwnedNamespace_IsLeftOutLikeACompileTimeOneAsync</tests>
   public IReadOnlySet<string> DiscoverEventNamespaces() {
     // Defense in depth (issue #636): the WithRouting factory refuses an owned-and-subscribed
     // namespace at first resolution, but hand-constructed options never pass through the factory.

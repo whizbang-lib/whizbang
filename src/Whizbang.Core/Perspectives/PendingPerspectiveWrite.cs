@@ -79,7 +79,7 @@ public sealed record PerspectiveRowValues(
 /// <see cref="Write"/> and <see cref="Purge"/>, so a write whose operation disagrees with its version cannot be made.
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PendingPerspectiveWriteTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs</tests>
 public sealed class PendingPerspectiveWrite {
   private PendingPerspectiveWrite(
       string table, Guid streamId, PerspectiveWriteOperation operation, PerspectiveRowVersion expectedVersion,
@@ -117,7 +117,7 @@ public sealed class PendingPerspectiveWrite {
   /// <summary>The same write, for the sink registered under <paramref name="sinkKey"/>.</summary>
   /// <param name="sinkKey">The key of the sink of the row's DbContext.</param>
   /// <returns>The write, keyed to that sink.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PendingPerspectiveWriteTests.cs:ForSink_KeysTheSameWriteToTheContextsSinkAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:ForSink_KeysTheSameWriteToTheContextsSinkAsync</tests>
   public PendingPerspectiveWrite ForSink(object sinkKey) {
     ArgumentNullException.ThrowIfNull(sinkKey);
     return new PendingPerspectiveWrite(Table, StreamId, Operation, ExpectedVersion, Row) { SinkKey = sinkKey };

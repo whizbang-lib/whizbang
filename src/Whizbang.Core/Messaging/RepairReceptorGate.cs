@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>Why a repaired event was delivered state only, or run through its opted-in receptors (#2273).</summary>
 /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RepairReceptorGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairReceptorGateTests.cs</tests>
 public enum RepairReceptorReason {
   /// <summary>The bundle was asked for state only (a backfill), so its children were state only already.</summary>
   RequestedStateOnly = 0,
@@ -53,7 +53,7 @@ public enum RepairReceptorReason {
 /// children the configured lookback admits.
 /// </summary>
 /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RepairReceptorGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairReceptorGateTests.cs</tests>
 public static class RepairReceptorGate {
   /// <summary>Marks each child of a redelivery bundle and counts the decisions by reason.</summary>
   /// <param name="children">The bundle's children, as the fan-out built them (their envelopes are

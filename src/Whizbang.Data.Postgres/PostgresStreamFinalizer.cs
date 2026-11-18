@@ -66,7 +66,7 @@ public sealed partial class PostgresStreamFinalizer(
   /// <param name="status">The function's <c>finalize_status</c>.</param>
   /// <returns>The status.</returns>
   /// <exception cref="InvalidOperationException">The function returned a status this reader does not know.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/PostgresStreamFinalizerStatusTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/PostgresStreamFinalizerStatusTests.cs</tests>
   internal static StreamFinalizeStatus ToStatus(string status) => status switch {
     "sealed" => StreamFinalizeStatus.Sealed,
     "already_sealed" => StreamFinalizeStatus.AlreadySealed,

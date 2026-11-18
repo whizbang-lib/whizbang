@@ -25,7 +25,7 @@ namespace Whizbang.Core.Dispatch;
 /// forever: it fails after the maximum wait, with the deferral already in the log, instead of deadlocking.
 /// </remarks>
 /// <docs>operations/workers/database-readiness</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_WhileTheSchemaIsNotReady_DefersUntilTheMigrationCompletesAsync</tests>
 internal sealed partial class SchemaReadyDispatchDeferral {
   private readonly ISchemaReadyGate _gate;
@@ -36,7 +36,7 @@ internal sealed partial class SchemaReadyDispatchDeferral {
 
   /// <summary>Creates the deferral over the gate, the maximum wait and the clock that times it.</summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
   internal SchemaReadyDispatchDeferral(ISchemaReadyGate gate, TimeSpan maxWait, TimeProvider timeProvider, ILogger logger) {
     _gate = gate;
     _maxWait = maxWait;
@@ -49,9 +49,9 @@ internal sealed partial class SchemaReadyDispatchDeferral {
   /// host without the worker pipeline), which stays ungated.
   /// </summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithNoGateRegistered_StaysUngatedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_OnceTheGateOpens_ProceedsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithNoGateRegistered_StaysUngatedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_OnceTheGateOpens_ProceedsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
   internal static SchemaReadyDispatchDeferral? Resolve(IServiceProvider services) {
     if (services.GetService<ISchemaReadyGate>() is not { } gate) {
       return null;
@@ -67,7 +67,7 @@ internal sealed partial class SchemaReadyDispatchDeferral {
 
   /// <summary>True once the migration has completed; a dispatch then runs without waiting.</summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_OnceTheGateOpens_ProceedsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_OnceTheGateOpens_ProceedsAsync</tests>
   internal bool IsReady => _gate.IsReady;
 
   /// <summary>
@@ -76,9 +76,9 @@ internal sealed partial class SchemaReadyDispatchDeferral {
   /// <param name="cancellationToken">The caller's token; canceling it stops the wait.</param>
   /// <exception cref="WhizbangNotReadyException">The migration did not complete within the maximum wait.</exception>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WhenTheCallerCancels_StopsWaitingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_LogsOnceThatDispatchIsDeferredUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WhenTheCallerCancels_StopsWaitingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_LogsOnceThatDispatchIsDeferredUntilTheMigrationCompletesAsync</tests>
   internal async ValueTask WaitAsync(CancellationToken cancellationToken) {
     if (Interlocked.Exchange(ref _deferralLogged, 1) == 0) {
       LogDispatchDeferred(_logger, _maxWait);

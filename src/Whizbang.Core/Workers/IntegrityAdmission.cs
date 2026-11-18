@@ -19,7 +19,7 @@ namespace Whizbang.Core.Workers;
 /// unmeasured: a gate that cannot measure must never silently disable what it gates.
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityDeliveryWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityDeliveryWorkerTests.cs</tests>
 internal static partial class IntegrityAdmission {
   /// <summary>An admission decision, and the slot it holds until disposed.</summary>
   /// <remarks>

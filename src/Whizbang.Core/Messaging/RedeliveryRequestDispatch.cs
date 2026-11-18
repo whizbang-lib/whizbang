@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 internal static class RedeliveryRequestDispatch {
   /// <summary>
   /// Publishes <paramref name="command"/> to <paramref name="originServiceName"/> (null broadcasts, #2092) at <paramref name="destination"/>: the

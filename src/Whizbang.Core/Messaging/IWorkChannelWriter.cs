@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// Enables the framework layer to queue work for background processing.
 /// Implementations are typically singleton and shared between strategy and worker layers.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
 /// <docs>messaging/outbox-pattern</docs>
 public interface IWorkChannelWriter {
   /// <summary>
@@ -26,7 +26,7 @@ public interface IWorkChannelWriter {
   /// <param name="work">The outbox work to queue for processing</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>A task that completes when the work has been written to the channel</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
   ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default);
 
   /// <summary>
@@ -35,14 +35,14 @@ public interface IWorkChannelWriter {
   /// </summary>
   /// <param name="work">The outbox work to queue for processing</param>
   /// <returns>True if the work was written; false if the channel is full or complete</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
   bool TryWrite(OutboxWork work);
 
   /// <summary>
   /// Signals that no more work will be written to the channel.
   /// Consumers will complete after draining existing work.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
   void Complete();
 
   /// <summary>

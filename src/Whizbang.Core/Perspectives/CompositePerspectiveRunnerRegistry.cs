@@ -29,9 +29,9 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/registry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_EachAssemblysRunnerIsFound_WhicheverRegisteredLastAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:SamePerspectiveInTwoAssemblies_TheLatestContributionAnswers_AndIsListedOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_LifecycleStagesWithReceptors_AreTheUnionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_EachAssemblysRunnerIsFound_WhicheverRegisteredLastAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:SamePerspectiveInTwoAssemblies_TheLatestContributionAnswers_AndIsListedOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_LifecycleStagesWithReceptors_AreTheUnionAsync</tests>
 public sealed class CompositePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
   private readonly IPerspectiveRunnerRegistry[] _registries;
   private readonly IReadOnlyList<PerspectiveRegistrationInfo> _perspectives;

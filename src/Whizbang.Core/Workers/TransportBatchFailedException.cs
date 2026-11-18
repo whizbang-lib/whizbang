@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="innerException">What failed.</param>
 /// <exception cref="ArgumentNullException"><paramref name="innerException"/> is null.</exception>
 /// <docs>messaging/transports/transport-consumer#failed-batches</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportBatchGuardTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBatchFailureTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "The signal always carries the failed batch's size and its cause; a parameterless or message-only instance would report a failure with nothing to settle on and nothing to diagnose.")]

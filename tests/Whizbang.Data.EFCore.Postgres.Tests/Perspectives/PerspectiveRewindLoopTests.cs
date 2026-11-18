@@ -92,18 +92,7 @@ public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
     }
     var rewindsWhenSettled = rewinds.Count;
 
-    var reclaims = 0;
-    var polls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var seen = 0;
-    pipeline.ClaimWorker.OnBatchClaimed += batch => {
-      if (batch.PerspectiveStreamIds.Contains(streamId) || batch.PerspectiveWork.Any(w => w.StreamId == streamId)) {
-        Interlocked.Increment(ref reclaims);
-      }
-      if (Interlocked.Increment(ref seen) >= QUIET_POLLS) {
-        polls.TrySetResult();
-      }
-    };
-    await polls.Task.WaitAsync(_signalDeadline, ct);
+    var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
 
     var flagged = await _scalarAsync<bool>(conn,
       "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct);
@@ -441,18 +430,28 @@ public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
     return ids;
   }
 
-  /// <summary>Counts the claims of the stream over the next <see cref="QUIET_POLLS"/> claim polls.</summary>
   /// <summary>
   /// Counts the claim loop's next <see cref="QUIET_POLLS"/> polls and how many of them claimed the stream again.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// <see cref="ClaimWorker.OnBatchClaimed"/> is raised only by a claim that returned work, so an idle loop raises
   /// nothing: a wait for polls on a settled store would time out with none seen although the loop polls on its cadence.
   /// The pipeline's poll beacon is an outbox row that nothing in this pipeline publishes, so every claim offers it again
   /// and every poll is observed.
+  /// </para>
+  /// <para>
+  /// Only claims that start after the call are counted. A claim re-offers the rows leased to this instance until their
+  /// completion is written, and it raises <see cref="ClaimWorker.OnBatchClaimed"/> after its hand-off, so a claim whose
+  /// query ran just before the stream's last completion could raise it after the counting began, with a batch that
+  /// predates the settle. The claim loop takes a run-permit hold around each claim and its hand-off, one claim at a
+  /// time, so once nothing is held the claim that was in flight has ended, and every claim counted began after the
+  /// stream settled.
+  /// </para>
   /// </remarks>
   private static async Task<int> _reclaimsOverQuietPollsAsync(Pipeline pipeline, NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
     await pipeline.EnsurePollBeaconAsync(conn, ct);
+    await pipeline.ClaimWorker.RunPermit.WhenNothingHeldAsync(ct).WaitAsync(_signalDeadline, ct);
     var reclaims = 0;
     var seen = 0;
     var polls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

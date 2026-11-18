@@ -15,7 +15,7 @@ namespace Whizbang.Core.Security.Exceptions;
 /// to carry authentication/authorization information but none was found.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#exceptions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_NoExtractors_AllowAnonymousFalse_ThrowsSecurityContextRequiredExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_NoExtractors_AllowAnonymousFalse_ThrowsSecurityContextRequiredExceptionAsync</tests>
 public sealed class SecurityContextRequiredException : Exception {
   /// <summary>
   /// The type of message that required security context.

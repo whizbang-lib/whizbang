@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// are decided.
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PreparedPerspectiveApplyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PreparedPerspectiveApplyTests.cs</tests>
 public enum PerspectivePerPairReason {
   /// <summary>The pair takes the batch write (or has nothing to write).</summary>
   None = 0,
@@ -57,7 +57,7 @@ public enum PerspectivePerPairReason {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PreparedPerspectiveApplyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PreparedPerspectiveApplyTests.cs</tests>
 public class PreparedPerspectiveApply {
   /// <summary>Creates a prepared pair.</summary>
   /// <param name="streamId">The stream.</param>

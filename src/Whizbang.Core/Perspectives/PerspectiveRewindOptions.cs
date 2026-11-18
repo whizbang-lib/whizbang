@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Controls whether rewinds are enabled, startup scan behavior, and concurrency limits.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindOptionsTests.cs</tests>
 public class PerspectiveRewindOptions {
   /// <summary>
   /// Master switch for rewind detection and execution.
@@ -72,8 +72,8 @@ public class PerspectiveRewindOptions {
 /// Controls startup rewind behavior.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#startup-modes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:RewindStartupMode_HasExpectedValuesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:Properties_CanBeSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:RewindStartupMode_HasExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:Properties_CanBeSetAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 public enum RewindStartupMode {
   /// <summary>

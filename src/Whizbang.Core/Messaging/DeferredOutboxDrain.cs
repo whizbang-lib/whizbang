@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// empty-queue check, and the factory supplies each of them the channel.
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#deferred-event-channel</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredChannelDrainEveryStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DeferredChannelDrainEveryStrategyTests.cs</tests>
 internal static class DeferredOutboxDrain {
   /// <summary>
   /// Moves every message pending on <paramref name="channel"/> to the front of <paramref name="outbox"/>, in the

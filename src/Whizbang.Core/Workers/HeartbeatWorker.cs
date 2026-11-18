@@ -47,7 +47,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/HeartbeatWorkerStartupBeatTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileStarting_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs:AnInstanceEvictedWhileRunning_ExitsOnce_WithCodeThree_AndRecordsWhoEvictedItAsync</tests>

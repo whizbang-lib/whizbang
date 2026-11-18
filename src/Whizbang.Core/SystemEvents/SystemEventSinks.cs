@@ -12,7 +12,7 @@ namespace Whizbang.Core.SystemEvents;
 /// the event store to append to. How they are reached can then differ from how the emitter is registered.
 /// </summary>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
 internal interface ISystemEventSink {
   /// <summary>Opens what one record needs. The caller disposes it once the record is appended or dropped.</summary>
   ISystemEventSinkSession Open();
@@ -20,7 +20,7 @@ internal interface ISystemEventSink {
 
 /// <summary>What one record needs: the hook to consult and the append.</summary>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
 internal interface ISystemEventSinkSession : IAsyncDisposable {
   /// <summary>The audit decision hook for this record; null leaves the decision to the attribute.</summary>
   IAuditDecisionHook? AuditDecisionHook { get; }
@@ -34,7 +34,7 @@ internal interface ISystemEventSinkSession : IAsyncDisposable {
 /// lives no longer than that store; every record shares them and disposing a session disposes nothing.
 /// </summary>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterTests.cs</tests>
 internal sealed class EventStoreSystemEventSink(IEventStore store, IAuditDecisionHook? auditDecisionHook)
     : ISystemEventSink, ISystemEventSinkSession {
   public IAuditDecisionHook? AuditDecisionHook => auditDecisionHook;
@@ -65,9 +65,9 @@ internal sealed class EventStoreSystemEventSink(IEventStore store, IAuditDecisio
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_WithAScopedEventStoreRegisteredAfterIt_NeverCapturesTheStoreAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_TheDefaultEmitter_OutlivesTheScopeItWasResolvedInAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_AScopedHostHook_IsHonoredWithoutBeingCapturedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_WithAScopedEventStoreRegisteredAfterIt_NeverCapturesTheStoreAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_TheDefaultEmitter_OutlivesTheScopeItWasResolvedInAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_AScopedHostHook_IsHonoredWithoutBeingCapturedAsync</tests>
 internal sealed class ScopePerAppendSystemEventSink(IServiceScopeFactory scopeFactory) : ISystemEventSink {
   public ISystemEventSinkSession Open() => new Session(scopeFactory.CreateAsyncScope());
 

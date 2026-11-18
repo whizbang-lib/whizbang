@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </summary>
 /// <docs>fundamentals/events/stream-end-of-life#scheduled-disposition</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDispositionSqlTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamDispositionStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamDispositionStepTests.cs</tests>
 public interface IStreamDispositionLedger {
   /// <summary>
   /// Schedules the sealed streams that have no disposition scheduled: due when their grace has passed, counted from the

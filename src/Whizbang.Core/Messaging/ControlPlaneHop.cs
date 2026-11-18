@@ -24,7 +24,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#scope-markers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ControlPlaneHopTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ControlPlaneHopTests.cs</tests>
 public static class ControlPlaneHop {
 
   /// <summary>Creates the creation hop for a control-plane message.</summary>

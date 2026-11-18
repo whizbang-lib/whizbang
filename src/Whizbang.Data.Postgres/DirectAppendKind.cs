@@ -19,7 +19,7 @@ namespace Whizbang.Data.Postgres;
 /// never happened.
 /// </remarks>
 /// <docs>operations/diagnostics/whiz133</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DirectAppendKindTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DirectAppendKindTests.cs</tests>
 internal static class DirectAppendKind {
   private const EventFlags KIND_BITS = EventFlags.Ephemeral | EventFlags.Compacted | EventFlags.Terminal | EventFlags.Superseding;
 

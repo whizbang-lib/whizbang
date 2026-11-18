@@ -37,7 +37,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Chaos/MaintainerAcquisitionVacuumTests.cs</tests>
 public sealed partial class WorkTableVacuumOnAcquisition : IDutyAcquisitionHandler {
   private readonly IServiceScopeFactory _scopeFactory;

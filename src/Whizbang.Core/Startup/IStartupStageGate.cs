@@ -20,7 +20,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageGateTests.cs</tests>
 public interface IStartupStageGate {
   /// <summary>Whether this instance has reached <paramref name="stage"/>.</summary>
   /// <param name="stage">A startup stage.</param>

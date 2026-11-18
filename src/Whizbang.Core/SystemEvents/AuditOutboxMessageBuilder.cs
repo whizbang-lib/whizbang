@@ -33,11 +33,11 @@ public static partial class AuditOutboxMessageBuilder {
   /// every type is decided by the audit mode alone.
   /// </param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:LiveAndRebuild_AgreeWhereTypeGetTypeAndTheCatalogDisagree_UnderEitherModeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditOutboxMessageBuilderTests.cs:TryBuildAuditMessage_OptInMode_UnresolvableType_IsNotAuditedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditOutboxMessageBuilderTests.cs:TryBuildAuditMessage_OptInMode_UnresolvableType_WarnsThatItWasNotAuditedNamingTheTypeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:LiveAndRebuild_AgreeOnAnUnresolvableType_UnderEitherModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs:LiveAndRebuild_AgreeWhereTypeGetTypeAndTheCatalogDisagree_UnderEitherModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditOutboxMessageBuilderTests.cs:TryBuildAuditMessage_OptInMode_UnresolvableType_IsNotAuditedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditOutboxMessageBuilderTests.cs:TryBuildAuditMessage_OptInMode_UnresolvableType_WarnsThatItWasNotAuditedNamingTheTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs:LiveAndRebuild_AgreeOnAnUnresolvableType_UnderEitherModeAsync</tests>
   /// <remarks>
   /// An event type that cannot be resolved is decided as the ledger rebuild decides it (#1980): audited under
   /// <see cref="AuditMode.OptOut"/>, not audited under <see cref="AuditMode.OptIn"/>, and every such skip logs a warning
@@ -119,7 +119,7 @@ public static partial class AuditOutboxMessageBuilder {
   /// <param name="scope">The audited event's scope, stored on the row.</param>
   /// <param name="options">The audit options, which give the record its priority band.</param>
   /// <returns>The outbox row.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:Rederive_AnEligibleEvent_IsARecordOfItOnTheTenantLedgerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs:Rederive_AnEligibleEvent_IsARecordOfItOnTheTenantLedgerAsync</tests>
   internal static OutboxMessage ToOutboxMessage(
       EventAudited auditEvent, List<MessageHop> causationHops, PerspectiveScope? scope, SystemEventOptions options) {
     // Serialize EventAudited to JsonElement

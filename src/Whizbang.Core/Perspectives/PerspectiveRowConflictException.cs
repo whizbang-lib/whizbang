@@ -15,8 +15,8 @@ namespace Whizbang.Core.Perspectives;
 /// through the ordinary failure path, and its events are redelivered.
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowConflictRetryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowConflictRetryTests.cs</tests>
 public sealed class PerspectiveRowConflictException : Exception {
   /// <summary>Initializes a new instance with a default message.</summary>
   public PerspectiveRowConflictException()

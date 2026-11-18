@@ -13,8 +13,8 @@ namespace Whizbang.Core.Workers;
 /// gives to an online tool (#2319).
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
 internal static class OnlineRewriteTools {
   /// <summary>A capability a tool needs Ready, with how a log names it and where it is probed.</summary>
   internal sealed record Prerequisite(CapabilityId Id, string Label, string ProbedOn);

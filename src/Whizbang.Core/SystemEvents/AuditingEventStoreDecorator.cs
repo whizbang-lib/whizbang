@@ -181,7 +181,7 @@ public sealed class AuditingEventStoreDecorator(
   }
 
   /// <summary>The audit record's outbox row; its hop names the record's own stream (#1798).</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private OutboxMessage _buildOutboxMessage(EventAudited auditEvent) {
     // Create envelope for the audit event
     var envelope = new MessageEnvelope<EventAudited> {

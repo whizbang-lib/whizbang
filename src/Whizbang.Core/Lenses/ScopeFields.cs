@@ -9,10 +9,10 @@ namespace Whizbang.Core.Lenses;
 /// inherits from the creating message scope.
 /// </summary>
 /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs:ScopeFields_All_ContainsEveryNamedFieldAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs:ScopeFields_FlagsCombineWithBitwiseOrAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/PerspectiveScopeFilterByFieldsTests.cs:FilterByFields_TenantOnly_KeepsOnlyTenantAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/InheritScopeAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/InheritScopeAttributeTests.cs:ScopeFields_All_ContainsEveryNamedFieldAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/InheritScopeAttributeTests.cs:ScopeFields_FlagsCombineWithBitwiseOrAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/PerspectiveScopeFilterByFieldsTests.cs:FilterByFields_TenantOnly_KeepsOnlyTenantAsync</tests>
 [Flags]
 public enum ScopeFields {
   /// <summary>No fields. Equivalent to "do not inherit anything".</summary>

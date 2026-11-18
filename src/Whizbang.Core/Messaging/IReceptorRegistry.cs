@@ -30,9 +30,9 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_IsReturnedByGetReceptorsForAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Unregister_VoidReceptor_RemovesFromRegistryAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GeneratedRegistry_RuntimeRegister_AnswersHasRuntimeConsumerForAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_IsReturnedByGetReceptorsForAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Unregister_VoidReceptor_RemovesFromRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GeneratedRegistry_RuntimeRegister_AnswersHasRuntimeConsumerForAsync</tests>
 public interface IReceptorRegistry {
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
@@ -149,8 +149,8 @@ public interface IReceptorRegistry {
   /// registries with no compiled receptors; the source-generated registry lists its own.
   /// </remarks>
   /// <returns>The ids; empty when nothing is compiled in.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheGeneratedRegistry_ListsTheReceptorsCompiledIntoItAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs:AnImplementationWithoutCompiledReceptors_ListsNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheGeneratedRegistry_ListsTheReceptorsCompiledIntoItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs:AnImplementationWithoutCompiledReceptors_ListsNoneAsync</tests>
   IReadOnlyCollection<string> GetCompiledReceptorIds() => [];
 }
 

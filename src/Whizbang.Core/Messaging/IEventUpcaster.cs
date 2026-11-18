@@ -31,10 +31,10 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-upcasting</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterPipelineTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterPipelineTests.cs:Apply_WithMatchingUpcaster_TransformsEventAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterPipelineTests.cs:Apply_ChainsUpcastersInRegistrationOrder_V1ToV3Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterRegistrationTests.cs:AddEventUpcaster_RegistersAsSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventUpcasterPipelineTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventUpcasterPipelineTests.cs:Apply_WithMatchingUpcaster_TransformsEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventUpcasterPipelineTests.cs:Apply_ChainsUpcastersInRegistrationOrder_V1ToV3Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventUpcasterRegistrationTests.cs:AddEventUpcaster_RegistersAsSingletonAsync</tests>
 public interface IEventUpcaster {
   /// <summary>
   /// Cheap predicate — returns <c>true</c> only for events this upcaster transforms. MUST be

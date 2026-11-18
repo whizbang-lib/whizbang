@@ -29,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveOrderingKeyTests.cs</tests>
 public static class CollectiveOrdering {
   // Namespaces the hash so no other derived id in the framework can collide with a collective's.
   private const string DOMAIN = "whizbang:collective-ordering\n";

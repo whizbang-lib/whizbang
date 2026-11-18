@@ -13,7 +13,7 @@ namespace Whizbang.Core.Security;
 /// - PropagateToOutgoingMessages is true by default
 /// </remarks>
 /// <docs>fundamentals/security/message-security#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityOptionsTests.cs</tests>
 /// <example>
 /// services.AddWhizbangMessageSecurity(options => {
 ///   // Must explicitly opt-in to allow anonymous messages

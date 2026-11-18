@@ -14,7 +14,7 @@ namespace Whizbang.Core.Routing;
 /// not by duplicated string logic.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxNamingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxNamingTests.cs</tests>
 public static class CommandInboxNaming {
   /// <summary>Prefix for per-namespace command inbox entities.</summary>
   private const string PER_NAMESPACE_TOPIC_PREFIX = "inbox.";
@@ -65,8 +65,8 @@ public static class CommandInboxNaming {
   /// <returns>The control inbox entity name.</returns>
   /// <exception cref="ArgumentException">Thrown when the service name is null or whitespace.</exception>
   /// <docs>fundamentals/dispatcher/routing#service-control-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxNamingTests.cs:ServiceControlTopicFor_IsTheServicesOwnLowercaseControlEntityAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxNamingTests.cs:ServiceControlTopicFor_ReplacesCharactersAnEntityNameCannotCarryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxNamingTests.cs:ServiceControlTopicFor_IsTheServicesOwnLowercaseControlEntityAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxNamingTests.cs:ServiceControlTopicFor_ReplacesCharactersAnEntityNameCannotCarryAsync</tests>
   public static string ServiceControlTopicFor(string serviceName) {
     ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
     var lowered = serviceName.Trim().ToLowerInvariant();

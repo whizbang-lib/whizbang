@@ -12,9 +12,9 @@ namespace Whizbang.Core.Workers;
 /// Default readiness check - always returns true (transport always ready).
 /// Use for in-process transports or transports without connectivity concerns.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_Always_ReturnsTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_AlwaysReturnsTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_Cancellation_ThrowsOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_Always_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_AlwaysReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_Cancellation_ThrowsOperationCanceledExceptionAsync</tests>
 public class DefaultTransportReadinessCheck : ITransportReadinessCheck {
   /// <summary>
   /// Always returns true indicating the transport is ready.

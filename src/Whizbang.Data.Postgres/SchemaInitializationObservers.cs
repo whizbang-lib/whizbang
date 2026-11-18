@@ -10,7 +10,7 @@ namespace Whizbang.Data.Postgres;
 /// that has the service provider but not the observers: the EF Core driver's generated schema pass calls this.
 /// </summary>
 /// <docs>data/turnkey-initialization#watching-initialization</docs>
-/// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationObserversTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:ConcurrentStarts_AreSerializedByTheSchemaLockAsync</tests>
 public static class SchemaInitializationObservers {
   /// <summary>Another session holds the schema lock for <paramref name="schema"/>; this start is about to wait.</summary>
@@ -39,7 +39,7 @@ public static class SchemaInitializationObservers {
   /// <param name="services">Where the observers are registered; null tells none.</param>
   /// <param name="schema">The schema, unquoted.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_TellsEveryRegisteredObserverAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_TellsEveryRegisteredObserverAsync</tests>
   public static async Task PreLockPhasesStartingAsync(IServiceProvider? services, string schema, CancellationToken cancellationToken) {
     StartupProgress.Note();   // #2165
     foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {

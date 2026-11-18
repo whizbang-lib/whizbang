@@ -15,8 +15,8 @@ namespace Whizbang.Core.Archival;
 /// its stream, and a host with no archive store are not retried.
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:AnAppend_AutoRestore_RestoresTheStream_AndIsRetriedOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_AnAutoRestoreRefusal_RestoresTheStream_AndStoresTheWriteOnceMoreAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:AnAppend_AutoRestore_RestoresTheStream_AndIsRetriedOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_AnAutoRestoreRefusal_RestoresTheStream_AndStoresTheWriteOnceMoreAsync</tests>
 internal static class ArchivedStreamAutoRestore {
   /// <summary>Runs <paramref name="write"/>, restoring its stream and running it once more on an AutoRestore refusal.</summary>
   /// <param name="write">The write.</param>

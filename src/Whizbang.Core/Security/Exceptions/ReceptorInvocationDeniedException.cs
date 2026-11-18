@@ -19,7 +19,7 @@ namespace Whizbang.Core.Security.Exceptions;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorGateTests.cs</tests>
 public sealed class ReceptorInvocationDeniedException : UnauthorizedAccessException {
   /// <summary>The receptor that was not invoked. Null only when built through a general-purpose constructor.</summary>
   public Type? ReceptorType { get; }

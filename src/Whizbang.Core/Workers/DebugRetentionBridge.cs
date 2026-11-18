@@ -27,7 +27,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/maintenance-steps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DebugRetentionBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DebugRetentionBridgeTests.cs</tests>
 public static class DebugRetentionBridge {
 
   /// <summary>The <c>wh_settings</c> key the maintenance sweep reads.</summary>

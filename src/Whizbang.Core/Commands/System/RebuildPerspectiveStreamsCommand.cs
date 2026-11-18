@@ -18,7 +18,7 @@ namespace Whizbang.Core.Commands.System;
 /// <param name="PerspectiveName">The perspective to rebuild them for.</param>
 /// <param name="Origin">Who asked, and under which request id; stamped on every stream's rebuild events.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:HandleStreamAsync_RebuildsThatOneStreamUnderTheRebuildsOriginAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:HandleStreamAsync_RebuildsThatOneStreamUnderTheRebuildsOriginAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/RebuildCommandRoutingTests.cs:NamedStreams_WithAStore_AreRecordedAsARunAndRebuiltNothingHereAsync</tests>
 [PinnedId("57e609a6-3b62-46c6-bb1b-1d7464a6d224")]
 public sealed record RebuildPerspectiveStreamsCommand(

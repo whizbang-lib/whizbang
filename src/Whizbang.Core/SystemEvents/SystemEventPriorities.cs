@@ -29,7 +29,7 @@ namespace Whizbang.Core.SystemEvents;
 /// withheld: moving one into the idle band is a decision someone has to write down here.
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventPrioritiesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventPrioritiesTests.cs</tests>
 internal static class SystemEventPriorities {
   private static readonly HashSet<Type> _audit = [typeof(EventAudited), typeof(CommandAudited)];
 

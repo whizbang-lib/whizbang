@@ -47,7 +47,7 @@ public enum MessageChangeKind {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageChangesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageChangesTests.cs</tests>
 public sealed class MessageChanges {
   private static readonly ConcurrentDictionary<Type, IReadOnlyList<string>> _eventProperties = new();
   private static readonly IReadOnlyDictionary<Type, IReadOnlyList<string>> _noModels =

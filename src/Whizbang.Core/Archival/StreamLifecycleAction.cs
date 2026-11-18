@@ -11,7 +11,7 @@ namespace Whizbang.Core.Archival;
 /// sealed stream's grace has passed. The PreDestruction hook sees it as the declared disposition and may return another.
 /// </summary>
 /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public enum StreamLifecycleAction {
   /// <summary>
   /// The default. The whole stream (or, for the version cap, its prefix) is written through the <see cref="IArchiveStore"/>
@@ -39,7 +39,7 @@ public enum StreamLifecycleAction {
 
 /// <summary>Maps a <see cref="StreamLifecycleAction"/> to the <see cref="Disposition"/> every destruction routes on.</summary>
 /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public static class StreamLifecycleActionExtensions {
   /// <summary>
   /// The disposition the action runs: Archive, Compact, or Delete for Purge. CloseBooks runs Archive: it is the

@@ -10,7 +10,7 @@ namespace Whizbang.Core.Lifecycle;
 /// <see cref="IBookCloser"/>. A host that declares <c>CloseBooks</c> without registering a handler fails its start.
 /// </summary>
 /// <docs>fundamentals/events/closing-the-books#by-policy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamDispositionStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamDispositionStepTests.cs</tests>
 public interface IBookClosingHandler {
   /// <summary>
   /// The closing summary and opening balance for the stream in <paramref name="context"/>, or <see langword="null"/> to

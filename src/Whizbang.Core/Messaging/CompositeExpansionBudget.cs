@@ -32,7 +32,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeExpansionBudgetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeExpansionBudgetTests.cs</tests>
 public sealed class CompositeExpansionBudget {
 
   /// <summary>How an expansion should be carried out.</summary>

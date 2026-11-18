@@ -174,7 +174,7 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
   /// and <see cref="ArgumentException"/> for a name that parses but names nothing loadable. Both lookups use
   /// it, so the binder's "no header can make it throw" contract has one definition.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MultiPassMessageTypeBinderCoverageTests.cs:IsUnresolvableName_EachLookupFailure_IsUnresolvableAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MultiPassMessageTypeBinderCoverageTests.cs:IsUnresolvableName_EachLookupFailure_IsUnresolvableAsync</tests>
   internal static bool IsUnresolvableName(Exception ex) =>
     ex is FileLoadException or BadImageFormatException or ArgumentException;
 

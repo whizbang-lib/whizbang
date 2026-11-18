@@ -55,7 +55,7 @@ internal sealed partial class LifecycleTrackingState(
   /// The clock activity is stamped on; the coordinator passes its own, so its inactivity sweep and these stamps
   /// read the same time (#1797). Setting it restarts the activity stamp on that clock.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_KeepsAnUnreportedEntry_UntilTheInjectedClockPassesTheBoundAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_KeepsAnUnreportedEntry_UntilTheInjectedClockPassesTheBoundAsync</tests>
   internal TimeProvider Clock {
     get => _clock;
     init {

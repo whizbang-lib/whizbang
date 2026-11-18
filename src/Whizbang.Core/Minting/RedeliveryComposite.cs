@@ -25,7 +25,7 @@ namespace Whizbang.Core.Minting;
 /// machine-built, so a mismatch is a producer bug, never data.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync</tests>
 public interface IRawInnerComposite : ICompositeEvent {
   /// <summary>Each child's raw stored payload JSON, verbatim from the origin's store.</summary>
   IReadOnlyList<JsonElement> InnerPayloads { get; }
@@ -58,7 +58,7 @@ public interface IRawInnerComposite : ICompositeEvent {
 /// the pairing — these bundles are machine-built, so a mismatch is a producer bug, never data.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 public interface IIdentityPreservingComposite : ICompositeEvent {
   /// <summary>Original message ids, parallel to the inner events (same order and count).</summary>
   IReadOnlyList<Guid> InnerEventIds { get; }
@@ -106,7 +106,7 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
 /// integrity cycle re-detects any remainder.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 [PinnedId("b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a")]
 public sealed class RedeliveryComposite
   : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite, IControlPlaneMessage {

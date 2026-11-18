@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="FromCommitSequence">Exclusive floor; null = from the beginning.</param>
 /// <param name="ToCommitSequence">Inclusive ceiling; null = to the head.</param>
 /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryAnswerCoverageTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryAnswerCoverageTests.cs</tests>
 public readonly record struct RedeliveryAnswerWindow(long? FromCommitSequence, long? ToCommitSequence) {
   /// <summary>The answer covers the stream's whole history: neither bound is set.</summary>
   public bool IsWholeHistory => FromCommitSequence is null && ToCommitSequence is null;
@@ -30,7 +30,7 @@ public readonly record struct RedeliveryAnswerWindow(long? FromCommitSequence, l
   /// cannot change, whatever its window. Null (or empty) when every stream was carried whole.
   /// </summary>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryAnswerCoverageTests.PartialStreams.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryAnswerCoverageTests.PartialStreams.cs</tests>
   public IReadOnlyList<Guid>? PartialStreamIds { get; init; }
 
   /// <summary>

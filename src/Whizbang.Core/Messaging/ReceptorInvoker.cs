@@ -47,7 +47,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <docs>operations/observability/tracing#parent-context</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
@@ -224,7 +224,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// outside the receptors, and a cancellation of <paramref name="cancellationToken"/>, are thrown.
   /// </remarks>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
   public ValueTask InvokeEveryReceptorAsync(
       IMessageEnvelope envelope,
       LifecycleStage stage,
@@ -777,9 +777,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// exceptions are still reported with <c>IsError=true</c> plus the exception type.
   /// </remarks>
   /// <docs>operations/observability/tracing#exception-recording</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerLoggingTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerBranchCoverageTests.cs:InvokeAsync_SampledActivity_ThrowingReceptor_MarksTheSpanErrorAndRecordsOneExceptionEventAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerBranchCoverageTests.cs:InvokeAsync_SampledActivity_SuccessfulReceptor_RecordsNoExceptionEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerBranchCoverageTests.cs:InvokeAsync_SampledActivity_ThrowingReceptor_MarksTheSpanErrorAndRecordsOneExceptionEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerBranchCoverageTests.cs:InvokeAsync_SampledActivity_SuccessfulReceptor_RecordsNoExceptionEventAsync</tests>
   private async ValueTask _invokeReceptorAsync(
       ReceptorInfo receptor,
       ReceptorInvocationContext ctx,

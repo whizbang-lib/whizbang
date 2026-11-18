@@ -16,11 +16,11 @@ namespace Whizbang.Core.Perspectives;
 /// was compiled into both; the registration reports it at startup (<see cref="RegistrationCollisions"/>).
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events#di-wiring</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs</tests>
 public sealed class CompositeCollectiveApplyRegistry : ICollectiveApplyRegistry {
   /// <summary>Combines the given registries, in the order given.</summary>
   /// <param name="registries">The contributions, latest registered first.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:AHandlerTwoContributionsList_IsListedOnce_AtTheLatestAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:AHandlerTwoContributionsList_IsListedOnce_AtTheLatestAsync</tests>
   public CompositeCollectiveApplyRegistry(IEnumerable<ICollectiveApplyRegistry> registries) {
     ArgumentNullException.ThrowIfNull(registries);
     Entries = CollectiveApplyRegistryServiceCollectionExtensions.Union(registries.SelectMany(registry => registry.Entries));
@@ -41,7 +41,7 @@ public sealed class CompositeCollectiveApplyRegistry : ICollectiveApplyRegistry 
 /// a host with handlers in several assemblies gave the dispatcher one assembly's (#2238).
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events#di-wiring</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs</tests>
 public static class CollectiveApplyRegistryServiceCollectionExtensions {
   /// <summary>The service key each assembly's registry is registered under as a contribution.</summary>
   public const string CONTRIBUTION_KEY = "whizbang:collective-apply-registry-contribution";
@@ -53,7 +53,7 @@ public static class CollectiveApplyRegistryServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
   /// <remarks>Idempotent per registry type: an assembly registered twice contributes once.</remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:TwoAssemblies_TheServedRegistry_ListsBothAssemblysHandlersAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:TwoAssemblies_TheServedRegistry_ListsBothAssemblysHandlersAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/MultiAssemblyCollectiveDispatchTests.cs:TwoAssemblies_TheDispatcher_AppliesEachAssemblysCollectiveEventsAsync</tests>
   public static IServiceCollection AddCollectiveApplyRegistryContribution<TRegistry>(this IServiceCollection services)
       where TRegistry : class, ICollectiveApplyRegistry {
@@ -71,7 +71,7 @@ public static class CollectiveApplyRegistryServiceCollectionExtensions {
   /// <param name="services">The host's service provider.</param>
   /// <param name="handPassed">A handler table a consumer passed by hand to the obsolete registration, or none.</param>
   /// <returns>Each handler once; empty when no assembly contributed and nothing was passed.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:GetCollectiveApplyEntries_WithHandPassedHandlers_AddsThoseTheRegistryLacks_OnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:GetCollectiveApplyEntries_WithHandPassedHandlers_AddsThoseTheRegistryLacks_OnceAsync</tests>
   public static IReadOnlyList<CollectiveApplyEntry> GetCollectiveApplyEntries(
       this IServiceProvider services, IReadOnlyList<CollectiveApplyEntry>? handPassed = null) {
     ArgumentNullException.ThrowIfNull(services);
@@ -82,7 +82,7 @@ public static class CollectiveApplyRegistryServiceCollectionExtensions {
   /// <summary>How a handler is named in the startup collisions report: the event and the handler's entry key.</summary>
   /// <param name="entry">The handler.</param>
   /// <returns>The event's display name and <see cref="CollectiveApplyEntry.EntryKey"/>.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:CollisionItem_NamesTheEventAndTheHandlerMethodAndModelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs:CollisionItem_NamesTheEventAndTheHandlerMethodAndModelAsync</tests>
   public static string CollisionItem(CollectiveApplyEntry entry) {
     ArgumentNullException.ThrowIfNull(entry);
     return TypeNameFormatter.DisplayName(entry.EventType) + " -> " + entry.EntryKey;

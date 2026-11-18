@@ -189,7 +189,7 @@ public sealed class StreamIntegrityMetrics {
   /// copy of that key (#2350): each is satisfied, so it is neither stored above the newest nor read as missing. Growth
   /// means consumers reap superseded copies before their origins do.</summary>
   /// <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
   public PassiveCounter<long> RedeliveredCopiesSuperseded { get; }
 
   /// <summary>Stored events without an origin that a redelivery named an origin for but did not adopt, because the

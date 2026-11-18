@@ -85,7 +85,7 @@ public sealed class RedeliveryPumpOptions {
 /// (operator-initiated origin-wide repair).
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpTests.cs</tests>
 /// <remarks>
 /// Creates the pump over the transport. The envelope serializer is the same seam the outbox uses
 /// for composites — and because the children ride as raw JSON, serializing the bundle needs type
@@ -143,7 +143,7 @@ public sealed class RedeliveryPump(
   /// understands; only a windowed backfill, whose requester is new enough to ask for it, sets it.
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
   public Guid? BundleStreamId { get; init; }
 
   /// <summary>
@@ -157,7 +157,7 @@ public sealed class RedeliveryPump(
   /// <see cref="BundleStreamId"/>, when also set, names the session instead.
   /// </summary>
   /// <docs>resilience/stream-integrity#repair-answers-bundle-across-streams</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpAnswerBundlingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpAnswerBundlingTests.cs</tests>
   public bool BundleAcrossStreams { get; init; }
 
   /// <summary>Namespace of <see cref="AnswerSessionFor"/>'s name-based ids.</summary>
@@ -177,7 +177,7 @@ public sealed class RedeliveryPump(
   /// <param name="scope">The events' stored scope JSON, or null when unscoped.</param>
   /// <returns>The session key.</returns>
   /// <docs>resilience/stream-integrity#repair-answers-bundle-across-streams</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpAnswerBundlingTests.cs:AnswerSessionFor_IsDerived_AndSeparatesOrigins_Requesters_Topics_AndScopesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpAnswerBundlingTests.cs:AnswerSessionFor_IsDerived_AndSeparatesOrigins_Requesters_Topics_AndScopesAsync</tests>
   public static Guid AnswerSessionFor(Guid originServiceId, string topic, string? target, string? scope) {
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
     // Target and scope are each prefixed by whether they are present, so "no requester" never collides with an empty one.
@@ -196,7 +196,7 @@ public sealed class RedeliveryPump(
   /// <param name="target">The requester's service name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.cs</tests>
   public async Task PublishWindowAnswerAsync(BackfillWindowAnswer answer, string topic, string target, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(answer);
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
@@ -229,7 +229,7 @@ public sealed class RedeliveryPump(
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of composites published.</returns>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.cs:PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.cs:PublishAnswer_EchoesTheAnsweredWindowOnEveryBundle_AndPublishSaysNoneAsync</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
     Justification = "PublishAsync's parameters plus the window the answer covered.")]
   public async Task<int> PublishAnswerAsync(
@@ -258,7 +258,7 @@ public sealed class RedeliveryPump(
   /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
   /// <returns>The answer to publish into.</returns>
   /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
   public RedeliveryAnswerPublication BeginAnswer(string topic, string? target, Guid originServiceId = default, bool stateOnly = false) {
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
     return new RedeliveryAnswerPublication(this, topic, target, originServiceId, stateOnly);
@@ -379,7 +379,7 @@ public sealed class RedeliveryPump(
   /// One chunk's repair bundle: the stored payloads and type names raw, the original ids, origin and commit sequences,
   /// and the stream each event is stored on, which the receiver files it under (#1798).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private RedeliveryComposite _buildComposite(
       IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, Guid? bundleStreamId,
       RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams, bool answerContinues) {

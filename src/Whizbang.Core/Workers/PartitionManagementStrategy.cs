@@ -14,7 +14,7 @@ namespace Whizbang.Core.Workers;
 /// partitions, because a drop must first carry the signals a live instance has not consumed.
 /// </summary>
 /// <docs>operations/infrastructure/partitioned-ledgers#pg-partman</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PartitionManagementStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitionManagementStrategyTests.cs</tests>
 public enum PartitionManagementStrategy {
   /// <summary>
   /// The default. pg_partman creates partitions where it is already Ready on every database probed; otherwise the
@@ -42,7 +42,7 @@ public enum PartitionManagementStrategy {
 /// </param>
 /// <param name="Reason">Why, in a phrase the cycle reports.</param>
 /// <docs>operations/infrastructure/partitioned-ledgers#pg-partman</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PartitionManagementStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitionManagementStrategyTests.cs</tests>
 public readonly record struct PartitionManagementPlan(bool UsePgPartman, bool BuiltInOnFailure, string Reason);
 
 /// <summary>
@@ -57,7 +57,7 @@ public readonly record struct PartitionManagementPlan(bool UsePgPartman, bool Bu
 /// </list>
 /// </remarks>
 /// <docs>operations/infrastructure/partitioned-ledgers#pg-partman</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PartitionManagementStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitionManagementStrategyTests.cs</tests>
 public static class PartitionManagementStrategyResolver {
   private const string STRATEGY_KEY = "Whizbang:Workers:Maintenance:Partitioning:Strategy";
   private const string PG_PARTMAN_CREATES = "pg_partman creates partitions ahead; the built-in manager still drops expired ones";

@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerPhysicalFieldRegistrationTests.cs</tests>
 public static class PerspectivePhysicalFieldRegistry {
   private static readonly ConcurrentDictionary<(Type ModelType, string PropertyName), PerspectivePhysicalField> _fields = new();
@@ -59,7 +59,7 @@ public static class PerspectivePhysicalFieldRegistry {
   /// <param name="modelType">The perspective model.</param>
   /// <param name="columnName">The column, as registered.</param>
   /// <param name="field">The field, when one is registered.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs:TryResolveColumn_FindsTheFieldByItsColumnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs:TryResolveColumn_FindsTheFieldByItsColumnAsync</tests>
   public static bool TryResolveColumn(Type modelType, string columnName, out PerspectivePhysicalField field) {
     foreach (var ((model, _), registered) in _fields) {
       if (model == modelType && string.Equals(registered.ColumnName, columnName, StringComparison.Ordinal)) {
@@ -77,7 +77,7 @@ public static class PerspectivePhysicalFieldRegistry {
   /// </summary>
   /// <param name="modelType">The model type.</param>
   /// <returns>The fields, ordered by property name; empty for a model with none.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
   public static IReadOnlyList<PerspectivePhysicalField> JsonbDocumentFields(Type modelType) =>
     [.. _fields
       .Where(entry => entry.Key.ModelType == modelType && entry.Value.IsJsonbColumn && entry.Value.InDocument)
@@ -91,7 +91,7 @@ public static class PerspectivePhysicalFieldRegistry {
   /// <param name="modelType">The model type.</param>
   /// <param name="columnName">The column name, as the runner's physical values are keyed.</param>
   /// <returns>True when a field of the model is registered with that column and a jsonb column type.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
   public static bool IsJsonbColumn(Type modelType, string columnName) {
     foreach (var ((type, _), field) in _fields) {
       if (type == modelType && field.IsJsonbColumn && string.Equals(field.ColumnName, columnName, StringComparison.Ordinal)) {

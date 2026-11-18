@@ -11,10 +11,10 @@ namespace Whizbang.Core.Security;
 /// Contains all security-related information extracted from the message.
 /// </summary>
 /// <docs>fundamentals/security/message-security#extraction</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Constructor_WithValidExtraction_CreatesContextAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Scope_DelegatesToExtractionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_PropagateToOutgoingTrue_SetsContextForPropagationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ImmutableScopeContextTests.cs:Constructor_WithValidExtraction_CreatesContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ImmutableScopeContextTests.cs:Scope_DelegatesToExtractionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_PropagateToOutgoingTrue_SetsContextForPropagationAsync</tests>
 public sealed record SecurityExtraction {
   /// <summary>
   /// The perspective scope containing TenantId, UserId, etc.
@@ -78,6 +78,6 @@ public sealed record SecurityExtraction {
   /// every claim it carries, because each of them was opted in where the chain started.
   /// </remarks>
   /// <docs>fundamentals/security/message-security#hop-scope</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Security/HopScopeTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/HopScopeTests.cs</tests>
   public IReadOnlySet<string> PropagatedClaimTypes { get; init; } = FrozenSet<string>.Empty;
 }

@@ -15,10 +15,10 @@ namespace Whizbang.Core.Messaging;
 /// Supports routing via Route.Local(), Route.Outbox(), Route.Both() wrappers.
 /// </summary>
 /// <docs>fundamentals/receptors/lifecycle-receptors#event-cascading</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsEvent_ShouldCascadeEventAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsTupleWithEvents_ShouldCascadeAllEventsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersDispatcherEventCascaderAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsEvent_ShouldCascadeEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsTupleWithEvents_ShouldCascadeAllEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersDispatcherEventCascaderAsync</tests>
 public interface IEventCascader {
   /// <summary>
   /// Cascades all messages from a receptor's return value.

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Transports;
 /// (an unknown type, or a body the typed read rejects) instead of settling it with the broker unstored (#1720).
 /// </summary>
 /// <docs>messaging/transports/transports#transport-message</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/ReceivedEnvelopeReaderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/ReceivedEnvelopeReaderTests.cs</tests>
 public static class ReceivedEnvelopeReader {
   /// <summary>
   /// The body as an envelope as received, or <see langword="null"/> when it is not one: not JSON, JSON missing a

@@ -14,7 +14,7 @@ namespace Whizbang.Core.SystemEvents;
 /// removes the possibility rather than the symptom.
 /// </remarks>
 /// <docs>fundamentals/events/system-events#audit-decisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
 public static class AuditEligibility {
 
   /// <summary>
@@ -47,7 +47,7 @@ public static class AuditEligibility {
   /// would point at nothing (#1730).
   /// </param>
   /// <returns>The decision, carrying any name or description the hook supplied.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEphemeralExclusionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditEphemeralExclusionTests.cs</tests>
   public static AuditDecision Decide(
       object? payload, Type eventType, AuditMode mode, IAuditDecisionHook? hook, bool isEphemeral = false) {
     ArgumentNullException.ThrowIfNull(eventType);

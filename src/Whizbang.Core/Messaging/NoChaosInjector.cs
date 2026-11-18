@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>operations/testing/chaos-injection</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ChaosInjectorDefaultTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ChaosInjectorDefaultTests.cs</tests>
 public sealed class NoChaosInjector : IChaosInjector {
 
   /// <summary>A shared instance; the type is stateless.</summary>

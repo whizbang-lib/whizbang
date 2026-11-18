@@ -19,8 +19,8 @@ namespace Whizbang.Core.Routing;
 /// <see cref="IReceptorRegistryQuery.GetHandledMessages"/>; empty when no registry is
 /// resolvable (strategies must treat empty as "no metadata", not "handles nothing").</param>
 /// <docs>fundamentals/dispatcher/routing#inbox-routing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/InboxRoutingStrategyTests.cs:InboxSubscriptionContext_CarriesAllComponentsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_RegistryResolvable_PassesHandledMessagesToContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/InboxRoutingStrategyTests.cs:InboxSubscriptionContext_CarriesAllComponentsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_RegistryResolvable_PassesHandledMessagesToContextAsync</tests>
 public sealed record InboxSubscriptionContext(
   string ServiceName,
   IReadOnlySet<string> OwnedDomains,
@@ -36,8 +36,8 @@ public sealed record InboxSubscriptionContext(
   /// empty so pre-phase-5 construction sites keep compiling with unchanged behavior.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#inbox-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:ComputeConsumedNamespaces_UnionsHandledAndConsumedEventNamespacesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:InboxSubscriptionContext_ConsumedEventNamespaces_DefaultsToEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:ComputeConsumedNamespaces_UnionsHandledAndConsumedEventNamespacesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:InboxSubscriptionContext_ConsumedEventNamespaces_DefaultsToEmptyAsync</tests>
   public IReadOnlySet<string> ConsumedEventNamespaces { get; init; } =
     System.Collections.Frozen.FrozenSet<string>.Empty;
 }

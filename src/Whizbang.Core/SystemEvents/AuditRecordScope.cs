@@ -38,7 +38,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#scope-markers</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditEnvelopeScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditEnvelopeScopeTests.cs</tests>
 public static class AuditRecordScope {
 
   /// <summary>Builds the scope for an audit record about an action in the given tenant.</summary>

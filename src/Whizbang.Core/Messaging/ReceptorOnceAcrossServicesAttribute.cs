@@ -30,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing#once-per-service</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalDispatchRecordTests.cs:OnceAcrossServicesReceptor_InTwoServices_RunsOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvocationTrackingTests.cs:OnceAcrossServices_FiredInAnotherService_IsSkippedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherLocalDispatchRecordTests.cs:OnceAcrossServicesReceptor_InTwoServices_RunsOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvocationTrackingTests.cs:OnceAcrossServices_FiredInAnotherService_IsSkippedAsync</tests>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class ReceptorOnceAcrossServicesAttribute : Attribute;

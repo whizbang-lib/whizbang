@@ -35,7 +35,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityDeliveryWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityDeliveryWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityDeliveryWorkerLoopTests.cs</tests>
 public sealed partial class IntegrityDeliveryWorker(
     IServiceScopeFactory scopeFactory,
@@ -77,7 +77,7 @@ public sealed partial class IntegrityDeliveryWorker(
   /// its staleness bound by it rather than reporting a live origin as silent.
   /// </summary>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityDeliveryWorkerTests.cs:OnABusyService_ThePassIsDeferred_AndTheSlotIsNotHeldAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityDeliveryWorkerTests.cs:OnABusyService_ThePassIsDeferred_AndTheSlotIsNotHeldAsync</tests>
   public DateTimeOffset? DeferredSince => _deferredSince;
 
   /// <summary>Raised after every pass the loop runs, whatever it did; a signal for monitoring and tests.</summary>

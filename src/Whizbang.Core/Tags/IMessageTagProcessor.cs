@@ -20,10 +20,10 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#processing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessAsync_InvokesMatchingHookAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs:LocalInvokeAsync_WithTagProcessingEnabled_InvokesTagProcessorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:ProcessAsync_InvokesMatchingHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/DispatcherTagProcessingTests.cs:LocalInvokeAsync_WithTagProcessingEnabled_InvokesTagProcessorAsync</tests>
 public interface IMessageTagProcessor {
   /// <summary>
   /// Processes all tags for a message at the specified lifecycle stage.
@@ -65,7 +65,7 @@ public interface IMessageTagProcessor {
   /// <param name="changes">The message's changes, or null for what the message itself describes.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithChanges_TheHookReadsThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithChanges_TheHookReadsThemAsync</tests>
   ValueTask ProcessTagsAsync(
       object message,
       Type messageType,

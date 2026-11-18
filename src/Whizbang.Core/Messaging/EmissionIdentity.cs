@@ -36,7 +36,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EmissionIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EmissionIdentityTests.cs</tests>
 public static class EmissionIdentity {
   private const string PREFIX = "whizbang.emission.v2";
 
@@ -79,7 +79,7 @@ public static class EmissionIdentity {
 /// so a retry, which materializes a fresh envelope, starts again at zero and re-derives the same sequence.
 /// </summary>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EmissionIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EmissionIdentityTests.cs</tests>
 public static class EmissionSequence {
   private static readonly ConditionalWeakTable<object, Counter> _counters = [];
 

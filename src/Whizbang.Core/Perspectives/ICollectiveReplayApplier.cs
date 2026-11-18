@@ -53,7 +53,7 @@ public interface ICollectiveReplayApplier {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The events to fold, in order.</returns>
   /// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeRewindsFoldedCollectives_InterleavesNoneAfterAStartAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeRewindsFoldedCollectives_InterleavesNoneAfterAStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_FromASnapshot_FoldsTheCollectivesCommittedAfterItAsync</tests>
   Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveAfterAsync(
     Type modelType,
@@ -87,7 +87,7 @@ public interface ICollectiveReplayApplier {
   /// <param name="collectiveEvent">A collective event the replay merged in.</param>
   /// <returns>True when the collective is still in flight.</returns>
   /// <docs>fundamentals/messaging/collective-events#collective-replay-from-a-start</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeInFlightCollectivesWereKnown_SaysNoneIsInFlightAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeInFlightCollectivesWereKnown_SaysNoneIsInFlightAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_ThatMeetsACollectiveStillInFlight_TakesNoSnapshotAsync</tests>
   bool IsInFlight(IEvent collectiveEvent) => false;
 }

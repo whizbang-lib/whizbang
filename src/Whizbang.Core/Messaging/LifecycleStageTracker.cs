@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleStageTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleStageTrackerTests.cs</tests>
 /// <remarks>Creates the tracker with a hard ceiling on how many claims it retains.</remarks>
 /// <param name="maxTrackedClaims">Maximum retained claims before the oldest are evicted.</param>
 public sealed class LifecycleStageTracker(int maxTrackedClaims = 100_000) {

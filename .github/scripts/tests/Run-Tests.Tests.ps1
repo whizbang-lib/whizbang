@@ -189,6 +189,76 @@ Describe 'Run-Tests.ps1 reports a crashed test process as a failure (#2231)' -Sk
   }
 }
 
+# A test module that hangs holds its suite until the job's own limit cancels it, which writes no result, takes no dump
+# and leaves no trace of which test hung (#2402). -HangDumpTimeout hands every module the testing platform's hang dump:
+# after that long with no test activity the module dumps itself, names the tests still running, and is killed, so the
+# job fails while it still has time to upload the dump.
+Describe 'Run-Tests.ps1 -HangDumpTimeout (#2402)' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+  }
+
+  It 'gives every test module a hang dump after <Timeout> in a <Mode> run' -ForEach @(
+    @{ Mode = 'Unit'; Type = 'Unit'; Timeout = '7m' }
+    @{ Mode = 'AiUnit'; Type = 'Unit'; Timeout = '90s' }
+    @{ Mode = 'Component'; Type = 'Component'; Timeout = '1h' }
+    @{ Mode = 'Integration'; Type = 'Integration'; Timeout = '30m' }) {
+    $repo = New-FakeRepo -TestType $Type
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Configuration', 'Release', '-NoBuild', '-ModuleCoverage', '-HangDumpTimeout', $Timeout) -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Match "(?m)^dotnet test .*--hangdump --hangdump-timeout $Timeout( |$)"
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'takes no hang dump unless asked' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Match '(?m)^dotnet test ' -Because 'the test step must have run, or the absence below would prove nothing'
+    ($r.Calls -join "`n") | Should -Not -Match '--hangdump'
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'refuses the timeout <Timeout>, which the platform would read differently or not at all' -ForEach @(
+    @{ Timeout = '7' }, @{ Timeout = '7min' }, @{ Timeout = '0m' }, @{ Timeout = '-5m' }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-HangDumpTimeout', $Timeout) -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet test '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match 'HangDumpTimeout'
+    $r.Output | Should -Not -Match 'cannot be found that matches parameter name' -Because 'the script must know the parameter and refuse the value'
+  }
+
+  It 'refuses it with -Coverage, whose per-project runs would silently not take it' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'AiUnit', '-Coverage', '-Configuration', 'Release', '-NoBuild', '-HangDumpTimeout', '5m') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet (test|run) '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match '-HangDumpTimeout and -Coverage'
+    $r.Output | Should -Not -Match 'ScriptHalted'
+  }
+
+  # The refusal this one is modeled on lost its message the same way: Write-Error under the script's error trap
+  # printed only ScriptHalted.
+  It 'names -Coverage and -ModuleCoverage as alternatives when both are given' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'AiUnit', '-Coverage', '-ModuleCoverage', '-Configuration', 'Release', '-NoBuild') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet (test|run) '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match '-Coverage and -ModuleCoverage are alternatives'
+    $r.Output | Should -Not -Match 'ScriptHalted'
+  }
+}
+
 Describe 'Run-Tests.ps1 builds the configuration it runs (#2244)' -Skip:$NoPosixShell {
   BeforeAll {
     $script:Passing = @'

@@ -15,7 +15,7 @@ namespace Whizbang.Core.Archival;
 /// as many chunks as it needs before it truncates.
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#batches</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveBatchTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveBatchTests.cs</tests>
 public sealed record ArchiveBatch {
   private ArchiveBatch(Guid streamId, long? throughVersion) {
     StreamId = streamId;

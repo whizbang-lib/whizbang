@@ -9,7 +9,7 @@ namespace Whizbang.Core.Perspectives;
 /// New events queue up in wh_perspective_events and are processed after the lock is released.
 /// </summary>
 /// <docs>fundamentals/perspectives/stream-locking</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:IPerspectiveStreamLocker_HasExpectedMethodsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:IPerspectiveStreamLocker_HasExpectedMethodsAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesOverload_ResolvesRealImplementationTypesAsync</tests>
 public interface IPerspectiveStreamLocker {
   /// <summary>True when a real implementation is registered. The framework's null default returns false so

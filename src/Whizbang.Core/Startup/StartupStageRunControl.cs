@@ -20,7 +20,7 @@ namespace Whizbang.Core.Startup;
 /// only participant that writes the instance's row: one write per transition, of stage, phase and version together.
 /// </remarks>
 /// <docs>operations/startup/startup-status#one-writer-of-the-phase</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageRunControlTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageRunControlTests.cs</tests>
 public sealed class StartupStageRunControl : IWhizbangRunControl {
   private readonly IStartupStageReporter _stages;
 

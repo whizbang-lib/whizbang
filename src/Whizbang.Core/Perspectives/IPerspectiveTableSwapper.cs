@@ -81,7 +81,7 @@ public sealed record PerspectiveTableSwap(string LiveTable, string ShadowTable, 
 
 /// <summary>Options for <see cref="IPerspectiveRebuilder.RebuildBlueGreenAsync"/>.</summary>
 /// <docs>fundamentals/perspectives/rebuild#blue-green</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
 public sealed class BlueGreenRebuildOptions {
   /// <summary>
   /// Whether the table the rebuild replaces is kept, renamed, rather than dropped. Default true: the previous

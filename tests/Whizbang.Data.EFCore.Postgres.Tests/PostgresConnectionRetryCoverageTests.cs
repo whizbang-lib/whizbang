@@ -272,7 +272,10 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     await Assert.That(async () => await retryTask).ThrowsException()
       .Because("cancellation is the only way indefinite retry ends -- the loop must actually stop");
 
-    var stillFailing = logger.Entries.LastOrDefault(e => e.Level == LogLevel.Warning
+    // The first status line, the one waited for. The loop keeps retrying every 2ms until it sees the
+    // cancellation, so on a slow runner a later status (attempt 20) can follow; the last one is not
+    // the tenth (#2397).
+    var stillFailing = logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Warning
         && e.Message!.Contains("still failing", StringComparison.Ordinal));
     await Assert.That(stillFailing.Message).IsNotNull();
     await Assert.That(stillFailing.Message).Contains("still failing after 10 attempts")

@@ -32,7 +32,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/superseding-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs</tests>
 public static class SupersedingEvents {
   private sealed record Registration(Type EventType, Func<object, string?>? Reader, string? KeyMember, string? KeyJsonName, string? Group);
 
@@ -64,7 +64,7 @@ public static class SupersedingEvents {
   /// metadata without member information writes the key under, with <paramref name="keyMember"/> when it is null.</param>
   /// <remarks>The first registration of a type is kept: a type's key is declared once, at compile time.</remarks>
   /// <docs>fundamentals/events/superseding-events#a-key-missing-from-the-payload</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:KeyOf_ARegistrationWithoutAMappableKeyMember_ReadsThePayloadAsBeforeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:KeyOf_ARegistrationWithoutAMappableKeyMember_ReadsThePayloadAsBeforeAsync</tests>
   [EditorBrowsable(EditorBrowsableState.Never)]
   public static void Register(Type eventType, Func<object, string?>? keyOf, string? keyMember, string? keyJsonName) =>
     Register(eventType, keyOf, keyMember, keyJsonName, null);
@@ -83,7 +83,7 @@ public static class SupersedingEvents {
   /// the type is its own group. The generator passes null for an empty name.</param>
   /// <remarks>The first registration of a type is kept: a type's key and group are declared once, at compile time.</remarks>
   /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:Register_WithAGroup_ByHand_KeepsTheGroup_TheOlderOverloadsRegisterNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:Register_WithAGroup_ByHand_KeepsTheGroup_TheOlderOverloadsRegisterNoneAsync</tests>
   [EditorBrowsable(EditorBrowsableState.Never)]
   public static void Register(Type eventType, Func<object, string?>? keyOf, string? keyMember, string? keyJsonName, string? group) {
     ArgumentNullException.ThrowIfNull(eventType);
@@ -110,7 +110,7 @@ public static class SupersedingEvents {
   /// <param name="eventType">The event type.</param>
   /// <returns>The group name, or <see langword="null"/>.</returns>
   /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_AGroupedType_IsItsDeclaredGroup_AnUngroupedOrUnregisteredTypeHasNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_AGroupedType_IsItsDeclaredGroup_AnUngroupedOrUnregisteredTypeHasNoneAsync</tests>
   public static string? GroupOf(Type eventType) {
     ArgumentNullException.ThrowIfNull(eventType);
     return _byType.TryGetValue(eventType, out var registration) ? registration.Group : null;
@@ -120,7 +120,7 @@ public static class SupersedingEvents {
   /// <param name="payload">The payload, possibly null.</param>
   /// <returns>Its type's group, or <see langword="null"/>.</returns>
   /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync</tests>
   public static string? GroupOf(object? payload) => payload is null ? null : GroupOf(payload.GetType());
 
   /// <summary>
@@ -131,7 +131,7 @@ public static class SupersedingEvents {
   /// <param name="wireTypeName">The payload's type name as the transport carried it.</param>
   /// <returns>Its type's group, or <see langword="null"/>.</returns>
   /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:GroupOf_APayload_TypedOrReceived_IsItsTypesGroupAsync</tests>
   public static string? GroupOf(object? payload, string? wireTypeName) =>
     payload is JsonElement ? _registered(wireTypeName)?.Group : GroupOf(payload);
 
@@ -143,7 +143,7 @@ public static class SupersedingEvents {
   /// <param name="eventType">The event type.</param>
   /// <returns>The key property's name, or <see langword="null"/>.</returns>
   /// <docs>resilience/stream-integrity#rule-fingerprint</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:KeyMemberOf_IsTheRegisteredKeyProperty_OrNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:KeyMemberOf_IsTheRegisteredKeyProperty_OrNoneAsync</tests>
   public static string? KeyMemberOf(Type eventType) {
     ArgumentNullException.ThrowIfNull(eventType);
     return _byType.TryGetValue(eventType, out var registration) ? registration.KeyMember : null;
@@ -152,7 +152,7 @@ public static class SupersedingEvents {
   /// <summary>The event types registered as superseding, as a snapshot.</summary>
   /// <returns>Every registered superseding type; the history reconcile walks the stored events of each (#2110).</returns>
   /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:Types_ListsEveryRegisteredSupersedingType_AndNoOtherAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:Types_ListsEveryRegisteredSupersedingType_AndNoOtherAsync</tests>
   public static IReadOnlyList<Type> Types() => [.. _byType.Keys];
 
   /// <summary>The key a typed <paramref name="payload"/> is stored with: the dispatch and direct-append paths.</summary>
@@ -173,7 +173,7 @@ public static class SupersedingEvents {
   /// <returns>The key, or <see langword="null"/> (see <see cref="KeyOf(object?)"/>); also <see langword="null"/> when a
   /// JSON payload does not carry the key property or carries it as JSON null (see <see cref="IsKeyMissing"/>).</returns>
   /// <docs>fundamentals/events/superseding-events#a-key-missing-from-the-payload</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:KeyOf_AValueTypeKeyMissingFromTheJson_IsNull_ButAPresentDefaultIsAKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:KeyOf_AValueTypeKeyMissingFromTheJson_IsNull_ButAPresentDefaultIsAKeyAsync</tests>
   public static string? KeyOf(object? payload, string? wireTypeName, JsonSerializerOptions? jsonOptions) {
     if (payload is not JsonElement json) {
       return KeyOf(payload);
@@ -206,7 +206,7 @@ public static class SupersedingEvents {
   /// property, for a payload that is not a JSON object, and for a registration whose key member no JSON property of the
   /// type maps to (its key is read by deserializing, as before).</returns>
   /// <docs>fundamentals/events/superseding-events#a-key-missing-from-the-payload</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:IsKeyMissing_IsFalse_WhereThereIsNoKeyToMissAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:IsKeyMissing_IsFalse_WhereThereIsNoKeyToMissAsync</tests>
   public static bool IsKeyMissing(JsonElement payload, string? wireTypeName, JsonSerializerOptions? jsonOptions) {
     if (_registered(wireTypeName) is not { Reader: not null } registration) {
       return false;

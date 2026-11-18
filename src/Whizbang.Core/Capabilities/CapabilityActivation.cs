@@ -7,7 +7,7 @@ namespace Whizbang.Core.Capabilities;
 
 /// <summary>How a requirement in force was turned on.</summary>
 /// <docs>operations/infrastructure/capabilities#activation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityActivationResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityActivationResolverTests.cs</tests>
 public enum CapabilityActivation {
   /// <summary>The operator set the key: a capability it lacks fails start.</summary>
   Explicit,
@@ -22,7 +22,7 @@ public enum CapabilityActivation {
 /// <param name="Value">The value in force (configured or default), or null for a section.</param>
 /// <param name="Activation">Whether the operator set it or a default did.</param>
 /// <docs>operations/infrastructure/capabilities#activation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityActivationResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityActivationResolverTests.cs</tests>
 public sealed record ActiveCapabilityRequirement(
   CapabilityRequirement Requirement,
   string Key,
@@ -61,7 +61,7 @@ public sealed record ActiveCapabilityRequirement(
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#activation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityActivationResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityActivationResolverTests.cs</tests>
 public static class CapabilityActivationResolver {
   private const string WILDCARD = "*";
 

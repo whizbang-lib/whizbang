@@ -26,6 +26,6 @@ namespace Whizbang.Core.Attributes;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
 public sealed class OverwriteOnlyAttribute : Attribute;

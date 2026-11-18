@@ -38,7 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </remarks>
 /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerRepairTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerRepairTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorRunOnRepairTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class RunOnRepairAttribute : Attribute;

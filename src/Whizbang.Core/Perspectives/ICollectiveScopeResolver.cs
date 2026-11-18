@@ -32,7 +32,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveScopeResolver_HasScopeKindDiscriminatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveScopeResolver_HasScopeKindDiscriminatorAsync</tests>
 public interface ICollectiveScopeResolver {
   /// <summary>
   /// The scope discriminator this resolver handles. Must match the

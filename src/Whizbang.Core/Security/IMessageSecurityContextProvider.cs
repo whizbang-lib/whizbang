@@ -21,7 +21,7 @@ namespace Whizbang.Core.Security;
 /// 4. Returns an ImmutableScopeContext that cannot be modified</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
 /// <example>
 /// // Register the provider
 /// services.AddWhizbangMessageSecurity(options => {

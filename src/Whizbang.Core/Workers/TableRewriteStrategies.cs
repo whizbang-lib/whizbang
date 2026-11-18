@@ -5,7 +5,7 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>The strategy names a <see cref="ITableRewriter"/> is selected by.</summary>
 /// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
 public static class TableRewriteStrategies {
   /// <summary>
   /// <c>VACUUM FULL</c> at boot: blocking, under an ACCESS EXCLUSIVE lock, and only when

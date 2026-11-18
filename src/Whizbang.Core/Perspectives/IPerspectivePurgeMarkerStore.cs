@@ -31,7 +31,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PurgeStaysPurgedTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AStaleMarkerOnAResurrectedRow_CoversOnlyTheBodiesAtOrBeforeThePurgeAsync</tests>
 public interface IPerspectivePurgeMarkerStore {
@@ -54,7 +54,7 @@ public interface IPerspectivePurgeMarkerStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The purged streams.</returns>
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:PurgedAmongAsync_Default_AsksEachStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:PurgedAmongAsync_Default_AsksEachStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs:PurgedAmongAsync_AnswersEveryStreamInOneQueryAsync</tests>
   async Task<IReadOnlySet<Guid>> PurgedAmongAsync(
       IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) {

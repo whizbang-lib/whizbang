@@ -29,9 +29,9 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#hop-scope</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/HopScopeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/HopScopeDispatchParityTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/HopScopeTwoHopWireTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/HopScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/HopScopeDispatchParityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/HopScopeTwoHopWireTests.cs</tests>
 public static class HopScope {
 
   /// <summary>

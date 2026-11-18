@@ -20,7 +20,7 @@ namespace Whizbang.Core.Audit;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditListLengthsTests.cs</tests>
 public interface IBoundedCommandAudit {
   /// <summary>The properties whose lists a command audit record replaces with their lengths.</summary>
   /// <returns>The C# property names of the command's id lists.</returns>

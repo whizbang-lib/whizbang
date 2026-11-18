@@ -8,5 +8,5 @@ namespace Whizbang.Core;
 /// Queries are processed by Receptors which return query results without changing state.
 /// </summary>
 /// <docs>messaging/commands-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/MessageKindTests.cs:Detect_ImplementsIQuery_ReturnsQueryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/MessageKindTests.cs:Detect_ImplementsIQuery_ReturnsQueryAsync</tests>
 public interface IQuery : IMessage;

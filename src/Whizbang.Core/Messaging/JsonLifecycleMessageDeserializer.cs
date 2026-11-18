@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// Uses JsonContextRegistry for AOT-safe deserialization with zero reflection.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeCrossContextDispatchTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeCrossContextDispatchTests.cs</tests>
 /// <remarks>
 /// Creates a new JSON lifecycle message deserializer.
 /// </remarks>

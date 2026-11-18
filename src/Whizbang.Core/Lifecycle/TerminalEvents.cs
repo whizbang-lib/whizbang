@@ -12,7 +12,7 @@ namespace Whizbang.Core.Lifecycle;
 /// so a terminal event is stamped <see cref="Messaging.EventFlags.Terminal"/> the same way under native AOT.
 /// </summary>
 /// <docs>fundamentals/events/stream-end-of-life#terminal-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/TerminalEventsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/TerminalEventsTests.cs</tests>
 public static class TerminalEvents {
   private static readonly ConcurrentDictionary<Type, bool> _types = new();
 

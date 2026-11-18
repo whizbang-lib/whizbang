@@ -28,11 +28,11 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionPresent_AllowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_DeniesWithDeadLetterDefaultAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:NoAttributes_AlwaysAllowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs:RequirePermission_MissingPermission_DeniesEndToEndAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs:PermissionPresent_AllowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_DeniesWithDeadLetterDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs:NoAttributes_AlwaysAllowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorDispatchTests.cs:RequirePermission_MissingPermission_DeniesEndToEndAsync</tests>
 public sealed class DefaultRequirePermissionInterceptor : IReceptorInterceptor {
   /// <inheritdoc />
   public ValueTask<InterceptorResult> CanInvokeAsync(

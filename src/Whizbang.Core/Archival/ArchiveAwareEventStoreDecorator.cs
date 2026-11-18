@@ -40,9 +40,9 @@ namespace Whizbang.Core.Archival;
 /// <param name="archive">The registered archive store.</param>
 /// <param name="readThrough">Whether reads from the start read through the archive (<c>Whizbang:Archive:ReadThrough</c>).</param>
 /// <docs>fundamentals/events/archive-store#read-through</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ARebuildThatSkipsArchivedData_ReadsOnlyTheHotEvents_OnEveryReadPathAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ARewind_AndALiveRead_ReadThroughTheGap_WhateverARebuildWouldChooseAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ARebuildThatSkipsArchivedData_ReadsOnlyTheHotEvents_OnEveryReadPathAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ARewind_AndALiveRead_ReadThroughTheGap_WhateverARebuildWouldChooseAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs</tests>
 public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveStore archive, bool readThrough)
@@ -132,7 +132,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// start shows a gap there, the archive holds the stream's first events, so null is returned and each pair reads its
   /// own events, through the archive.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABatchedRead_ThatAStreamsGapNeedsTheArchiveFor_LeavesEachPairToItsOwnReadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABatchedRead_ThatAStreamsGapNeedsTheArchiveFor_LeavesEachPairToItsOwnReadAsync</tests>
   public override async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
       IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken = default) {

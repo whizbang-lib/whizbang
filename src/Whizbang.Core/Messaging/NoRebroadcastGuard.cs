@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// or code path that explicitly re-publishes a fan-out child is stopped here.
 /// </summary>
 /// <docs>fundamentals/messaging/composite-events#no-rebroadcast</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
 public static class NoRebroadcastGuard {
   /// <summary>
   /// True when <paramref name="sourceEnvelope"/> is a no-rebroadcast message (carries

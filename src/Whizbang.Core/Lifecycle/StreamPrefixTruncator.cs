@@ -42,7 +42,7 @@ public interface IStreamPrefixTruncator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The truncate's outcome.</returns>
   /// <docs>fundamentals/events/stream-end-of-life#dispositions</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
   Task<StreamTruncateResult> TruncateAsync(
     Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default);
 
@@ -58,7 +58,7 @@ public interface IStreamPrefixTruncator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The truncate's outcome.</returns>
   /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
   Task<StreamTruncateResult> TruncateAsync(
     Guid streamId, long throughVersion, Disposition disposition, DestructionReason reason, CancellationToken cancellationToken = default);
 }
@@ -83,7 +83,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   private readonly IArchiveStore? _archiveStore = archiveStore;
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
   public Task<StreamTruncateResult> TruncateAsync(
       Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) =>

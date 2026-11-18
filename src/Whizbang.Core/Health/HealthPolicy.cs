@@ -20,9 +20,9 @@ namespace Whizbang.Core.Health;
 /// </para>
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:StrictOverride_HoldsThatComponentOutOfRotationAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:StrictOverride_DoesNotAffectOtherComponentsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AppliesPolicyConfigurationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthAggregatorTests.cs:StrictOverride_HoldsThatComponentOutOfRotationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthAggregatorTests.cs:StrictOverride_DoesNotAffectOtherComponentsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AppliesPolicyConfigurationAsync</tests>
 public sealed class HealthPolicy {
   private readonly IReadOnlyDictionary<(ComponentState, HealthProbe), HealthStatus> _map;
 

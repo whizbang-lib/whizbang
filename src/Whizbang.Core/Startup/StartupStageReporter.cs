@@ -27,7 +27,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs</tests>
 public sealed partial class StartupStageReporter : IStartupStageReporter, IDisposable {
   private const string SKIPPED = "skipped: ";
   private static readonly TimeSpan _writeTimeout = TimeSpan.FromSeconds(5);

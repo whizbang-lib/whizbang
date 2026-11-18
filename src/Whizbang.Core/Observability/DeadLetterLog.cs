@@ -24,7 +24,7 @@ namespace Whizbang.Core.Observability;
 /// the broker dead-letter drains together.</para>
 /// </remarks>
 /// <docs>operations/observability/logging-categories#dead-lettered-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Observability/DeadLetterLogTests.cs</tests>
 public static partial class DeadLetterLog {
   /// <summary>The EventId of the dead-letter record.</summary>
@@ -48,7 +48,7 @@ public static partial class DeadLetterLog {
   /// <param name="reason">Why it was dead-lettered, typically a <see cref="Messaging.MessageFailureReason"/> name.</param>
   /// <param name="lastError">The last failure's recorded text, or null when none was recorded (the record says so).</param>
   /// <docs>operations/observability/logging-categories#dead-lettered-messages</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs:MaxAttempts_MovedToTheDeadLetterStore_LogsOneErrorRecordWithTypeAndLastErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs:MaxAttempts_MovedToTheDeadLetterStore_LogsOneErrorRecordWithTypeAndLastErrorAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerTests.cs:Drain_ImportedWithoutTypeOrReason_RecordSaysSoAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Observability/DeadLetterLogTests.cs:MessageDeadLettered_NoTypeOrError_SaysSoAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Observability/DeadLetterLogTests.cs:MessageDeadLettered_LogsTheDocumentedEventIdAndNameAsync</tests>
@@ -83,8 +83,8 @@ public static partial class DeadLetterLog {
   /// <param name="options">The bound options, or null.</param>
   /// <returns>The level to log the record at.</returns>
   /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_Options_IsTheirLevelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_Options_IsTheirLevelAsync</tests>
   public static LogLevel LevelFrom(IOptions<DeadLetterLoggingOptions>? options) => LevelFrom(options?.Value);
 
   /// <summary>
@@ -94,8 +94,8 @@ public static partial class DeadLetterLog {
   /// <param name="options">The bound options, or null.</param>
   /// <returns>The level to log the record at.</returns>
   /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_PlainOptions_IsTheirLevelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_NoOptions_IsErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:LevelFrom_PlainOptions_IsTheirLevelAsync</tests>
   public static LogLevel LevelFrom(DeadLetterLoggingOptions? options) => options?.Level ?? LogLevel.Error;
 
   /// <summary>

@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// refused when the host starts (<see cref="DatabaseFailureEscalationOptionsValidator"/>).</para>
 /// </remarks>
 /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
 public sealed class DatabaseFailureEscalationOptions {
   /// <summary>The configuration section the options bind from.</summary>
   public const string SECTION = "Whizbang:DatabaseFailureEscalation";
@@ -45,8 +45,8 @@ public sealed class DatabaseFailureEscalationOptions {
   /// How many transient database failures in a row a worker meets before its run can escalate. At least 1.
   /// </summary>
   /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Defaults_AreThreeFailuresOverAMinuteAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_Settings_BindFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Defaults_AreThreeFailuresOverAMinuteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_Settings_BindFromConfigurationAsync</tests>
   public int ConsecutiveFailures { get; set; } = DEFAULT_CONSECUTIVE_FAILURES;
 
   /// <summary>
@@ -54,8 +54,8 @@ public sealed class DatabaseFailureEscalationOptions {
   /// Zero or more.
   /// </summary>
   /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Defaults_AreThreeFailuresOverAMinuteAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_Settings_BindFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Defaults_AreThreeFailuresOverAMinuteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_Settings_BindFromConfigurationAsync</tests>
   public TimeSpan FailingFor { get; set; } = DEFAULT_FAILING_FOR;
 }
 #pragma warning restore CA1707
@@ -65,9 +65,9 @@ public sealed class DatabaseFailureEscalationOptions {
 /// key. Registered with the options and checked when the host starts.
 /// </summary>
 /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Validator_RefusesFewerThanOneFailure_NamingTheKeyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Validator_RefusesANegativeTime_NamingTheKeyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_UnmeetableSetting_IsRefusedAtStartupAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Validator_RefusesFewerThanOneFailure_NamingTheKeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Validator_RefusesANegativeTime_NamingTheKeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs:Turnkey_UnmeetableSetting_IsRefusedAtStartupAsync</tests>
 public sealed class DatabaseFailureEscalationOptionsValidator : IValidateOptions<DatabaseFailureEscalationOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, DatabaseFailureEscalationOptions options) {

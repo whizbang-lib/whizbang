@@ -66,7 +66,7 @@ public sealed class PerspectiveMetrics {
   /// Events skipped because their stream was purged and the Apply did not resurrect it. Tags: perspective_name.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs:LaterBatch_AfterPurge_IsSkipped_AndNoRowIsRecreatedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PurgeStaysPurgedTests.cs:LaterBatch_AfterPurge_IsSkipped_AndNoRowIsRecreatedAsync</tests>
   public PassiveCounter<long> PurgedEventsSkipped { get; }
 
   // Batch composition
@@ -96,7 +96,7 @@ public sealed class PerspectiveMetrics {
   /// health. This rising while the gauge holds still says the gauge is stale; the worker's warning names the cause.
   /// </remarks>
   /// <docs>operations/observability/metrics#perspectives</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
   public PassiveCounter<long> PendingEventsRefreshFailures { get; }
 
   // Rewind
@@ -166,7 +166,7 @@ public sealed class PerspectiveMetrics {
   /// from older snapshots.
   /// </remarks>
   /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveReplayRunnerTests.cs:ALiveSnapshot_IsDeferred_WhenACollectiveOfTheRowIsInFlightBeforeTheReadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:ALiveSnapshot_IsDeferred_WhenACollectiveOfTheRowIsInFlightBeforeTheReadAsync</tests>
   public PassiveCounter<long> SnapshotsDeferred { get; }
 
   /// <summary>Rewinds running right now (observable gauge).</summary>

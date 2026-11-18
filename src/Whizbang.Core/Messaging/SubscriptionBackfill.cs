@@ -36,7 +36,7 @@ public enum SubscriptionBackfillOutcome {
 /// <see cref="BackfillId"/>, which every window and its answer carry and whose session every bundle rides.
 /// </summary>
 /// <docs>resilience/stream-integrity#paced-backfill</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillCursorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SubscriptionBackfillCursorTests.cs</tests>
 public sealed record SubscriptionBackfillCursor {
   /// <summary>The backfill's id: its windows' correlation and its bundles' session.</summary>
   public required Guid BackfillId { get; init; }

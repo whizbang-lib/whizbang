@@ -223,9 +223,9 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// here as well as in the default registry query, so a custom <see cref="IReceptorRegistryQuery"/>
   /// is asked the same question.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasAConsumer_IsKeptAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasNoConsumer_IsStillSkippedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:EvaluateReceive_EnvelopeWrappedName_WhosePayloadHasAConsumer_IsKeptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchSkipGateTests.cs:ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasAConsumer_IsKeptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchSkipGateTests.cs:ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasNoConsumer_IsStillSkippedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchSkipGateTests.cs:EvaluateReceive_EnvelopeWrappedName_WhosePayloadHasAConsumer_IsKeptAsync</tests>
   private bool _hasAnyConsumer(string payloadClrType) =>
     _registry.HasAnyConsumer(EventTypeMatchingHelper.ExtractInnerPayloadTypeName(payloadClrType));
 

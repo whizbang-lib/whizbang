@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
 public static class SteadyIntegrityTraffic {
   /// <summary>The types, in no particular order.</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:TheTraffic_IsTheCheckpoint_TheRedeliveryRequest_AndItsAnswerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SteadyIntegrityTrafficTests.cs:TheTraffic_IsTheCheckpoint_TheRedeliveryRequest_AndItsAnswerAsync</tests>
   public static IReadOnlyList<Type> Types { get; } =
     [typeof(IntegrityCheckpoint), typeof(RequestRedeliveryCommand), typeof(Minting.RedeliveryComposite)];
 

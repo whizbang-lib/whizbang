@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:BatchSize_TakesPriorityOverDebounceAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Batch strategy - flushes when batch size is reached OR after a debounce quiet period.
 /// Combines count-based and time-based triggers for optimal throughput.
 /// Best for: Bulk imports, seeding, high-volume background processing.
@@ -250,7 +250,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// and routed publish/send paths that do not consume the WorkBatch.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
@@ -265,7 +265,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// and batch-size trigger. Use for dedup callers that must consume the WorkBatch, or end-of-scope drains.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {

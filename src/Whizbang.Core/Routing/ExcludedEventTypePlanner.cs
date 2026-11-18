@@ -11,7 +11,7 @@ namespace Whizbang.Core.Routing;
 /// subscription excludes, and runs the startup checks on it.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/ExcludedEventTypePlannerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ExcludedEventTypePlannerTests.cs</tests>
 internal static partial class ExcludedEventTypePlanner {
   /// <summary>
   /// The excluded subjects per subscribed event topic. Every topic in <paramref name="eventTopics"/> is in the answer,

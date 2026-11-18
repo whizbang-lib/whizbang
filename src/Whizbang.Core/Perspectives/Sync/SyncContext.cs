@@ -37,7 +37,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#sync-context</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncContextTests.cs</tests>
 public sealed class SyncContext {
   /// <summary>
   /// Gets the stream ID that was synced.

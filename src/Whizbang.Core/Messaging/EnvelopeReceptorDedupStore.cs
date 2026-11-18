@@ -29,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs</tests>
 public sealed class EnvelopeReceptorDedupStore : IReceptorDedupStore {
   /// <inheritdoc />
   public ValueTask<ReceptorInvocationRecord?> TryGetPriorInvocationAsync(

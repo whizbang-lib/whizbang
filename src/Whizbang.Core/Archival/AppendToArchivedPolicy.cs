@@ -10,7 +10,7 @@ namespace Whizbang.Core.Archival;
 /// policy before it stores.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public enum AppendToArchivedPolicy {
   /// <summary>
   /// The default. A write its caller awaits throws <see cref="StreamArchivedException"/>; a write nobody awaits is
