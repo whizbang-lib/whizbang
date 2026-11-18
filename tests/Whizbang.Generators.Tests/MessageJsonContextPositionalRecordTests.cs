@@ -66,12 +66,13 @@ public class MessageJsonContextPositionalRecordTests {
     var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, CONTEXT);
     var creator = _creatorOf(code, "global::TestApp.AccountOpened");
 
-    await Assert.That(creator).StartsWith("static args => new global::TestApp.AccountOpened( (decimal)args[0] ) {")
+    await Assert.That(creator).IsEqualTo("static args => new global::TestApp.AccountOpened( (decimal)args[0] ),")
       .Because("the positional member goes to the constructor");
-    await Assert.That(creator).Contains("SuccessorStreamId = (global::System.Guid)args[");
-    await Assert.That(creator).Contains("PredecessorStreamId = (global::System.Guid)args[");
-    await Assert.That(creator).Contains("PredecessorFinalVersion = (long)args[")
-      .Because("the base's init members follow the constructor in an object initializer");
+    await Assert.That(code).Contains(
+      "InitAccessorFor_TestApp_AccountOpened_SuccessorStreamId(global::Whizbang.Core.Lifecycle.OpeningBalance target, global::System.Guid value);")
+      .Because("the base's init members are set after the constructor, and only when the document holds them (#2374)");
+    await Assert.That(code).Contains("InitAccessorFor_TestApp_AccountOpened_PredecessorStreamId(");
+    await Assert.That(code).Contains("InitAccessorFor_TestApp_AccountOpened_PredecessorFinalVersion(");
   }
 
   /// <summary>
@@ -93,9 +94,10 @@ public class MessageJsonContextPositionalRecordTests {
       }
       """;
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
-    var creator = _creatorOf(GeneratorTestHelper.GetRequiredGeneratedSource(result, CONTEXT), "global::TestApp.Tallied");
+    var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, CONTEXT);
 
-    await Assert.That(creator).IsEqualTo("static args => new global::TestApp.Tallied() { Count = (int)args[0] },");
+    await Assert.That(code).Contains("ObjectCreator = static () => new global::TestApp.Tallied(),")
+      .Because("the parameterless constructor is used, and the settable member is set through its setter (#2374)");
     await Assert.That(_compileErrors(source)).IsEmpty();
   }
 

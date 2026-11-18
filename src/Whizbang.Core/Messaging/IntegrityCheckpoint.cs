@@ -65,9 +65,10 @@ public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
   /// </summary>
   /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_FromAnOlderOriginWithoutOwnedDomains_ReadsAsEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_WithOwnedDomainsNull_ReadsAsEmptyAsync</tests>
   public List<string> OwnedDomains {
     get => _ownedDomains;
-    // A payload from an older origin has no such field, and the generated reader then hands null: read it as none.
+    // A payload that holds null for the field claims no domains, the same as an older origin's, which has no such field.
     init => _ownedDomains = value ?? [];
   }
 
