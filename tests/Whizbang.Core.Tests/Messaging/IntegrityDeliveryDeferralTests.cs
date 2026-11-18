@@ -26,6 +26,7 @@ public class IntegrityDeliveryDeferralTests {
     [LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline];
 
   private static RequestRedeliveryCommand _command(string requester = "consumer-svc") => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     RequesterService = requester,
     Topic = "repair-topic",
     EventTypes = ["Contracts.OrderPlaced, Contracts"],

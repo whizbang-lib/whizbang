@@ -751,7 +751,8 @@
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
           "Microsoft.Extensions.Hosting": "[10.0.14, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )"
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ": {
@@ -763,6 +764,9 @@
           "RabbitMQ.Client": "[7.2.2, )",
           "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ": "[0.100.0-local.111, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ": {
         "type": "Project",
@@ -1511,7 +1515,8 @@
           "Microsoft.Extensions.DependencyInjection": "[10.0.14, )",
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
-          "Microsoft.Extensions.Hosting": "[10.0.14, )"
+          "Microsoft.Extensions.Hosting": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ": {
@@ -1522,6 +1527,9 @@
           "RabbitMQ.Client": "[7.2.2, )",
           "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ": "[0.100.0-local.111, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ": {
         "type": "Project",

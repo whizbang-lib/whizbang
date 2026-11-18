@@ -104,10 +104,16 @@ internal static partial class EFCoreSchemaTemplate {
   /// service, so two test databases sharing it (an origin and a consumer in one test) would read each other's events
   /// as their own. Found by machine, not by reading the migrations: two databases migrated from scratch are compared
   /// column by column, date and time columns left out, and what differs has to be exactly this list and
-  /// <see cref="LocalRowKeys"/>.
+  /// <see cref="LocalRowKeys"/>. <c>wh_settings.setting_value</c> is here for one row, <c>archive_database_id</c> (465,
+  /// #2367): the database's archive identity, which the archive store's owner marker holds, so two test databases sharing
+  /// it would each take the other's archived streams for their own. The comparison is per column, so any other setting a
+  /// migration seeds randomly still fails it unless a statement below renews that row too.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Containers/EFCoreSchemaTemplateTests.cs:TwoMigrationsFromScratch_DifferOnlyInWhatACopyRenewsAsync</tests>
-  internal static readonly (string Table, string Column)[] RenewedPerCopy = [("wh_service_config", "service_id")];
+  internal static readonly (string Table, string Column)[] RenewedPerCopy = [
+    ("wh_service_config", "service_id"),
+    ("wh_settings", "setting_value"),
+  ];
 
   /// <summary>
   /// Random primary keys a migration gives its seed rows, which mean nothing outside the database and so are left as
@@ -125,6 +131,7 @@ internal static partial class EFCoreSchemaTemplate {
   /// <summary>What a copy runs to give the columns in <see cref="RenewedPerCopy"/> values of its own.</summary>
   internal static readonly string[] ReidentifyStatements = [
     "UPDATE public.wh_service_config SET service_id = gen_random_uuid(), created_at = now()",
+    "UPDATE public.wh_settings SET setting_value = gen_random_uuid()::text WHERE setting_key = 'archive_database_id'",
   ];
 
   private static readonly Lazy<string> _fingerprint = new(ComputeFingerprint);

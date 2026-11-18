@@ -72,6 +72,14 @@ public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
   }
 
   private readonly List<string> _ownedDomains = [];
+
+  /// <summary>
+  /// #2362: the origin's eligibility rules for the types in <see cref="Buckets"/>. The consumer compares them with its
+  /// own over the types both name, and on a mismatch verifies nothing from this origin. Null from an origin on a release
+  /// that predates the field, which is a mismatch too.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
 }
 
 /// <summary>One (tenant, event type) emission count inside a checkpoint window.</summary>
@@ -867,6 +875,11 @@ public sealed class StreamIntegrityOptions {
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompare_IsOffByDefault_OnTheNightlyScheduleAsync</tests>
   public FullHistoryCompareOptions FullHistoryCompare { get; set; } = new();
+
+  /// <summary>The pair guard (<c>Whizbang:StreamIntegrity:PairGuard</c>, #2362).</summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityPairGuardTests.cs:Options_AlertAfterTwoHoursByDefaultAsync</tests>
+  public IntegrityPairGuardOptions PairGuard { get; set; } = new();
 
   /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as

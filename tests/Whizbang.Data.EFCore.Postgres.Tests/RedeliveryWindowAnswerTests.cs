@@ -166,6 +166,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer);
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       FromCommitSequence = from,
@@ -190,6 +191,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, transport, serializer);
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       StreamIds = streams,
@@ -213,6 +215,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, transport, serializer, new RedeliveryPumpOptions { SelectPageSize = 2 });
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       AcceptsStreamSpanningBundles = true,
@@ -234,6 +237,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer);
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       StreamIds = [_s1, _s2],
@@ -278,7 +282,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer,
       new RedeliveryPumpOptions { MaxEventsPerRequest = 2 }, metrics);
 
-    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(capped.Total("ordinary")).IsEqualTo(1L);
     await Assert.That(serializer.Answers).IsEmpty().Because("only a windowed request is answered with a window answer");
@@ -293,7 +297,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), new CaptureSerializer(),
       new RedeliveryPumpOptions { MaxEventsPerRequest = 2 }, metrics);
 
-    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(capped.Sum()).IsEqualTo(0L).Because("exactly the bound, with nothing after it, is a complete answer");
   }
@@ -304,7 +308,7 @@ public partial class RedeliveryWindowAnswerTests {
     var serializer = new CaptureSerializer();
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer, new RedeliveryPumpOptions { MaxEventsPerRequest = 2 });
 
-    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(serializer.Composites.SelectMany(c => c.InnerEventIds)).Count().IsEqualTo(2);
   }
@@ -336,6 +340,7 @@ public partial class RedeliveryWindowAnswerTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RequestRedeliveryCommand _window(Guid backfill, long window, long? from, int? max) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     EventTypes = ["Contracts.ProbeHappened"],
     RequesterService = "damaged-svc",
     Topic = "inbox.whizbang.service.damaged-svc",

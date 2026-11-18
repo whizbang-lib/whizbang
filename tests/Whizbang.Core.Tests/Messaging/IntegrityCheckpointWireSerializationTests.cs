@@ -26,6 +26,7 @@ public class IntegrityCheckpointWireSerializationTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var origin = TrackedGuid.New().Value;
     var checkpoint = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = origin,
       OriginServiceId = origin,
       OriginServiceName = "origin-svc",
@@ -58,6 +59,7 @@ public class IntegrityCheckpointWireSerializationTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var origin = TrackedGuid.New().Value;
     var checkpoint = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = origin,
       OriginServiceId = origin,
       OriginServiceName = "origin-svc",

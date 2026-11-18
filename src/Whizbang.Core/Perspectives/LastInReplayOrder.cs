@@ -54,7 +54,8 @@ public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoT
     if (Count == 0) {
       _origin = envelope.SourceServiceId;
     }
-    _singleOrigin &= _origin != Guid.Empty && envelope.SourceServiceId == _origin && envelope.SourceCommitSequence > 0;
+    // #2379: an event of the origin with no origin position is still the origin's, placed among its events by its id.
+    _singleOrigin &= _origin != Guid.Empty && envelope.SourceServiceId == _origin;
     _allVersioned &= envelope.LocalStreamVersion.HasValue;
     _allStamped &= envelope.LocalCommitSequence.HasValue;
     _last.Offer(envelope);
@@ -67,13 +68,18 @@ public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoT
   /// <summary>The last event under each ordering <see cref="ReplayEventOrder"/> can choose.</summary>
   private sealed class Candidates {
     private MessageEnvelope<IEvent>? _byOrigin;
+    private MessageEnvelope<IEvent>? _unpositionedById;
     private MessageEnvelope<IEvent>? _byVersion;
     private MessageEnvelope<IEvent>? _byCommit;
     private MessageEnvelope<IEvent>? _byId;
 
     public void Offer(MessageEnvelope<IEvent> envelope) {
       // A later event wins a tie, as the stable sort leaves it last.
-      _byOrigin = _atLeast(envelope, _byOrigin, static e => e.SourceCommitSequence) ? envelope : _byOrigin;
+      if (envelope.SourceCommitSequence > 0) {
+        _byOrigin = _atLeast(envelope, _byOrigin, static e => e.SourceCommitSequence) ? envelope : _byOrigin;
+      } else {
+        _unpositionedById = _atLeast(envelope, _unpositionedById, static _ => 0) ? envelope : _unpositionedById;
+      }
       _byVersion = _atLeast(envelope, _byVersion, static e => e.LocalStreamVersion.GetValueOrDefault()) ? envelope : _byVersion;
       _byCommit = _atLeast(envelope, _byCommit, static e => e.LocalCommitSequence.GetValueOrDefault()) ? envelope : _byCommit;
       _byId = _byId is null || envelope.MessageId.Value.CompareTo(_byId.MessageId.Value) >= 0 ? envelope : _byId;
@@ -81,12 +87,24 @@ public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoT
 
     public MessageEnvelope<IEvent>? Pick(LastInReplayOrder order) {
       if (order._singleOrigin) {
-        return _byOrigin;
+        return _lastOfTheOrigin();
       }
       if (order._allVersioned) {
         return _byVersion;
       }
       return order._allStamped ? _byCommit : _byId;
+    }
+
+    // ReplayEventOrder merges the origin's unpositioned events among its positioned ones by id (#2379): the last
+    // unpositioned event follows the last positioned one exactly when its id sorts after it.
+    private MessageEnvelope<IEvent>? _lastOfTheOrigin() {
+      if (_unpositionedById is null) {
+        return _byOrigin;
+      }
+      return _byOrigin is null
+          || string.CompareOrdinal(ReplayEventOrder.TieBreak(_unpositionedById), ReplayEventOrder.TieBreak(_byOrigin)) > 0
+        ? _unpositionedById
+        : _byOrigin;
     }
 
     // The ordering ReplayEventOrder sorts by: the key, then the id's canonical text.

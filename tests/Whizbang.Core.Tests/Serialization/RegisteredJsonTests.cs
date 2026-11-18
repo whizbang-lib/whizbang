@@ -24,6 +24,7 @@ public class RegisteredJsonTests {
   [Test]
   public async Task TypeInfo_ForAFrameworkRecord_RoundTripsItAsync() {
     var checkpoint = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = TrackedGuid.New().Value,
       OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "orders-service",

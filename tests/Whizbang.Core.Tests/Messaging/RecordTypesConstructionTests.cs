@@ -245,23 +245,4 @@ public class RecordTypesConstructionTests {
     await Assert.That(metadata.Region).IsNull();
     await Assert.That(metadata.Custom).IsNull();
   }
-
-  [Test]
-  public async Task ReceptorProcessingRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var eventId = (Guid)TrackedGuid.New();
-    var record = new ReceptorProcessingRecord {
-      Id = (Guid)TrackedGuid.New(),
-      EventId = eventId,
-      ReceptorName = "OrderReceptor",
-      Status = ReceptorProcessingStatus.Processing,
-      Attempts = 1,
-      Error = null,
-      StartedAt = DateTime.UtcNow,
-      ProcessedAt = DateTime.UtcNow,
-    };
-    await Assert.That(record.EventId).IsEqualTo(eventId);
-    await Assert.That(record.ReceptorName).IsEqualTo("OrderReceptor");
-    await Assert.That(record.Status).IsEqualTo(ReceptorProcessingStatus.Processing);
-    await Assert.That(record.Attempts).IsEqualTo(1);
-  }
 }

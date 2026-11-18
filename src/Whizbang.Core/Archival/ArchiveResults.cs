@@ -26,6 +26,14 @@ public static class ArchiveStatus {
   public const string DEBUG_SKIPPED = "debug_skipped";
 
   /// <summary>
+  /// The batch reaches history this service has not sealed yet (#2363). A cut removes only sealed, verified history, so
+  /// nothing moved; the caller asks again once the epochs close. Returned by a whole-stream batch and, through the
+  /// prefix truncate, by a prefix batch, while the cut gate is on (<c>Whizbang:StreamIntegrity:Sealing:Enabled</c>).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-cut-waits-for-the-seal</docs>
+  public const string AWAITING_SEAL = "awaiting_seal";
+
+  /// <summary>
   /// A prefix through a version below 1 (#1738). A prefix always removes version 1, so an archived stream always shows a
   /// gap at its start and a read from the start sees it without asking the archive. Nothing moved.
   /// </summary>

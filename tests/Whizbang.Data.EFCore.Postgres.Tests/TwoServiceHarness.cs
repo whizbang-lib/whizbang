@@ -91,9 +91,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   /// <param name="consumedEventTypes">What the consumer's audit says it consumes (#2349); null keeps the permissive
   /// registry's list.</param>
   /// <param name="consumerClock">The clock the consumer's audit worker runs on; null leaves the system clock.</param>
+  /// <param name="originRules">The origin's eligibility rules (#2362); null knows no type, so it compares versions only.</param>
+  /// <param name="consumerRules">The consumer's eligibility rules; null knows no type.</param>
   public static async Task<TwoServiceHarness> CreateAsync(
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
-      Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null) {
+      Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null,
+      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null) {
     var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
@@ -120,11 +123,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       // The compare dispatches its repairs inline, so a cycle is one audit.
       RepairDrainEnabled = false,
     };
-    h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null);
+    h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null,
+      rules: originRules);
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(h.OriginId, ORIGIN_NAME, DateTimeOffset.UnixEpoch, ORIGIN_REQUEST_TOPIC);
     h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
-      consumedEventTypes, consumerClock);
+      consumedEventTypes, consumerClock, consumerRules);
     h._originRequestReceptor = new IntegrityManifestRequestReceptor(
       h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
     h._originRedeliveryReceptor = new RedeliveryRequestReceptor(
@@ -272,8 +276,13 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   // ----- the audit -----
 
   /// <summary>One audit cycle of the given kind over the given types, pumped until both sides are quiet.</summary>
-  public async Task AuditAsync(TwoServiceAudit audit, params string[] eventTypes) {
+  public Task AuditAsync(TwoServiceAudit audit, params string[] eventTypes) => AuditAsync(audit, stampRules: true, eventTypes);
+
+  /// <summary>One audit cycle; <paramref name="stampRules"/> false asks as a consumer on a release that predates the rule
+  /// fingerprint (#2362), with none.</summary>
+  public async Task AuditAsync(TwoServiceAudit audit, bool stampRules, params string[] eventTypes) {
     var ask = new RequestIntegrityManifest {
+      RuleFingerprint = stampRules ? ConsumerGuard.Stamp(eventTypes) : null,
       RequesterService = CONSUMER_NAME,
       Topic = CONSUMER_TOPIC,
       EventTypes = eventTypes,
@@ -321,6 +330,16 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       .IntegrityRecordOriginCheckpointAsync(OriginId, ORIGIN_NAME, ORIGIN_REQUEST_TOPIC, _consumerClock?.GetUtcNow() ?? _clock, head);
   }
 
+  /// <summary>The origin's pair guard (#2362).</summary>
+  public IntegrityPairGuard OriginGuard => _originProvider!.GetRequiredService<IntegrityPairGuard>();
+
+  /// <summary>The consumer's pair guard (#2362).</summary>
+  public IntegrityPairGuard ConsumerGuard => _consumerProvider!.GetRequiredService<IntegrityPairGuard>();
+
+  /// <summary>True makes the origin answer as a release that predates the rule fingerprint (#2362): its manifests carry
+  /// none.</summary>
+  public bool OriginPredatesRuleFingerprint { get; set; }
+
   /// <summary>The manifest asks the consumer has sent so far.</summary>
   public int ManifestAsks() =>
     _consumerTransport.Published.Count(p => p.EnvelopeType?.Contains("RequestIntegrityManifest", StringComparison.Ordinal) == true);
@@ -328,6 +347,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   /// <summary>An operator's redelivery request for whole streams.</summary>
   public async Task OperatorRedeliverAsync(IReadOnlyList<Guid> streams, string[] types) {
     await _originRedeliveryReceptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = ConsumerGuard.Stamp(types),
       RequesterService = CONSUMER_NAME,
       Topic = CONSUMER_TOPIC,
       StreamIds = streams,
@@ -346,7 +366,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
         if (envelopeType?.Contains("RedeliveryComposite", StringComparison.Ordinal) == true) {
           await _applyBundleAsync(envelope);
         } else if (envelopeType?.Contains("IntegrityManifest", StringComparison.Ordinal) == true) {
-          await _consumerManifestReceptor.HandleAsync(_payload<IntegrityManifest>(envelope));
+          var manifest = _payload<IntegrityManifest>(envelope);
+          await _consumerManifestReceptor.HandleAsync(OriginPredatesRuleFingerprint ? manifest with { RuleFingerprint = null } : manifest);
         }
       }
       while (_processedConsumer < _consumerTransport.Published.Count) {
@@ -450,8 +471,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   private ServiceProvider _buildProvider(
       TwoServiceStore store, IntegrityWireTransport transport, IntegrityWireDispatcher dispatcher, string serviceName,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker,
-      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null) {
+      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null, IRuleFingerprintSource? rules = null) {
     var services = new ServiceCollection();
+    // #2362: each side's rules and its own pair guard, as the turnkey registration gives every service.
+    services.AddSingleton(rules ?? CatalogRuleFingerprintSource.Empty);
+    services.AddSingleton(sp => new IntegrityPairGuard(sp.GetRequiredService<IRuleFingerprintSource>(), Options.Create(options),
+      NullLogger<IntegrityPairGuard>.Instance));
     services.AddScoped<IWorkCoordinator>(_ =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(store.Options), _json));
     services.AddSingleton<ITransport>(transport);

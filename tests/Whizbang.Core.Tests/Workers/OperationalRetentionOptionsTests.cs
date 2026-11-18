@@ -76,6 +76,20 @@ public class OperationalRetentionOptionsTests {
   }
 
   [Test]
+  public async Task ACategoryThisReleaseDoesNotDefine_RestsForTheDefault_NotAnotherCategorysOverrideAsync() {
+    var options = new OperationalRetentionOptions {
+      Default = TimeSpan.FromDays(3),
+      MaintenanceRuns = TimeSpan.FromDays(1),
+      CarriedDetail = TimeSpan.FromDays(2),
+    };
+    var undefined = (OperationalCategory)(Enum.GetValues<OperationalCategory>().Max(c => (int)c) + 1);
+
+    await Assert.That(options.RetentionFor(undefined)).IsEqualTo(TimeSpan.FromDays(3))
+      .Because("a category value with no override of its own falls back to the default, never to a neighbor's period");
+    await Assert.That(options.RetentionFor(OperationalCategory.MaintenanceRuns)).IsEqualTo(TimeSpan.FromDays(1));
+  }
+
+  [Test]
   public async Task Validate_TheDefaults_SucceedAsync() {
     var result = new OperationalRetentionOptionsValidator().Validate(null, new OperationalRetentionOptions());
 

@@ -36,7 +36,7 @@ public partial class IntegrityManifestReceptorTests {
     var transport = new CaptureTransport();
 
     await _requestReceptor(coordinator, transport).HandleAsync(
-      new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", KnownOriginGeneration = 9 });
+      new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", KnownOriginGeneration = 9 });
 
     await Assert.That(coordinator.HistoryRewriteSinceSeen).IsEqualTo(9L);
     var manifest = _deserializeManifest(transport.Published.Single().Envelope);
@@ -56,7 +56,7 @@ public partial class IntegrityManifestReceptorTests {
     var transport = new CaptureTransport();
 
     await _requestReceptor(coordinator, transport).HandleAsync(
-      new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+      new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(coordinator.HistoryRewriteSinceSeen).IsNull();
     var manifest = _deserializeManifest(transport.Published.Single().Envelope);
@@ -73,7 +73,7 @@ public partial class IntegrityManifestReceptorTests {
     var transport = new CaptureTransport();
 
     await _requestReceptor(coordinator, transport).HandleAsync(
-      new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", KnownOriginGeneration = 3 });
+      new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", KnownOriginGeneration = 3 });
 
     var manifest = _deserializeManifest(transport.Published.Single().Envelope);
     await Assert.That(manifest.RewrittenSinceGeneration).IsNull()

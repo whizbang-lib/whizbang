@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Whizbang.Data.Postgres;
@@ -49,10 +50,7 @@ public static partial class MigrationConstants {
     }
     // Constants with an argument first, so the constants their values write are substituted with the rest.
     foreach (var (token, parameter) in _parameters.Value) {
-      var value = Tokens[token];
-      sql = Regex.Replace(sql, Regex.Escape(token) + @"\(\s*(?<alias>[A-Za-z_][A-Za-z0-9_]*)\s*\)",
-        call => Regex.Replace(value, @"\b" + Regex.Escape(parameter) + @"\b", call.Groups["alias"].Value, RegexOptions.None, _matchTimeout),
-        RegexOptions.None, _matchTimeout);
+      sql = _applyCalls(sql, token, parameter, Tokens[token]);
     }
     foreach (var (key, value) in _entries.Value.Where(e => _parameterOf(e.Key) is null)) {
       sql = sql.Replace(key, value, StringComparison.Ordinal);
@@ -60,7 +58,78 @@ public static partial class MigrationConstants {
     return sql;
   }
 
-  private static readonly TimeSpan _matchTimeout = TimeSpan.FromSeconds(5);
+  /// <summary>
+  /// Replaces every <c>token(alias)</c> call in <paramref name="sql"/> with <paramref name="value"/>, its argument
+  /// word <paramref name="parameter"/> renamed to the alias. A plain scan, not a pattern match with a timeout: a
+  /// migration applied on a starved host must not fail because a match ran past a wall-clock limit. A call not written
+  /// as one identifier between parentheses is left as written.
+  /// </summary>
+  private static string _applyCalls(string sql, string token, string parameter, string value) {
+    var result = new StringBuilder(sql.Length);
+    var at = 0;
+    for (var hit = sql.IndexOf(token, StringComparison.Ordinal); hit >= 0; hit = sql.IndexOf(token, at, StringComparison.Ordinal)) {
+      var afterToken = hit + token.Length;
+      if (_tryReadCall(sql, afterToken, out var alias, out var end)) {
+        result.Append(sql, at, hit - at).Append(RenameWord(value, parameter, alias));
+        at = end;
+      } else {
+        result.Append(sql, at, afterToken - at);
+        at = afterToken;
+      }
+    }
+    return result.Append(sql, at, sql.Length - at).ToString();
+  }
+
+  /// <summary>Reads <c>( alias )</c> at <paramref name="start"/>: one identifier, whitespace allowed inside.</summary>
+  private static bool _tryReadCall(string sql, int start, out string alias, out int end) {
+    alias = "";
+    end = start;
+    if (start >= sql.Length || sql[start] != '(') {
+      return false;
+    }
+    var i = _skipWhiteSpace(sql, start + 1);
+    var aliasStart = i;
+    if (i >= sql.Length || !(char.IsAsciiLetter(sql[i]) || sql[i] == '_')) {
+      return false;
+    }
+    while (i < sql.Length && _isAsciiWordChar(sql[i])) {
+      i++;
+    }
+    alias = sql[aliasStart..i];
+    i = _skipWhiteSpace(sql, i);
+    if (i >= sql.Length || sql[i] != ')') {
+      return false;
+    }
+    end = i + 1;
+    return true;
+  }
+
+  private static int _skipWhiteSpace(string sql, int i) {
+    while (i < sql.Length && char.IsWhiteSpace(sql[i])) {
+      i++;
+    }
+    return i;
+  }
+
+  /// <summary>Replaces <paramref name="word"/> in <paramref name="text"/> where it stands as a whole word.</summary>
+  internal static string RenameWord(string text, string word, string replacement) {
+    var result = new StringBuilder(text.Length);
+    var at = 0;
+    for (var hit = text.IndexOf(word, StringComparison.Ordinal); hit >= 0; hit = text.IndexOf(word, hit + word.Length, StringComparison.Ordinal)) {
+      var end = hit + word.Length;
+      if ((hit > 0 && _isWordChar(text[hit - 1])) || (end < text.Length && _isWordChar(text[end]))) {
+        continue;
+      }
+      result.Append(text, at, hit - at).Append(replacement);
+      at = end;
+    }
+    return result.Append(text, at, text.Length - at).ToString();
+  }
+
+  private static bool _isAsciiWordChar(char c) => char.IsAsciiLetterOrDigit(c) || c == '_';
+
+  /// <summary>A word character as a pattern's <c>\w</c> reads one: a letter, a digit or an underscore.</summary>
+  private static bool _isWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
   /// <summary>The token of a definition's left side: <c>__T__</c> for both <c>__T__</c> and <c>__T__(p)</c>.</summary>
   private static string _tokenOf(string key) {

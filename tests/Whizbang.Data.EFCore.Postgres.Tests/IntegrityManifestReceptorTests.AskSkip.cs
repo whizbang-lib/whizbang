@@ -121,6 +121,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       Level = ManifestLevel.Types,
@@ -152,6 +153,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       Level = ManifestLevel.Streams,

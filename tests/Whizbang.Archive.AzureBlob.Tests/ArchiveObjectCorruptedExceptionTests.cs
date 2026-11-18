@@ -26,6 +26,22 @@ public class ArchiveObjectCorruptedExceptionTests {
   }
 
   [Test]
+  public async Task ForExistingObject_SaysTheExpectedBytesAreTheWritesOwn_NotTheManifestsAsync() {
+    var stream = Guid.Parse("0199a1b2-0000-7000-8000-000000000001");
+
+    var ex = ArchiveObjectCorruptedException.ForExistingObject(stream, "s/o.jsonl.br", 10, 9, "aa", "bb");
+
+    await Assert.That(ex.Message).Contains("already holds s/o.jsonl.br");
+    await Assert.That(ex.Message).Contains("this write encoded 10 bytes with SHA-256 aa");
+    await Assert.That(ex.Message).Contains("storage holds 9 bytes with SHA-256 bb");
+    await Assert.That(ex.Message).DoesNotContain("manifest").Because("no manifest row names the object yet: the expected bytes are the write's own");
+    await Assert.That(ex.StreamId).IsEqualTo(stream);
+    await Assert.That(ex.Locator).IsEqualTo("s/o.jsonl.br");
+    await Assert.That(ex.ExpectedSha256).IsEqualTo("aa");
+    await Assert.That(ex.ActualSha256).IsEqualTo("bb");
+  }
+
+  [Test]
   public async Task TheStandardConstructors_LeaveTheDetailsUnknownAsync() {
     var inner = new InvalidOperationException("cause");
 

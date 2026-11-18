@@ -304,6 +304,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
 
   private static IntegrityCheckpoint _checkpointOf(
       Guid originId, long from, long to, params (string EventType, int Count)[] buckets) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         CheckpointStreamId = originId,
         OriginServiceId = originId,
         OriginServiceName = "origin-svc",
@@ -329,6 +330,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
   private static IntegrityCheckpoint _checkpoint(
       Guid originId, string originName, long from, long to, int count,
       bool emptyBuckets = false, string? requestTopic = null) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         CheckpointStreamId = originId,
         OriginServiceId = originId,
         OriginServiceName = originName,

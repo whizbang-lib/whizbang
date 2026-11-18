@@ -347,6 +347,7 @@ public class IntegrityManifestDrainAdmissionTests {
       var sp = services.BuildServiceProvider();
       var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), Logger);
       await receptor.HandleAsync(new IntegrityManifest {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = Coordinator.OriginId,
         OriginServiceId = Coordinator.OriginId,
         OriginServiceName = "origin-svc",

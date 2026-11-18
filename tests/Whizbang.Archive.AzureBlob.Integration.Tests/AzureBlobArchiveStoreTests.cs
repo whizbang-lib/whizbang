@@ -31,7 +31,7 @@ namespace Whizbang.Archive.AzureBlob.Integration.Tests;
 /// </summary>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
 [NotInParallel("PostgreSQL")]
-public class AzureBlobArchiveStoreTests {
+public partial class AzureBlobArchiveStoreTests {
   private const string LEDGER = "Whizbang.Tests.LedgerEntry";
 
   private PerTestDatabase _db;
@@ -97,8 +97,9 @@ public class AzureBlobArchiveStoreTests {
 
   // Events through the emit chain (versions 1, 2, 3...), with commit positions stamped, and a perspective cursor on the
   // last one.
-  private async Task<(Guid Stream, Guid[] Ids)> _seedAsync(int count) {
-    await using var connection = await _openAsync();
+  private async Task<(Guid Stream, Guid[] Ids)> _seedAsync(int count, string? connectionString = null) {
+    await using var connection = new NpgsqlConnection(connectionString ?? _db.ConnectionString);
+    await connection.OpenAsync();
     var stream = Guid.CreateVersion7();
     var ids = Enumerable.Range(0, count).Select(_ => Guid.CreateVersion7()).Order().ToArray();
     foreach (var id in ids) {
@@ -192,7 +193,10 @@ public class AzureBlobArchiveStoreTests {
       return names;
     }
     await foreach (var item in client.GetBlobsAsync()) {
-      names.Add(item.Name);
+      // The archive's objects: the container's owner marker (#2367) is not one.
+      if (item.Name != AzureBlobArchiveStore.OWNER_MARKER_NAME) {
+        names.Add(item.Name);
+      }
     }
     return names;
   }
@@ -220,6 +224,14 @@ public class AzureBlobArchiveStoreTests {
     "SELECT concat_ws('|', state, COALESCE(archive_locator, '<none>'), last_version) FROM wh_stream_lifecycle WHERE stream_id = @s", stream);
 
   // ── Write and read ─────────────────────────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task Store_WithoutAClock_MeasuresAgesOnTheSystemClockAsync() {
+    // The registered clock is the unit project's case (AzureBlobArchiveRegistrationTests); this is the default, which
+    // names the real clock and so belongs here (#1264).
+    await Assert.That(_store().Clock).IsSameReferenceAs(TimeProvider.System) // review-checks:allow compares the default reference; reads no time
+      .Because("a store built without a clock measures ages on the system clock");
+  }
 
   [Test]
   public async Task Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync() {
@@ -1021,8 +1033,10 @@ public class AzureBlobArchiveStoreTests {
       ProcessAsync(message, pipeline).AsTask().GetAwaiter().GetResult();
 
     public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline) {
+      // An archive object's upload: not the container's creation, and not the owner marker (#2367).
       var target = Armed && message.Request.Method == RequestMethod.Put
-        && !message.Request.Uri.Query.Contains("restype=container", StringComparison.Ordinal);
+        && !message.Request.Uri.Query.Contains("restype=container", StringComparison.Ordinal)
+        && !message.Request.Uri.Path.EndsWith("/" + AzureBlobArchiveStore.OWNER_MARKER_NAME, StringComparison.Ordinal);
       if (target && !afterSending) {
         Faulted++;
         throw new RequestFailedException(503, "injected: the upload failed");

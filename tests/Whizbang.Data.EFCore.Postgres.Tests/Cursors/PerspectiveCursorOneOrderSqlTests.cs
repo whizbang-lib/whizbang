@@ -328,6 +328,72 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
     await Assert.That((await _readAsync(conn, stream)).Status & REWIND_REQUIRED).IsEqualTo(REWIND_REQUIRED);
   }
 
+  /// <summary>
+  /// The upgrade repair of #2379 is bounded: one work row (the trigger) for each cursor flagged RewindRequired that sits
+  /// below its stream's last version with no pending work; none for a flagged pair with pending work, a flagged cursor
+  /// at its stream's last version, an unflagged cursor or a flag whose trigger its stream does not hold. A re-run
+  /// queues nothing more. The specimen shape, a cursor on version 2 flagged for version 2 while version 1 carries the
+  /// highest id, is the first case.
+  /// </summary>
+  [Test]
+  public async Task QueueUnreachable_QueuesOnePerFlaggedPairBelowItsStreamWithNoWork_NothingElse_AndARerunQueuesNothingAsync() {
+    await using var conn = await _openAsync();
+    // Version 1 the highest id, version 2 the lowest, then versions 3 and 4; the cursor on version 2, flagged for it.
+    var stuck = (Guid)TrackedGuid.New();
+    var (s1, s2, s3, s4) = (_id(100), _id(1), _id(50), _id(51));
+    await _appendAsync(conn, stuck, s1, s2, s3, s4);
+    await _cursorAsync(conn, stuck, s2, COMPLETED | REWIND_REQUIRED, trigger: s2);
+    var busy = (Guid)TrackedGuid.New();
+    var (b1, b2, b3) = (_id(200), _id(2), _id(60));
+    await _appendAsync(conn, busy, b1, b2, b3);
+    await _cursorAsync(conn, busy, b2, COMPLETED | REWIND_REQUIRED, trigger: b2);
+    await _pendingAsync(conn, busy, b3);
+    var atTheEnd = (Guid)TrackedGuid.New();
+    var (e1, e2) = (_id(300), _id(3));
+    await _appendAsync(conn, atTheEnd, e1, e2);
+    await _cursorAsync(conn, atTheEnd, e2, COMPLETED | REWIND_REQUIRED, trigger: e1);
+    var unflagged = (Guid)TrackedGuid.New();
+    var (u1, u2) = (_id(400), _id(4));
+    await _appendAsync(conn, unflagged, u1, u2);
+    await _cursorAsync(conn, unflagged, u1, COMPLETED, trigger: null);
+    var foreignTrigger = (Guid)TrackedGuid.New();
+    var (f1, f2) = (_id(500), _id(5));
+    await _appendAsync(conn, foreignTrigger, f1, f2);
+    await _cursorAsync(conn, foreignTrigger, f1, COMPLETED | REWIND_REQUIRED, trigger: s3);
+
+    var queued = await _queueUnreachableAsync(conn);
+    var pending = await _pendingByStreamAsync(conn);
+
+    await Assert.That(queued).IsEqualTo(1).Because("only the stuck pair is below its stream with a flag and no work");
+    await Assert.That(pending).IsEquivalentTo(new Dictionary<Guid, long> { [stuck] = 1, [busy] = 1 })
+      .Because("the stuck pair's trigger is queued; the busy pair keeps only its own row; nothing else is queued");
+    await Assert.That(await _queuedEventAsync(conn, stuck)).IsEqualTo(s2).Because("the row queued is the flag's trigger");
+    await Assert.That((await _readAsync(conn, stuck)).Status & REWIND_REQUIRED).IsEqualTo(REWIND_REQUIRED)
+      .Because("the flag is kept for the rewind it asks for");
+    await Assert.That(await _queueUnreachableAsync(conn)).IsEqualTo(0);
+    await Assert.That(await _pendingByStreamAsync(conn)).IsEquivalentTo(pending).Because("a re-run queues nothing more");
+  }
+
+  [Test]
+  public async Task QueueUnreachable_ATriggerWhoseProcessedRowIsNotYetPurged_IsQueuedAgainOnThatRowAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    var (v1, v2, v3) = (_id(100), _id(1), _id(50));
+    await _appendAsync(conn, stream, v1, v2, v3);
+    await _cursorAsync(conn, stream, v2, COMPLETED | REWIND_REQUIRED, trigger: v2);
+    await _pendingAsync(conn, stream, v2);
+    await using (var processed = new NpgsqlCommand(
+        "UPDATE wh_perspective_events SET processed_at = NOW(), status = 2, attempts = 1 WHERE stream_id = @s AND event_id = @e", conn)) {
+      processed.Parameters.AddWithValue("s", stream);
+      processed.Parameters.AddWithValue("e", v2);
+      await processed.ExecuteNonQueryAsync();
+    }
+
+    await Assert.That(await _queueUnreachableAsync(conn)).IsEqualTo(1);
+    await Assert.That(await _pendingCountAsync(conn, stream)).IsEqualTo(1)
+      .Because("the trigger's processed row is made pending again, so its rewind runs");
+  }
+
   // ===== Helpers =====
 
   /// <summary>An id minted <paramref name="seconds"/> after a fixed instant: a larger number sorts later.</summary>
@@ -406,6 +472,19 @@ public class PerspectiveCursorOneOrderSqlTests : EFCoreTestBase {
   private static async Task<int> _settleAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand("SELECT wh_settle_id_ordered_rewind_flags()", conn);
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  private static async Task<int> _queueUnreachableAsync(NpgsqlConnection conn) {
+    await using var cmd = new NpgsqlCommand("SELECT wh_queue_unreachable_rewinds()", conn);
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
+  private static async Task<Guid> _queuedEventAsync(NpgsqlConnection conn, Guid stream) {
+    await using var cmd = new NpgsqlCommand(
+      "SELECT event_id FROM wh_perspective_events WHERE stream_id = @s AND perspective_name = @p AND processed_at IS NULL", conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", PERSPECTIVE);
+    return (Guid)(await cmd.ExecuteScalarAsync())!;
   }
 
   private static async Task<long> _pendingCountAsync(NpgsqlConnection conn, Guid stream) {

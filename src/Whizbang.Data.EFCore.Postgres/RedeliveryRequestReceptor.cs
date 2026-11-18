@@ -73,6 +73,14 @@ public sealed partial class RedeliveryRequestReceptor(
       LogRepairRequestDeclined(logger, message.RequesterService, message.Topic);
       return;
     }
+    // #2362: a repair the integrity comparison asked for is served only while the pair applies the same rules to the
+    // types it shares; a request from a release that predates the fingerprint is refused too. An operator's request and
+    // a subscription backfill window are not judged by a digest, so they are served whatever the rules.
+    if (!message.OperatorRequested && message.BackfillId is null
+        && !IntegrityPairGuard.Resolve(services).Admit(message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint).IsAgreed) {
+      metrics?.RedeliveryRequestsIgnored.Add(1, new KeyValuePair<string, object?>("reason", "pair_halted"));
+      return;
+    }
     var buildTimer = System.Diagnostics.Stopwatch.StartNew();
     var options = services.GetService<RedeliveryPumpOptions>() ?? new RedeliveryPumpOptions();
     var cap = options.MaxEventsPerRequest;

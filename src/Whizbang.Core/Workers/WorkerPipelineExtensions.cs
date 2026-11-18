@@ -456,6 +456,17 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IIntegritySweepRunner>(sp => sp.GetRequiredService<IntegrityAuditWorker>());
     services.TryAddSingleton<IntegritySweepScheduleState>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
+    // #2362: this service's eligibility rules, from the generated catalog and the stream lifecycle settings, and the pair
+    // guard every integrity receptor asks before comparing, repairing or redelivering.
+    services.TryAddSingleton<Whizbang.Core.Messaging.IRuleFingerprintSource>(sp => new Whizbang.Core.Messaging.CatalogRuleFingerprintSource(
+      sp.GetService<Whizbang.Core.IMessageTypeCatalog>() ?? Whizbang.Core.NullMessageTypeCatalog.Instance,
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()));
+    services.TryAddSingleton(sp => new Whizbang.Core.Messaging.IntegrityPairGuard(
+      sp.GetRequiredService<Whizbang.Core.Messaging.IRuleFingerprintSource>(),
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Messaging.IntegrityPairGuard>>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetService<Whizbang.Core.Observability.WhizbangMetrics>()));
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();

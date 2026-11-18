@@ -13,6 +13,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
@@ -275,6 +276,9 @@ public class AzureBlobArchiveRegistrationTests {
   [Arguments("MaxEventsPerChunk", "ten thousand")]
   [Arguments("ServiceUri", "not an absolute uri")]
   [Arguments("VerifyLocation", "maybe")]
+  [Arguments("DeleteAfter", "soon")]
+  [Arguments("DeleteAfter", "00:00:00")]
+  [Arguments("DeleteAfter", "-01:00:00")]
   public async Task Configuration_AValueThatCannotBeRead_IsRefused_NamingTheKeyAsync(string key, string value) {
     var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
         _config(new() { [key] = value }), new AzureBlobArchiveOptions()))
@@ -283,6 +287,102 @@ public class AzureBlobArchiveRegistrationTests {
     await Assert.That(refused!.Message).Contains($"Whizbang:Archive:AzureBlob:{key}")
       .Because("a misread setting would otherwise fall back to a default nobody chose");
   }
+
+  [Test]
+  public async Task Configuration_DeleteAfter_IsOffByDefault_AndBindsATimeSpanAsync() {
+    var bound = new AzureBlobArchiveOptions();
+    var blank = new AzureBlobArchiveOptions();
+
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["DeleteAfter"] = "35.00:00:00" }), bound);
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["DeleteAfter"] = " " }), blank);
+
+    await Assert.That(new AzureBlobArchiveOptions().DeleteAfter).IsNull()
+      .Because("off by default: a queued deletion runs at once, as before the option existed");
+    await Assert.That(bound.DeleteAfter).IsEqualTo(TimeSpan.FromDays(35));
+    await Assert.That(blank.DeleteAfter).IsNull().Because("a blank value keeps the default");
+  }
+
+  [Test]
+  [Arguments(0L)]
+  [Arguments(-1L)]
+  public async Task Store_RefusesADeleteAfterThatIsNotAboveZeroAsync(long ticks) {
+    var options = new AzureBlobArchiveOptions { DeleteAfter = TimeSpan.FromTicks(ticks) };
+
+    var refused = await Assert.That(() => new AzureBlobArchiveStore(_database, _container(), options)).Throws<ArgumentOutOfRangeException>();
+
+    await Assert.That(refused!.Message).Contains("DeleteAfter");
+    await Assert.That(new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions { DeleteAfter = TimeSpan.FromTicks(1) }))
+      .IsNotNull().Because("the control: any span above zero is a delay");
+  }
+
+  [Test]
+  public async Task Startup_ADeleteAfterOfZeroSetInCode_FailsTheHostAtStartAsync() {
+    var services = new ServiceCollection();
+    _driver(services);
+    services.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.DeleteAfter = TimeSpan.Zero;
+    });
+    await using var provider = services.BuildServiceProvider();
+
+    var refused = await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate()).Throws<OptionsValidationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:DeleteAfter");
+  }
+
+  [Test]
+  public async Task Registration_TheStoreMeasuresAgesOnTheRegisteredTimeProviderAsync() {
+    var services = new ServiceCollection();
+    _driver(services);
+    var clock = new FixedClock();
+    services.AddSingleton<TimeProvider>(clock);
+    services.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    await using var provider = services.BuildServiceProvider();
+
+    // Without one, the store uses the system clock: AzureBlobArchiveStoreTests in the integration project asserts it,
+    // since a unit project does not name the real clock (#1264).
+    await Assert.That(provider.GetRequiredService<AzureBlobArchiveStore>().Clock).IsSameReferenceAs(clock);
+  }
+
+  [Test]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.br", "0199a1b2-0000-7000-8000-000000000001")]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl", "0199a1b2-0000-7000-8000-000000000001")]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.txt", null)]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/nested/0000000001-0000000002-ab.jsonl.br", null)]
+  [Arguments("notes/0000000001-0000000002-ab.jsonl.br", null)]
+  [Arguments("/0000000001-0000000002-ab.jsonl.br", null)]
+  [Arguments("0000000001-0000000002-ab.jsonl.br", null)]
+  public async Task StreamOf_ReadsTheStreamOfANameThisStoreWrites_AndNothingElseAsync(string name, string? stream) {
+    await Assert.That(AzureBlobArchiveStore.StreamOf(name)).IsEqualTo(stream is null ? null : Guid.Parse(stream))
+      .Because("the orphan sweep only ever touches an object whose name is one this store writes");
+  }
+
+  [Test]
+  public async Task Registration_CountsSweepRefusals_WhenTheHostHasWhizbangMetrics_AndOtherwiseNotAsync() {
+    var withMetrics = new ServiceCollection();
+    _driver(withMetrics);
+    withMetrics.AddSingleton(new WhizbangMetrics(new ServiceCollection().AddMetrics().BuildServiceProvider()
+      .GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    withMetrics.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    var without = new ServiceCollection();
+    _driver(without);
+    without.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    await using var first = withMetrics.BuildServiceProvider();
+    await using var second = without.BuildServiceProvider();
+
+    await Assert.That(first.GetRequiredService<AzureBlobArchiveStore>().Metrics).IsNotNull();
+    await Assert.That(second.GetRequiredService<AzureBlobArchiveStore>().Metrics).IsNull()
+      .Because("a host without the metrics registration still runs the store; it counts nothing");
+  }
+
+  [Test]
+  public async Task ArchiveSweepMetrics_MeterIsListedInWhizbangMetersAsync() {
+    await Assert.That(WhizbangMeters.All).Contains(ArchiveSweepMetrics.METER_NAME)
+      .Because("the meter list carries this package's meter as a literal; this locks it to the constant");
+    await Assert.That(() => new ArchiveSweepMetrics(null!)).Throws<ArgumentNullException>();
+  }
+
+  private sealed class FixedClock : TimeProvider;
 
   [Test]
   [Arguments(-1, 10_000)]

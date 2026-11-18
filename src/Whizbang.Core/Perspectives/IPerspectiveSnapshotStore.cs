@@ -149,6 +149,12 @@ public interface IPerspectiveSnapshotStore {
   /// as sound there as it ever was. Refusing to answer at that point would turn every rewind into a replay
   /// from event zero for a store that never had the defect.
   /// </para>
+  /// <para>
+  /// The store's answer is a candidate, not the floor (#2379). The rewind restores it only when the events it holds come
+  /// first in the order the replay folds the stream (<see cref="ReplayFloor"/>); a single-origin stream replays in origin
+  /// order, which version alone does not give. A snapshot with no version cannot be placed in that order and is never
+  /// restored: the rewind replays in full.
+  /// </para>
   /// <para>Default implementation returns null so stores that do not record a version keep compiling.</para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/snapshots</docs>

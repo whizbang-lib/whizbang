@@ -41,6 +41,18 @@ public sealed class SealingOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#sealing</docs>
   public int MaxClosuresPerCycle { get; set; } = 64;
+
+  /// <summary>
+  /// A cut of this service's own history (a truncate, close the books, an archive, an end-of-life cut) also waits until
+  /// every consumer has reported verifying it (<c>Whizbang:StreamIntegrity:Sealing:CutWaitsForConsumers</c>, default
+  /// false, #2363). Every cut already waits for this service's own seal while sealing is on, so it removes only history
+  /// it has verified; with this on, it also removes only history every consumer verified while this service could still
+  /// resend it. The cost is that the slowest consumer holds back this service's cuts. A consumer reports its seal with
+  /// each windowed manifest request, and only reports from the last 7 days count, so a consumer that stopped asking
+  /// holds nothing back for long.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-cut-waits-for-the-seal</docs>
+  public bool CutWaitsForConsumers { get; set; }
 }
 
 /// <summary>What the sealed-history re-check does with an epoch whose recompute disagrees with its seal.</summary>

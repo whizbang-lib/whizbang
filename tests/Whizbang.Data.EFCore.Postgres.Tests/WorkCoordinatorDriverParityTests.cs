@@ -121,6 +121,11 @@ public class WorkCoordinatorDriverParityTests {
     [nameof(IWorkCoordinator.IntegrityRecordCompareOutcomeAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.IntegrityDecideOriginAskAsync)] = INTEGRITY,
     [nameof(IWorkCoordinator.WithdrawSubscriptionBackfillWindowRequestAsync)] = INTEGRITY,
+    // #2363: the cut gate, the consumer seals and the carried detail's resting period only matter to the integrity
+    // compares, which a Dapper host never runs; its cuts still carry (the SQL is shared), and nothing reads the detail.
+    [nameof(IWorkCoordinator.SetCutGatesAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.RecordConsumerSealAsync)] = INTEGRITY,
+    [nameof(IWorkCoordinator.RollOffCarriedDetailAsync)] = INTEGRITY,
   };
 
   /// <summary>

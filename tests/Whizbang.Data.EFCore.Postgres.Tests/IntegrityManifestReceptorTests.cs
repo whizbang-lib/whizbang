@@ -55,6 +55,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"]
@@ -83,7 +84,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(transport.Published).IsEmpty()
       .Because("comparison is per-bucket — absence means nothing to audit, not an empty manifest.");
@@ -361,6 +362,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -397,6 +399,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.Consumed, Contracts"],
@@ -427,6 +430,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventNamespaces = ["contracts.jobs"],
@@ -448,6 +452,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -470,6 +475,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -497,6 +503,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -524,6 +531,7 @@ public partial class IntegrityManifestReceptorTests {
 
     // A enters its compute synchronously and parks INSIDE the answer.
     var taskA = receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "svc-a",
       Topic = "t",
       EventTypes = ["A"],
@@ -534,6 +542,7 @@ public partial class IntegrityManifestReceptorTests {
 
     // B starts while A holds the gate: without the gate it would enter its compute right here.
     var taskB = receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "svc-b",
       Topic = "t",
       EventTypes = ["B"],
@@ -562,6 +571,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
     await receptor.HandleAsync(new IntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.OriginId,
       OriginServiceId = coordinator.OriginId,
       OriginServiceName = "origin-svc",
@@ -593,6 +603,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     IntegrityManifest manifest(string tag) => new() {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.OriginId,
       OriginServiceId = coordinator.OriginId,
       OriginServiceName = "origin-svc",
@@ -1484,7 +1495,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     var manifest = _deserializeManifest(transport.Published[0].Envelope);
     await Assert.That(manifest.OriginGeneration).IsEqualTo(7L)
@@ -1736,6 +1747,7 @@ public partial class IntegrityManifestReceptorTests {
   // ── #2107: one audit window is capped; the asker continues from where it stopped ───────────
 
   private static RequestIntegrityManifest _windowedAsk(long since, long? until = null, ManifestLevel level = ManifestLevel.Types) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     RequesterService = "auditor-svc",
     Topic = "inbox",
     EventTypes = ["Contracts.TypeX"],
@@ -2084,6 +2096,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -2117,6 +2130,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       Level = ManifestLevel.Types,
@@ -2148,6 +2162,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       Level = ManifestLevel.Streams,
@@ -2180,6 +2195,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -2491,7 +2507,7 @@ public partial class IntegrityManifestReceptorTests {
     var logger = new CapturingLogger<IntegrityManifestRequestReceptor>();
     var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(logger.Entries.Any(e => e.Message.Contains("required infrastructure is missing")))
       .IsTrue().Because("a request the origin cannot answer must be visibly dropped, not silently ignored");
@@ -2537,6 +2553,7 @@ public partial class IntegrityManifestReceptorTests {
     // manifest. Without the self-check this compares as a total deficit (nothing local is ever
     // recorded under an origin id nobody actually tracks) and alarms/repairs against itself.
     var selfManifest = new IntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.LocalServiceId,
       OriginServiceId = coordinator.LocalServiceId,
       OriginServiceName = "self-svc",
@@ -2917,6 +2934,7 @@ public partial class IntegrityManifestReceptorTests {
   private static IntegrityManifest _manifest(
       AuditCoordinator coordinator, List<StreamDigest> digests,
       ManifestLevel level = ManifestLevel.Streams, bool recomputed = false) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = coordinator.OriginId,
         OriginServiceId = coordinator.OriginId,
         OriginServiceName = "origin-svc",
@@ -3373,7 +3391,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
 
     var manifest = _deserializeManifest(transport.Published.Single().Envelope);
     await Assert.That(manifest.Digests.Select(d => d.EventType)).IsEquivalentTo(["App.Contracts.Orders.Placed, App.Contracts"])
@@ -3391,7 +3409,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
 
     await Assert.That(transport.Published).IsEmpty();
   }

@@ -202,6 +202,8 @@ public sealed partial class RepairDrainWorker(
         FromCommitSequence = fromSeq,
         ToCommitSequence = toSeq,
         AcceptsStreamSpanningBundles = true,
+        // #2362: the origin refuses a repair while the pair's rules differ.
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([group.Key.EventType]),
       };
       // #2029, #2223: recorded as awaiting its answer before it is sent. An answer clears the wait, and the origin can
       // answer before the publish call returns (a fast origin, or this host's continuation delayed under load); recorded

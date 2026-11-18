@@ -137,6 +137,7 @@ public class IntegrityRepairSupportTests {
   }
 
   private static IntegrityManifest _manifest(long? since, long? through) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     ManifestStreamId = Guid.NewGuid(),
     OriginServiceId = Guid.NewGuid(),
     OriginServiceName = "origin-svc",

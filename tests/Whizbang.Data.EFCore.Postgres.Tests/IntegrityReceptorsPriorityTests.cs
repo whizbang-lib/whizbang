@@ -87,7 +87,7 @@ public class IntegrityReceptorsPriorityTests {
     var sp = _manifestProvider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
     var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", EventTypes = ["Contracts.TypeX"] });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", EventTypes = ["Contracts.TypeX"] });
 
     await Assert.That(transport.Published.Count).IsEqualTo(2);
     foreach (var (envelope, _, _) in transport.Published) {
@@ -124,6 +124,7 @@ public class IntegrityReceptorsPriorityTests {
   // ── helpers ─────────────────────────────────────────────────────────────
 
   private static IntegrityCheckpoint _checkpoint(Guid originId, long from, long to, int count, bool emptyBuckets = false) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     CheckpointStreamId = originId,
     OriginServiceId = originId,
     OriginServiceName = "origin-svc",
@@ -144,6 +145,7 @@ public class IntegrityReceptorsPriorityTests {
 
 
   private static IntegrityManifest _manifest(AuditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     ManifestStreamId = coordinator.OriginId,
     OriginServiceId = coordinator.OriginId,
     OriginServiceName = "origin-svc",

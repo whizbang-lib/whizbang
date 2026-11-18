@@ -128,6 +128,9 @@ public class RewindDeletedArchiveTests {
     var store = new CountingEventStore();
     var snapshotEvent = _envelope(new DeletedArchiveRewindAdded { StreamId = streamId, Delta = 1 });
     var late = _envelope(new DeletedArchiveRewindAdded { StreamId = streamId, Delta = 5 });
+    // The hot events sit at versions 4 and 5, after the deleted prefix: the rewind places the snapshot among them (#2379).
+    snapshotEvent.LocalStreamVersion = 4;
+    late.LocalStreamVersion = 5;
     store.Stream.AddRange([snapshotEvent, late]);
     var snapshots = new FloorSnapshotStore(new PerspectiveSnapshotFloor(
       snapshotEvent.MessageId.Value, 4, _snapshotOf(new DeletedArchiveRewindModel { Id = streamId, Total = 100 }), ArchivedThroughVersion: null));

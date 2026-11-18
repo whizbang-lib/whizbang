@@ -491,7 +491,8 @@
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
           "Microsoft.Extensions.Hosting": "[10.0.14, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )"
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom": {
@@ -540,6 +541,9 @@
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
           "System.CommandLine": "[2.0.0-beta4.22272.1, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "Dapper": {
         "type": "CentralTransitive",
@@ -1086,7 +1090,8 @@
           "Microsoft.Extensions.DependencyInjection": "[10.0.14, )",
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
-          "Microsoft.Extensions.Hosting": "[10.0.14, )"
+          "Microsoft.Extensions.Hosting": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom": {
@@ -1135,6 +1140,9 @@
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
           "System.CommandLine": "[2.0.0-beta4.22272.1, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "Dapper": {
         "type": "CentralTransitive",

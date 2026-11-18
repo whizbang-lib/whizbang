@@ -38,12 +38,15 @@ public class StreamPurgeTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Purge.Tests.SomethingPerspective";
   private const string PERSPECTIVE_TABLE = "wh_per_action_test";
 
-  /// <summary>Every table a stream owns rows in, as the purge reports it.</summary>
+  /// <summary>
+  /// Every table a stream owns rows in that the purge removes, as it reports it. <c>wh_stream_digests</c> is not among
+  /// them since #2363: a purged stream keeps its buckets, its whole digest carried, as its tombstone.
+  /// </summary>
   private static readonly string[] _streamTables = [
     "wh_outbox", "wh_inbox_state", "wh_inbox", "wh_perspective_events", "wh_active_streams",
-    "wh_message_deduplication", "wh_receptor_processing", "wh_perspective_cursors", "wh_perspective_snapshots",
+    "wh_message_deduplication", "wh_perspective_cursors", "wh_perspective_snapshots",
     "wh_perspective_applied", PERSPECTIVE_TABLE, "wh_perspective_row_hold", "wh_row_eviction_journal",
-    "wh_stream_digests", "wh_integrity_ledger", "wh_event_body", "wh_event_destruction_hold",
+    "wh_integrity_ledger", "wh_event_body", "wh_event_destruction_hold",
     "wh_lifecycle_completions", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store",
     "wh_stream_lifecycle",
   ];
@@ -76,6 +79,10 @@ public class StreamPurgeTests : EFCoreTestBase {
     foreach (var table in _streamTables) {
       await Assert.That(after[table]).IsEqualTo(0).Because($"{table} keeps no row of the purged stream");
     }
+    await Assert.That(report.Totals["wh_stream_digests"]).IsEqualTo(0)
+      .Because("#2363: the purge removes no digest bucket");
+    await Assert.That(after["wh_stream_digests"]).IsEqualTo(before["wh_stream_digests"])
+      .Because("#2363: the purged stream keeps its buckets, its digest carried, so it still answers what it held");
     var untouched = await _countsAsync(conn, kept);
     foreach (var table in _streamTables) {
       await Assert.That(untouched[table]).IsEqualTo(before[table]).Because($"{table} keeps every row of the other stream");
@@ -121,6 +128,7 @@ public class StreamPurgeTests : EFCoreTestBase {
       await Assert.That(report.Totals[table]).IsEqualTo(before[table]).Because($"the dry run counts what {table} would lose");
     }
     await Assert.That(report.Totals["wh_stream_purge_markers"]).IsEqualTo(1);
+    await Assert.That(report.Totals["wh_stream_digests"]).IsEqualTo(0).Because("#2363: a purge would remove no digest bucket");
     var after = await _countsAsync(conn, stream);
     foreach (var table in _streamTables) {
       await Assert.That(after[table]).IsEqualTo(before[table]).Because($"a dry run leaves {table} alone");
@@ -402,10 +410,6 @@ public class StreamPurgeTests : EFCoreTestBase {
     // Bookkeeping written by machinery outside this test's reach.
     await _executeAsync(conn, "INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING", eventId);
     await _executeAsync(conn, """
-      INSERT INTO wh_receptor_processing (id, event_id, receptor_name, stream_id, status, attempts, started_at)
-      VALUES (gen_random_uuid(), $1, 'Receptor', $2, 0, 0, NOW())
-      """, eventId, stream);
-    await _executeAsync(conn, """
       INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number)
       VALUES ($1, $2, $3, '{}'::jsonb, 1)
       """, stream, PERSPECTIVE, eventId);
@@ -452,7 +456,7 @@ public class StreamPurgeTests : EFCoreTestBase {
     const string BY_EVENT = "= ANY($1)";
     var counts = new Dictionary<string, long>(StringComparer.Ordinal);
     foreach (var table in new[] {
-        "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams", "wh_receptor_processing",
+        "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams",
         "wh_perspective_cursors", "wh_perspective_snapshots", "wh_perspective_applied", "wh_stream_digests",
         "wh_integrity_ledger", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store", "wh_stream_lifecycle" }) {
       counts[table] = await _scalarAsync<long>(conn, $"SELECT count(*) FROM {table} WHERE stream_id = $1", stream);

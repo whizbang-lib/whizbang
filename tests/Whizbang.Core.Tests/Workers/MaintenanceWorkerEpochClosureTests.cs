@@ -41,6 +41,13 @@ public class MaintenanceWorkerEpochClosureTests {
     public int Calls { get; private set; }
     public long WidthSeen { get; private set; } = -1;
     public int Closed { get; init; } = 1;
+    /// <summary>#2363: every cut-gate write, in order.</summary>
+    public List<(bool Seal, bool Consumers)> Gates { get; } = [];
+
+    public Task SetCutGatesAsync(bool waitForSeal, bool waitForConsumers, CancellationToken cancellationToken = default) {
+      Gates.Add((waitForSeal, waitForConsumers));
+      return Task.CompletedTask;
+    }
 
     public Task<int> CloseDigestEpochsAsync(
         int settleSeconds, int maxEpochs, long epochWidth, CancellationToken cancellationToken = default) {
@@ -182,5 +189,40 @@ public class MaintenanceWorkerEpochClosureTests {
       .Throws<OperationCanceledException>()
       .Because("the frontier advancing on a later cycle is fine; reaping rows on a host that "
              + "asked to stop is not");
+  }
+
+  [Test]
+  public async Task SealingOn_ACutWaitsForTheSeal_AndForConsumersOnlyWhenAskedAsync() {
+    var coord = new ClosureCoordinator();
+    await _build(coord, new StreamIntegrityOptions()).RunMaintenanceOnceAsync(CancellationToken.None);
+    var asked = new ClosureCoordinator();
+    await _build(asked, new StreamIntegrityOptions { Sealing = { CutWaitsForConsumers = true } })
+      .RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Gates).IsEquivalentTo([(true, false)])
+      .Because("#2363: with sealing on, a cut removes only history sealed here, and waits for consumers only when asked");
+    await Assert.That(asked.Gates).IsEquivalentTo([(true, true)]);
+  }
+
+  [Test]
+  public async Task SealingOff_ACutNeverWaits_AndNothingIsClosedAsync() {
+    var coord = new ClosureCoordinator();
+    var worker = _build(coord, new StreamIntegrityOptions { Sealing = { Enabled = false, CutWaitsForConsumers = true } });
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Gates).IsEquivalentTo([(false, true)])
+      .Because("#2363: nothing seals while sealing is off, so a cut that waited for a seal would wait forever");
+    await Assert.That(coord.Calls).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task NoIntegrityOptionsRegistered_WritesNoCutGateAsync() {
+    var coord = new ClosureCoordinator();
+
+    await _build(coord, integrity: null).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Gates).IsEmpty()
+      .Because("a host without stream integrity has nothing to seal and leaves the store's cut gate as it is (off)");
   }
 }

@@ -511,7 +511,7 @@ public sealed class StreamIntegrityMetrics {
       description: "Domains two services claim, once per contesting pair and domain; neither claimant is used; tagged by domain");
     RedeliveryRequestsIgnored = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_ignored",
-      description: "Redelivery requests an origin declined to answer; tagged by reason (own_request)");
+      description: "Redelivery requests an origin declined to answer; tagged by reason (own_request | pair_halted)");
     RepairedEvents = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repaired_events",
       description: "Repaired events by how their receptors were decided; tagged by delivery (state_only | receptors) + reason");

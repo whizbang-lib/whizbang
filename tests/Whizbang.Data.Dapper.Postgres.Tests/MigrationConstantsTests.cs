@@ -146,6 +146,46 @@ public partial class MigrationConstantsTests {
     await Assert.That(MigrationConstants.Tokens.ContainsKey("__DIGEST_ELIGIBLE__")).IsTrue();
   }
 
+  /// <summary>
+  /// The argument form is read by a plain scan with no wall-clock limit: a startup that migrates on a starved host must
+  /// not fail because a pattern match ran past a timer. Only <c>__TOKEN__(alias)</c> with one identifier is substituted;
+  /// every other shape is left exactly as written, so <see cref="MigrationConstants.UnknownTokens"/> and the migration
+  /// itself report it.
+  /// </summary>
+  [Test]
+  [Arguments("__DIGEST_ELIGIBLE__")]
+  [Arguments("x __DIGEST_ELIGIBLE__ y")]
+  [Arguments("__DIGEST_ELIGIBLE__(")]
+  [Arguments("__DIGEST_ELIGIBLE__( ")]
+  [Arguments("__DIGEST_ELIGIBLE__(1e)")]
+  [Arguments("__DIGEST_ELIGIBLE__()")]
+  [Arguments("__DIGEST_ELIGIBLE__(es")]
+  [Arguments("__DIGEST_ELIGIBLE__(es ")]
+  [Arguments("__DIGEST_ELIGIBLE__(es x)")]
+  [Arguments("__DIGEST_ELIGIBLE__ (es)")]
+  public async Task Apply_AnArgumentFormNotWrittenAsOneAlias_IsLeftAsWrittenAsync(string sql) {
+    await Assert.That(MigrationConstants.Apply(sql)).IsEqualTo(sql);
+  }
+
+  [Test]
+  public async Task Apply_AnArgumentForm_TakesAnyIdentifier_AndEveryCallInTheTextAsync() {
+    var applied = MigrationConstants.Apply("a __DIGEST_ELIGIBLE__(\t_e9\n) b __DIGEST_ELIGIBLE__(es)__DIGEST_ELIGIBLE__(x");
+
+    await Assert.That(applied).StartsWith("a (COALESCE(_e9.flags, 0) & 8 = 0");
+    await Assert.That(applied).Contains(") b (COALESCE(es.flags, 0) & 8 = 0");
+    await Assert.That(applied).EndsWith("))__DIGEST_ELIGIBLE__(x").Because("the unfinished last call is left as written");
+  }
+
+  [Test]
+  [Arguments("e", "es")]
+  [Arguments("e.a e", "es.a es")]
+  [Arguments("_e e_ ee 9e e9 é e", "_e e_ ee 9e e9 é es")]
+  [Arguments("(e)", "(es)")]
+  [Arguments("none", "none")]
+  public async Task RenameWord_ReplacesTheWordOnlyWhereItStandsAloneAsync(string text, string expected) {
+    await Assert.That(MigrationConstants.RenameWord(text, "e", "es")).IsEqualTo(expected);
+  }
+
   [GeneratedRegex("__[A-Z][A-Z0-9_]*__")]
   private static partial Regex _anyToken();
 }

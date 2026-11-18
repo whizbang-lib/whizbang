@@ -169,9 +169,9 @@ public abstract class ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("wh_event_store");
     await Assert.That(sql).Contains("wh_service_instances");
     await Assert.That(sql).Contains("wh_active_streams");
-    await Assert.That(sql).Contains("wh_partition_assignments");
+    await Assert.That(sql).DoesNotContain("wh_partition_assignments");
     await Assert.That(sql).Contains("wh_message_deduplication");
-    await Assert.That(sql).Contains("wh_receptor_processing");
+    await Assert.That(sql).DoesNotContain("wh_receptor_processing");
     await Assert.That(sql).Contains("wh_perspective_cursors");
     await Assert.That(sql).Contains("wh_message_associations");
     await Assert.That(sql).Contains("wh_perspective_registry");
