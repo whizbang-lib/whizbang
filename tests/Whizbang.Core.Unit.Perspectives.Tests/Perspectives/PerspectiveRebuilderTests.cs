@@ -284,7 +284,7 @@ public class PerspectiveRebuilderTests {
     // Act
     var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
 
-    // Assert — the other streams still rebuild, but a failed stream is not a clean success (#2376)
+    // Assert: the other streams still rebuild, but a failed stream is not a clean success (#2376)
     await Assert.That(result.Success).IsFalse();
     await Assert.That(result.StreamsFailed).IsEqualTo(1);
     await Assert.That(result.StreamsProcessed).IsEqualTo(2);
@@ -417,7 +417,7 @@ public class PerspectiveRebuilderTests {
     // Act
     var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
 
-    // Assert — the failed stream is reported (#2376), and its cursor is not completed
+    // Assert: the failed stream is reported (#2376), and its cursor is not completed
     await Assert.That(result.Success).IsFalse();
     await Assert.That(result.StreamsFailed).IsEqualTo(1);
     await Assert.That(result.StreamsProcessed).IsEqualTo(2);

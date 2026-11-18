@@ -270,7 +270,7 @@ public class ArchiveAwareEventStoreDecoratorTests {
 
   // Mints the first archived event's id after every other event's, as an event stored first but minted later is.
   private static void _giveTheFirstArchivedEventTheHighestId(ArchiveFake archive) =>
-    archive.Events[0] = archive.Events[0] with { EventId = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddHours(1)) };
+    archive.Events[0] = archive.Events[0] with { EventId = Guid.CreateVersion7(new DateTimeOffset(2999, 1, 1, 0, 0, 0, TimeSpan.Zero)) };
 
   // #1931: a rebuild reads no archived data unless it opts in. The seam is where every reader of a rebuild reads (the
   // runner, the collective replay), so it is where the choice holds.

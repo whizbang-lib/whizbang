@@ -79,7 +79,7 @@ public class PerspectiveRebuilderFailedStreamsTests {
         EventType = "TestEvent",
         EventData = JsonElement.Parse("{}"),
         Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
-        CreatedAt = DateTime.UtcNow,
+        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
       }).AsQueryable();
 
     public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) => Query.Where(e => e.StreamId == streamId);
