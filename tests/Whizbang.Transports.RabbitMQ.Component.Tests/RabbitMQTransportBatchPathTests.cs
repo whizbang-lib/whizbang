@@ -1001,12 +1001,28 @@ internal sealed class RecordingChannel : IChannel {
     return Task.CompletedTask;
   }
 
+  /// <summary>Every consumer tag a consume started, in order.</summary>
+  public List<string> ConsumedTags { get; } = [];
+
+  /// <summary>Every consumer tag a cancel was asked for, in order.</summary>
+  public List<string> CanceledTags { get; } = [];
+
+  public Exception? ExceptionToThrowOnCancel { get; set; }
+
   public Task<string> BasicConsumeAsync(string queue, bool autoAck, string consumerTag, bool noLocal, bool exclusive, IDictionary<string, object?>? arguments, IAsyncBasicConsumer consumer, CancellationToken cancellationToken = default) {
-    LastRegisteredConsumer = consumer;
+    lock (_sync) {
+      LastRegisteredConsumer = consumer;
+      ConsumedTags.Add(consumerTag);
+    }
     return Task.FromResult(consumerTag);
   }
 
-  public Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  public Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) {
+    lock (_sync) {
+      CanceledTags.Add(consumerTag);
+    }
+    return ExceptionToThrowOnCancel is null ? Task.CompletedTask : Task.FromException(ExceptionToThrowOnCancel);
+  }
 
   public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) {
     lock (_sync) {

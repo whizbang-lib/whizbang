@@ -140,6 +140,86 @@ public class AzureServiceBusTransportLivenessWiringTests {
       .Because("Track-on-subscribe is the baseline: a subscription that never receives while backlog exists is stalled from birth");
   }
 
+  // ===== A paused subscription is not a stall (#2406) =====
+
+  /// <summary>
+  /// A session subscription paused for longer than the silence threshold is not recovered: its silence is the pause, not
+  /// a stall, so it is neither re-subscribed nor handed sessions while it stays paused.
+  /// </summary>
+  [Test]
+  public async Task SessionSubscription_PausedPastTheSilenceThreshold_IsNotRecoveredAndTakesNoSessionsAsync() {
+    var (transport, client, time, recoveryCalls) = _createTransport(enableSessions: true);
+    var subscription = await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), new TransportBatchOptions());
+    var processor = client.LastSessionProcessor!;
+
+    await subscription.PauseAsync();
+    time.Advance(_pastThreshold);
+    await transport.LivenessWatchdog!.ProbeAsync();
+
+    await Assert.That(recoveryCalls.Count).IsEqualTo(0)
+      .Because("a subscription paused on purpose is not a stall, so the watchdog must not re-subscribe it");
+    await Assert.That(client.LastSessionProcessor).IsSameReferenceAs(processor)
+      .Because("no replacement processor is created while the subscription is paused");
+    await Assert.That(processor.StartProcessingAsyncCallCount).IsEqualTo(1)
+      .Because("only the subscribe started the processor; nothing hands it sessions while it is paused");
+  }
+
+  /// <summary>A non-session subscription paused past the silence threshold is not recovered either.</summary>
+  [Test]
+  public async Task NonSessionSubscription_PausedPastTheSilenceThreshold_IsNotRecoveredAsync() {
+    var (transport, client, time, recoveryCalls) = _createTransport(enableSessions: false);
+    var subscription = await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination());
+    var processor = client.LastProcessor!;
+
+    await subscription.PauseAsync();
+    time.Advance(_pastThreshold);
+    await transport.LivenessWatchdog!.ProbeAsync();
+
+    await Assert.That(recoveryCalls.Count).IsEqualTo(0);
+    await Assert.That(processor.StartProcessingAsyncCallCount).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A subscription resumed after a long pause starts a fresh silence window: it is not recovered at once for the time it
+  /// spent paused, and it is watched again from the resume on.
+  /// </summary>
+  [Test]
+  public async Task Subscription_ResumedAfterALongPause_IsWatchedAgainFromAFreshWindowAsync() {
+    var (transport, _, time, recoveryCalls) = _createTransport(enableSessions: true);
+    var subscription = await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), new TransportBatchOptions());
+    await subscription.PauseAsync();
+    time.Advance(_pastThreshold);
+
+    await subscription.ResumeAsync();
+    await transport.LivenessWatchdog!.ProbeAsync();
+    await Assert.That(recoveryCalls.Count).IsEqualTo(0)
+      .Because("the silence window starts again at the resume, not at the pause");
+
+    time.Advance(_pastThreshold);
+    await transport.LivenessWatchdog.ProbeAsync();
+    await Assert.That(recoveryCalls.Count).IsEqualTo(1)
+      .Because("once resumed the subscription is watched again");
+  }
+
+  /// <summary>
+  /// A subscription established again for the same entity is watched, even though the one it replaced was paused: the new
+  /// subscription starts active, and pausing it again is what takes it off the watch.
+  /// </summary>
+  [Test]
+  public async Task Subscription_EstablishedAgainAfterAPausedOne_IsWatchedAsync() {
+    var (transport, _, time, recoveryCalls) = _createTransport(enableSessions: true);
+    var paused = await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination());
+    await paused.PauseAsync();
+
+    await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination());
+    time.Advance(_pastThreshold);
+    await transport.LivenessWatchdog!.ProbeAsync();
+
+    await Assert.That(recoveryCalls.Count).IsEqualTo(1);
+  }
+
   // ===== Disposal =====
 
   [Test]
