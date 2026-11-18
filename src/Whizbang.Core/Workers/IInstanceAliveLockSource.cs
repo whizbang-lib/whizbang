@@ -25,9 +25,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockHeld_AdvisoryLockMode_UsesSlowCadenceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockNotHeld_AdvisoryLockMode_UsesFastCadenceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockTransitionsHeldToNotHeld_NextResolveReturnsFastCadenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockHeld_AdvisoryLockMode_UsesSlowCadenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockNotHeld_AdvisoryLockMode_UsesFastCadenceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockTransitionsHeldToNotHeld_NextResolveReturnsFastCadenceAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourceRegistrationTests.cs:AddWhizbangPostgresNotifications_RegistersTheSharedConnectionAsTheAliveLockSourceAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/ClaimWorkerAliveLockTests.cs:AClaim_WhileTheAliveLockIsHeld_SaysSoAsync</tests>
 public interface IInstanceAliveLockSource {

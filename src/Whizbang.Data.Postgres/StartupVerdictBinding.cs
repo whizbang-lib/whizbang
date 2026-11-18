@@ -14,7 +14,7 @@ namespace Whizbang.Data.Postgres;
 /// </summary>
 /// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Schema/StartupVerdictBindingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/StartupVerdictBindingTests.cs</tests>
 public static class StartupVerdictBinding {
   /// <summary>
   /// The verdict, or <see langword="null"/> when the host has no assessor (no host, or no driver supplied one): the

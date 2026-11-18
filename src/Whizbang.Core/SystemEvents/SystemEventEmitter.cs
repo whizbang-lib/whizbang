@@ -30,7 +30,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
 public sealed class SystemEventEmitter : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options;
@@ -73,7 +73,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
   /// <paramref name="sink"/>.
   /// </summary>
   /// <remarks>A factory rather than an internal constructor, so a null store given to the public constructor is not ambiguous.</remarks>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitEventAuditedAsync_ATypeTheCatalogDeclaresEphemeral_RecordsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitEventAuditedAsync_ATypeTheCatalogDeclaresEphemeral_RecordsNothingAsync</tests>
   internal static SystemEventEmitter ForSink(
       IOptions<SystemEventOptions> options,
       ISystemEventSink sink,

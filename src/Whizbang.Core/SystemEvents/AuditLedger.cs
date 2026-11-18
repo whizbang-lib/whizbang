@@ -26,7 +26,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/audit-logging#dedicated-system-stream</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerTests.cs</tests>
 public static class AuditLedger {
   /// <summary>The name the ledger namespace is derived from.</summary>
   public const string NAMESPACE_NAME = "sys-audit";
@@ -43,7 +43,7 @@ public static class AuditLedger {
   public const string RECORD_NAMESPACE_NAME = "sys-audit-record";
 
   /// <summary>The namespace every audit record id is derived within: <c>UUIDv5(nil, "sys-audit-record")</c>.</summary>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs:RecordNamespace_IsTheVersionFiveIdOfSysAuditRecordUnderTheNilNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerTests.cs:RecordNamespace_IsTheVersionFiveIdOfSysAuditRecordUnderTheNilNamespaceAsync</tests>
   public static Guid RecordNamespace { get; } = NameBasedGuid.V5(Guid.Empty, RECORD_NAMESPACE_NAME);
 
   /// <summary>
@@ -57,8 +57,8 @@ public static class AuditLedger {
   /// <param name="originalEventId">The id of the audited event.</param>
   /// <returns>The record's id.</returns>
   /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs:RecordIdFor_KnownEvent_MatchesTheReferenceVectorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerTests.cs:RecordIdFor_SameEvent_IsTheSameRecordAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerTests.cs:RecordIdFor_KnownEvent_MatchesTheReferenceVectorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerTests.cs:RecordIdFor_SameEvent_IsTheSameRecordAsync</tests>
   public static Guid RecordIdFor(Guid originalEventId) =>
     NameBasedGuid.V5(RecordNamespace, originalEventId.ToString("D", System.Globalization.CultureInfo.InvariantCulture));
 }

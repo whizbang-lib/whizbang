@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// time. Bundles leave in the order they were selected. Created by <see cref="RedeliveryPump.BeginAnswer"/>.
 /// </remarks>
 /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
 public sealed class RedeliveryAnswerPublication {
   private readonly RedeliveryPump _pump;
   private readonly string _topic;
@@ -49,7 +49,7 @@ public sealed class RedeliveryAnswerPublication {
   /// (#2149).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of bundles this call published.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
   public async Task<int> PublishAsync(
       IReadOnlyList<RedeliveryEvent> events, RedeliveryAnswerWindow answeredWindow, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(events);
@@ -76,7 +76,7 @@ public sealed class RedeliveryAnswerPublication {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of bundles this call published: 1, or 0 when the answer carried nothing.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
   public async Task<int> CompleteAsync(CancellationToken cancellationToken = default) {
     if (_held is not { } held) {
       return 0;

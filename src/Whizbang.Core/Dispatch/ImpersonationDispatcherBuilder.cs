@@ -59,7 +59,7 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
 public sealed class ImpersonationDispatcherBuilder {
   private readonly IDispatcher _dispatcher;
   private readonly string _effectiveIdentity;
@@ -104,7 +104,7 @@ public sealed class ImpersonationDispatcherBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#cross-tenant-impersonation</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync</tests>
   public DispatcherSecurityBuilder ForAllTenants() {
     return new DispatcherSecurityBuilder(
         _dispatcher,
@@ -137,7 +137,7 @@ public sealed class ImpersonationDispatcherBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#tenant-scoped-impersonation</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_ForTenant_SetsExplicitTenantIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_ForTenant_SetsExplicitTenantIdAsync</tests>
   public DispatcherSecurityBuilder ForTenant(string tenantId) {
     ArgumentNullException.ThrowIfNull(tenantId);
     ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
@@ -171,7 +171,7 @@ public sealed class ImpersonationDispatcherBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#preserve-ambient-tenant</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_KeepTenant_PreservesAmbientTenantIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_KeepTenant_PreservesAmbientTenantIdAsync</tests>
   public DispatcherSecurityBuilder KeepTenant() {
     if (string.IsNullOrEmpty(_ambientTenantId)) {
       throw new InvalidOperationException(

@@ -18,7 +18,7 @@ Consistently fails in every full `dotnet run` of `Whizbang.Core.Tests`. Fails th
 
 ## The test
 
-`tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorOptionsRegistrationTests.cs:67`
+`tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorOptionsRegistrationTests.cs:67`
 
 ```csharp
 [Test]

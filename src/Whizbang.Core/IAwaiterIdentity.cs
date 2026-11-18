@@ -16,10 +16,10 @@ namespace Whizbang.Core;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_ImplementsIAwaiterIdentityAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:PerspectiveSyncAwaiter_ImplementsIAwaiterIdentityAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_TwoInstances_HaveDifferentIdsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaiterIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_ImplementsIAwaiterIdentityAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:PerspectiveSyncAwaiter_ImplementsIAwaiterIdentityAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_TwoInstances_HaveDifferentIdsAsync</tests>
 public interface IAwaiterIdentity {
   /// <summary>
   /// Gets the unique identifier for this awaiter instance.

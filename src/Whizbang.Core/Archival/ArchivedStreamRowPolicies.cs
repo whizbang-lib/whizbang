@@ -26,7 +26,7 @@ namespace Whizbang.Core.Archival;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchivedStreamRowPoliciesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchivedStreamRowPoliciesTests.cs</tests>
 public static class ArchivedStreamRowPolicies {
   /// <summary>The <c>wh_settings</c> key the SQL archive reads the policies from: one <c>name=policy</c> per line.</summary>
   public const string SETTING_KEY = "archived_stream_rows";

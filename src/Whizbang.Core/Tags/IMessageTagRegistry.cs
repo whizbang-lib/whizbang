@@ -17,10 +17,10 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#registry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_TwoHooksAtDifferentStages_EachFiresOnlyAtItsStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMatchingTag_InvokesHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagHookStageFilteringAndScopeTests.cs:ProcessTagsAsync_TwoHooksAtDifferentStages_EachFiresOnlyAtItsStageAsync</tests>
 public interface IMessageTagRegistry {
   /// <summary>
   /// Gets all tag registrations for a specific message type.
@@ -39,6 +39,6 @@ public interface IMessageTagRegistry {
   /// generated code) keep compiling; generated registries override it with their full table.
   /// </remarks>
   /// <returns>All registrations, or empty when the registry predates enumeration.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagRegistryGetAllTagsTests.cs:GetAllTags_DefaultInterfaceMember_ReturnsEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagRegistryGetAllTagsTests.cs:GetAllTags_DefaultInterfaceMember_ReturnsEmptyAsync</tests>
   IEnumerable<MessageTagRegistration> GetAllTags() => [];
 }

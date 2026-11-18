@@ -16,7 +16,7 @@ namespace Whizbang.Core.Transports;
 /// <see cref="DefaultKey"/>, so single-namespace hosts are unaffected.
 /// </summary>
 /// <docs>messaging/transports/transports#transport-namespaces</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/TransportNamespacesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/TransportNamespacesTests.cs</tests>
 public static class TransportNamespaces {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>

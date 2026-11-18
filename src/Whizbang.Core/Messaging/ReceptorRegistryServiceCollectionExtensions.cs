@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// left alone, and the composite replaces the framework's <see cref="NullReceptorRegistry"/> whichever comes first.
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors#several-assemblies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs</tests>
 public static class ReceptorRegistryServiceCollectionExtensions {
   /// <summary>The service key each assembly's registry is registered under as a contribution.</summary>
   public const string CONTRIBUTION_KEY = "whizbang:receptor-registry-contribution";
@@ -32,8 +32,8 @@ public static class ReceptorRegistryServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
   /// <remarks>Idempotent per registry type: an assembly registered twice contributes once.</remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs:TwoAssemblies_EachAssemblysLifecycleReceptorFires_WhicheverRegisteredLastAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheReceptorRegistry_ReportsReceptorsTwoAssembliesShareAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs:TwoAssemblies_EachAssemblysLifecycleReceptorFires_WhicheverRegisteredLastAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs:TheReceptorRegistry_ReportsReceptorsTwoAssembliesShareAsync</tests>
   public static IServiceCollection AddReceptorRegistryContribution<TRegistry>(this IServiceCollection services)
       where TRegistry : class, IReceptorRegistry {
     ArgumentNullException.ThrowIfNull(services);

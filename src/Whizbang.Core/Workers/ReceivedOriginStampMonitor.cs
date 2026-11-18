@@ -22,7 +22,7 @@ namespace Whizbang.Core.Workers;
 /// nothing.
 /// </remarks>
 /// <docs>resilience/stream-integrity#origin-stamp</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedOriginStampMonitorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceivedOriginStampMonitorTests.cs</tests>
 internal sealed partial class ReceivedOriginStampMonitor {
   /// <summary>How often the counts are evaluated, and so the most often the warning can repeat.</summary>
   internal static readonly TimeSpan Window = TimeSpan.FromMinutes(5);

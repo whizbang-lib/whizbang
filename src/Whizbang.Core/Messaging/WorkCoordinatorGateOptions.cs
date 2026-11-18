@@ -13,8 +13,8 @@ namespace Whizbang.Core.Messaging;
 /// configuration.
 /// </summary>
 /// <docs>operations/configuration/configuration-reference#workcoordinatorgateoptions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateRegistrationTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGatePrecedenceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorGateRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorGatePrecedenceTests.cs</tests>
 public sealed class WorkCoordinatorGateOptions {
   private const int DEFAULT_MAX_CONCURRENT = 50;
 
@@ -43,6 +43,6 @@ public sealed class WorkCoordinatorGateOptions {
   /// and an interactive caller takes a shared slot first, so the reserve is a bulkhead, not a fast lane.
   /// </summary>
   /// <docs>fundamentals/messaging/message-priority#bulkheads</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateRegistrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorGateRegistrationTests.cs</tests>
   public int? InteractiveReserve { get; set; }
 }

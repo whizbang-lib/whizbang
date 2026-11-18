@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamReadAnchorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamReadAnchorTests.cs</tests>
 public sealed class StreamReadAnchor {
   private Guid? _byVersion;
   private long _version;
@@ -36,9 +36,9 @@ public sealed class StreamReadAnchor {
   /// <param name="current">The anchor the pass read after; null for a read from the stream's start.</param>
   /// <returns>The anchor for the next read.</returns>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamReadAnchorTests.cs:After_EveryEventVersioned_IsTheHighestVersion_NotTheHighestIdAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamReadAnchorTests.cs:After_AnEventWithNoVersion_IsTheHighestIdAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamReadAnchorTests.cs:After_NothingRead_KeepsTheCurrentAnchorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamReadAnchorTests.cs:After_EveryEventVersioned_IsTheHighestVersion_NotTheHighestIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamReadAnchorTests.cs:After_AnEventWithNoVersion_IsTheHighestIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamReadAnchorTests.cs:After_NothingRead_KeepsTheCurrentAnchorAsync</tests>
   public static Guid? After(IEnumerable<MessageEnvelope<IEvent>> read, Guid? current) {
     ArgumentNullException.ThrowIfNull(read);
     var anchor = new StreamReadAnchor();
@@ -51,7 +51,7 @@ public sealed class StreamReadAnchor {
   /// <summary>Offers one event the pass read, keeping only what the anchor needs, never the event itself.</summary>
   /// <param name="envelope">The event read.</param>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamReadAnchorTests.cs:After_EveryEventVersioned_IsTheHighestVersion_NotTheHighestIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamReadAnchorTests.cs:After_EveryEventVersioned_IsTheHighestVersion_NotTheHighestIdAsync</tests>
   public void Offer(MessageEnvelope<IEvent> envelope) {
     ArgumentNullException.ThrowIfNull(envelope);
     var id = envelope.MessageId.Value;
@@ -70,7 +70,7 @@ public sealed class StreamReadAnchor {
   /// <param name="current">The anchor the pass read after.</param>
   /// <returns>The anchor for the next read.</returns>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamReadAnchorTests.cs:After_NothingRead_KeepsTheCurrentAnchorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamReadAnchorTests.cs:After_NothingRead_KeepsTheCurrentAnchorAsync</tests>
   public Guid? Next(Guid? current) {
     if (_byId is null) {
       return current;

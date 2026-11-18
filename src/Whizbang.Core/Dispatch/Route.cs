@@ -46,7 +46,7 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs</tests>
 public static class Route {
   /// <summary>
   /// Returns a value indicating "no value" for use in discriminated union tuples.
@@ -88,7 +88,7 @@ public static class Route {
   /// return Route.Local(new OrderCreatedEvent { OrderId = orderId });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Local_WithValue_ReturnsRoutedWithLocalModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:Local_WithValue_ReturnsRoutedWithLocalModeAsync</tests>
   public static Routed<T> Local<T>(T value) => new(value, DispatchModes.Local);
 
   /// <summary>
@@ -107,7 +107,7 @@ public static class Route {
   /// return Route.LocalNoPersist(new CacheInvalidatedEvent { Key = "users" });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:LocalNoPersist_WithValue_ReturnsRoutedWithLocalNoPersistModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:LocalNoPersist_WithValue_ReturnsRoutedWithLocalNoPersistModeAsync</tests>
   public static Routed<T> LocalNoPersist<T>(T value) => new(value, DispatchModes.LocalNoPersist);
 
   /// <summary>
@@ -121,7 +121,7 @@ public static class Route {
   /// return Route.LocalNoPersist(new[] { evt1, evt2, evt3 });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:LocalNoPersist_WithCollection_ReturnsEnumerableOfRoutedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:LocalNoPersist_WithCollection_ReturnsEnumerableOfRoutedAsync</tests>
   public static IEnumerable<Routed<T>> LocalNoPersist<T>(IEnumerable<T> values)
     => values.Select(v => new Routed<T>(v, DispatchModes.LocalNoPersist));
 
@@ -136,7 +136,7 @@ public static class Route {
   /// return Route.Outbox(new UserCreatedEvent { UserId = userId });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Outbox_WithValue_ReturnsRoutedWithOutboxModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:Outbox_WithValue_ReturnsRoutedWithOutboxModeAsync</tests>
   public static Routed<T> Outbox<T>(T value) => new(value, DispatchModes.Outbox);
 
   /// <summary>
@@ -150,7 +150,7 @@ public static class Route {
   /// return Route.Both(new AuditLogEvent { Action = "create" });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Both_WithValue_ReturnsRoutedWithBothModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:Both_WithValue_ReturnsRoutedWithBothModeAsync</tests>
   public static Routed<T> Both<T>(T value) => new(value, DispatchModes.Both);
 
   /// <summary>
@@ -168,7 +168,7 @@ public static class Route {
   /// return Route.EventStoreOnly(new AuditEvent { Action = "login" });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:EventStoreOnly_WithValue_ReturnsRoutedWithEventStoreOnlyModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:EventStoreOnly_WithValue_ReturnsRoutedWithEventStoreOnlyModeAsync</tests>
   public static Routed<T> EventStoreOnly<T>(T value) => new(value, DispatchModes.EventStoreOnly);
 
   /// <summary>
@@ -182,7 +182,7 @@ public static class Route {
   /// return Route.EventStoreOnly(new[] { auditEvt1, auditEvt2 });
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:EventStoreOnly_WithCollection_ReturnsEnumerableOfRoutedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:EventStoreOnly_WithCollection_ReturnsEnumerableOfRoutedAsync</tests>
   public static IEnumerable<Routed<T>> EventStoreOnly<T>(IEnumerable<T> values)
     => values.Select(v => new Routed<T>(v, DispatchModes.EventStoreOnly));
 }

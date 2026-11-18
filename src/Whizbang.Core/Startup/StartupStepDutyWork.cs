@@ -20,7 +20,7 @@ namespace Whizbang.Core.Startup;
 /// lease, moving.
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStepDutyWorkTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStepDutyWorkTests.cs</tests>
 public sealed class StartupStepDutyWork : IDutyWorkHandler {
   private readonly IStartupStep _step;
   private readonly IStartupPipelineState? _state;

@@ -41,7 +41,7 @@ owner has to make before phase 2 starts.
   | Test | Flow |
   |---|---|
   | `tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs` | Real host (public `AddWhizbang` chain on Postgres), real JSON wire, one event, two perspectives, a receptor at the last lifecycle stage, one drain session per stream |
-  | `tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs` (`ParseCount_*`) | Multi-stream runs: K streams of one run, interleaved runs, the same run across batches |
+  | `tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs` (`ParseCount_*`) | Multi-stream runs: K streams of one run, interleaved runs, the same run across batches |
   | `tests/Whizbang.Core.Component.Tests/MultiService/RedeliveryParseCountTests.cs` | Redelivery from the origin's stored events to receiving services |
   | `tests/Whizbang.Core.Tests/Offloads/BodyClaimRehydratorTests.cs` (`ParseCount_*`) | Offload claim-check rehydration |
 

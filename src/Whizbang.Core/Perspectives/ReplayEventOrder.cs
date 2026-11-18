@@ -49,7 +49,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ReplayEventOrderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReplayEventOrderTests.cs</tests>
 public static class ReplayEventOrder {
   /// <summary>
   /// Returns <paramref name="events"/> in replay order. A batch of zero or one event is returned as it is.

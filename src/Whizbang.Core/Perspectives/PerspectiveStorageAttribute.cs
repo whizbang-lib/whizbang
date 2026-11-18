@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStorageAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveStorageAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// // Extracted mode: JSONB contains full model, physical columns are indexed copies

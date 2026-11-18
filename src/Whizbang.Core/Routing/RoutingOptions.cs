@@ -135,7 +135,7 @@ public sealed class RoutingOptions {
   /// opts.OwnNamespaceOf&lt;CreateUserCommand&gt;(); // Owns "myapp.users.commands"
   /// </example>
   /// <docs>fundamentals/dispatcher/routing#own-namespace-of</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
   public RoutingOptions OwnNamespaceOf<T>() {
     var ns = TypeNameFormatter.NamespaceOf(typeof(T))
       ?? throw new InvalidOperationException($"Type {TypeNameFormatter.ForLog(typeof(T))} has no namespace");
@@ -153,9 +153,9 @@ public sealed class RoutingOptions {
   /// </param>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/events/system-events#subscribe-to-audit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_EnablesAuditPerspectiveByDefaultAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_ReturnsSelfForChainingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_CanChainWithOwnDomainsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_EnablesAuditPerspectiveByDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_ReturnsSelfForChainingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:SubscribeToAudit_CanChainWithOwnDomainsAsync</tests>
   public RoutingOptions SubscribeToAudit(bool autoGeneratePerspective = true) {
     _subscribedNamespaces.Add(SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
     AuditPerspectiveEnabled = autoGeneratePerspective;
@@ -205,7 +205,7 @@ public sealed class RoutingOptions {
   /// opts.SubscribeToNamespaceOf&lt;OrderCreatedEvent&gt;(); // Subscribes to "myapp.orders.events"
   /// </example>
   /// <docs>fundamentals/dispatcher/routing#subscribe-to-namespace-of</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
   public RoutingOptions SubscribeToNamespaceOf<T>() {
     var ns = TypeNameFormatter.NamespaceOf(typeof(T))
       ?? throw new InvalidOperationException($"Type {TypeNameFormatter.ForLog(typeof(T))} has no namespace");
@@ -253,7 +253,7 @@ public sealed class RoutingOptions {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludedEventTypes_ByDefault_IsEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludedEventTypes_ByDefault_IsEmptyAsync</tests>
   public IReadOnlySet<string> ExcludedEventTypes => _excludedEventTypes;
 
   /// <summary>
@@ -265,7 +265,7 @@ public sealed class RoutingOptions {
   /// <typeparam name="TEvent">The event type to opt out of.</typeparam>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_Generic_RecordsTheWireFormAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_Generic_RecordsTheWireFormAsync</tests>
   public RoutingOptions ExcludeEventType<TEvent>() where TEvent : IEvent => ExcludeEventType(typeof(TEvent));
 
   /// <summary>Opts this service out of an event type given as a <see cref="Type"/>; see
@@ -274,7 +274,7 @@ public sealed class RoutingOptions {
   /// <returns>This options instance for chaining.</returns>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="eventType"/> is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_NestedType_RecordsTheWireFormAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventType_NestedType_RecordsTheWireFormAsync</tests>
   public RoutingOptions ExcludeEventType(Type eventType) {
     ArgumentNullException.ThrowIfNull(eventType);
     _excludedEventTypes.Add(TypeNameFormatter.Format(eventType));
@@ -290,7 +290,7 @@ public sealed class RoutingOptions {
   /// <returns>This options instance for chaining.</returns>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="typeNames"/> is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventTypes_Names_StripVersionAndSkipBlankAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:ExcludeEventTypes_Names_StripVersionAndSkipBlankAsync</tests>
   public RoutingOptions ExcludeEventTypes(params string[] typeNames) {
     ArgumentNullException.ThrowIfNull(typeNames);
     _excludedEventTypes.UnionWith(typeNames
@@ -348,7 +348,7 @@ public sealed class RoutingOptions {
   /// <returns>This options instance for chaining.</returns>
   /// <exception cref="ArgumentException">Thrown when the namespace is null or whitespace.</exception>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteCommandNamespaceToInbox_IsRepeatableAndLowercasesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteCommandNamespaceToInbox_IsRepeatableAndLowercasesAsync</tests>
   public RoutingOptions RouteCommandNamespaceToInbox(string contractNamespace) {
     ArgumentException.ThrowIfNullOrWhiteSpace(contractNamespace);
     _commandNamespacesToInbox.Add(contractNamespace.ToLowerInvariant());
@@ -368,7 +368,7 @@ public sealed class RoutingOptions {
   /// </summary>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteAllCommandNamespacesToInbox_FlipsEveryNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteAllCommandNamespacesToInbox_FlipsEveryNamespaceAsync</tests>
   public RoutingOptions RouteAllCommandNamespacesToInbox() {
     _routeAllCommandNamespacesToInbox = true;
     return this;
@@ -384,7 +384,7 @@ public sealed class RoutingOptions {
   /// </summary>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:MidMigration_ExplicitInverses_RollBackToThePreMigrationStateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:MidMigration_ExplicitInverses_RollBackToThePreMigrationStateAsync</tests>
   public RoutingOptions RouteNoCommandNamespacesToInbox() {
     _routeAllCommandNamespacesToInbox = false;
     return this;
@@ -428,7 +428,7 @@ public sealed class RoutingOptions {
   /// DI-bound instance, so there is exactly ONE control-class options object per host.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#control-class</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ControlClassSubscriptionSplitTests.cs</tests>
   public ControlClassOptions ControlClass { get; set; } = new();
 
   /// <summary>
@@ -452,8 +452,8 @@ public sealed class RoutingOptions {
   /// </remarks>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/SharedInboxRetirementTests.cs:RetireSharedInbox_DefaultsOn_AndBothFluentSwitchesChainAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/SharedInboxRetirementTests.cs:WithRouting_RetirementWithoutFullFlip_ThrowsClearStartupErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/SharedInboxRetirementTests.cs:RetireSharedInbox_DefaultsOn_AndBothFluentSwitchesChainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/SharedInboxRetirementTests.cs:WithRouting_RetirementWithoutFullFlip_ThrowsClearStartupErrorAsync</tests>
   public RoutingOptions RetireSharedInbox() {
     _retireSharedInbox = true;
     return this;
@@ -470,7 +470,7 @@ public sealed class RoutingOptions {
   /// </summary>
   /// <returns>This options instance for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:Configuration_RetireSharedInboxFalse_KeepsTheTransitionalSubscriptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:Configuration_RetireSharedInboxFalse_KeepsTheTransitionalSubscriptionAsync</tests>
   public RoutingOptions KeepSharedInbox() {
     _retireSharedInbox = false;
     return this;
@@ -520,8 +520,8 @@ public sealed class RoutingOptions {
   /// owned and not absorbed. The message names every such namespace, the owned domain that claims
   /// it, and both remedies.</exception>
   /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:ThrowIfSubscribedNamespaceIsOwned_ExactOverlap_ThrowsNamingBothDeclarationsAndTheRemediesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_OwnedAndSubscribedNamespace_FailsAtFirstResolutionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:ThrowIfSubscribedNamespaceIsOwned_ExactOverlap_ThrowsNamingBothDeclarationsAndTheRemediesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_OwnedAndSubscribedNamespace_FailsAtFirstResolutionAsync</tests>
   internal void ThrowIfSubscribedNamespaceIsOwned() {
     if (_ownedDomains.Count == 0) {
       return;
@@ -643,8 +643,8 @@ public sealed class InboxRoutingOptionsBuilder {
   /// </remarks>
   /// <param name="topic">Topic name. Default: "inbox".</param>
   /// <returns>The parent options for chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:Inbox_UseSharedTopic_DefaultTopic_IsInboxMatchingStrategyDefaultAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:ExplicitLegacyStrategies_AreByteIdenticalToTodaysSharedTopologyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:Inbox_UseSharedTopic_DefaultTopic_IsInboxMatchingStrategyDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:ExplicitLegacyStrategies_AreByteIdenticalToTodaysSharedTopologyAsync</tests>
   public RoutingOptions UseSharedTopic(string topic = "inbox") {
     _parent.SelectLegacyTopology();
     _parent.SetInboxStrategy(new SharedTopicInboxStrategy(topic));
@@ -664,8 +664,8 @@ public sealed class InboxRoutingOptionsBuilder {
   /// until the flip completes).</param>
   /// <returns>The parent options for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_SetsNamespaceStrategyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_BindsParentOptionsSoRetirementIsConsultedLiveAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_SetsNamespaceStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_BindsParentOptionsSoRetirementIsConsultedLiveAsync</tests>
   public RoutingOptions UseNamespaceInboxes(string sharedInboxTopic = "inbox") {
     _parent.SetInboxStrategy(new NamespaceInboxStrategy(_parent, sharedInboxTopic));
     return _parent;
@@ -679,7 +679,7 @@ public sealed class InboxRoutingOptionsBuilder {
   /// retirement defaults — see <see cref="RoutingOptions.SelectLegacyTopology"/>.</remarks>
   /// <param name="suffix">Suffix for domain topics. Default: ".inbox".</param>
   /// <returns>The parent options for chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseDomainTopics_EitherSide_ClearsFlipAndRetirementAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseDomainTopics_EitherSide_ClearsFlipAndRetirementAsync</tests>
   public RoutingOptions UseDomainTopics(string suffix = ".inbox") {
     _parent.SelectLegacyTopology();
     _parent.SetInboxStrategy(new DomainTopicInboxStrategy(suffix));
@@ -697,7 +697,7 @@ public sealed class InboxRoutingOptionsBuilder {
   /// cover the per-namespace entities.</remarks>
   /// <param name="strategy">Custom strategy implementation.</param>
   /// <returns>The parent options for chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseCustom_EitherSide_ClearsFlipAndRetirementAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseCustom_EitherSide_ClearsFlipAndRetirementAsync</tests>
   public RoutingOptions UseCustom(IInboxRoutingStrategy strategy) {
     ArgumentNullException.ThrowIfNull(strategy);
     _parent.SelectLegacyTopology();
@@ -725,7 +725,7 @@ public sealed class OutboxRoutingOptionsBuilder {
   /// pre-migration flip and retirement defaults — a flipped set it cannot honor would be a lie.
   /// See <see cref="RoutingOptions.SelectLegacyTopology"/>.</remarks>
   /// <returns>The parent options for chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseDomainTopics_EitherSide_ClearsFlipAndRetirementAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseDomainTopics_EitherSide_ClearsFlipAndRetirementAsync</tests>
   public RoutingOptions UseDomainTopics() {
     _parent.SelectLegacyTopology();
     _parent.SetOutboxStrategy(new DomainTopicOutboxStrategy());
@@ -754,7 +754,7 @@ public sealed class OutboxRoutingOptionsBuilder {
   /// Topic is the full namespace (e.g., "myapp.users.events"), routing key is the type name.
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:ExplicitLegacyStrategies_AreByteIdenticalToTodaysSharedTopologyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:ExplicitLegacyStrategies_AreByteIdenticalToTodaysSharedTopologyAsync</tests>
   public RoutingOptions UseSharedTopic(string inboxTopic = "inbox") {
     _parent.SelectLegacyTopology();
     _parent.SetOutboxStrategy(new SharedTopicOutboxStrategy(inboxTopic));
@@ -776,7 +776,7 @@ public sealed class OutboxRoutingOptionsBuilder {
   /// using. Default: "inbox".</param>
   /// <returns>The parent options for chaining.</returns>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:Outbox_UseNamespaceRouting_SetsNamespaceStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceOutboxStrategyTests.cs:Outbox_UseNamespaceRouting_SetsNamespaceStrategyAsync</tests>
   public RoutingOptions UseNamespaceRouting(string sharedInboxTopic = "inbox") {
     _parent.SetOutboxStrategy(new NamespaceOutboxStrategy(_parent, sharedInboxTopic));
     return _parent;
@@ -792,7 +792,7 @@ public sealed class OutboxRoutingOptionsBuilder {
   /// <see cref="RoutingOptions.RetireSharedInbox"/> explicitly when it does.</remarks>
   /// <param name="strategy">Custom strategy implementation.</param>
   /// <returns>The parent options for chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseCustom_EitherSide_ClearsFlipAndRetirementAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:UseCustom_EitherSide_ClearsFlipAndRetirementAsync</tests>
   public RoutingOptions UseCustom(IOutboxRoutingStrategy strategy) {
     ArgumentNullException.ThrowIfNull(strategy);
     _parent.SelectLegacyTopology();

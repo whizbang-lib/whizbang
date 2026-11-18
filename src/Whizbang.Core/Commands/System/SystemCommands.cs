@@ -127,7 +127,7 @@ public record RebuildPerspectiveCommand(
 
   /// <inheritdoc />
   /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARebuildNamingStreams_IsAuditedWithTheListLengths_AndKeepsTheRestOfTheCommandAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARebuildNamingStreams_IsAuditedWithTheListLengths_AndKeepsTheRestOfTheCommandAsync</tests>
   public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
 }
 

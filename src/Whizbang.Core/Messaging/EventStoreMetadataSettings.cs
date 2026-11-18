@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>data/event-store#stored-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs</tests>
 public static class EventStoreMetadataSettings {
   /// <summary>The <c>wh_settings</c> key holding the write form (<c>Full</c>, <c>Slim</c> or <c>Linked</c>).</summary>
   public const string WRITE_FORM_KEY = "metadata_write_form";
@@ -51,11 +51,11 @@ public static class EventStoreMetadataSettings {
   /// <param name="attributeFullTypes">The type names <c>[StoredMetadata(StoredMetadataForm.Full)]</c> declares
   /// (<see cref="StoredMetadataRegistry.FullTypeNames"/>).</param>
   /// <returns>One entry per key to write, each key once.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Defaults_PublishLinkedAndAnEmptyList_ButNoStagingWindowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_JoinsConfigurationAndAttributes_SortedOnce_AndCutAtTheCommaAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:StagingDays_WhenSet_IsPublishedAsAnIntegerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:EachWriteForm_IsPublishedByNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:ConvertHistory_IsPublishedEveryTime_InBothDirectionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Defaults_PublishLinkedAndAnEmptyList_ButNoStagingWindowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_JoinsConfigurationAndAttributes_SortedOnce_AndCutAtTheCommaAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:StagingDays_WhenSet_IsPublishedAsAnIntegerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:EachWriteForm_IsPublishedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:ConvertHistory_IsPublishedEveryTime_InBothDirectionsAsync</tests>
   public static IReadOnlyList<RetentionSetting> SettingsFor(EventStoreMetadataOptions options, IEnumerable<string> attributeFullTypes) {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(attributeFullTypes);
@@ -77,8 +77,8 @@ public static class EventStoreMetadataSettings {
   /// <summary>Renders full-for entries as the text the write paths read: trimmed, cut at a comma, sorted, once, one per line.</summary>
   /// <param name="entries">Type names and namespaces.</param>
   /// <returns>The names joined with a line feed; empty for none.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_JoinsConfigurationAndAttributes_SortedOnce_AndCutAtTheCommaAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_BlankAndNullEntries_AreSkippedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_JoinsConfigurationAndAttributes_SortedOnce_AndCutAtTheCommaAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:FullFor_BlankAndNullEntries_AreSkippedAsync</tests>
   public static string FullForText(IEnumerable<string?> entries) {
     ArgumentNullException.ThrowIfNull(entries);
     return string.Join('\n', entries
@@ -91,8 +91,8 @@ public static class EventStoreMetadataSettings {
   /// <summary>Configuration errors in the options: a negative staging window, or a write form that is not defined.</summary>
   /// <param name="options">The bound options.</param>
   /// <returns>One message per invalid value; empty when the options are valid.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Validate_ANegativeStagingWindow_IsRejectedByNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Validate_AnUndefinedWriteForm_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Validate_ANegativeStagingWindow_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Validate_AnUndefinedWriteForm_IsRejectedByNameAsync</tests>
   public static IReadOnlyList<string> Validate(EventStoreMetadataOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var failures = new List<string>();

@@ -29,7 +29,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStepOrderResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStepOrderResolverTests.cs</tests>
 public static class StartupStepOrderResolver {
   /// <summary>
   /// Resolves <paramref name="steps"/> into the order they must run in, omitting disabled ones.

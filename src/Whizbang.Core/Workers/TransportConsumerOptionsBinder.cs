@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// assignments and no reflection reaches the AOT path.
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#transport-sections</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerOptionsConfigurationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerOptionsConfigurationTests.cs</tests>
 internal static class TransportConsumerOptionsBinder {
   internal const string MESSAGE_PROCESSING_SECTION = "MessageProcessing";
   internal const string BATCH_SECTION = "Batch";

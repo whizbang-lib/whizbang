@@ -12,7 +12,7 @@ namespace Whizbang.Core.MultiStream;
 /// over the command at compile time, so nothing is resolved by reflection.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync</tests>
 public interface IMultiStreamCommandBinding {
   /// <summary>The command's type name, as recorded on its runs.</summary>
   string CommandType { get; }

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Each metric corresponds to a PostgreSQL operator for ordering by similarity.
 /// </summary>
 /// <docs>fundamentals/perspectives/vector-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/VectorDistanceMetricTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/VectorDistanceMetricTests.cs</tests>
 public enum VectorDistanceMetric {
   /// <summary>
   /// L2 (Euclidean) distance. Lower values indicate more similar vectors.

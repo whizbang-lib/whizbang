@@ -10,8 +10,8 @@ namespace Whizbang.Core.MultiStream;
 
 /// <summary>Registers multi-stream command handlers.</summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_ASecondHandlerForTheSameCommand_IsRefusedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_ASecondHandlerForTheSameCommand_IsRefusedAsync</tests>
 public static class MultiStreamCommandServiceCollectionExtensions {
   /// <summary>
   /// Registers <typeparamref name="THandler"/> as the one handler of <typeparamref name="TCommand"/>, the command's

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Configuration;
 /// so a TTL can be retuned — or retention switched off — per environment without a redeploy.
 /// </summary>
 /// <docs>fundamentals/perspectives/row-retention</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveTtlRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveTtlRegistryTests.cs</tests>
 public sealed class PerspectiveRowRetentionOptions {
   /// <summary>
   /// Global kill switch (default <c>true</c>). When <c>false</c>, every model resolves to

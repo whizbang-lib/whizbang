@@ -42,9 +42,9 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextFlagsTests.cs:IsReplay_ReplayProcessingMode_ReturnsTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextFlagsTests.cs:IsNewEvent_DefaultsToTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextTests.cs:Receptor_WithLifecycleContext_CanAccessContextPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextFlagsTests.cs:IsReplay_ReplayProcessingMode_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextFlagsTests.cs:IsNewEvent_DefaultsToTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextTests.cs:Receptor_WithLifecycleContext_CanAccessContextPropertiesAsync</tests>
 public interface ILifecycleContext {
   /// <summary>
   /// Gets the current lifecycle stage at which the receptor is being invoked.

@@ -21,7 +21,7 @@ namespace Whizbang.Core.Startup;
 /// is provisioned out of band has one that is open from the start, never none.
 /// </param>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageGateTests.cs</tests>
 public sealed class StartupStageGate(ISchemaReadyGate schemaReady) : IStartupStageGate, IStartupStageObserver {
   private readonly ISchemaReadyGate _schemaReady = schemaReady ?? throw new ArgumentNullException(nameof(schemaReady));
   private readonly Dictionary<StartupStage, TaskCompletionSource> _reached = StartupStages.Startup

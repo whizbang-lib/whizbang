@@ -10,14 +10,14 @@ namespace Whizbang.Core.Routing;
 /// disagree on a nested or renamed type.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#excluded-event-types</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/EventSubjectTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/EventSubjectTests.cs</tests>
 public static class EventSubject {
   /// <summary>The subject of an event type given by name, in the wire or the CLR form.</summary>
   /// <param name="typeName">The type name (<c>"MyApp.Events.Outer+OrderPlaced, MyApp"</c> or
   /// <c>"MyApp.Events.Outer+OrderPlaced"</c>).</param>
   /// <returns>The lowercased CLR form.</returns>
   /// <exception cref="ArgumentException">Thrown when <paramref name="typeName"/> is null, empty or whitespace.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubjectTests.cs:For_WireForm_IsTheLowercasedClrFormAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/EventSubjectTests.cs:For_WireForm_IsTheLowercasedClrFormAsync</tests>
   public static string For(string typeName) {
     ArgumentException.ThrowIfNullOrWhiteSpace(typeName);
     return TypeNameFormatter.GetFullName(typeName).ToLowerInvariant();
@@ -26,7 +26,7 @@ public static class EventSubject {
   /// <summary>The subject of an event type.</summary>
   /// <param name="eventType">The event type.</param>
   /// <returns>The lowercased CLR form.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubjectTests.cs:For_Type_IsTheSubjectOfItsWireFormAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/EventSubjectTests.cs:For_Type_IsTheSubjectOfItsWireFormAsync</tests>
   public static string For(Type eventType) {
     ArgumentNullException.ThrowIfNull(eventType);
     return For(TypeNameFormatter.FormatClrTypeName(eventType));

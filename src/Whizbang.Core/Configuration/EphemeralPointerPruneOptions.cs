@@ -12,7 +12,7 @@ namespace Whizbang.Core.Configuration;
 /// unset (<see langword="null"/>), which leaves the stored value alone; a value that is set is written every cycle.
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
 public sealed class EphemeralPointerPruneOptions {
   /// <summary>
   /// Whether the prune runs at all. Publishes <c>ephemeral_deep_maintenance_enabled</c>; the database default is

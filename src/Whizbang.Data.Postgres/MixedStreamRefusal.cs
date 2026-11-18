@@ -16,7 +16,7 @@ namespace Whizbang.Data.Postgres;
 /// read back from it; the message detail is not used, because Npgsql redacts it unless the connection string opts in.
 /// </remarks>
 /// <docs>operations/diagnostics/whiz133</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MixedStreamRefusalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MixedStreamRefusalTests.cs</tests>
 internal static class MixedStreamRefusal {
   /// <summary>The SQLSTATE <c>_wh_refuse_mixed_stream_outbox_events</c> raises (migration 228).</summary>
   internal const string SQL_STATE = "WH133";

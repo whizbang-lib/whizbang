@@ -47,7 +47,7 @@ public interface IPerspectiveRunner {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The events, in the order <see cref="RunAsync"/> reads them, or null when the runner does not expose its read.</returns>
   /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:ReadEventsAsync_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:ReadEventsAsync_Default_ReturnsNullAsync</tests>
   Task<IReadOnlyList<MessageEnvelope<IEvent>>?> ReadEventsAsync(
     Guid streamId,
     Guid? lastProcessedEventId,
@@ -63,7 +63,7 @@ public interface IPerspectiveRunner {
   /// <param name="streamEvents">The stream's events after the pair's cursor, of every type the batch read.</param>
   /// <returns>The events this perspective applies, or null when the runner does not select from a shared read.</returns>
   /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:SelectEvents_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:SelectEvents_Default_ReturnsNullAsync</tests>
   IReadOnlyList<MessageEnvelope<IEvent>>? SelectEvents(IReadOnlyList<MessageEnvelope<IEvent>> streamEvents) => null;
 
   /// <summary>
@@ -114,7 +114,7 @@ public interface IPerspectiveRunner {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The prepared pair.</returns>
   /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:PrepareAsync_Default_HandsThePairToThePerPairPathAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:PrepareAsync_Default_HandsThePairToThePerPairPathAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
   Task<PreparedPerspectiveApply> PrepareAsync(
     Guid streamId,
@@ -137,7 +137,7 @@ public interface IPerspectiveRunner {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The prepared pair.</returns>
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:PrepareAsync_Default_HandsThePairToThePerPairPathAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:PrepareAsync_Default_HandsThePairToThePerPairPathAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
   Task<PreparedPerspectiveApply> PrepareAsync(
     Guid streamId,
@@ -172,7 +172,7 @@ public interface IPerspectiveRunner {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The pair's cursor completion.</returns>
   /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:CompleteAsync_Default_RunsAPerPairPairThroughRunWithEventsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:CompleteAsync_Default_RunsAPerPairPairThroughRunWithEventsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
   Task<PerspectiveCursorCompletion> CompleteAsync(
     PreparedPerspectiveApply prepared,
@@ -247,7 +247,7 @@ public interface IPerspectiveRunner {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The row's cursor completion.</returns>
   /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:RunRekeyedRowAsync_Default_FoldsTheMergedSourcesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:RunRekeyedRowAsync_Default_FoldsTheMergedSourcesAsync</tests>
   async Task<PerspectiveCursorCompletion> RunRekeyedRowAsync(
     Guid rowStreamId,
     string perspectiveName,
@@ -321,7 +321,7 @@ public interface IPerspectiveRunner {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>What the bootstrap did.</returns>
   /// <docs>fundamentals/perspectives/snapshots#bootstrap</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/SnapshotBootstrapOutcomeTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/SnapshotBootstrapOutcomeTests.cs</tests>
   async Task<SnapshotBootstrapOutcome> TryBootstrapSnapshotAsync(
     Guid streamId,
     string perspectiveName,

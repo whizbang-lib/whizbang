@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <param name="name">The table name, such as <c>wh_per_orders</c>.</param>
 /// <docs>fundamentals/perspectives/table-naming#explicit-table-names</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveTableAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveTableAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveTableNameGoldenTests.cs:BothDrivers_WithSuffixStrippingOff_KeepTheManualNameAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveTableNamingDiagnosticsTests.cs</tests>
 /// <example>

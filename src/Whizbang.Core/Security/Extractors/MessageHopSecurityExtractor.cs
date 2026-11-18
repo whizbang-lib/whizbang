@@ -24,7 +24,7 @@ namespace Whizbang.Core.Security.Extractors;
 /// principals, claims, actual/effective principal, context type).</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#message-hop-extractor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
 /// <remarks>
 /// Creates a new instance of MessageHopSecurityExtractor.
 /// </remarks>

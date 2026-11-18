@@ -361,7 +361,7 @@ The point of this work is that absence is invisible, so the tests must assert on
 
 **Regression, one per historical failure**
 - Optional parameter dropped at a factory-lambda registration site
-  (already written: `tests/Whizbang.Core.Tests/SystemEvents/AuditDependencyInjectionWiringTests.cs`)
+  (already written: `tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditDependencyInjectionWiringTests.cs`)
 - Registration behind a condition that is not live
 - Registration call that never runs, simulating an assembly-composition strip
 

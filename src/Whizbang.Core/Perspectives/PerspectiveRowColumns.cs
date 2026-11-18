@@ -38,7 +38,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/perspective-indexes#the-updated_at-index</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowColumnsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowColumnsTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/UpdatedAtIndexGenerationTests.cs</tests>
 public static class PerspectiveRowColumns {
 #pragma warning disable IDE1006 // Named like the properties they stand beside in a [PerspectiveIndex], as TenantConstants.AllTenants is

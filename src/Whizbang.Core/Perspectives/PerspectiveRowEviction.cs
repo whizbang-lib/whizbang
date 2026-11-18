@@ -15,8 +15,8 @@ namespace Whizbang.Core.Perspectives;
 /// generated module initializers, so the check is reflection-free.
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention#what-an-eviction-removes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowEvictionTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/EvictedRowRebuildTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowEvictionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/EvictedRowRebuildTests.cs</tests>
 public static class PerspectiveRowEviction {
   /// <summary>
   /// True when <paramref name="modelType"/>'s rows can be evicted by row retention: it resolves a row TTL

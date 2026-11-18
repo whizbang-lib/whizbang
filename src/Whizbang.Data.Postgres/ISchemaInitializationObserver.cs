@@ -69,7 +69,7 @@ public interface ISchemaInitializationObserver {
   /// pass's. Their progress is said in the log (#2128).
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorKeepaliveStartupTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationObserversTests.cs:PreLockPhasesStarting_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
   ValueTask OnPreLockPhasesStartingAsync(string schema, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 
   /// <summary>
@@ -87,7 +87,7 @@ public interface ISchemaInitializationObserver {
   /// </remarks>
   /// <docs>data/turnkey-initialization#bootstrap-retry-scheduled</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ATransientFailure_IsRetriedOnceItsDelayHasPassed_ThenTheClosureLandsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationObserversTests.cs:BootstrapRetryScheduled_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationObserversTests.cs:BootstrapRetryScheduled_IsANoOpForAnObserverThatDoesNotWatchItAsync</tests>
   ValueTask OnBootstrapRetryScheduledAsync(
       string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }

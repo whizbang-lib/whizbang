@@ -12,7 +12,7 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <typeparam name="TModel">The log entry model type</typeparam>
 /// <docs>fundamentals/lenses/temporal-query</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/TemporalPerspectiveRowTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/TemporalPerspectiveRowTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Unlike <see cref="PerspectiveRow{TModel}"/> which maintains a single row per stream (UPSERT),

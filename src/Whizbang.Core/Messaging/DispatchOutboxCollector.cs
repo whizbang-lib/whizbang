@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// outbox exactly as before — zero behavior change off the collecting path.
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchOutboxCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatchOutboxCollectorTests.cs</tests>
 /// <docs>fundamentals/messaging/composite-events#pre-fanout</docs>
 public sealed class DispatchOutboxCollector {
   private static readonly AsyncLocal<DispatchOutboxCollector?> _current = new();

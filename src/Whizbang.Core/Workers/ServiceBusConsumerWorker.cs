@@ -28,8 +28,8 @@ namespace Whizbang.Core.Workers;
 /// Events from remote services are stored in inbox via store_inbox_messages and perspectives are invoked with ordering guarantees.
 /// </summary>
 /// <docs>messaging/transports/transport-consumer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:StartAsync_WhenSubscribeFails_LogsAndRethrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:ExecuteAsync_WhenFatalErrorOccurs_LogsAndRethrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
@@ -628,7 +628,7 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   /// <remarks>Internal rather than private so its failure path, which must still end the tracking it began, can be
   /// driven directly (#2228).</remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsOnFailureTests.cs:ServiceBusConsumer_PostLifecycleStageThrows_EndsItsTrackingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsOnFailureTests.cs:ServiceBusConsumer_PostLifecycleStageThrows_EndsItsTrackingAsync</tests>
   internal static async Task InvokePostLifecycleForEventAsync(
     InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
     LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, Action<Task> trackDetachedTask,

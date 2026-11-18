@@ -29,8 +29,8 @@ namespace Whizbang.Core.Lenses;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/InheritScopeAttributeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/ScopeInheritanceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/InheritScopeAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/ScopeInheritanceTests.cs</tests>
 /// <example>
 /// <code>
 /// // No attribute, or [InheritScope]: every field at creation, set once.

@@ -16,7 +16,7 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <typeparam name="TModel">The log entry model type that this perspective produces</typeparam>
 /// <docs>fundamentals/perspectives/temporal</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Temporal perspectives are ideal for:
@@ -72,7 +72,7 @@ public interface ITemporalPerspectiveFor<TModel> where TModel : class {
 /// <typeparam name="TModel">The log entry model type</typeparam>
 /// <typeparam name="TEvent1">The event type this perspective handles</typeparam>
 /// <docs>fundamentals/perspectives/temporal</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
 public interface ITemporalPerspectiveFor<TModel, TEvent1> : ITemporalPerspectiveFor<TModel>
   where TModel : class
   where TEvent1 : IEvent {

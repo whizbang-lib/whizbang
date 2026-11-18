@@ -140,7 +140,7 @@ public enum IndexKinds {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IndexedAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// public record OrderModel {
@@ -236,7 +236,7 @@ public sealed class IndexedAttribute(IndexKinds kind = IndexKinds.Ordered, bool 
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IndexedAttributeTests.cs</tests>
 /// <param name="kind">What each index has to answer. Defaults to <see cref="IndexKinds.Ordered"/>.</param>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class IndexAllFieldsAttribute(IndexKinds kind = IndexKinds.Ordered) : Attribute {

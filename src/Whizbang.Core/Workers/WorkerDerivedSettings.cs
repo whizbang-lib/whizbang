@@ -12,7 +12,7 @@ namespace Whizbang.Core.Workers;
 /// the startup settings report through the same functions the workers size themselves with (#2251).
 /// </summary>
 /// <docs>operations/configuration/startup-settings-report#derived-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkerDerivedSettingsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerDerivedSettingsTests.cs</tests>
 internal sealed class WorkerDerivedSettings(
     IOptions<PerspectiveWorkerOptions> perspective,
     IOptions<InboxDispatchWorkerOptions> inboxDispatch,

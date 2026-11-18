@@ -37,7 +37,7 @@ namespace Whizbang.Core.Perspectives;
 /// <typeparam name="TModel">The read model the perspective maintains.</typeparam>
 /// <typeparam name="TEvent">The collective event this handler responds to. Constrained to <see cref="ICollectiveEvent"/> so the source generator can filter handlers by constraint.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveApplyFor_TEventConstraint_IsICollectiveEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveApplyFor_TEventConstraint_IsICollectiveEventAsync</tests>
 public interface ICollectiveApplyFor<TModel, TEvent>
     where TModel : class
     where TEvent : ICollectiveEvent {

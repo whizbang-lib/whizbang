@@ -33,7 +33,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RebuildCreatedAtIntegrationTests.cs</tests>
 public static class PerspectiveRowStart {
   private static readonly AsyncLocal<Start?> _current = new();
@@ -42,7 +42,7 @@ public static class PerspectiveRowStart {
   /// <summary>The date this flow gives <paramref name="rowId"/> when it inserts the row, or null.</summary>
   /// <param name="rowId">The row being written.</param>
   /// <returns>The row's start, or null when this flow carries none for it.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:Begin_DatesThatRowOnly_UntilTheHandleIsDisposedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:Begin_DatesThatRowOnly_UntilTheHandleIsDisposedAsync</tests>
   public static DateTime? For(Guid rowId) =>
     _current.Value is { } start && start.RowId == rowId ? start.StartedAt : null;
 
@@ -54,8 +54,8 @@ public static class PerspectiveRowStart {
   /// <param name="rowId">The row being written.</param>
   /// <param name="startedAt">The row's date, or null to change nothing.</param>
   /// <returns>A handle that restores the start this flow carried before.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:Begin_Nested_RestoresTheOuterStartOnDisposeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:Begin_WithNoStart_ChangesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:Begin_Nested_RestoresTheOuterStartOnDisposeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:Begin_WithNoStart_ChangesNothingAsync</tests>
   public static IDisposable Begin(Guid rowId, DateTime? startedAt) {
     if (startedAt is not { } at) {
       return _unchanged;
@@ -78,10 +78,10 @@ public static class PerspectiveRowStart {
   /// <param name="folded">The events folded into the row, in order.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The row's date in UTC, or null to leave the write's own time.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_AFoldStartingAfterTheFirstEvent_TakesTheStoresStartAsUtcAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_AFoldThatBeginsTheStream_IsTheFirstEventsTime_NotTheLastsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_AStreamThatStillHoldsItsStart_IsTheFirstFoldedEventsTimeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_ARowThatExists_AsksNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_AFoldStartingAfterTheFirstEvent_TakesTheStoresStartAsUtcAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_AFoldThatBeginsTheStream_IsTheFirstEventsTime_NotTheLastsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_AStreamThatStillHoldsItsStart_IsTheFirstFoldedEventsTimeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowStartTests.cs:ResolveAsync_ARowThatExists_AsksNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RebuildCreatedAtIntegrationTests.cs:LiveFirstBatch_OfSeveralEvents_DatesTheRowAtTheFirstAsync</tests>
   public static async Task<DateTime?> ResolveAsync(
       IEventStore eventStore, Guid rowId, bool rowExists, IReadOnlyList<MessageEnvelope<IEvent>> folded,

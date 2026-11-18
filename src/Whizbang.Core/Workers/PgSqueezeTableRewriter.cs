@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
 public sealed class PgSqueezeTableRewriter : ITableRewriter {
   /// <inheritdoc />
   public string Strategy => TableRewriteStrategies.PG_SQUEEZE;

@@ -140,7 +140,7 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
 
   /// <inheritdoc />
   /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
   public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
 
   /// <summary>Optional tenant filter (scope <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>

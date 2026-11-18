@@ -64,7 +64,7 @@ public sealed class LifecycleCoordinatorMetrics {
   /// inactivity bound, so PostAllPerspectives does not fire for the event in this process (#1797).
   /// </summary>
   /// <docs>operations/observability/metrics</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_EndsAPartialEntry_OnceNoPerspectiveHasReportedForTheBound_NamingTheMissingPerspectivesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_EndsAPartialEntry_OnceNoPerspectiveHasReportedForTheBound_NamingTheMissingPerspectivesAsync</tests>
   public PassiveCounter<long> PartialTrackingEnded { get; }
 
   /// <summary>
@@ -72,7 +72,7 @@ public sealed class LifecycleCoordinatorMetrics {
   /// names a path that skipped its exit (#1797).
   /// </summary>
   /// <docs>operations/observability/metrics</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_NeverRetainsACompletedEntry_HoweverRecentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_NeverRetainsACompletedEntry_HoweverRecentAsync</tests>
   public PassiveCounter<long> CompletedTrackingSwept { get; }
 
   private readonly Meter _meter;
@@ -84,7 +84,7 @@ public sealed class LifecycleCoordinatorMetrics {
   /// </summary>
   /// <param name="trackedEntries">Reads the live tracked count.</param>
   /// <docs>operations/observability/metrics</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:TrackedEntriesGauge_ReportsTheLiveTrackedCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:TrackedEntriesGauge_ReportsTheLiveTrackedCountAsync</tests>
   public void ObserveTrackedEntries(Func<int> trackedEntries) {
     ArgumentNullException.ThrowIfNull(trackedEntries);
     _meter.CreateObservableGauge("whizbang.lifecycle_coordinator.tracked_entries", trackedEntries,

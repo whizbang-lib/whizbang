@@ -124,8 +124,8 @@ public sealed record ServiceBacklog {
   /// measured.
   /// </summary>
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsQuiescentApartFromIntegrity_ButNotQuiescentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToQuiescentAsync</tests>
   public bool IsQuiescentApartFromIntegrity => IsSettledApartFromIntegrity && PendingIdleRows == 0;
 
   /// <summary>
@@ -135,9 +135,9 @@ public sealed record ServiceBacklog {
   /// <remarks>Settled, not quiescent: the idle band is admitted BECAUSE it still holds rows, so its rows are not counted
   /// (see <see cref="PendingIdleRows"/>).</remarks>
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToSettledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SteadyIntegrityTrafficTests.cs:OnlyIntegrityTraffic_IsSettledApartFromIntegrity_ButNotSettledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SteadyIntegrityTrafficTests.cs:ApplicationWork_OrPerspectiveRows_AreNotSettled_ButTheIdleBandIsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SteadyIntegrityTrafficTests.cs:AnUnmeasuredFigure_FallsBackToSettledAsync</tests>
   public bool IsSettledApartFromIntegrity => NonIntegrityWorkRows is { } work
     ? work == 0 && PendingPerspectiveRows == 0
     : IsSettled;
@@ -154,7 +154,7 @@ public sealed record ServiceBacklog {
   /// figure and no budget is being spent; null means it cannot hold it, and the ceiling is measured in memory as before.
   /// </remarks>
   /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
   public IReadOnlyDictionary<string, DateTimeOffset>? HousekeepingDeferrals { get; init; }
 }
@@ -291,7 +291,7 @@ public interface IWorkCoordinator {
   /// <returns>A task that completes when the moment is recorded.</returns>
   /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:TheFirstDeferral_IsReadWithTheBacklog_AndTheFirstWriterWinsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
   ValueTask RecordHousekeepingDeferralAsync(string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default)
     => ValueTask.CompletedTask;
 
@@ -307,7 +307,7 @@ public interface IWorkCoordinator {
   /// <returns>A task that completes when the record is cleared.</returns>
   /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HousekeepingDeferralSqlTests.cs:AClear_RemovesOnlyItsOwnBudgetAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ServiceBacklogTests.cs:TheDefaultCoordinator_HoldsNoHousekeepingDeferralsAsync</tests>
   ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default)
     => ValueTask.CompletedTask;
 
@@ -354,8 +354,8 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>A task that completes when the settings are stored.</returns>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:AnEngineThatOnlySyncsDebugMode_StillReceivesItAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:TheDefaultSync_WithNoDebugEntry_DoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:AnEngineThatOnlySyncsDebugMode_StillReceivesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:TheDefaultSync_WithNoDebugEntry_DoesNothingAsync</tests>
   Task SyncRetentionSettingsAsync(IReadOnlyList<Whizbang.Core.Workers.RetentionSetting> settings, CancellationToken cancellationToken = default)
     => Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeIn(settings) is bool debugMode
       ? SyncDebugRetentionSettingAsync(debugMode, cancellationToken)
@@ -373,7 +373,7 @@ public interface IWorkCoordinator {
   /// archive has no archived streams to apply them to.</returns>
   /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveRestoreRequestSqlTests.cs:SyncPolicies_ThroughTheCoordinator_StoresTheConfiguredSetAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
   Task SyncStreamTypePoliciesAsync(IReadOnlyList<Whizbang.Core.Archival.StreamTypePolicy> policies, CancellationToken cancellationToken = default)
     => Task.CompletedTask;
 
@@ -417,7 +417,7 @@ public interface IWorkCoordinator {
   /// <see cref="RecordHeartbeatAsync"/>; <see langword="true"/> otherwise.
   /// </returns>
   /// <docs>fundamentals/workers/instance-liveness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordStartupHeartbeatAsync_DefaultImplementation_IsTheHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordStartupHeartbeatAsync_DefaultImplementation_IsTheHeartbeatAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartingInstanceHeartbeatE2ETests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupHeartbeatTests.cs</tests>
   Task<bool> RecordStartupHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
@@ -871,7 +871,7 @@ public interface IWorkCoordinator {
   /// This calls the complete_perspective_checkpoint_work SQL function directly.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
   Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
@@ -891,7 +891,7 @@ public interface IWorkCoordinator {
   /// This calls the complete_perspective_checkpoint_work SQL function directly.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
   Task ReportPerspectiveFailureAsync(
     PerspectiveCursorFailure failure,
@@ -934,7 +934,7 @@ public interface IWorkCoordinator {
   /// taking "nothing" for "no cursor" would apply every pair's stream again from its start.
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync</tests>
   bool ReadsCursorsInBatches => false;
 
   /// <summary>
@@ -1089,7 +1089,7 @@ public interface IWorkCoordinator {
   /// <returns>The ids among <paramref name="streamIds"/> that are StateBased.</returns>
   /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:StateBased_IgnoringTheAllowedEphemeralType_LeavesTheMixedStreamRebuildableAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync</tests>
   Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
     IReadOnlyList<Guid> streamIds,
     IReadOnlyList<string> ignoredEphemeralTypes,
@@ -1737,7 +1737,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:FoldStreamApplyPaths_FoldsAStreamOnce_AndAnEmptySetIsNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
   Task<int> FoldStreamApplyPathsAsync(
@@ -1939,7 +1939,7 @@ public interface IWorkCoordinator {
   /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync</tests>
   Task<TableRewriteQueueStatus> GetTableRewriteQueueStatusAsync(CancellationToken cancellationToken = default) =>
     Task.FromResult(new TableRewriteQueueStatus(0, Whizbang.Core.Workers.TableRewriteSettings.DEFAULT_BLOAT_THRESHOLD, 0));
 
@@ -1953,7 +1953,7 @@ public interface IWorkCoordinator {
   /// <docs>operations/observability/metrics#table-rewrites</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsATablesTotalBytesAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableMaintenanceTests.cs:TheQueueStatus_IsReadAsOnEfCoreAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync</tests>
   Task<long?> GetTableTotalBytesAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<long?>(null);
 
@@ -1982,7 +1982,7 @@ public interface IWorkCoordinator {
   /// <remarks>The <see cref="Whizbang.Core.Workers.PgRepackTableRewriter"/> strategy's rewrite.</remarks>
   /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExternalTableRewriteTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
   Task<double?> RewriteTableWithAsync(
       string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
@@ -2059,7 +2059,7 @@ public interface IWorkCoordinator {
   /// <remarks>Default: the request is cleared and nothing is recorded.</remarks>
   /// <docs>operations/infrastructure/storage-maintenance#rewrite-history</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs</tests>
   Task CompleteTableRewriteAsync(TableRewriteOutcome outcome, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(outcome);
     return ClearTableRewriteRequestAsync(outcome.TableName, cancellationToken);
@@ -2169,7 +2169,7 @@ public interface IWorkCoordinator {
   /// record that can never come. True: a stage counts as recorded only once a write lands.
   /// </summary>
   /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:RecordsInstanceTransitions_WithoutProviderSupport_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:RecordsInstanceTransitions_WithoutProviderSupport_IsFalseAsync</tests>
   bool RecordsInstanceTransitions => false;
 
   /// <summary>
@@ -2208,7 +2208,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token: the host's stop budget.</param>
   /// <returns>Whether the row was written, and the tombstone when the instance has one.</returns>
   /// <docs>operations/startup/instance-exits#the-exit-record</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordInstanceExitAsync_DefaultImplementation_KeepsNoRecordAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:RecordInstanceExitAsync_DefaultImplementation_KeepsNoRecordAsync</tests>
   Task<RunControl.InstanceExitRecordResult> RecordInstanceExitAsync(
       RunControl.InstanceExitRecord exitRecord, CancellationToken cancellationToken = default) =>
     Task.FromResult(RunControl.InstanceExitRecordResult.NotKept);
@@ -2457,7 +2457,7 @@ public interface IWorkCoordinator {
   /// <returns>The ledger rows withdrawn.</returns>
   /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RepairDrainRecordsBeforeSendingTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync</tests>
   Task<int> IntegrityWithdrawAnswerPendingAsync(
     Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
     CancellationToken cancellationToken = default) =>
@@ -2476,7 +2476,7 @@ public interface IWorkCoordinator {
   /// <returns>The buckets awaiting an answer, at most <paramref name="limit"/>.</returns>
   /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync</tests>
   Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
     Task.FromResult(0);
 
@@ -2682,7 +2682,7 @@ public interface IWorkCoordinator {
   /// nothing can be proven never handled) for a store that keeps no ledger.</returns>
   /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:LookupHandledEvents_Default_HasNoLedgerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:LookupHandledEvents_Default_HasNoLedgerAsync</tests>
   Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) =>
     Task.FromResult(HandledLedgerAnswer.NoLedger);
 
@@ -2715,7 +2715,7 @@ public interface IWorkCoordinator {
   /// <returns>The records removed; zero for a store that keeps no ledger.</returns>
   /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HandledLedgerSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:SweepHandledLedger_Default_RemovesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultInterfaceTests.cs:SweepHandledLedger_Default_RemovesNothingAsync</tests>
   Task<long> SweepHandledLedgerAsync(DateTimeOffset now, TimeSpan keep, CancellationToken cancellationToken = default) =>
     Task.FromResult(0L);
 
@@ -2762,7 +2762,7 @@ public interface IWorkCoordinator {
   /// store cannot record deliveries, and the caller handles the delivery inline, as before.</returns>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityDeliverySqlTests.cs:Enqueue_TheSameDeliveryTwice_RecordsItOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryCoordinatorDefaultsTests.cs:ACoordinatorWithoutTheQueue_ReportsUnsupported_AndIsInertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryCoordinatorDefaultsTests.cs:ACoordinatorWithoutTheQueue_ReportsUnsupported_AndIsInertAsync</tests>
   Task<IntegrityDeliveryEnqueueResult> EnqueueIntegrityDeliveryAsync(
     Guid deliveryId, string deliveryType, string payload, CancellationToken cancellationToken = default) =>
     Task.FromResult(IntegrityDeliveryEnqueueResult.Unsupported);
@@ -2843,7 +2843,7 @@ public interface IWorkCoordinator {
   /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerForgetNonOwnerSqlTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnownedAgeOutSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync</tests>
   Task<int> IntegrityForgetNonOwnerLedgerRowsAsync(
     Func<Guid, string, DateTimeOffset, bool> isNotAuthoritative, CancellationToken cancellationToken = default) =>
     Task.FromResult(0);
@@ -2872,7 +2872,7 @@ public interface IWorkCoordinator {
   /// <returns>The reading, or the not-reported reading.</returns>
   /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerBacklogSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
   Task<Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
     int maxRepairAttempts, CancellationToken cancellationToken = default) =>
     Task.FromResult(Observability.LedgerBacklogSnapshot.NotReported);
@@ -2891,7 +2891,7 @@ public interface IWorkCoordinator {
   /// <returns>Whether the counts were written.</returns>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync</tests>
   Task<bool> IntegrityAddLedgerTallyAsync(
     DateTimeOffset at, long opened, long closed, DateTimeOffset keepSince, CancellationToken cancellationToken = default) =>
     Task.FromResult(false);
@@ -2906,7 +2906,7 @@ public interface IWorkCoordinator {
   /// <returns>The window's counts, or null.</returns>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCompletionSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
   Task<IntegrityLedgerTally?> GetIntegrityLedgerTallyAsync(DateTimeOffset since, CancellationToken cancellationToken = default) =>
     Task.FromResult<IntegrityLedgerTally?>(null);
 
@@ -3293,7 +3293,7 @@ public interface IWorkCoordinator {
   /// </returns>
   /// <docs>fundamentals/events/event-streams#truncating-a-stream-prefix</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:CloseStream_ConsumptionGate_BlocksThenTruncatesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:Truncate_ConsumptionGate_BlocksThenTruncatesAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPrefixTruncateTests.cs:Truncator_AHookToldProceed_SeesTheDetailActuallyTruncated_AndIsAnnouncedAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrefixTruncateDriverParityTests.cs</tests>
@@ -3737,7 +3737,7 @@ public interface IWorkCoordinator {
   /// is empty when the engine has no queue.</returns>
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorCollectiveSinkQueueDefaultsTests.cs:Members_ByDefault_FilterTheWholeQueueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorCollectiveSinkQueueDefaultsTests.cs:Members_ByDefault_FilterTheWholeQueueAsync</tests>
   async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
     Guid streamId,
     IReadOnlyCollection<Guid> workIds,
@@ -3771,7 +3771,7 @@ public interface IWorkCoordinator {
   /// <returns>Results for each maintenance task with row counts and durations.</returns>
   /// <docs>fundamentals/events/ephemeral-events#reap-deletes-what-the-hook-saw</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapSeenSetTests.cs:Reap_GivenIds_DeletesOnlyThose_AnEmptyListNothing_AndNullEveryEligibleBodyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerReapScopeTests.cs:TheRestrictedCall_OnAnEngineThatImplementsOnlyTheUnrestrictedOne_RunsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerReapScopeTests.cs:TheRestrictedCall_OnAnEngineThatImplementsOnlyTheUnrestrictedOne_RunsItAsync</tests>
   Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
     IReadOnlyCollection<Guid>? ephemeralReapEventIds,
     CancellationToken cancellationToken = default)
@@ -3829,7 +3829,7 @@ public interface IWorkCoordinator {
   /// <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of rows deleted.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
   Task<long> DiscardPendingInboxMessagesAsync(
@@ -3848,7 +3848,7 @@ public interface IWorkCoordinator {
   /// <param name="messageTypeNames">Normalized assembly-qualified type names.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of rows deleted.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
   Task<long> DiscardPendingOutboxMessagesAsync(
@@ -4006,7 +4006,7 @@ public interface IWorkCoordinator {
   /// <returns>The number of rows dropped. Default: none, for engines without an inbox.</returns>
   /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExhaustedInboxDropSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync</tests>
   Task<int> DropExhaustedInboxRowsAsync(
     IReadOnlyList<Guid> messageIds,
     int maxAttempts,
@@ -4040,8 +4040,8 @@ public sealed record MaintenanceResult(string TaskName, long RowsAffected, doubl
 /// <param name="LastEventId">Current cursor position.</param>
 /// <param name="RewindTriggerEventId">The late-arriving event that triggered the rewind.</param>
 /// <docs>fundamentals/perspectives/rewind</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
@@ -4160,7 +4160,7 @@ public sealed record StreamTruncateResult(string Status, long EventsTruncated);
 /// disposition it cannot carry out (#1735). Nothing was removed in either case.
 /// </summary>
 /// <docs>fundamentals/events/stream-end-of-life#dispositions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
 public static class StreamTruncateStatus {
   /// <summary><see cref="Lifecycle.Disposition.Compact"/> with no <see cref="Lifecycle.ICompactionHandler"/> registered.</summary>
   public const string COMPACTION_UNAVAILABLE = "compaction_unavailable";
@@ -4506,9 +4506,9 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// migration required.
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_DefaultsToNoneAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:OutboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_DefaultsToNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsWireFormTests.cs:OutboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
   [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
@@ -4541,8 +4541,8 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// paths (migrations 017/018/019) write internally. The two are orthogonal: a failed
   /// scheduled-delivery retries with backoff on top of its original schedule.</para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_PropertyExistsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_DefaultIsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_PropertyExistsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OutboxMessageScheduledForTests.cs:OutboxMessage_ScheduledFor_DefaultIsNullAsync</tests>
   public DateTimeOffset? ScheduledFor { get; init; }
 
   /// <summary>
@@ -4556,8 +4556,8 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// releases them (group and floor cleared) at the deadline.
   /// </summary>
   /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CoalesceMintStampingTests.cs:AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoalesceMintStampingTests.cs:AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync</tests>
   public string? CoalesceGroup { get; init; }
 
   /// <summary>
@@ -4567,7 +4567,7 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// Null for every other message, which is stored as before.
   /// </summary>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherKeyedCollectiveStreamTests.cs:PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherKeyedCollectiveStreamTests.cs:PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync</tests>
   public string? CollectiveLinkType { get; init; }
 
   /// <summary>
@@ -4664,9 +4664,9 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// re-running the payload type check.
   /// </summary>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_DefaultsToNoneAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:InboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_DefaultsToNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsWireFormTests.cs:InboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
   [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
@@ -4768,26 +4768,26 @@ public record MessageFailure {
   /// <summary>
   /// Message ID that failed.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public required Guid MessageId { get; init; }
 
   /// <summary>
   /// Which stages of processing completed successfully before failure.
   /// For example: (Stored | EventStored) indicates storage succeeded but next stage failed.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public required MessageProcessingStatus CompletedStatus { get; init; }
 
   /// <summary>
   /// Error message or exception details.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public required string Error { get; init; }
 
   /// <summary>
@@ -4795,9 +4795,9 @@ public record MessageFailure {
   /// Enables typed filtering and handling of different failure scenarios.
   /// Defaults to Unknown if not specified.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
 }
 
@@ -5113,7 +5113,7 @@ public record PerspectiveCursorCompletion {
   /// Used by rewind observability to populate PerspectiveRewindCompleted.EventsReplayed.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDtoSurfaceTests.cs:PerspectiveCursorCompletion_ProcessedEventIds_DefaultsEmptyAndRoundTripsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDtoSurfaceTests.cs:PerspectiveCursorCompletion_ProcessedEventIds_DefaultsEmptyAndRoundTripsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveApplyIdempotencyTests.cs:RunAsync_RerunWithSameEvents_SkipsAllAndDoesNotReWriteAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveApplyIdempotencyTests.cs:RunAsync_RerunWithMixOfAppliedAndNewEvents_AppliesOnlyNewAsync</tests>
   public int EventsProcessed { get; init; }
@@ -5147,7 +5147,7 @@ public record PerspectiveCursorCompletion {
   /// </remarks>
   /// <docs>fundamentals/events/ephemeral-events</docs>
   /// <docs>fundamentals/perspectives/rewind#deleted-archive</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RewindDeletedArchiveTests.cs:ARewindFromTheStreamsStart_OfAStreamWhoseArchiveWasDeleted_IsRefused_AndNamesTheLateEventDroppedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RewindDeletedArchiveTests.cs:ARewindFromTheStreamsStart_OfAStreamWhoseArchiveWasDeleted_IsRefused_AndNamesTheLateEventDroppedAsync</tests>
   [JsonIgnore]
   public Guid[] DroppedStragglers { get; init; } = [];
 }
@@ -5556,12 +5556,12 @@ public sealed record TableRewriteOutcome(
 /// </param>
 /// <docs>operations/infrastructure/storage-maintenance#post-rewrite-floor</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs:TheCoordinator_ReadsTheQueueStatusAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
 public sealed record TableRewriteQueueStatus(int Requested, double Threshold, int HeldByFloor);
 
 /// <summary>Why a table is offered for rewrite (<see cref="TableRewriteCandidate.Reason"/>).</summary>
 /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public enum TableRewriteReason {
   // Each value is explicit: the numbers are public API, so a new member takes the next free number and is declared last.
@@ -5601,7 +5601,7 @@ public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, s
 /// say (the index has never been vacuumed or analyzed, or a column it holds has no statistics and no fixed width).
 /// </param>
 /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
 public readonly record struct QueueIndexBloat(string IndexName, string TableName, long SizeBytes, long? ExpectedBytes) {
   /// <summary>False for an index Postgres marks invalid (<c>pg_index.indisvalid</c>): a build that did not finish.</summary>
@@ -5629,7 +5629,7 @@ public readonly record struct QueueIndexBloat(string IndexName, string TableName
 
 /// <summary>The names <c>REINDEX CONCURRENTLY</c> gives the indexes it builds and retires (#1746).</summary>
 /// <docs>operations/infrastructure/storage-maintenance#queue-index-leftovers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
 public static class QueueIndexNames {
   /// <summary>
   /// Whether <paramref name="indexName"/> ends with <c>_ccnew</c> or <c>_ccold</c>, optionally followed by digits (Postgres

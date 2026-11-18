@@ -52,7 +52,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/perspective-indexes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveQueriesAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveQueriesAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDocumentIndexGenerationTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Analyzers/DocumentMatchIndexAnalyzerTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]

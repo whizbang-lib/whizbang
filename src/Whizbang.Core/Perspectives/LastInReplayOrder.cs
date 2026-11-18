@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives;
 /// Events to find the last of too, in the same ordering (<see cref="LastMatching"/>); null tracks none.
 /// </param>
 /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/LastInReplayOrderTests.cs</tests>
 public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoTrack = null) {
   private readonly Candidates _last = new();
   private readonly Candidates _lastMatching = new();
@@ -32,23 +32,23 @@ public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoT
 
   /// <summary>How many events were offered.</summary>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs:NothingOffered_HasNoLastEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/LastInReplayOrderTests.cs:NothingOffered_HasNoLastEventAsync</tests>
   public int Count { get; private set; }
 
   /// <summary>The last event in replay order; null when none was offered.</summary>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs:Last_IsTheEventAFullReplayFoldsLastAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/LastInReplayOrderTests.cs:Last_IsTheEventAFullReplayFoldsLastAsync</tests>
   public MessageEnvelope<IEvent>? Last => _last.Pick(this);
 
   /// <summary>The last event in replay order that the constructor's filter matched; null when none did.</summary>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs:LastMatching_IsTheLastMatchingEventInReplayOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/LastInReplayOrderTests.cs:LastMatching_IsTheLastMatchingEventInReplayOrderAsync</tests>
   public MessageEnvelope<IEvent>? LastMatching => _lastMatching.Pick(this);
 
   /// <summary>Takes the next event read.</summary>
   /// <param name="envelope">The event.</param>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/LastInReplayOrderTests.cs:Last_IsTheEventAFullReplayFoldsLastAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/LastInReplayOrderTests.cs:Last_IsTheEventAFullReplayFoldsLastAsync</tests>
   public void Offer(MessageEnvelope<IEvent> envelope) {
     ArgumentNullException.ThrowIfNull(envelope);
     if (Count == 0) {

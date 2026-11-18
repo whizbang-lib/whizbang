@@ -7,7 +7,7 @@ namespace Whizbang.Core.Perspectives;
 /// Defines how physical fields are stored relative to JSONB in a perspective.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/FieldStorageModeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FieldStorageModeTests.cs</tests>
 public enum FieldStorageMode {
   /// <summary>
   /// Default mode. No physical fields; all data stored in JSONB column only.

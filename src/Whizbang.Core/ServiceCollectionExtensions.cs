@@ -601,7 +601,7 @@ public static class ServiceCollectionExtensions {
   /// <see cref="DecorateEventStoreWithSyncTracking"/> registers them with the factory that calls this.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#read-through</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveReadThroughRegistrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveReadThroughRegistrationTests.cs</tests>
   private static Messaging.IEventStore _withArchive(Messaging.IEventStore store, IServiceProvider sp) =>
     sp.GetService<Whizbang.Core.Archival.IArchiveStore>() is { } archive
       ? new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(

@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#unresolved-inner-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs</tests>
 // WHIZ110 asks for a pinned identity so a stored type survives renames. This type is never stored,
 // published or registered: it exists only in memory, between reading a composite and fanning it out.
 #pragma warning disable WHIZ110

@@ -317,9 +317,9 @@ public static class JsonContextRegistry {
   /// case reads its value rather than the member's default. Writing always uses the declared name.</para>
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Serialization/DeclaredNameReadTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
   public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile)
     => CreateCombinedOptions(profile, _resolvers);
 
@@ -861,7 +861,7 @@ public static class JsonContextRegistry {
   /// (<see cref="JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor"/>). An interface has no
   /// constructor, so without a creator that read throws for the WHOLE containing message.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:Deserialize_InnerDiscriminatorUnresolvable_KeepsResolvableInnerEventsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:Deserialize_InnerDiscriminatorUnresolvable_KeepsResolvableInnerEventsAsync</tests>
   private static Func<TBase>? _unresolvedElementCreator<TBase>(bool strict) where TBase : notnull =>
     !strict && typeof(TBase) == typeof(global::Whizbang.Core.IMessage)
       ? (Func<TBase>)(object)_createUnresolvedMessage
@@ -878,7 +878,7 @@ public static class JsonContextRegistry {
   /// another assembly's events would silently serialize them as empty base objects.
   /// </summary>
   /// <docs>fundamentals/messages/json-serialization</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryCompositeWireSerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryCompositeWireSerializationTests.cs</tests>
   public static JsonTypeInfo<TBase>? GetLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options)
     where TBase : notnull {
     ArgumentNullException.ThrowIfNull(options);

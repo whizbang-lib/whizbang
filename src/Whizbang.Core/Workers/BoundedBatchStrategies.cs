@@ -18,7 +18,7 @@ namespace Whizbang.Core.Workers;
 /// when the caller cannot tell, which counts as no transaction.
 /// </param>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BoundedBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BoundedBatchStrategyTests.cs</tests>
 public readonly record struct BatchAppendContext(string Caller, Func<bool>? HoldsOpenTransaction) {
   /// <summary>An append from a caller that can say who it is but not whether it holds a transaction open.</summary>
   /// <param name="caller">Names the caller.</param>
@@ -39,7 +39,7 @@ internal static class BatchMessageSize {
 /// chosen; an append waits for room while the process-wide buffer is full.
 /// </summary>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BoundedBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BoundedBatchStrategyTests.cs</tests>
 public sealed class BoundedOutboxBatchStrategy : IOutboxBatchStrategy {
   private const string DEFAULT_CALLER = "An outbox append";
   private readonly BatchBuffer _buffer;
@@ -96,7 +96,7 @@ public sealed class BoundedOutboxBatchStrategy : IOutboxBatchStrategy {
 /// append waits while the buffer is full, so the receive loop stops pulling from the broker until flushes make room.
 /// </summary>
 /// <docs>messaging/inbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BoundedBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BoundedBatchStrategyTests.cs</tests>
 public sealed class BoundedInboxBatchStrategy : IInboxBatchStrategy {
   private const string CALLER = "An inbox append";
   private readonly BatchBuffer _buffer;

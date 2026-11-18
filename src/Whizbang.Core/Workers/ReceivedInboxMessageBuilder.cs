@@ -49,8 +49,8 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="messageTypeName">The payload type name.</param>
   /// <param name="payload">The payload; its marker is consulted only for a type nothing here consumes or declares.</param>
   /// <returns><see langword="true"/> for an event.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ConsumedEventReachesEventStoreTests.cs</tests>
   internal static bool ClassifiesAsEvent(IServiceProvider scope, string messageTypeName, object? payload) {
     // #2064: the consumer registry is authoritative for a type this service consumes. The perspective list alone
@@ -81,8 +81,8 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="redelivery">The dead letter's stored envelope and payload type.</param>
   /// <returns>The inbox row to store.</returns>
   /// <exception cref="InvalidOperationException">The stored envelope is empty or names another message.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage BuildRedelivery(IServiceProvider scope, DeadLetterRedelivery redelivery) {
     var jsonOptions = scope.GetService<JsonSerializerOptions>() ?? Serialization.JsonContextRegistry.CreateCombinedOptions();
     var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -128,7 +128,7 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="originMonitor">Counts received events with and without the producer's origin (#1029), when registered.</param>
   /// <param name="jsonOptions">Reads a received superseding event's payload for its key (#1729); when null, the combined
   /// registered contexts.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage Build(
       ReceivedEnvelope received,
       int priority,

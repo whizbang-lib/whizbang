@@ -10,7 +10,7 @@ namespace Whizbang.Core.Perspectives;
 /// right from a write the store refused and from a fold that produced no model.
 /// </summary>
 /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AMixedRun_SeparatesRewrittenAlreadyCorrectRefusedNoModelAndNoEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AMixedRun_SeparatesRewrittenAlreadyCorrectRefusedNoModelAndNoEventsAsync</tests>
 public enum PerspectiveRowUnchangedReason {
   /// <summary>The run did not say: it wrote the row, folded nothing, or predates the reason.</summary>
   Unreported = 0,
@@ -39,10 +39,10 @@ public static class PerspectiveRowUnchanged {
   /// <param name="folded">The model the run folded, serialized before the write.</param>
   /// <param name="stored">The row the store holds, serialized the same way; null when there is none.</param>
   /// <returns>Why the row was left untouched.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_AFoldEqualToTheStoredRow_IsAlreadyCorrectAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_AFoldThatDiffersFromTheStoredRow_IsAWriteRefusedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_WithNoStoredRow_IsAWriteRefusedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_WithNoFold_IsAWriteRefusedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_AFoldEqualToTheStoredRow_IsAlreadyCorrectAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_AFoldThatDiffersFromTheStoredRow_IsAWriteRefusedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_WithNoStoredRow_IsAWriteRefusedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowUnchangedTests.cs:OfRefusedWrite_WithNoFold_IsAWriteRefusedAsync</tests>
   public static PerspectiveRowUnchangedReason OfRefusedWrite(JsonDocument? folded, JsonDocument? stored) =>
     folded is not null && stored is not null && JsonElement.DeepEquals(folded.RootElement, stored.RootElement)
       ? PerspectiveRowUnchangedReason.AlreadyCorrect

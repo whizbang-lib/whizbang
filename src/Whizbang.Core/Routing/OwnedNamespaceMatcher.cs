@@ -17,7 +17,7 @@ namespace Whizbang.Core.Routing;
 /// discovery would silently discard. Both must agree, which is why neither carries its own copy.
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#owned-namespace-matching</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OwnedNamespaceMatcherTests.cs</tests>
 public static class OwnedNamespaceMatcher {
   /// <summary>
   /// Returns <c>true</c> when <paramref name="candidate"/> exactly matches, or is a child of, any
@@ -26,7 +26,7 @@ public static class OwnedNamespaceMatcher {
   /// <param name="candidate">The namespace to test. <c>null</c> or empty is never owned.</param>
   /// <param name="ownedDomains">The declared owned domains (see <see cref="RoutingOptions.OwnedDomains"/>).</param>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="ownedDomains"/> is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherTests.cs:IsOwned_ChildNamespace_IsOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OwnedNamespaceMatcherTests.cs:IsOwned_ChildNamespace_IsOwnedAsync</tests>
   public static bool IsOwned(string? candidate, IEnumerable<string> ownedDomains)
     => FindOwner(candidate, ownedDomains) is not null;
 
@@ -38,7 +38,7 @@ public static class OwnedNamespaceMatcher {
   /// <param name="candidate">The namespace to test. <c>null</c> or empty is never owned.</param>
   /// <param name="ownedDomains">The declared owned domains (see <see cref="RoutingOptions.OwnedDomains"/>).</param>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="ownedDomains"/> is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherTests.cs:IsOwned_SiblingSharingThePrefixWithoutADotBoundary_IsNotOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OwnedNamespaceMatcherTests.cs:IsOwned_SiblingSharingThePrefixWithoutADotBoundary_IsNotOwnedAsync</tests>
   public static string? FindOwner(string? candidate, IEnumerable<string> ownedDomains) {
     ArgumentNullException.ThrowIfNull(ownedDomains);
     if (string.IsNullOrEmpty(candidate)) {
@@ -79,7 +79,7 @@ public static class OwnedNamespaceMatcher {
   /// <param name="ownedDomains">The declared owned domains (see <see cref="RoutingOptions.OwnedDomains"/>).</param>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="ownedDomains"/> is null.</exception>
   /// <docs>resilience/stream-integrity#the-local-lane-follows-ownership</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherLocalLaneTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OwnedNamespaceMatcherLocalLaneTests.cs</tests>
   public static bool IsLocalEventType(string? storedEventType, IReadOnlyCollection<string> ownedDomains) {
     ArgumentNullException.ThrowIfNull(ownedDomains);
     if (ownedDomains.Count == 0) {
@@ -96,7 +96,7 @@ public static class OwnedNamespaceMatcher {
   /// <param name="domain">A declared owned domain.</param>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="domain"/> is null.</exception>
   /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/OwnedNamespaceMatcherLocalLaneTests.cs:NormalizeDomain_TrimsWhitespaceAndATrailingDotAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OwnedNamespaceMatcherLocalLaneTests.cs:NormalizeDomain_TrimsWhitespaceAndATrailingDotAsync</tests>
   public static string NormalizeDomain(string domain) {
     ArgumentNullException.ThrowIfNull(domain);
     return domain.Trim().TrimEnd('.');

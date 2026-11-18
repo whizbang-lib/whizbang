@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// carries the rules for its types, and every receiver compares them with its own through the same source.
 /// </summary>
 /// <docs>resilience/stream-integrity#rule-fingerprint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CatalogRuleFingerprintSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CatalogRuleFingerprintSourceTests.cs</tests>
 public interface IRuleFingerprintSource {
   /// <summary>
   /// The rules for <paramref name="eventTypes"/>: both versions, and the rule hash of each named type this service knows.
@@ -31,7 +31,7 @@ public interface IRuleFingerprintSource {
 /// Built once, on first use.
 /// </summary>
 /// <docs>resilience/stream-integrity#rule-fingerprint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CatalogRuleFingerprintSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CatalogRuleFingerprintSourceTests.cs</tests>
 public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
   private const string EVENT_KIND = "event";
 

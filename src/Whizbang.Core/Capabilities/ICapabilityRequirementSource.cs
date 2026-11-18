@@ -17,7 +17,7 @@ namespace Whizbang.Core.Capabilities;
 /// <c>TryAddEnumerable</c>); the <c>Capabilities</c> startup step reads every one after the probe.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#requirement-sources</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/ConfigurationManifestRequirementSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/ConfigurationManifestRequirementSourceTests.cs</tests>
 public interface ICapabilityRequirementSource {
   /// <summary>The requirements this source puts in force, and how each was turned on.</summary>
   /// <param name="configuration">The host's configuration, or null when it has none.</param>
@@ -31,7 +31,7 @@ public interface ICapabilityRequirementSource {
 /// (<see cref="CapabilityActivationResolver"/>).
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#requirement-sources</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/ConfigurationManifestRequirementSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/ConfigurationManifestRequirementSourceTests.cs</tests>
 internal sealed class ConfigurationManifestRequirementSource : ICapabilityRequirementSource {
   /// <inheritdoc />
   public IReadOnlyList<ActiveCapabilityRequirement> Resolve(IConfiguration? configuration) =>
@@ -43,7 +43,7 @@ internal sealed class ConfigurationManifestRequirementSource : ICapabilityRequir
 /// database that context uses, not on every database the host probes.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#requirement-sources</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/ScopedCapabilityRequirementSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/ScopedCapabilityRequirementSourceTests.cs</tests>
 public sealed class ScopedCapabilityRequirementSource : ICapabilityRequirementSource {
   private readonly ICapabilityRequirementSource _inner;
 
@@ -71,7 +71,7 @@ public sealed class ScopedCapabilityRequirementSource : ICapabilityRequirementSo
 /// implicit.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#requirement-sources</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/FixedCapabilityRequirementSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/FixedCapabilityRequirementSourceTests.cs</tests>
 public sealed class FixedCapabilityRequirementSource : ICapabilityRequirementSource {
   private readonly IReadOnlyList<ActiveCapabilityRequirement> _requirements;
 

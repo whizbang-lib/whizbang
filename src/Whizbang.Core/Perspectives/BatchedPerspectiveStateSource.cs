@@ -25,7 +25,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <param name="logger">Logs a batched read that failed.</param>
 /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
 public sealed partial class BatchedPerspectiveStateSource(ILogger<BatchedPerspectiveStateSource> logger) : IPerspectiveStateSource {
   private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));

@@ -39,10 +39,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_Constructor_StoresPerspectiveTypeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_EffectiveTimeoutMs_UsesExplicitValueWhenSetAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_CanHaveMultipleOnSameClassAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_Constructor_StoresPerspectiveTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_EffectiveTimeoutMs_UsesExplicitValueWhenSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_CanHaveMultipleOnSameClassAsync</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
 public sealed class AwaitPerspectiveSyncAttribute(Type perspectiveType) : Attribute {
   /// <summary>

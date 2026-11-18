@@ -21,7 +21,7 @@ namespace Whizbang.Core.Workers;
 /// runs on the schema-initialization connection when one is configured, and measures the ratio afterwards.
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed class VacuumFullTableRewriter : ITableRewriter {
   private readonly MaintenanceWorkerOptions _options;

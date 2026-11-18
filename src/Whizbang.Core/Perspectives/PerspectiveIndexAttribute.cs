@@ -56,7 +56,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveIndexAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveIndexAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/UpdatedAtIndexGenerationTests.cs</tests>
 /// <param name="properties">
 /// The model properties the index covers, leading property first. One is allowed: an index over a

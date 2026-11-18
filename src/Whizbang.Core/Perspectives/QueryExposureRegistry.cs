@@ -55,7 +55,7 @@ public enum QueryExposures {
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz306</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/QueryExposureRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/QueryExposureRegistryTests.cs</tests>
 public static class QueryExposureRegistry {
   private static readonly ConcurrentDictionary<Type, QueryExposures> _exposures = new();
   private static readonly ConcurrentDictionary<Type, ImmutableArray<string>> _unindexedFields = new();

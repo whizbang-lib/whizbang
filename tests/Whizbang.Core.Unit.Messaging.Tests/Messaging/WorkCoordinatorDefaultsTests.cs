@@ -1,0 +1,1174 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Covers the default interface method bodies on <see cref="IWorkCoordinator"/>.
+/// </summary>
+/// <remarks>
+/// IWorkCoordinator is a capability surface: a store provider implements the six
+/// members it must, and inherits a safe no-op for every optional capability it does
+/// not support. Those inherited defaults are only reachable through an implementation
+/// that leaves them alone, so a Postgres or Dapper coordinator — which overrides
+/// nearly all of them — never exercises one. Each test below pins the documented
+/// fallback: an empty result, a zero count, or a completed task, never a throw, so a
+/// provider missing a capability degrades rather than breaks the caller.
+/// </remarks>
+[Category("Core")]
+[Category("Messaging")]
+public class WorkCoordinatorDefaultsTests {
+
+  /// <summary>
+  /// Implements only the six abstract members so every optional capability keeps its
+  /// inherited default. The abstract members throw, so a test that strays into one
+  /// fails loudly instead of passing for the wrong reason.
+  /// </summary>
+  private sealed class MinimalWorkCoordinator : IWorkCoordinator {
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
+    public Task ReportPerspectiveCompletionAsync(
+        PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
+    public Task ReportPerspectiveFailureAsync(
+        PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
+    public Task StoreInboxMessagesAsync(
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+  }
+
+  [Test]
+  public async Task ReclassifyEventsEphemeralAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ReclassifyEventsEphemeralAsync([]);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task CountSourcedEventsForTypesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.CountSourcedEventsForTypesAsync([]);
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetTypeDefinitionsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetTypeDefinitionsAsync();
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task RegisterTypeDefinitionAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RegisterTypeDefinitionAsync("x", "x", "x", 0);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task GetStateBasedStreamIdsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetStateBasedStreamIdsAsync([]);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  /// <summary>
+  /// #2255: an engine that does not implement the mixed-stream members ignores no ephemeral type (every stream holding
+  /// an ephemeral event stays refused, the safe direction) and syncs nothing.
+  /// </summary>
+  [Test]
+  public async Task MixedStreamDefaults_IgnoreNothing_AndSyncNothingAsync() {
+    var mixed = Guid.NewGuid();
+    IWorkCoordinator coordinator = new StateBasedOnlyCoordinator(mixed);
+
+    var stateBased = await coordinator.GetStateBasedStreamIdsAsync([mixed], ["Ns.Pinged, Contracts"]);
+    var task = coordinator.SyncMixedStreamAllowancesAsync([new Whizbang.Core.Perspectives.MixedStreamPair("Ns.Pinged, Contracts", "Ns.Opened, Contracts")]);
+
+    await Assert.That(stateBased).IsEquivalentTo([mixed])
+      .Because("the default passes over nothing, so the stream is refused as it was before the allowance");
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  private sealed class StateBasedOnlyCoordinator(Guid stateBased) : IWorkCoordinator {
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyCollection<Guid>>([.. streamIds.Where(s => s == stateBased)]);
+  }
+
+  [Test]
+  public async Task SyncEphemeralTypeGraceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.SyncEphemeralTypeGraceAsync([]);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task SyncPerspectiveRetentionAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.SyncPerspectiveRetentionAsync([]);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task GetEphemeralPairsNeedingSnapshotAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task AdvanceIntegrityCheckpointAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.AdvanceIntegrityCheckpointAsync();
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task CountReceivedFromOriginAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.CountReceivedFromOriginAsync(Guid.Empty, 0L, 0L);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetConsumedTypeRegistrationsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetConsumedTypeRegistrationsAsync();
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task RegisterConsumedTypesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RegisterConsumedTypesAsync([], false);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task MarkConsumedTypeBackfillRequestedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.MarkConsumedTypeBackfillRequestedAsync([]);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task SubscriptionBackfillMembers_WithoutProviderSupport_UseTheInertDefaultsAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var id = Guid.Parse("0b000000-0000-0000-0000-00000000000b");
+    var now = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+
+    await coordinator.EnqueueSubscriptionBackfillsAsync([new SubscriptionBackfillSeed(Guid.Empty, string.Empty, "Contracts.A")]);
+    await coordinator.MarkSubscriptionBackfillWindowRequestedAsync(id, 1, now, now.AddMinutes(1));
+    await coordinator.WithdrawSubscriptionBackfillWindowRequestAsync(
+      new SubscriptionBackfillCursor { BackfillId = id, OwnerServiceId = Guid.Empty, OwnerServiceName = string.Empty, EventType = "Contracts.A" }, 1);
+    await coordinator.EndSubscriptionBackfillAsync(id, SubscriptionBackfillOutcome.Unanswered, now);
+
+    await Assert.That(await coordinator.GetSubscriptionBackfillsAsync()).IsEmpty()
+      .Because("an engine without the backfill table queues nothing, so it has nothing to walk");
+    await Assert.That(await coordinator.RecordSubscriptionBackfillAnswerAsync(new BackfillWindowAnswer { BackfillId = id, Window = 1 }, now)).IsNull();
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.A"])).IsNull();
+  }
+
+  [Test]
+  public async Task ComputeStreamDigestsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeStreamDigestsAsync(null, [], TimeSpan.Zero);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task ComputeTypeDigestsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeTypeDigestsAsync(null, [], TimeSpan.Zero);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task GetPerspectiveCoverageGapsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetPerspectiveCoverageGapsAsync(TimeSpan.Zero, 0);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task TryClaimIntegrityAuditCycleAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.TryClaimIntegrityAuditCycleAsync(TimeSpan.Zero);
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task TryClaimTypeDefinitionReconcileAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.TryClaimTypeDefinitionReconcileAsync(TimeSpan.Zero);
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task RecordOffloadClaimAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RecordOffloadClaimAsync("x", "x");
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task GetExpiredOffloadClaimsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetExpiredOffloadClaimsAsync(TimeSpan.Zero, 0);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task RemoveOffloadClaimsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RemoveOffloadClaimsAsync([]);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task TryClaimOffloadSweepAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.TryClaimOffloadSweepAsync(TimeSpan.Zero);
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task GetPerspectiveRowsAboutToReapAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetPerspectiveRowsAboutToReapAsync([], 0);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task HoldPerspectiveRowDestructionAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.HoldPerspectiveRowDestructionAsync([], default);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task ReleasePerspectiveRowHoldsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.ReleasePerspectiveRowHoldsAsync([]);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task AcknowledgeRetentionEnforcementAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.AcknowledgeRetentionEnforcementAsync("x");
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task CountPerspectiveRetentionBacklogAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.CountPerspectiveRetentionBacklogAsync("x");
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AdoptEnrolledPerspectiveRetentionAsync_WithoutProviderSupport_AdoptsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var adopted = await coordinator.AdoptEnrolledPerspectiveRetentionAsync();
+
+    await Assert.That(adopted).IsEmpty()
+      .Because("a provider without the adoption gate has nothing to adopt; the worker's loop stays silent");
+  }
+
+  [Test]
+  public async Task RequeueRowEvictionsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RequeueRowEvictionsAsync([]);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task GetPerspectiveTableNamesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetPerspectiveTableNamesAsync([]);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetPerspectiveRowsByIdsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetPerspectiveRowsByIdsAsync("x", "x", []);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task CascadeDeletePerspectiveRowsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.CascadeDeletePerspectiveRowsAsync("x", []);
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ReconcileFollowerPresenceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ReconcileFollowerPresenceAsync("x", []);
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetOwnAuditedEventTypesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetOwnAuditedEventTypesAsync();
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetStreamDigestsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetStreamDigestsAsync(null, []);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetTypeDigestsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetTypeDigestsAsync(null, []);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task DrainRowEvictionJournalAsync_WithoutProviderSupport_DrainsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var drained = await coordinator.DrainRowEvictionJournalAsync();
+
+    await Assert.That(drained).IsEmpty()
+      .Because("a store with no row-eviction journal has nothing to cascade, so the maintenance cascade ends at once");
+  }
+
+  [Test]
+  public async Task VerifyDigestTableAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.VerifyDigestTableAsync(TimeSpan.Zero);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task VerifyDigestTableSliceAsync_WithoutProviderSupport_IsACompletedPassWithNothingInItAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.VerifyDigestTableSliceAsync(
+      new FullHistoryCompareRequest(TimeSpan.Zero, TimeSpan.FromDays(1), 100));
+
+    await Assert.That(result.BucketsChecked).IsEqualTo(0);
+    await Assert.That(result.TotalDrift).IsEqualTo(0);
+    await Assert.That(result.StreamsChecked).IsEqualTo(0);
+    await Assert.That(result.PassCompleted).IsTrue()
+      .Because("a store with no compare has nothing left to walk, so each slice completes the pass and no cursor waits");
+  }
+
+  [Test]
+  public async Task RewriteTableAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RewriteTableAsync("x");
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ClearTableRewriteRequestAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.ClearTableRewriteRequestAsync("x");
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  /// <summary>#2301: without provider support, completing a rewrite clears its request and records nothing.</summary>
+  [Test]
+  public async Task CompleteTableRewriteAsync_WithoutProviderSupport_ClearsTheRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.CompleteTableRewriteAsync(new TableRewriteOutcome("x", "PgSqueeze", TableRewriteReason.Bloat, 4.0, 1.0));
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+    await Assert.That(() => coordinator.CompleteTableRewriteAsync(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task RequestTableRewriteAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RequestTableRewriteAsync("x");
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task GetTableRewriteQueueStatusAsync_WithoutProviderSupport_IsAnEmptyQueueAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var status = await coordinator.GetTableRewriteQueueStatusAsync();
+
+    await Assert.That(status).IsEqualTo(new TableRewriteQueueStatus(0, 3.0, 0));
+  }
+
+  [Test]
+  public async Task GetTableTotalBytesAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetTableTotalBytesAsync("wh_outbox")).IsNull();
+  }
+
+  [Test]
+  public async Task MeasureTableBloatAsync_WithoutProviderSupport_MeasuresNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var ratio = await coordinator.MeasureTableBloatAsync("x", Whizbang.Core.Observability.BloatMeasurementMethod.Approx);
+
+    await Assert.That(ratio).IsNull();
+  }
+
+  [Test]
+  public async Task RequestMeasuredTableRewriteAsync_WithoutProviderSupport_RecordsThePlainRequestAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RequestMeasuredTableRewriteAsync(
+      "x", new Whizbang.Core.Observability.BloatMeasurement(3.0, Whizbang.Core.Observability.BloatMeasurementMethod.Approx), 2.5);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task VacuumWorkTablesAsync_WithoutProviderSupport_VacuumsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var outcomes = await coordinator.VacuumWorkTablesAsync();
+
+    await Assert.That(outcomes).IsEmpty();
+  }
+
+  /// <summary>A backend that does not survey its queue indexes offers none, drops none and rebuilds none (#1746).</summary>
+  [Test]
+  public async Task QueueIndexCalls_WithoutProviderSupport_SurveyDropAndRebuildNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetQueueIndexBloatAsync()).IsEmpty();
+    await Assert.That(await coordinator.DropInvalidQueueIndexAsync("idx_x_ccnew")).IsFalse();
+    await Assert.That(await coordinator.ReindexQueueIndexAsync("idx_x")).IsNull();
+  }
+
+  [Test]
+  public async Task RecordInstanceTransitionAsync_WithoutProviderSupport_RecordsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      Guid.Empty, Whizbang.Core.Startup.StartupStage.Running, "serving", Whizbang.Core.RunControl.LifecyclePhase.Running, null));
+
+    await Assert.That(result).IsFalse()
+      .Because("a coordinator with no instance rows records nothing, so the reporter holds the transition as unwritten");
+  }
+
+  [Test]
+  public async Task ReadsCursorsInBatches_WithoutProviderSupport_IsFalseAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(coordinator.ReadsCursorsInBatches).IsFalse()
+      .Because("the default batched cursor read returns nothing, which a batch must not take for 'no cursor' (#2246)");
+  }
+
+  [Test]
+  public async Task RecordsInstanceTransitions_WithoutProviderSupport_IsFalseAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(coordinator.RecordsInstanceTransitions).IsFalse()
+      .Because("a coordinator that keeps no instance rows has nothing to record, so the stage gate does not wait for a "
+        + "record that can never come (#1636)");
+  }
+
+  [Test]
+  public async Task RequestStandbyAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RequestStandbyAsync(Guid.Empty, "x");
+
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task ClearStandbyRequestAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ClearStandbyRequestAsync(Guid.Empty);
+
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task GetStandbyRequestAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetStandbyRequestAsync();
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task EvictInstanceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.EvictInstanceAsync(Guid.Empty, Guid.Empty, "x");
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task IntegrityTryBeginReportBatchAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityTryBeginReportBatchAsync(Guid.Empty, [], default, TimeSpan.Zero);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityTryBeginRepairBatchAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityTryBeginRepairBatchAsync(Guid.Empty, [], default, TimeSpan.Zero, 0, 0);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityStampRepairWindowsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityStampRepairWindowsAsync(Guid.Empty, [], 0L, 0L);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task IntegrityProbeRepairBacklogAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityProbeRepairBacklogAsync(Guid.Empty, [], backlogCap: 10);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain admission to fall back to the per-comparison cap alone");
+  }
+
+  [Test]
+  public async Task IntegrityMarkUnhealableBatchAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkUnhealableBatchAsync(Guid.Empty, [], DateTimeOffset.UnixEpoch);
+
+    await Assert.That(result).IsNull()
+      .Because("null means the provider cannot mark buckets, so the durable ledger marks none and repair keeps asking as before");
+  }
+
+  [Test]
+  public async Task IntegrityWindowAwareAnswerAndMark_WithoutProviderSupport_AnswerAsTheWindowlessOnesAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var answer = await coordinator.IntegrityRecordBundleAnswerAsync(
+      Guid.Empty, [], [], new RedeliveryAnswerWindow(1, 2), DateTimeOffset.UnixEpoch);
+    var marked = await coordinator.IntegrityMarkUnhealableBatchAsync(
+      Guid.Empty, [], new RedeliveryAnswerWindow(1, 2), [], DateTimeOffset.UnixEpoch);
+
+    await Assert.That(answer).IsNull().Because("a store that cannot judge coverage answers as the window-less record (#2143)");
+    await Assert.That(marked).IsNull();
+  }
+
+  [Test]
+  public async Task AdoptRedeliveredOriginAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.AdoptRedeliveredOriginAsync(Guid.Empty, null, [], []);
+
+    await Assert.That(result).IsNull()
+      .Because("null means presence is unknown, so the reconciler adopts nothing and marks no bucket unhealable");
+  }
+
+  [Test]
+  public async Task ReconcileRedeliveredBundlesAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ReconcileRedeliveredBundlesAsync([]);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain to reconcile each bundle on its own (#2099)");
+  }
+
+  [Test]
+  public async Task IntegrityClaimRepairDrainAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityClaimRepairDrainAsync([], default, TimeSpan.Zero, 0, 0);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task IntegrityMarkHealedBatchAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkHealedBatchAsync(Guid.Empty, []);
+
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task IntegrityMarkHealedBatchWithAgesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(Guid.Empty, []);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityMarkTypesHealedWithAgesAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityMarkTypesHealedWithAgesAsync(Guid.Empty, []);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityTakeDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityTakeDrillCursorAsync(Guid.Empty, 0);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegritySaveDrillCursorAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var save = coordinator.IntegritySaveDrillCursorAsync(Guid.Empty, 0, Guid.Empty, DateTimeOffset.MinValue);
+
+    await Assert.That(save.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
+  public async Task GetIntegrityLedgerSummaryAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegrityLedgerSummaryAsync(0);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task GetIntegrityLedgerBacklogAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegrityLedgerBacklogAsync(0);
+
+    await Assert.That(result.Reported).IsFalse()
+      .Because("an engine with no ledger has no backlog to report, and a zero would read as a healed service");
+  }
+
+  [Test]
+  public async Task IntegrityRecordOriginCheckpointAsync_WithoutProviderSupport_KeepsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityRecordOriginCheckpointAsync(Guid.Empty, "origin", null, DateTimeOffset.UnixEpoch, 10);
+    await task;
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue()
+      .Because("an engine with no store keeps no checkpoint, and says so by doing nothing");
+  }
+
+  [Test]
+  public async Task IntegrityAddLedgerTallyAsync_WithoutProviderSupport_WritesNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var written = await coordinator.IntegrityAddLedgerTallyAsync(DateTimeOffset.UnixEpoch, 1, 1, DateTimeOffset.UnixEpoch);
+
+    await Assert.That(written).IsFalse().Because("an engine with no ledger keeps no tally, and the caller keeps its counts");
+  }
+
+  [Test]
+  public async Task GetIntegrityLedgerTallyAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var tally = await coordinator.GetIntegrityLedgerTallyAsync(DateTimeOffset.UnixEpoch);
+
+    await Assert.That(tally).IsNull().Because("no tally is no reading, and a zero would read as no progress");
+  }
+
+  [Test]
+  public async Task GetIntegritySettledMaxAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegritySettledMaxAsync(null, TimeSpan.Zero);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ComputeTypeDigestsWindowedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeTypeDigestsWindowedAsync(null, [], 0L, null, TimeSpan.Zero);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task IntegrityClaimLedgerRecheckAsync_WithoutProviderSupport_ClaimsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var claimed = await coordinator.IntegrityClaimLedgerRecheckAsync([Guid.NewGuid()], DateTimeOffset.MinValue, DateTimeOffset.MinValue, 10);
+
+    await Assert.That(claimed).IsEmpty().Because("#2115: an engine without the ledger has nothing to re-check");
+  }
+
+  [Test]
+  public async Task IntegrityForgetNonOwnerLedgerRowsAsync_WithoutProviderSupport_ForgetsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var forgotten = await coordinator.IntegrityForgetNonOwnerLedgerRowsAsync((_, _, _) => true);
+
+    await Assert.That(forgotten).IsEqualTo(0).Because("#2185: an engine without the ledger has no row to forget");
+  }
+
+  [Test]
+  public async Task IntegrityCountAnswerPendingAsync_WithoutProviderSupport_CountsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var pending = await coordinator.IntegrityCountAnswerPendingAsync(DateTimeOffset.MinValue, 500);
+
+    await Assert.That(pending).IsEqualTo(0).Because("#2184: an engine without the ledger has no answer outstanding");
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPendingAsync_WithoutProviderSupport_WithdrawsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var key = new IntegrityRepairLedger.DivergenceKey(Guid.Empty, null, "Contracts.A", Guid.Empty);
+
+    var withdrawn = await coordinator.IntegrityWithdrawAnswerPendingAsync(Guid.Empty, [key], DateTimeOffset.MinValue, TimeSpan.FromMinutes(1));
+
+    await Assert.That(withdrawn).IsEqualTo(0).Because("#2223: an engine without the ledger recorded no answer to withdraw");
+  }
+
+  [Test]
+  public async Task ComputeStreamDigestsWindowedAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeStreamDigestsWindowedAsync(null, [], 0L, null, null, 0, TimeSpan.Zero);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ComputeStreamDigestsForChunkAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeStreamDigestsForChunkAsync(Guid.Empty, [], null, null, TimeSpan.Zero);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ComputeUnsequencedReceivedDigestsAsync_WithoutProviderSupport_HoldsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ComputeUnsequencedReceivedDigestsAsync(Guid.Empty, ["Contracts.T"], null, TimeSpan.Zero);
+
+    await Assert.That(result).IsEmpty()
+      .Because("a store that cannot tell holds no sequence-less events as far as a comparison knows, and compares as before");
+  }
+
+  [Test]
+  public async Task IntegrityRecordMissingEventsAsync_WithoutProviderSupport_RecordsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(async () => await coordinator.IntegrityRecordMissingEventsAsync(Guid.Empty, [], [])).ThrowsNothing()
+      .Because("an engine that cannot record the named event has the drain sync the stream whole, as before");
+  }
+
+  [Test]
+  public async Task GetIntegritySealAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegritySealAsync(Guid.Empty);
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AdvanceIntegritySealAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.AdvanceIntegritySealAsync(Guid.Empty, 0L);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task VerifyDigestEpochsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.VerifyDigestEpochsAsync(TimeSpan.Zero, 0);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task RecheckDigestEpochsAsync_WithoutProviderSupport_ChecksNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecheckDigestEpochsAsync(new SealRecheckRequest(
+      TimeSpan.Zero, 1, TimeSpan.FromDays(30), TimeSpan.FromDays(7), Refold: true));
+
+    await Assert.That(result).IsEqualTo(new EpochVerificationResult(0, 0))
+      .Because("#2353: an engine without the epoch substrate re-checks nothing and finds no drift");
+  }
+
+  [Test]
+  public async Task GetIntegrityOriginGenerationAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegrityOriginGenerationAsync();
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task EnsureIntegritySealGenerationAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 0L);
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task EnsureIntegritySealGenerationAsync_WithARewrite_WithoutProviderSupport_FallsBackToTheGenerationOnlyGuardAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.EnsureIntegritySealGenerationAsync(Guid.Empty, 3L, new IntegrityHistoryRewrite(2, 10));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task GetIntegritySealGenerationAsync_WithoutProviderSupport_IsUnknownAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegritySealGenerationAsync(Guid.Empty)).IsNull();
+  }
+
+  [Test]
+  public async Task GetIntegrityHistoryRewriteAsync_WithoutProviderSupport_VouchesForNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await Assert.That(await coordinator.GetIntegrityHistoryRewriteAsync(0L)).IsNull();
+  }
+
+  [Test]
+  public async Task TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.TruncateStreamPrefixAsync(Guid.Empty, 0L, false);
+
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task GetStreamTruncateTargetsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetStreamTruncateTargetsAsync(Guid.Empty, 0L);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetArchivedEventsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetArchivedEventsAsync(Guid.Empty);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetEventVersionAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetEventVersionAsync(Guid.Empty);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetEphemeralBodiesAboutToReapAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetEphemeralBodiesAboutToReapAsync();
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task HoldEphemeralDestructionAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.HoldEphemeralDestructionAsync([], default);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task GetPendingCoalesceGroupStatsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetPendingCoalesceGroupStatsAsync();
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task FetchPendingCoalesceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.FetchPendingCoalesceAsync("x", 0);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task CompleteCoalesceFoldAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.CompleteCoalesceFoldAsync([], [], 0);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task ReleaseMaturedCoalesceAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.ReleaseMaturedCoalesceAsync("x");
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task DropExhaustedInboxRowsAsync_WithoutProviderSupport_DropsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.DropExhaustedInboxRowsAsync([Guid.NewGuid()], maxAttempts: 10);
+
+    await Assert.That(result).IsEqualTo(0);
+  }
+
+  // --- Defaults whose parameters need a real instance ------------------------
+
+  [Test]
+  public async Task RecordDefinitionLineageAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.RecordDefinitionLineageAsync(
+        fromDefinitionId: 1,
+        toDefinitionId: 2,
+        DefinitionRelationship.SchemaUpgradedTo,
+        migrationRef: null);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+    await task;
+  }
+
+  [Test]
+  public async Task SelectRedeliveryEventsAsync_WithoutProviderSupport_ReturnsNoEventsAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest());
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
+  public async Task RecordPerspectiveRowDestructionFailureAsync_WithoutProviderSupport_ReportsExhaustedAsync() {
+    // The default returns int.MaxValue, not zero: a provider that cannot record the
+    // failure reports the retry budget as spent so the caller stops retrying rather
+    // than looping forever against a store that will never persist the attempt.
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
+        [new Whizbang.Core.Lifecycle.PerspectiveRowRef("orders", Guid.Empty)],
+        TimeSpan.Zero,
+        maxRetries: 3,
+        Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete);
+
+    await Assert.That(result).IsEqualTo(int.MaxValue);
+  }
+
+  [Test]
+  public async Task RecordDestructionFailureAsync_WithoutProviderSupport_ReportsExhaustedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecordDestructionFailureAsync(
+        [Guid.Empty],
+        retryHoldUntil: default,
+        maxRetries: 3,
+        Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete);
+
+    await Assert.That(result).IsEqualTo(int.MaxValue);
+  }
+
+  [Test]
+  public async Task ImportBrokerDeadLetterAsync_WithoutProviderSupport_RefusesLoudlyAsync() {
+    // The one capability whose default throws instead of degrading quietly. Returning
+    // false here would read as "nothing to import" and let the caller move on, while
+    // the message is still sitting on the broker DLQ — so it refuses instead.
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var import = new Whizbang.Core.Transports.BrokerDeadLetterImport(
+        MessageId: Guid.Empty,
+        StreamId: null,
+        MessageType: null,
+        Destination: "orders",
+        EnvelopeJson: "{}",
+        BrokerReason: null,
+        BrokerDescription: null,
+        EnqueuedAt: null,
+        DeliveryCount: null);
+
+    await Assert.That(async () => await coordinator.ImportBrokerDeadLetterAsync(import))
+        .ThrowsExactly<NotSupportedException>();
+  }
+
+  [Test]
+  public async Task CutGatesConsumerSealsAndCarriedDetail_WithoutProviderSupport_DoNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    await coordinator.SetCutGatesAsync(waitForSeal: true, waitForConsumers: true);
+    await coordinator.RecordConsumerSealAsync("consumer-a", 7);
+    var cleared = await coordinator.RollOffCarriedDetailAsync(TimeSpan.FromDays(14), 100);
+
+    await Assert.That(cleared).IsEqualTo(0)
+      .Because("#2363: an engine whose cuts carry no digest has no gate to write, no seal to record and no detail to clear");
+  }
+}

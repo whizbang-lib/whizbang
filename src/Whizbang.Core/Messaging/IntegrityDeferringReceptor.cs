@@ -34,7 +34,7 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <typeparam name="TMessage">The integrity message.</typeparam>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs</tests>
 public sealed class IntegrityDeferringReceptor<TMessage> : IReceptor<TMessage> where TMessage : IMessage {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IntegrityDeliveryRegistry? _deliveries;

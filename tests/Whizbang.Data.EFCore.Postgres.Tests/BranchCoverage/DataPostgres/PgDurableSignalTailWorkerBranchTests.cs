@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics.Metrics;
+using System.Threading.Tasks.Sources;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -56,9 +57,15 @@ public class PgDurableSignalTailWorkerBranchTests : EFCoreTestBase {
 
   /// <summary>
   /// A dispatch still in flight when it returns is awaited before the tick moves on, so the cursor never
-  /// advances past a signal whose delivery has not finished. The sink holds the delivery open on a gate the
-  /// test controls: the tick is observed waiting on it, then completes once it opens.
+  /// advances past a signal whose delivery has not finished. The sink hands back a delivery the test
+  /// controls and reports the moment the tick awaits it; the delivery is finished only after that, so the
+  /// tick cannot find it already complete and step past the await.
   /// </summary>
+  /// <remarks>
+  /// Waiting only for the delivery to start is not enough (#2405): the tick still has to return from the
+  /// sink and test the delivery before it awaits, and a delivery finished inside that window let the tick
+  /// skip the await while every assertion still passed.
+  /// </remarks>
   [Test]
   [Timeout(60000)]
   public async Task Tick_ADispatchStillInFlight_IsAwaitedBeforeTheTickCompletesAsync(CancellationToken cancellationToken) {
@@ -88,15 +95,18 @@ public class PgDurableSignalTailWorkerBranchTests : EFCoreTestBase {
     var plan = NotificationConnectionPlan.Create(null, NotificationConnectionStringResolver.Resolve(options, configuration));
 
     var tick = worker.TickOnceAsync(plan, cancellationToken);
-    await sink.Entered.WaitAsync(cancellationToken);
-    var completedWhileInFlight = tick.IsCompleted;
+    // The delivery cannot finish until it is released, so the tick either awaits it or moves on without it,
+    // and whichever happens first is the answer: a tick that moved on completes while the delivery is open.
+    var first = await Task.WhenAny(sink.Awaited, tick).WaitAsync(cancellationToken);
+    var awaitedWhileInFlight = first == sink.Awaited;
     sink.Release();
     var delivered = await tick;
 
-    await Assert.That(completedWhileInFlight).IsFalse()
+    await Assert.That(awaitedWhileInFlight).IsTrue()
       .Because("the tick awaits a delivery that has not finished rather than moving on past it");
     await Assert.That(delivered).IsEqualTo(1);
-    await Assert.That(sink.Completed).IsTrue();
+    await Assert.That(sink.ResultTaken).IsTrue()
+      .Because("the tick resumes from the awaited delivery and takes its outcome");
   }
 
   private readonly record struct GatedProbe(int V) : ISignal {
@@ -104,25 +114,35 @@ public class PgDurableSignalTailWorkerBranchTests : EFCoreTestBase {
     public static SignalTargeting Targeting => SignalTargeting.Broadcast;
   }
 
-  /// <summary>Holds each delivery open until the test releases it, and reports when one has started.</summary>
-  private sealed class GatedSink : ISignalSink {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  /// <summary>
+  /// Hands back one delivery that stays open until the test releases it, and reports when the caller awaits it.
+  /// Awaiting a pending <see cref="ValueTask"/> registers a continuation with its source, which is the one point
+  /// that observes the await itself rather than the start of the delivery.
+  /// </summary>
+  private sealed class GatedSink : ISignalSink, IValueTaskSource {
+    private readonly TaskCompletionSource _awaited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private ManualResetValueTaskSourceCore<bool> _delivery = new() { RunContinuationsAsynchronously = true };
+    private int _resultTaken;
 
-    public Task Entered => _entered.Task;
-    public bool Completed { get; private set; }
+    /// <summary>Completes when the caller awaits the delivery while it is still open.</summary>
+    public Task Awaited => _awaited.Task;
+    public bool ResultTaken => Volatile.Read(ref _resultTaken) == 1;
 
-    public void Release() => _gate.TrySetResult();
+    public void Release() => _delivery.SetResult(true);
 
     public ValueTask ReceiveAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
-        where TSignal : ISignal {
-      _entered.TrySetResult();
-      return new ValueTask(_deliverAsync());
+        where TSignal : ISignal => new(this, _delivery.Version);
+
+    public ValueTaskSourceStatus GetStatus(short token) => _delivery.GetStatus(token);
+
+    public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) {
+      _delivery.OnCompleted(continuation, state, token, flags);
+      _awaited.TrySetResult();
     }
 
-    private async Task _deliverAsync() {
-      await _gate.Task;
-      Completed = true;
+    public void GetResult(short token) {
+      _delivery.GetResult(token);
+      Volatile.Write(ref _resultTaken, 1);
     }
   }
 

@@ -133,17 +133,17 @@ public sealed class WorkCoordinatorMetrics {
 
   /// <summary>Appends that waited for room in the batch buffer.</summary>
   /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
   public PassiveCounter<long> BatchBufferAppendWaits { get; }
 
   /// <summary>How long an append waited for room in the batch buffer.</summary>
   /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
   public Histogram<double> BatchBufferWaitDuration { get; }
 
   /// <summary>Appends admitted past the batch buffer's limit because the caller held a database transaction open.</summary>
   /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferTests.cs:ACallerHoldingATransactionOpen_GoesPastTheLimit_UpToTheCeiling_AndIsNamedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:ACallerHoldingATransactionOpen_GoesPastTheLimit_UpToTheCeiling_AndIsNamedAsync</tests>
   public PassiveCounter<long> BatchBufferCeilingOvershoots { get; }
 
   private readonly Meter _meter;
@@ -155,7 +155,7 @@ public sealed class WorkCoordinatorMetrics {
   /// <param name="messages">Reads the buffered message count.</param>
   /// <param name="bytes">Reads the buffered byte count.</param>
   /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
   public void ObserveBatchBuffer(Func<long> messages, Func<long> bytes) {
     ArgumentNullException.ThrowIfNull(messages);
     ArgumentNullException.ThrowIfNull(bytes);

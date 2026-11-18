@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="qualifiedTable">The schema-qualified table, quoted where the server needs it.</param>
 /// <param name="clientEnvironment">The connection as libpq environment variables (<c>PGHOST</c>, <c>PGPORT</c>, <c>PGDATABASE</c>, <c>PGUSER</c>, <c>PGPASSWORD</c> and the rest).</param>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExternalTableRewriteTests.cs</tests>
 public sealed class TableRewriteTarget(string qualifiedTable, IReadOnlyDictionary<string, string> clientEnvironment) {
   /// <summary>The schema-qualified table.</summary>

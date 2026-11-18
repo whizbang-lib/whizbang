@@ -272,6 +272,97 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public void Fire(WorkSignalCategory category) => _onSignal?.Invoke(category);
   }
 
+  /// <summary>
+  /// A work channel writer that counts the handlers on its new-perspective-work event; everything else is the real writer.
+  /// </summary>
+  private sealed class CountingWorkChannelWriter : IWorkChannelWriter {
+    private readonly WorkChannelWriter _inner = new();
+    private readonly Lock _gate = new();
+    private Action? _onPerspective;
+    /// <summary>How many handlers are on the new-perspective-work event now.</summary>
+    public int PerspectiveSubscriberCount {
+      get {
+        lock (_gate) {
+          return _onPerspective?.GetInvocationList().Length ?? 0;
+        }
+      }
+    }
+    /// <summary>Completes when a handler is added to the new-perspective-work event.</summary>
+    public TaskCompletionSource PerspectiveSubscribed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader => _inner.Reader;
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) => _inner.WriteAsync(work, ct);
+    public bool TryWrite(OutboxWork work) => _inner.TryWrite(work);
+    public void Complete() => _inner.Complete();
+    public bool IsInFlight(Guid messageId) => _inner.IsInFlight(messageId);
+    public void RemoveInFlight(Guid messageId) => _inner.RemoveInFlight(messageId);
+    public void ClearInFlight() => _inner.ClearInFlight();
+    public event Action? OnNewWorkAvailable {
+      add => _inner.OnNewWorkAvailable += value;
+      remove => _inner.OnNewWorkAvailable -= value;
+    }
+    public void SignalNewWorkAvailable() => _inner.SignalNewWorkAvailable();
+    public event Action? OnNewPerspectiveWorkAvailable {
+      add {
+        lock (_gate) {
+          _onPerspective += value;
+        }
+        PerspectiveSubscribed.TrySetResult();
+      }
+      remove {
+        lock (_gate) {
+          _onPerspective -= value;
+        }
+      }
+    }
+    public void SignalNewPerspectiveWorkAvailable() {
+      Action? handlers;
+      lock (_gate) {
+        handlers = _onPerspective;
+      }
+      handlers?.Invoke();
+    }
+    public bool ShouldRenewLease(Guid messageId) => _inner.ShouldRenewLease(messageId);
+  }
+
+  /// <summary>
+  /// A listener whose subscription does not return until the test releases it, so ExecuteAsync can be held between
+  /// adding its handler and anything it does after.
+  /// </summary>
+  private sealed class HeldSubscribeNotificationListener : IWorkNotificationListener, IDisposable {
+    private readonly ManualResetEventSlim _release = new(initialState: false);
+    private readonly Lock _gate = new();
+    private Action<WorkSignalCategory>? _onSignal;
+    /// <summary>How many handlers are attached now.</summary>
+    public int SubscriberCount {
+      get {
+        lock (_gate) {
+          return _onSignal?.GetInvocationList().Length ?? 0;
+        }
+      }
+    }
+    public bool IsHealthy => true;
+    public DateTimeOffset? LastSignalAt => null;
+    /// <summary>Completes once the worker has entered the subscription and is held there.</summary>
+    public TaskCompletionSource Subscribing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public event Action<WorkSignalCategory>? OnSignal {
+      add {
+        lock (_gate) {
+          _onSignal += value;
+        }
+        Subscribing.TrySetResult();
+        _release.Wait();
+      }
+      remove {
+        lock (_gate) {
+          _onSignal -= value;
+        }
+      }
+    }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
+    public void ReleaseSubscribe() => _release.Set();
+    public void Dispose() => _release.Dispose();
+  }
+
   // ============================================================
   // Helpers
   // ============================================================
@@ -302,7 +393,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       IWorkNotificationListener? notificationListener = null,
       PerspectiveMetrics? metrics = null,
       bool registerLifecycleCoordinator = true,
-      Microsoft.Extensions.Logging.ILogger<PerspectiveWorker>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<PerspectiveWorker>? logger = null,
+      IWorkChannelWriter? workChannelWriter = null) {
     var harness = new PerspectiveWorkerTestHarness();
     var lifecycle = lifecycleCoordinator ?? new SpyLifecycleCoordinator();
     var instanceProvider = new InstanceProvider();
@@ -336,7 +428,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
       streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
-      workChannelWriter: new WorkChannelWriter(),
+      workChannelWriter: workChannelWriter ?? new WorkChannelWriter(),
       rewindOptions: (rewindOptions is null ? null : Options.Create(rewindOptions)) ?? Options.Create(new PerspectiveRewindOptions()) ?? Options.Create(new PerspectiveRewindOptions()) ?? Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -928,5 +1020,65 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     // Firing after stop must be a no-op (handler already detached).
     listener.Fire(WorkSignalCategory.Perspective);
+  }
+
+  /// <summary>
+  /// The worker hooks the work channel's new-perspective-work event so a producer can wake it, and the channel writer is
+  /// a singleton that outlives the worker (#2409). A stopped worker must take its handler off, or every later signal
+  /// still reaches a dead worker and keeps it reachable.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task WorkChannelWriter_SubscribedWhileRunning_UnsubscribedOnStopAsync(CancellationToken cancellationToken) {
+    var writer = new CountingWorkChannelWriter();
+    var fx = _build(new StartupCoordinator(), _registryWithOnePerspective(),
+      options: new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+      },
+      workChannelWriter: writer);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    await writer.PerspectiveSubscribed.Task.WaitAsync(cancellationToken);
+    await Assert.That(writer.PerspectiveSubscriberCount).IsEqualTo(1)
+      .Because("the running worker listens for new perspective work on the channel writer");
+
+    await cts.CancelAsync();
+    await fx.Worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(writer.PerspectiveSubscriberCount).IsEqualTo(0)
+      .Because("a stopped worker must leave no handler on the channel writer, which outlives it");
+  }
+
+  /// <summary>
+  /// StopAsync can run while ExecuteAsync is still subscribing: the host runs ExecuteAsync on its own thread, so a stop
+  /// that lands between the subscription and whatever records it must still leave no handler behind. The listener here
+  /// holds ExecuteAsync inside the subscription until StopAsync has begun, which is that interleaving every time.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task NotificationListener_StopDuringSubscribe_LeavesNoHandlerAsync(CancellationToken cancellationToken) {
+    using var listener = new HeldSubscribeNotificationListener();
+    var fx = _build(new StartupCoordinator(), _registryWithOnePerspective(),
+      options: new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+      },
+      notificationListener: listener);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    // ExecuteAsync is now inside the subscription, held there.
+    await listener.Subscribing.Task.WaitAsync(cancellationToken);
+
+    var stopping = fx.Worker.StopAsync(CancellationToken.None);
+    listener.ReleaseSubscribe();
+    await stopping.WaitAsync(cancellationToken);
+
+    await Assert.That(listener.SubscriberCount).IsEqualTo(0)
+      .Because("a stop that lands while the worker is subscribing must still leave no handler on the listener");
   }
 }

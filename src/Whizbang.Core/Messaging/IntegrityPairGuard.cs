@@ -45,7 +45,7 @@ public sealed record IntegrityPairState(
 /// mismatch: a rolling deploy halts a mixed pair instead of repairing losses that are not real.
 /// </remarks>
 /// <docs>resilience/stream-integrity#the-pair-guard</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityPairGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityPairGuardTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TwoServicePairGuardTests.cs</tests>
 public sealed partial class IntegrityPairGuard {
   /// <summary>The <c>state</c> attribute of a pair that agrees.</summary>

@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>Registers payload-size hooks.</summary>
 /// <docs>fundamentals/messages/payload-size-limit#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
 public static class MessagePayloadSizeServiceCollectionExtensions {
   /// <summary>
   /// Adds a hook that sees every message whose payload crosses the warning threshold or the limit. Adding

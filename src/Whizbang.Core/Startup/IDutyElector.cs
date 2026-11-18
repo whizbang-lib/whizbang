@@ -49,7 +49,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// what it meant: no fencing token, rather than a made-up one.
   /// </remarks>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   long? Epoch => null;
 
   /// <summary>
@@ -65,7 +65,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// from the last instance that held the duty.
   /// </remarks>
   /// <docs>operations/startup/capabilities-and-duties#acquiring-a-duty</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   Guid? PreviousHolderInstanceId => null;
 
   /// <summary>
@@ -76,7 +76,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// </summary>
   /// <remarks>A default member: a grant that cannot be asked to drain is never asked.</remarks>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   bool DrainRequested => false;
 
   /// <summary>
@@ -87,7 +87,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// </summary>
   /// <remarks>A default member: a grant that cannot observe a loss on its own offers a token that is never canceled.</remarks>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs:LostToken_OfAGrantThatCannotObserveALoss_IsNeverCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs:LostToken_OfAGrantThatCannotObserveALoss_IsNeverCanceledAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleHolderLivenessE2ETests.cs:TheOldHolder_ObservesItsLossWithinOneRenewInterval_SoExclusiveWorkNeverOverlapsAsync</tests>
   CancellationToken LostToken => CancellationToken.None;
 
@@ -137,7 +137,7 @@ public interface IDutyElector {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One attempt per duty, in the order of <paramref name="duties"/>.</returns>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   async Task<IReadOnlyList<DutyAttempt>> TryAcquireManyAsync(IReadOnlyList<string> duties, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(duties);
     var attempts = new List<DutyAttempt>(duties.Count);

@@ -29,8 +29,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/FirstEventInStreamTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FirstEventInStreamTests.cs</tests>
 public readonly struct ApplyContext {
   [ThreadStatic]
   private static bool _isFirstEventInStream;
@@ -39,8 +39,8 @@ public readonly struct ApplyContext {
 
   /// <summary>The facts for the <c>Apply</c> running on this thread; empty outside an <c>Apply</c>.</summary>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs:OutsideAnApply_NoEventIsTheFirstInItsStreamAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FirstEventInStreamTests.cs:TheEventThatOpensAStream_IsTheFirstEventInStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs:OutsideAnApply_NoEventIsTheFirstInItsStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FirstEventInStreamTests.cs:TheEventThatOpensAStream_IsTheFirstEventInStreamAsync</tests>
   public static ApplyContext Current => new(_isFirstEventInStream);
 
   /// <summary>
@@ -51,8 +51,8 @@ public readonly struct ApplyContext {
   /// record stream positions is never first.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FirstEventInStreamTests.cs:ALaterEventOnAStreamWithNoRow_IsNotTheFirstEventInStreamAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FirstEventInStreamTests.cs:ARewind_ReproducesTheFirstEventFactAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FirstEventInStreamTests.cs:ALaterEventOnAStreamWithNoRow_IsNotTheFirstEventInStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FirstEventInStreamTests.cs:ARewind_ReproducesTheFirstEventFactAsync</tests>
   public bool IsFirstEventInStream { get; }
 
   /// <summary>
@@ -63,8 +63,8 @@ public readonly struct ApplyContext {
   /// <param name="isFirstEventInStream">Whether the event being applied is the first in its stream.</param>
   /// <returns>The scope to dispose when the <c>Apply</c> returns.</returns>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs:Enter_MakesTheFactCurrentUntilTheScopeIsDisposedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs:ANestedScope_RestoresTheEnclosingFactOnDisposeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs:Enter_MakesTheFactCurrentUntilTheScopeIsDisposedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs:ANestedScope_RestoresTheEnclosingFactOnDisposeAsync</tests>
   public static Scope Enter(bool isFirstEventInStream) {
     var previous = _isFirstEventInStream;
     _isFirstEventInStream = isFirstEventInStream;
@@ -73,8 +73,8 @@ public readonly struct ApplyContext {
 
   /// <summary>Restores, when disposed, the facts that were current before <see cref="Enter"/>.</summary>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs:ANestedScope_RestoresTheEnclosingFactOnDisposeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs:ADefaultScope_DisposesToNotFirstAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs:ANestedScope_RestoresTheEnclosingFactOnDisposeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs:ADefaultScope_DisposesToNotFirstAsync</tests>
   public readonly struct Scope : IDisposable {
     private readonly bool _previous;
 
@@ -82,7 +82,7 @@ public readonly struct ApplyContext {
 
     /// <summary>Restores the enclosing facts.</summary>
     /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyContextTests.cs:Enter_MakesTheFactCurrentUntilTheScopeIsDisposedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyContextTests.cs:Enter_MakesTheFactCurrentUntilTheScopeIsDisposedAsync</tests>
     public void Dispose() => _restore(_previous);
 
     private static void _restore(bool isFirstEventInStream) => _isFirstEventInStream = isFirstEventInStream;

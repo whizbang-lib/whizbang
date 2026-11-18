@@ -21,7 +21,7 @@ namespace Whizbang.Core.Archival;
 /// registered fails the start (#1741).
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 internal static class ArchiveOptionsBinder {
   private const string READ_THROUGH_KEY = ArchiveOptions.SECTION + ":" + nameof(ArchiveOptions.ReadThrough);
   private const string TYPES_SECTION = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.Types);

@@ -82,7 +82,7 @@ internal enum InlineStageFailureHandling {
 /// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
 /// <docs>operations/diagnostics/error-reference#distribute-receptor-failed</docs>
 /// <docs>operations/diagnostics/error-reference#distribute-message-failed</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleStageFailureIsolationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleStageFailureIsolationTests.cs</tests>
 public static partial class LifecycleInvocationHelper {
   private const string METRIC_STAGE = "stage";
   private const string METRIC_MESSAGE_TYPE = "message_type";

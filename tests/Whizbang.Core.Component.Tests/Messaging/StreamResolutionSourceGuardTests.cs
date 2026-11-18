@@ -29,7 +29,7 @@ public partial class StreamResolutionSourceGuardTests {
 
   private const string HELPER = "src/Whizbang.Core/Messaging/StreamIdentity.cs";
 
-  private const string PARITY_TABLE = "tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs";
+  private const string PARITY_TABLE = "tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs";
 
   /// <summary>The inbox-row builders, each a row of the parity table.</summary>
   private static readonly string[] _inboxBuilders = [

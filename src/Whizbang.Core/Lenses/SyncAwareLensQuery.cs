@@ -30,7 +30,7 @@ namespace Whizbang.Core.Lenses;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="SyncAwareLensQuery{TModel}"/>.
 /// </remarks>

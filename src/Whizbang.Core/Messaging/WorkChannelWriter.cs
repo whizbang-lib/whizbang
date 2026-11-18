@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// Wraps an unbounded channel for async message processing.
 /// Registered as singleton - shared between dispatcher/strategy and background worker.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
 public class WorkChannelWriter : IWorkChannelWriter {
   private readonly Channel<OutboxWork> _channel;
   private readonly ConcurrentDictionary<Guid, DateTimeOffset> _inFlight = new();

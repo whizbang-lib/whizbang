@@ -451,7 +451,7 @@ function ConvertTo-TestPurityRow {
   $lines = Get-FindingLine -Type $Type
   $reasons = @(foreach ($rule in $lines.Keys) { "$rule $(@($lines[$rule] | ForEach-Object { "L$_" }) -join ',')" })
   $note = ''
-  if ($Type.Project -ceq 'Whizbang.Core.Tests' -and $Type.Category -ne 'Unit' -and $Type.File.StartsWith('tests/Whizbang.Core.Tests/Workers/', [System.StringComparison]::Ordinal)) {
+  if ($Type.Project -ceq 'Whizbang.Core.Unit.Workers.Tests' -and $Type.Category -ne 'Unit' -and $Type.File.StartsWith('tests/Whizbang.Core.Unit.Workers.Tests/Workers/', [System.StringComparison]::Ordinal)) {
     $note = 'phase 2 waits for #1259'
   }
   return [pscustomobject][ordered]@{

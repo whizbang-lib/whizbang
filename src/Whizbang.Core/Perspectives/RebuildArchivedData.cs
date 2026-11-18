@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// archived whole is not alive. A stream never archived rebuilds the same way under every choice.
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs</tests>
 public enum RebuildArchivedData {
   /// <summary>
   /// The default: the rebuild never reads the archive. A stream archived through a prefix starts from its newest live
@@ -44,7 +44,7 @@ public enum RebuildArchivedData {
 /// while <see cref="Messaging.ProcessingModeAccessor.Current"/> is <see cref="Messaging.ProcessingMode.Rebuild"/>.
 /// </summary>
 /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:Rebuild_HoldsItsArchivedDataChoice_AmbientForItsReaders_AndRestoresItAfterwardsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:Rebuild_HoldsItsArchivedDataChoice_AmbientForItsReaders_AndRestoresItAfterwardsAsync</tests>
 public static class RebuildArchivedDataAccessor {
   private static readonly AsyncLocal<RebuildArchivedData> _current = new();
 

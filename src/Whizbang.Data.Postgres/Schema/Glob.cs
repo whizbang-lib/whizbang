@@ -7,7 +7,7 @@ namespace Whizbang.Data.Postgres.Schema;
 /// Matches the <c>*</c> and <c>?</c> wildcards of a configured pin (<c>wh_per_*:idx_*_legacy</c>) against
 /// <c>table:object</c>, ordinal and case-sensitive like PostgreSQL identifiers.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Schema/GlobTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/GlobTests.cs</tests>
 internal static class Glob {
   /// <summary>Whether <paramref name="text"/> matches <paramref name="pattern"/>.</summary>
   public static bool IsMatch(string pattern, string text) {

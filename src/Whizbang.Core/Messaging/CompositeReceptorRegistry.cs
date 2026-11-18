@@ -26,7 +26,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors#several-assemblies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorRegistryContributionTests.cs</tests>
 public sealed class CompositeReceptorRegistry : IReceptorRegistry {
   private readonly IReceptorRegistry[] _registries;
   private readonly IReceptorRegistry _runtimeHome;

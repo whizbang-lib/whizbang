@@ -31,6 +31,6 @@ namespace Whizbang.Core.Attributes;
 /// </example>
 /// <docs>fundamentals/events/stream-end-of-life#terminal-events</docs>
 /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogGeneratorTests.cs:Generator_TerminalEvent_StampsTheEntryAndRegistersTheTypeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/TerminalEventsTests.cs:IsTerminal_AnAttributedTypeInThisAssembly_IsRegisteredByTheGeneratorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/TerminalEventsTests.cs:IsTerminal_AnAttributedTypeInThisAssembly_IsRegisteredByTheGeneratorAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class TerminalEventAttribute : Attribute;

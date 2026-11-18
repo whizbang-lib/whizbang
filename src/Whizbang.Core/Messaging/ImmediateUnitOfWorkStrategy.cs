@@ -16,8 +16,8 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Real-time scenarios, critical messages, low-throughput services.
 /// Each message gets its own unit with time-ordered UUIDv7 ID.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private readonly ConcurrentDictionary<Guid, DispatchUnitOfWork> _units = new();
 

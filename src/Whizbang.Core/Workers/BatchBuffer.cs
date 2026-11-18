@@ -30,7 +30,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs</tests>
 internal sealed partial class BatchBuffer {
   private readonly BatchBufferLimits _limits;
   private readonly ILogger _logger;

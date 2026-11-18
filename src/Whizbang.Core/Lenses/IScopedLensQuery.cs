@@ -10,10 +10,10 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
 /// <docs>fundamentals/lenses/scoped-queries</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs:GetByIdAsync_CreatesScope_AndDisposesAfterQueryAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs:QueryAsync_CreatesScope_AndStreamResultsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs:ExecuteAsync_CreatesScope_AndDisposesAfterQueryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/ScopedLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/ScopedLensQueryTests.cs:GetByIdAsync_CreatesScope_AndDisposesAfterQueryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/ScopedLensQueryTests.cs:QueryAsync_CreatesScope_AndStreamResultsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/ScopedLensQueryTests.cs:ExecuteAsync_CreatesScope_AndDisposesAfterQueryAsync</tests>
 public interface IScopedLensQuery<TModel> where TModel : class {
   /// <summary>
   /// Executes a query with auto-created scope.

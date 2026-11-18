@@ -21,7 +21,7 @@ public sealed record PerspectiveRegistryPayload(string ServiceName, string Json)
 /// startup, which is what row retention enrolls from (#1548).
 /// </summary>
 /// <docs>fundamentals/perspectives/row-retention#dapper-driver</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRegistryPayloadsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRegistryPayloadsTests.cs</tests>
 public static class PerspectiveRegistryPayloads {
   private static readonly ConcurrentDictionary<string, string> _payloads = new(StringComparer.Ordinal);
 

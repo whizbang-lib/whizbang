@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// staging window, or a write form that is not one of the three.
 /// </summary>
 /// <docs>data/event-store#stored-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Validator_FailsOnAnInvalidValue_AndPassesTheDefaultsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs:Validator_FailsOnAnInvalidValue_AndPassesTheDefaultsAsync</tests>
 public sealed class EventStoreMetadataOptionsValidator : IValidateOptions<EventStoreMetadataOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, EventStoreMetadataOptions options) {

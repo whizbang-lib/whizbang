@@ -79,7 +79,7 @@ Each slice is one red-then-green increment and its own commit.
 1. **Seam, behavior unchanged.** Introduce `ITableRewriter` (strategy name, `CanRun`,
    `RewriteAsync` returning the re-measured ratio). Move today's `VACUUM FULL` path behind a
    `VacuumFullTableRewriter`. RED first: characterization tests pinning current outcomes
-   (`tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs`,
+   (`tests/Whizbang.Core.Unit.Workers.Tests/Startup/TableRewriteStartupStepTests.cs`,
    `tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs` stay green), plus a
    new test that the step resolves the rewriter by strategy. Docs:
    `operations/infrastructure/migrations.md` ("Table rewrites run post-ready").
@@ -275,7 +275,7 @@ Each slice is one red-then-green increment and its own commit.
     recovery, which keeps its own counter (`:304`). Changing the tick silently moves the ceiling.
     Add `MaxDeferral` (default one hour), measured from the first deferral with the coordinator's
     `TimeProvider`; when set, it governs, and the count remains as a legacy fallback. RED, on
-    `tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs` with a fake time provider:
+    `tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingCoordinatorTests.cs` with a fake time provider:
     forced at the time regardless of tick; not forced one tick early; reset on End; count still
     honored when only it is configured. Docs: `operations/workers/housekeeping-arbitration.md`
     (lines 74 and 96 describe the count today) and the configuration reference.

@@ -163,8 +163,8 @@ internal static class ProcessWideOptionsBinding {
   /// register the consumer without the pipeline, and each dead-letter path reads the same bound value.
   /// </summary>
   /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingWiringTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingWiringTests.cs</tests>
   internal static void AddDeadLetterLogging(IServiceCollection services) {
     services.AddOptions<DeadLetterLoggingOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DeadLetterLoggingOptions>, DeadLetterLoggingOptionsValidator>());
@@ -214,8 +214,8 @@ internal static class ProcessWideOptionsBinding {
   /// type-activated worker loop that reports a transient database failure takes the configured threshold.
   /// </summary>
   /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationWiringTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationWiringTests.cs</tests>
   internal static void AddDatabaseFailureEscalation(IServiceCollection services) {
     services.AddOptions<DatabaseFailureEscalationOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DatabaseFailureEscalationOptions>, DatabaseFailureEscalationOptionsValidator>());

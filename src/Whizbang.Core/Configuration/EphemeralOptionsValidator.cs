@@ -12,7 +12,7 @@ namespace Whizbang.Core.Configuration;
 /// </summary>
 /// <remarks>Registered by <c>AddWhizbangWorkers</c> and checked at host start.</remarks>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs</tests>
 public sealed class EphemeralOptionsValidator : IValidateOptions<EphemeralOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, EphemeralOptions options) {

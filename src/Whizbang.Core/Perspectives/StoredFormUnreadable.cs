@@ -25,7 +25,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormUnreadableTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StoredFormUnreadableTests.cs</tests>
 public sealed class StoredFormUnreadable {
 #pragma warning disable CA1707
   /// <summary>The reason tag the meter and the log share for this classification.</summary>

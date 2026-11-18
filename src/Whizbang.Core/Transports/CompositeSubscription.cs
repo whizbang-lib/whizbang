@@ -20,7 +20,7 @@ namespace Whizbang.Core.Transports;
 /// no-op guarantee holds down to object identity.
 /// </remarks>
 /// <docs>messaging/transports/transports#transport-namespaces</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/NamespaceRoutingTransportTests.cs:CompositeSubscription_PauseResumeDispose_FanOutToEveryNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/NamespaceRoutingTransportTests.cs:CompositeSubscription_PauseResumeDispose_FanOutToEveryNamespaceAsync</tests>
 internal sealed class CompositeSubscription : ISubscription {
   private readonly IReadOnlyList<ISubscription> _subscriptions;
   private bool _disposed;
@@ -45,7 +45,7 @@ internal sealed class CompositeSubscription : ISubscription {
   /// The first disconnect any namespace's subscription has recorded: one dropped mirror is a disconnect of this
   /// handle, as it is when the drop is raised.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Transports/CompositeSubscriptionCoverageTests.cs:Disconnection_WhenAnUnderlyingSubscriptionRecordedOne_ReportsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/CompositeSubscriptionCoverageTests.cs:Disconnection_WhenAnUnderlyingSubscriptionRecordedOne_ReportsItAsync</tests>
   public SubscriptionDisconnectedEventArgs? Disconnection {
     get {
       foreach (var subscription in _subscriptions) {

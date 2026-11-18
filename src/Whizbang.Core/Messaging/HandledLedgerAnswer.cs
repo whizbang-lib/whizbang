@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="CoversFrom">The moment from which every event handled here is recorded; null when there is no ledger.</param>
 /// <param name="Handled">The asked-about events the ledger records as handled.</param>
 /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RepairReceptorGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairReceptorGateTests.cs</tests>
 public sealed record HandledLedgerAnswer(DateTimeOffset? CoversFrom, IReadOnlySet<Guid> Handled) {
   /// <summary>The answer of a store that keeps no ledger: no coverage, so no repaired event runs a receptor.</summary>
   public static HandledLedgerAnswer NoLedger { get; } = new(null, new HashSet<Guid>());

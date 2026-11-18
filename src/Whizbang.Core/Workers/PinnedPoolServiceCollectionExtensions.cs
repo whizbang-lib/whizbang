@@ -13,9 +13,9 @@ namespace Whizbang.Core.Workers;
 /// DI extensions for configuring the Whizbang pinned-connection worker pool.
 /// </summary>
 /// <docs>fundamentals/workers/pinned-connection-pool</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_CoreOnly_ResolvesNoOpAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:AddPinnedWorker_OptsInCustomWorkerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_CalledTwice_DoesNotDoubleRegisterRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_CoreOnly_ResolvesNoOpAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PinnedPoolRegistrationTests.cs:AddPinnedWorker_OptsInCustomWorkerAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PinnedPoolRegistrationTests.cs:Register_CalledTwice_DoesNotDoubleRegisterRegistryAsync</tests>
 public static class PinnedPoolServiceCollectionExtensions {
 
   /// <summary>

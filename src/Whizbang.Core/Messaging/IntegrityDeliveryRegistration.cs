@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// needs, with its drain handler registered beside it.
 /// </summary>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:Registration_WrapsTheReceptorAtAllThreeStagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:Registration_WrapsTheReceptorAtAllThreeStagesAsync</tests>
 public static class IntegrityDeliveryRegistration {
   /// <summary>
   /// Registers <paramref name="receptor"/> as an integrity receptor: an <see cref="IntegrityDeferringReceptor{TMessage}"/>
@@ -24,7 +24,7 @@ public static class IntegrityDeliveryRegistration {
   /// <param name="services">The host's services, where the delivery registry is found.</param>
   /// <param name="scopeFactory">Scopes the deferral records a delivery in.</param>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:Registration_WrapsTheReceptorAtAllThreeStagesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:Registration_WrapsTheReceptorAtAllThreeStagesAsync</tests>
   public static void RegisterIntegrityReceptor<TMessage>(
       this IReceptorRegistry registry, IReceptor<TMessage> receptor, IServiceProvider services,
       IServiceScopeFactory scopeFactory) where TMessage : IMessage {

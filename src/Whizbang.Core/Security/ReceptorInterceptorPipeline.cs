@@ -22,7 +22,7 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorPipelineTests.cs</tests>
 /// <remarks>
 /// Creates a pipeline from the supplied interceptors. Empty input is a no-op pipeline
 /// that always allows.
@@ -34,7 +34,7 @@ public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor
   /// True when no interceptor is registered. The dispatcher and the receptor invoker read this once, when they are
   /// built, and skip the gate entirely for an empty pipeline, so a host without interceptors pays nothing per message.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorGateTests.cs:Active_NoInterceptorsRegistered_IsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorGateTests.cs:Active_NoInterceptorsRegistered_IsNullAsync</tests>
   public bool IsEmpty => _interceptors.Count == 0;
 
   /// <summary>

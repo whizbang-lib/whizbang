@@ -24,8 +24,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowWriteGuardTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/DeclinedStreamLeavesNoRowTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowWriteGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/DeclinedStreamLeavesNoRowTests.cs</tests>
 public static partial class PerspectiveRowWriteGuard {
   /// <summary>
   /// Whether the runner may write the row: true when an Apply produced the model, or it continues a stored row or

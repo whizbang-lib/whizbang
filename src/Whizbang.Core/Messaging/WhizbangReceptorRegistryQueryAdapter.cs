@@ -41,8 +41,8 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(
   /// envelope type name, or a row recovered from dead-letter custody under it (#934), is asking
   /// about the payload.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfAStaticallyConsumedPayload_CountsAsConsumerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfARuntimeConsumedPayload_CountsAsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfAStaticallyConsumedPayload_CountsAsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfARuntimeConsumedPayload_CountsAsConsumerAsync</tests>
   public bool HasAnyConsumer(string messageType) {
     var payloadType = EventTypeMatchingHelper.ExtractInnerPayloadTypeName(messageType);
     return (_scoped?.HasAnyConsumer(payloadType) ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(payloadType))
@@ -58,7 +58,7 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(
     => _scoped?.GetHandledMessages() ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetConsumedMessages_DelegatesToGeneratedStaticAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetConsumedMessages_DelegatesToGeneratedStaticAsync</tests>
   public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages()
     => _scoped?.GetConsumedMessages() ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
 

@@ -28,8 +28,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalReadersTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalReadersTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
 public static class CanonicalTemporalReaders {
   /// <summary>An instant from the token under the reader: microseconds, or a rendering.</summary>
   /// <param name="reader">A reader positioned on the value.</param>

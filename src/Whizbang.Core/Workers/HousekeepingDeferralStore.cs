@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralStoreTests.cs</tests>
 internal static partial class HousekeepingDeferralStore {
   /// <summary>Records the first deferral the decision reports, if it reports one.</summary>
   /// <param name="coordinator">The work coordinator the backlog was measured through, or null when there is none.</param>

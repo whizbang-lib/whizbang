@@ -9,10 +9,10 @@ namespace Whizbang.Core.Workers;
 /// Register via DI to receive callbacks when events are deduped, cached, or evicted.
 /// </summary>
 /// <docs>operations/workers/perspective-worker#dedup-observer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEventsMarkedInFlight_CalledAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnRetentionActivated_CalledAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEvicted_CalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ProcessedEventCacheTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEventsMarkedInFlight_CalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnRetentionActivated_CalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEvicted_CalledAsync</tests>
 public interface IProcessedEventCacheObserver {
   /// <summary>
   /// Called when events are filtered out as duplicates before Apply.

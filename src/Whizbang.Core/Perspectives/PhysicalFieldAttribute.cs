@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PhysicalFieldAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PhysicalFieldAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// [PerspectiveStorage(FieldStorageMode.Extracted)]

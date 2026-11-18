@@ -61,7 +61,7 @@ public enum OperationalCategory {
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/operational-retention</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
 public sealed class OperationalRetentionOptions {
   /// <summary>
   /// Remove operational records past their resting period (<c>Whizbang:OperationalRetention:Enabled</c>, default true).
@@ -129,8 +129,8 @@ public sealed class OperationalRetentionOptions {
   /// <summary>The resting period of a category: its own override, else <see cref="Default"/>.</summary>
   /// <param name="category">The category.</param>
   /// <returns>The resting period.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs:TheDefaultAndACategoryOverride_BindFromConfigurationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs:ACategoryThisReleaseDoesNotDefine_RestsForTheDefault_NotAnotherCategorysOverrideAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs:TheDefaultAndACategoryOverride_BindFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs:ACategoryThisReleaseDoesNotDefine_RestsForTheDefault_NotAnotherCategorysOverrideAsync</tests>
   public TimeSpan RetentionFor(OperationalCategory category) => _override(category) ?? Default;
 
   /// <summary>Every category with its resting period.</summary>
@@ -163,7 +163,7 @@ public sealed class OperationalRetentionOptions {
 /// naming the configuration key (#2354).
 /// </summary>
 /// <docs>operations/infrastructure/operational-retention#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
 public sealed class OperationalRetentionOptionsValidator : IValidateOptions<OperationalRetentionOptions> {
   private const string SECTION = "Whizbang:OperationalRetention";
 

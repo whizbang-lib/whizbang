@@ -20,7 +20,7 @@ namespace Whizbang.Core.SystemEvents;
 /// usage the only compilable one.
 /// </remarks>
 /// <docs>fundamentals/security/audit-logging#audit-shipping</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:EventAudited_CarriesTheSysAuditTag_InTheGeneratedRegistryAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:CommandAudited_CarriesTheSysAuditTag_InTheGeneratedRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:EventAudited_CarriesTheSysAuditTag_InTheGeneratedRegistryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:CommandAudited_CarriesTheSysAuditTag_InTheGeneratedRegistryAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class SystemAuditTagAttribute : MessageTagAttribute;

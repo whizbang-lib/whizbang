@@ -13,7 +13,7 @@ namespace Whizbang.Core.Observability;
 /// receptors should fire during the cascade.
 /// </summary>
 /// <docs>fundamentals/dispatcher/dispatcher#cascade-default-dispatch</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStageFireTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStageFireTests.cs</tests>
 internal sealed class CascadeEnvelopeWrapper(IMessageEnvelope inner) : IMessageEnvelope {
   private readonly IMessageEnvelope _inner = inner;
 
@@ -24,7 +24,7 @@ internal sealed class CascadeEnvelopeWrapper(IMessageEnvelope inner) : IMessageE
   /// emissions would be silently deduplicated. Emissions made through this wrapper derive from the anchor
   /// instead (see <see cref="Messaging.EmissionIdentity"/>). Null only when the cascade had no source.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
   public Guid? EmissionAnchor { get; init; }
 
   public int Version => _inner.Version;

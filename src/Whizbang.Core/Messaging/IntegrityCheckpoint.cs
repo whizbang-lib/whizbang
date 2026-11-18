@@ -64,8 +64,8 @@ public sealed record IntegrityCheckpoint : IEvent, IControlPlaneMessage {
   /// an origin built before this field announces none, and an empty list gives up every earlier claim.
   /// </summary>
   /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_FromAnOlderOriginWithoutOwnedDomains_ReadsAsEmptyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_WithOwnedDomainsNull_ReadsAsEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_FromAnOlderOriginWithoutOwnedDomains_ReadsAsEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckpointWireSerializationTests.cs:IntegrityCheckpoint_WithOwnedDomainsNull_ReadsAsEmptyAsync</tests>
   public List<string> OwnedDomains {
     get => _ownedDomains;
     // A payload that holds null for the field claims no domains, the same as an older origin's, which has no such field.
@@ -373,7 +373,7 @@ public sealed class StreamIntegrityOptions {
   /// the previous one is answered. The owner clamps it to its own <c>MaxEventsPerRequest</c>. Must be at least 1.
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
   public int BackfillWindowSize { get; set; } = 1_000;
 
   /// <summary>
@@ -383,14 +383,14 @@ public sealed class StreamIntegrityOptions {
   /// at least 1.
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
   public int BackfillEventsPerMinute { get; set; } = 6_000;
 
   /// <summary>
   /// Backfill windows awaiting their answer at once, across every type and owner (default 2, #2092). Must be at least 1.
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
   public int BackfillMaxConcurrentWindows { get; set; } = 2;
 
   /// <summary>
@@ -401,7 +401,7 @@ public sealed class StreamIntegrityOptions {
   /// at least 1.
   /// </summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SubscriptionBackfillOptionsTests.cs:Defaults_PaceTheBackfillSoItCannotFloodAsync</tests>
   public int BackfillMaxWindowAttempts { get; set; } = 3;
 
   /// <summary>Phase A/L: run the scheduled deep audit (default true).</summary>
@@ -418,7 +418,7 @@ public sealed class StreamIntegrityOptions {
   /// many minutes, so a loss on this side with nothing else moving is found. 0 or less asks every cycle, as before.
   /// </summary>
   /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerAskSkipTests.cs:Options_MaxAskSkipMinutes_DefaultsToOneHourAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityAuditWorkerAskSkipTests.cs:Options_MaxAskSkipMinutes_DefaultsToOneHourAsync</tests>
   public int MaxAskSkipMinutes { get; set; } = 60;
 
   /// <summary>
@@ -490,7 +490,7 @@ public sealed class StreamIntegrityOptions {
   /// </remarks>
   /// <docs>resilience/stream-integrity#repair-caps</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestDrainAdmissionTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
   public int MaxRepairDrainBacklog { get; set; } = 10_000;
 
   /// <summary>
@@ -520,7 +520,7 @@ public sealed class StreamIntegrityOptions {
   /// origin's setting. Must be at least 1; host start fails otherwise.
   /// </remarks>
   /// <docs>resilience/stream-integrity#windowed-manifests</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:RequestReceptor_AnOpenEndedAsk_ReadsOneCappedWindow_AndSaysItWasCappedAsync</tests>
   public int MaxAuditWindowSequences { get; set; } = 500_000;
 
@@ -542,7 +542,7 @@ public sealed class StreamIntegrityOptions {
   /// least 1; host start fails otherwise.
   /// </remarks>
   /// <docs>resilience/stream-integrity#windowed-manifests</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs:ManifestReceptor_TheLastWindowTheBudgetAllows_SealsButAsksForNoMoreAsync</tests>
   public int MaxAuditWindowsPerAudit { get; set; } = 5;
 
@@ -564,7 +564,7 @@ public sealed class StreamIntegrityOptions {
   /// service spends nothing but that question. Must be at least 1; host start fails otherwise.
   /// </summary>
   /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
   public int LedgerRecheckIntervalSeconds { get; set; } = 60;
 
   /// <summary>
@@ -574,7 +574,7 @@ public sealed class StreamIntegrityOptions {
   /// without turning one tick into a burst of answers. Must be at least 1; host start fails otherwise.
   /// </summary>
   /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
   public int LedgerRecheckRowsPerTick { get; set; } = 500;
 
   /// <summary>
@@ -585,7 +585,7 @@ public sealed class StreamIntegrityOptions {
   /// before its next re-check. Must be at least 1; host start fails otherwise.
   /// </summary>
   /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
   public int LedgerRecheckAfterMinutes { get; set; } = 120;
 
   /// <summary>
@@ -717,7 +717,7 @@ public sealed class StreamIntegrityOptions {
   /// daily audit so a request that was lost is asked for again the same day. Must be at least 1.
   /// </summary>
   /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairAnswerTimeout_DefaultsToThreeHoursAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairAnswerTimeout_DefaultsToThreeHoursAsync</tests>
   public int RepairAnswerTimeoutMinutes { get; set; } = 180;
 
   /// <summary>
@@ -776,7 +776,7 @@ public sealed class StreamIntegrityOptions {
   /// </remarks>
   /// <docs>resilience/stream-integrity#outstanding-repair-answers-are-capped</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs:DrainTick_AtTheOutstandingAnswerCap_ClaimsNothing_AndSaysSoOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:Validate_ANegativeOutstandingAnswerCap_FailsNamingTheKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:Validate_ANegativeOutstandingAnswerCap_FailsNamingTheKeyAsync</tests>
   public int MaxOutstandingRepairAnswers { get; set; } = 500;
 
   /// <summary>
@@ -798,8 +798,8 @@ public sealed class StreamIntegrityOptions {
   /// </para>
   /// </remarks>
   /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerBranchCoverageTests.cs:RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:UnownedTypeOriginSilence_DefaultsToSevenDaysAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityAuditWorkerBranchCoverageTests.cs:RunAuditOnce_UnownedTypeRowsOfAnOriginSilentPastTheThreshold_AreForgottenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:UnownedTypeOriginSilence_DefaultsToSevenDaysAsync</tests>
   public int UnownedTypeOriginSilenceDays { get; set; } = 7;
 
   /// <summary>
@@ -864,22 +864,22 @@ public sealed class StreamIntegrityOptions {
 
   /// <summary>Sealing settled digest epochs (<c>Whizbang:StreamIntegrity:Sealing</c>, #2353). On by default.</summary>
   /// <docs>resilience/stream-integrity#sealing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:Sealing_IsOnByDefault_WithTheEpochWidthAndCapItHadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs:Sealing_IsOnByDefault_WithTheEpochWidthAndCapItHadAsync</tests>
   public SealingOptions Sealing { get; set; } = new();
 
   /// <summary>The sealed-history re-check (<c>Whizbang:StreamIntegrity:SealRecheck</c>, #2353). Off by default.</summary>
   /// <docs>resilience/stream-integrity#seal-re-check</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:SealRecheck_IsOffByDefault_WithTheDocumentedLimitsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs:SealRecheck_IsOffByDefault_WithTheDocumentedLimitsAsync</tests>
   public SealRecheckOptions SealRecheck { get; set; } = new();
 
   /// <summary>The full-history compare (<c>Whizbang:StreamIntegrity:FullHistoryCompare</c>, #2353). Off by default.</summary>
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompare_IsOffByDefault_OnTheNightlyScheduleAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompare_IsOffByDefault_OnTheNightlyScheduleAsync</tests>
   public FullHistoryCompareOptions FullHistoryCompare { get; set; } = new();
 
   /// <summary>The pair guard (<c>Whizbang:StreamIntegrity:PairGuard</c>, #2362).</summary>
   /// <docs>resilience/stream-integrity#the-pair-guard</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityPairGuardTests.cs:Options_AlertAfterTwoHoursByDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityPairGuardTests.cs:Options_AlertAfterTwoHoursByDefaultAsync</tests>
   public IntegrityPairGuardOptions PairGuard { get; set; } = new();
 
   /// <summary>
@@ -985,7 +985,7 @@ public sealed class StreamIntegrityOptions {
   /// </para>
   /// </remarks>
   /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_DefaultsToSevenDays_AndBindsFromConfigurationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_Negative_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_DefaultsToSevenDays_AndBindsFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs:RepairReceptorLookback_Negative_IsRejectedByNameAsync</tests>
   public TimeSpan RepairReceptorLookback { get; set; } = TimeSpan.FromDays(7);
 }

@@ -24,7 +24,7 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/jwt-claim-builder</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/JwtClaimSetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/JwtClaimSetTests.cs</tests>
 public sealed class JwtClaimSet {
   private readonly Dictionary<string, string> _scalars = [];
   private readonly List<KeyValuePair<string, string>> _multi = [];

@@ -25,12 +25,12 @@ public sealed class EphemeralOptions {
   /// is 300. Unset (<see langword="null"/>) leaves the stored value alone.
   /// </summary>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public int? RewindGraceSeconds { get; set; }
 
   /// <summary>The opt-in prune of ancient ephemeral pointers, under <c>Whizbang:Ephemeral:PointerPrune</c>.</summary>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public EphemeralPointerPruneOptions PointerPrune { get; set; } = new();
 
   /// <summary>

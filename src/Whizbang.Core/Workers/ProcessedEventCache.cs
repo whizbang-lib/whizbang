@@ -17,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// allowed (correct for rewind/rebuild scenarios).</para>
 /// </remarks>
 /// <docs>operations/workers/perspective-worker#event-deduplication</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ProcessedEventCacheTests.cs</tests>
 /// <param name="retentionPeriod">How long retained entries survive after DB acknowledgement (aligned to lease duration).</param>
 /// <param name="observer">Observer for lifecycle callbacks. Defaults to <see cref="NullProcessedEventCacheObserver"/>.</param>
 /// <param name="timeProvider">Time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>

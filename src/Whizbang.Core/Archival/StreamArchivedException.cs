@@ -26,7 +26,7 @@ namespace Whizbang.Core.Archival;
 /// <param name="policy">The policy the stream's type declares.</param>
 /// <param name="innerException">The store's refusal.</param>
 /// <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamArchivedRefusalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamArchivedRefusalTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:DirectAppend_Refuse_ThrowsStreamArchivedException_AndStoresNothingAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "The exception is only meaningful with the stream, its archived version and the policy; the standard constructors would produce one without them.")]

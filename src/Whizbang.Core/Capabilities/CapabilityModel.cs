@@ -10,7 +10,7 @@ namespace Whizbang.Core.Capabilities;
 /// <param name="Provider">The provider's name, for example <c>postgres</c>.</param>
 /// <param name="Name">The capability's name within the provider, for example <c>pg_squeeze</c>.</param>
 /// <docs>operations/infrastructure/capabilities</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
 public readonly record struct CapabilityId(string Provider, string Name) {
   /// <summary><c>provider/name</c>.</summary>
   /// <returns>The identity as it appears in the verdict and in configuration.</returns>
@@ -26,7 +26,7 @@ public readonly record struct CapabilityId(string Provider, string Name) {
 /// provider keeps its own, finer state in <see cref="CapabilityStatus.Detail"/>.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#states</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
 public enum CapabilityState {
   /// <summary>Could not be determined: the probe failed, is turned off, or has not run yet.</summary>
   Unknown = 0,
@@ -61,7 +61,7 @@ public enum CapabilityState {
 /// <param name="Prerequisites">What the server needs before it can be used, one phrase each.</param>
 /// <param name="Remedies">The operator's fix per problem state; a state without one gets a generic fix.</param>
 /// <docs>operations/infrastructure/capabilities#descriptor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
 public sealed record CapabilityDescriptor(
   CapabilityId Id,
   string Purpose,
@@ -114,7 +114,7 @@ public sealed record CapabilityDescriptor(
 /// <param name="Detail">The provider's own, finer state (for Postgres, <c>NotAllowlisted</c>), or null.</param>
 /// <param name="Reason">Why the state is Unknown (the probe failure), or null.</param>
 /// <docs>operations/infrastructure/capabilities#states</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityDescriptorTests.cs</tests>
 public sealed record CapabilityStatus(
   CapabilityDescriptor Descriptor,
   string Scope,
@@ -161,7 +161,7 @@ public sealed record CapabilityStatus(
 /// Unknown for its scope, with the exception's message as the reason, so a provider never stops startup.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#adding-a-capability-provider</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityRegistryTests.cs</tests>
 public interface ICapabilityProvider {
   /// <summary>The provider's name, the first half of every <see cref="CapabilityId"/> it describes.</summary>
   string Name { get; }

@@ -40,13 +40,13 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateFirstDenial_FirstDenies_ShortCircuitsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_AllInterceptorsRun_EvenWhenFirstDeniesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EmptyPipeline_AlwaysAllowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateFirstDenial_FirstDenies_ShortCircuitsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_AllInterceptorsRun_EvenWhenFirstDeniesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorPipelineTests.cs:EmptyPipeline_AlwaysAllowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorDispatchTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
 public interface IReceptorInterceptor {
   /// <summary>
   /// Decide whether the given receptor type may be invoked for the supplied envelope and

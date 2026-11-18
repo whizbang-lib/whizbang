@@ -8,8 +8,8 @@ namespace Whizbang.Core.Perspectives;
 /// collective-event handler.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_CustomHandlerWhere_StillHonorsTenantScopeAsync</tests>
 public enum CollectiveScopeHandling {
   /// <summary>
@@ -39,8 +39,8 @@ public enum CollectiveScopeHandling {
 /// right adapter; runtime never reflects on it.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
 public enum CollectiveSpecKind {
   /// <summary>
   /// Default. The spec carries a LINQ expression tree
@@ -104,9 +104,9 @@ public enum CollectiveSpecKind {
 /// </code>
 /// </example>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/CollectiveApplyDiscoveryGeneratorTests.cs:Generator_DiscoversDefaultAttributedMethod_EmitsRegistryEntryAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/CollectiveApplyDiscoveryGeneratorTests.cs:Generator_DiscoversQueryContextHandler_PassesQueryToInvokerAsync</tests>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]

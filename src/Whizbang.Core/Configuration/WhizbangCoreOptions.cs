@@ -257,7 +257,7 @@ public sealed class WhizbangCoreOptions {
 /// <docs>operations/configuration/whizbang-options#tag-processing-mode</docs>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:TagProcessingMode_DefaultsToAfterReceptorCompletion_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs:TagProcessingMode_CanBeSetToAsLifecycleStage_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs:LocalInvokeAsync_WithLifecycleStageMode_SkipsImmediateProcessingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/DispatcherTagProcessingTests.cs:LocalInvokeAsync_WithLifecycleStageMode_SkipsImmediateProcessingAsync</tests>
 public enum TagProcessingMode {
   /// <summary>
   /// Process tags immediately after receptor completes (default).

@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// Enables streaming capability on RabbitMQ and Service Bus.
 /// </summary>
 /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
 /// <docs>fundamentals/events/event-store</docs>
 public interface IEventStore {
@@ -72,9 +72,9 @@ public interface IEventStore {
   /// 3. EventStore retrieves envelope from registry, appending with full tracing context
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
   Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull;
 
   /// <summary>
@@ -102,7 +102,7 @@ public interface IEventStore {
   /// Composite expansion at 5K inner events: O(1) round-trip instead of O(N).
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreAppendBatchTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreAppendBatchTests.cs</tests>
   /// <docs>fundamentals/events/event-store#append-batch</docs>
   Task AppendBatchAsync<TMessage>(
       IReadOnlyList<(Guid streamId, MessageEnvelope<TMessage> envelope)> entries,
@@ -143,7 +143,7 @@ public interface IEventStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Each stream's events, or null when the store does not read streams in batches.</returns>
   /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:ReadPolymorphicManyAsync_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:ReadPolymorphicManyAsync_Default_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync</tests>
   Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
       IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
@@ -159,7 +159,7 @@ public interface IEventStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Each stored event's commit sequence, by id.</returns>
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:GetCommitSequencesAsync_Default_AsksEachEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:GetCommitSequencesAsync_Default_AsksEachEventAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:GetCommitSequencesAsync_AnswersEveryEventInOneQueryAsync</tests>
   async Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
       IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
@@ -212,7 +212,7 @@ public interface IEventStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The streams that hold such history (or archived history).</returns>
   /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:StreamsWithEventsBeforeAsync_Default_AsksEachStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:StreamsWithEventsBeforeAsync_Default_AsksEachStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:StreamsWithEventsBeforeAsync_AnswersEveryStreamInOneQueryAsync</tests>
   async Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
       IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
@@ -363,7 +363,7 @@ public interface IEventStore {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
   /// <docs>fundamentals/events/event-store#append-and-wait</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
   Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(
       Guid streamId,
       TMessage message,
@@ -428,7 +428,7 @@ public interface IEventStore {
   /// <returns>The events after the snapshot. The default is the ordinary read after <paramref name="fromEventId"/>: a
   /// store with no archive has nothing archived to read.</returns>
   /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:TheInterfaceDefault_ForAStoreWithNoArchive_IsTheOrdinaryReadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:TheInterfaceDefault_ForAStoreWithNoArchive_IsTheOrdinaryReadAsync</tests>
   IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
       Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
     ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);

@@ -81,13 +81,13 @@ jobs:
 
       - name: Run General Integration Tests (pre-built)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Integration -NoBuild -ModuleCoverage -ReportTrx
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Integration -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run General Integration Tests (built here)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Integration -ReportTrx
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Integration -ReportTrx -HangDumpTimeout 10m
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -96,6 +96,23 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: ./.github/scripts/Test-CiImagePulls.ps1
+
+      # A module with no test activity for the hang dump timeout above prints the tests still running, writes
+      # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log to its TestResults (the process is
+      # `dotnet` under `dotnet test`) and is killed, so the run fails with time left to upload them (#2402).
+      # Canceled too: a dump taken just before the job limit is still kept.
+      - name: Upload hang dumps
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hangdump-integration-${{ github.run_attempt }}
+          path: |
+            tests/**/TestResults/*_hang.dmp
+            tests/**/TestResults/*_hang.log
+            samples/**/TestResults/*_hang.dmp
+            samples/**/TestResults/*_hang.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload TRX Results
         if: always()

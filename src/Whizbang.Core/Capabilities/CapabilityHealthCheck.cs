@@ -11,7 +11,7 @@ namespace Whizbang.Core.Capabilities;
 /// otherwise. Its data holds the verdict line of every required capability that is not satisfied.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#health</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityHealthCheckTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityHealthCheckTests.cs</tests>
 public sealed class CapabilityHealthCheck : IHealthCheck {
 #pragma warning disable CA1707
   /// <summary>The health entry's name.</summary>

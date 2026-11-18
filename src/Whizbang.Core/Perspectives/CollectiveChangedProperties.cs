@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// reader perceives as changed belongs to the referenced record, which the framework cannot resolve.
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveChangedPropertiesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveChangedPropertiesTests.cs</tests>
 public static class CollectiveChangedProperties {
   /// <summary>The properties the setters assign, in the order they are written, each once.</summary>
   /// <param name="setters">A spec's setters.</param>

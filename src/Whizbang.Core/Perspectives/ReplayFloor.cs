@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind#snapshot-selection</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ReplayFloorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReplayFloorTests.cs</tests>
 public static class ReplayFloor {
   /// <summary>
   /// True when the snapshot taken at <paramref name="snapshotVersion"/> is a floor for a rewind triggered by
@@ -38,9 +38,9 @@ public static class ReplayFloor {
   /// <param name="triggeringEventId">The event the rewind is for.</param>
   /// <returns>Whether the rewind may restore the snapshot and replay the events above its version.</returns>
   /// <docs>fundamentals/perspectives/rewind#snapshot-selection</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ReplayFloorTests.cs:Qualifies_WhenTheOriginOrderPutsAnEventAboveTheSnapshotBeforeOneItHolds_IsFalseAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ReplayFloorTests.cs:Qualifies_WhenTheHeldEventsComeFirstInReplayOrder_IsTrueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ReplayFloorTests.cs:AQualifyingFloor_AndTheReplayAboveIt_FoldTheStreamInTheOrderAFullReplayFoldsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReplayFloorTests.cs:Qualifies_WhenTheOriginOrderPutsAnEventAboveTheSnapshotBeforeOneItHolds_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReplayFloorTests.cs:Qualifies_WhenTheHeldEventsComeFirstInReplayOrder_IsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReplayFloorTests.cs:AQualifyingFloor_AndTheReplayAboveIt_FoldTheStreamInTheOrderAFullReplayFoldsItAsync</tests>
   public static bool Qualifies(IReadOnlyList<MessageEnvelope<IEvent>> stream, int? snapshotVersion, Guid triggeringEventId) {
     ArgumentNullException.ThrowIfNull(stream);
     if (snapshotVersion is not int version || stream.Any(e => e.LocalStreamVersion is null)) {

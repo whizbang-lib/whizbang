@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives;
 /// already destroyed; the result is the cascade set only.
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamGroupClosureTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamGroupClosureTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs:LeaderTtlEviction_CascadesToTheFollower_InTheSameCycleAsync</tests>
 public static class StreamGroupClosure {
   /// <summary>
@@ -93,7 +93,7 @@ public static class StreamGroupClosure {
   /// <see cref="PerspectiveStreamGroupRegistry"/>).</param>
   /// <returns>The models that can announce an eviction the follower would receive.</returns>
   /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamGroupClosureTests.cs:ReachableAnnouncers_FollowsBridges_SoPresenceSeesTheWholeReachAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StreamGroupClosureTests.cs:ReachableAnnouncers_FollowsBridges_SoPresenceSeesTheWholeReachAsync</tests>
   public static IReadOnlyList<Type> ReachableAnnouncers(
       Type follower,
       IReadOnlyDictionary<Type, IReadOnlyList<StreamGroupMembership>> memberships) {

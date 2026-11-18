@@ -24,7 +24,7 @@ namespace Whizbang.Core.Attributes;
 /// </code>
 /// </example>
 /// <docs>fundamentals/events/stream-end-of-life#declaring-a-policy-on-the-event-type</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamEndOfLifeDeclarationsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamEndOfLifeDeclarationsTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogGeneratorTests.cs:Generator_StreamEndOfLife_RegistersTheDeclarationOfEachEventType_InheritedAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class StreamEndOfLifeAttribute : Attribute {

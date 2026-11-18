@@ -22,7 +22,7 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#scope-markers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/SystemScopeSentinelTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SystemScopeSentinelTests.cs</tests>
 public static class SystemScopeResolver {
 
   /// <summary>

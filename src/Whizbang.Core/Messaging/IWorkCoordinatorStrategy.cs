@@ -19,8 +19,8 @@ public interface IWorkCoordinatorStrategy {
   /// When it's actually stored depends on the strategy (immediate, on flush, on interval, etc.).
   /// </summary>
   /// <param name="message">Pre-serialized outbox message to store</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   void QueueOutboxMessage(OutboxMessage message);
 
@@ -45,8 +45,8 @@ public interface IWorkCoordinatorStrategy {
   /// Includes atomic deduplication and optional event store integration.
   /// </summary>
   /// <param name="message">Pre-serialized inbox message to store</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
   void QueueInboxMessage(InboxMessage message);
 
   /// <summary>
@@ -54,7 +54,7 @@ public interface IWorkCoordinatorStrategy {
   /// </summary>
   /// <param name="messageId">Message ID that completed</param>
   /// <param name="completedStatus">Which stages completed successfully</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
   void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus);
 
   /// <summary>
@@ -78,7 +78,7 @@ public interface IWorkCoordinatorStrategy {
   /// <param name="messageId">Message ID that failed</param>
   /// <param name="completedStatus">Which stages succeeded before failure</param>
   /// <param name="errorMessage">Error message or exception details</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
   void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage);
 
   /// <summary>
@@ -89,7 +89,7 @@ public interface IWorkCoordinatorStrategy {
   /// <param name="flags">Work batch flags (e.g., SkipInboxClaiming)</param>
   /// <param name="ct">Cancellation token</param>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
   Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default);
 
   /// <summary>
@@ -101,7 +101,7 @@ public interface IWorkCoordinatorStrategy {
   /// <param name="ct">Cancellation token</param>
   /// <returns>Work batch containing messages to process</returns>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
   Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default);
 }
 
@@ -109,9 +109,9 @@ public interface IWorkCoordinatorStrategy {
 /// Strategy types for work coordinator configuration.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
 public enum WorkCoordinatorStrategy {
   /// <summary>
   /// Immediate strategy - flushes queued work to the database immediately for each operation.
@@ -145,9 +145,9 @@ public enum WorkCoordinatorStrategy {
 /// Configuration options for work coordinator strategies.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_OptionsConfiguredViaIOptions_AppliedCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_DefaultIntervalMilliseconds_Is100Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_OptionsConfiguredViaIOptions_AppliedCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs:Interval_DefaultIntervalMilliseconds_Is100Async</tests>
 public class WorkCoordinatorOptions {
   /// <summary>
   /// Total number of partitions (default 10,000).

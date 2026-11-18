@@ -16,12 +16,12 @@ namespace Whizbang.Core.Messaging;
 /// Uses direct <c>new</c> calls only — no reflection, no Activator.CreateInstance.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
 public static class WorkCoordinatorStrategyFactory {
   /// <summary>
   /// Creates a new work coordinator strategy instance based on the specified strategy type.
@@ -31,8 +31,8 @@ public static class WorkCoordinatorStrategyFactory {
   /// <param name="strategy">The strategy type to create.</param>
   /// <param name="sp">The service provider to resolve dependencies from.</param>
   /// <returns>A new IWorkCoordinatorStrategy instance.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
   public static IWorkCoordinatorStrategy Create(WorkCoordinatorStrategy strategy, IServiceProvider sp) {
     return strategy switch {
       WorkCoordinatorStrategy.Scoped => _createScoped(sp),

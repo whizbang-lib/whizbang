@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 /// is dropped once it has been held for twice the wait, which keeps the map to collectives waiting right now.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CollectivePredecessorHoldsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/CollectivePredecessorHoldsTests.cs</tests>
 internal sealed class CollectivePredecessorHolds(TimeProvider timeProvider) {
   private readonly ConcurrentDictionary<Guid, DateTimeOffset> _heldSince = new();
 

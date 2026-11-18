@@ -26,9 +26,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerBloatMeasurementTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs:WhenPgstattupleIsReady_TheReMeasureIsApprox_AndItDecidesTheClearAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs:WhenPgstattupleIsReady_TheReMeasureIsApprox_AndItDecidesTheClearAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerBloatMeasurementTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs:WhenPgstattupleIsReady_TheReMeasureIsApprox_AndItDecidesTheClearAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/TableRewriteStartupStepTests.cs:WhenPgstattupleIsReady_TheReMeasureIsApprox_AndItDecidesTheClearAsync</tests>
 internal static partial class ApproxBloatMeasurement {
   /// <summary>The pgstattuple extension, as the capability registry identifies it.</summary>
   internal static readonly CapabilityId Capability = new(RequiresPostgresExtensionAttribute.PROVIDER, "pgstattuple");

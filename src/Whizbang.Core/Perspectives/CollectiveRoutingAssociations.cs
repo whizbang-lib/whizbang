@@ -32,7 +32,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveAssociationRegistrationTests.cs</tests>
 public static class CollectiveRoutingAssociations {
   /// <summary>The association type of a collective event type a handler here applies.</summary>
@@ -49,8 +49,8 @@ public static class CollectiveRoutingAssociations {
   /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
   /// <param name="serviceName">The service the rows belong to, as the perspective associations name it.</param>
   /// <returns>The entries, ready to follow at least one entry already in the array.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAKnownSet_AreOneCollectiveAssociationPerType_AndTheGateMarkerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAnUnknownSet_AreNothing_SoTheStoreKeepsCreatingEveryRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAKnownSet_AreOneCollectiveAssociationPerType_AndTheGateMarkerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAnUnknownSet_AreNothing_SoTheStoreKeepsCreatingEveryRowAsync</tests>
   public static string AssociationEntriesJson(IReadOnlyList<string>? handledEventTypes, string serviceName) {
     if (handledEventTypes is null) {
       return string.Empty;
@@ -71,9 +71,9 @@ public static class CollectiveRoutingAssociations {
   /// <param name="perspectiveAssociationsHash">The generated hash of the perspective associations.</param>
   /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
   /// <returns>The hash the step records and compares.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ChangesWhenTheHandledSetChanges_AndOnlyThenAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_TellsUnknownFromEmpty_AndFromThePerspectiveSetAloneAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ForAContextWithNoPerspectives_StaysEmpty_SoItHasNoAssociationsStepAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ChangesWhenTheHandledSetChanges_AndOnlyThenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_TellsUnknownFromEmpty_AndFromThePerspectiveSetAloneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ForAContextWithNoPerspectives_StaysEmpty_SoItHasNoAssociationsStepAsync</tests>
   public static string AssociationsHash(string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes) {
     ArgumentNullException.ThrowIfNull(perspectiveAssociationsHash);
     if (perspectiveAssociationsHash.Length == 0) {

@@ -76,7 +76,6 @@ public partial class DeadLetterRecoveryWorker(
   // Lazily built on first scan so it reads the bound options. Null when adaptivity is off.
   private AdaptiveStreamBatch? _adaptiveBatch;
   private bool _adaptiveBatchInit;
-  private bool _signalSubscribed;
 
   /// <summary>NOTIFY signal handler — wakes on a DeadLetterReady signal so the next scan runs within ms.</summary>
   private void _onSignal(Whizbang.Core.Notifications.WorkSignalCategory category) {
@@ -88,15 +87,6 @@ public partial class DeadLetterRecoveryWorker(
 
   /// <summary>Number of parked wake waiters the scan loop currently holds: 0 or 1, never more.</summary>
   internal int PendingWakeWaiters => _wake.PendingWaiters;
-
-  /// <inheritdoc />
-  public override Task StopAsync(CancellationToken cancellationToken) {
-    if (_signalSubscribed) {
-      _notificationListener.OnSignal -= _onSignal;
-      _signalSubscribed = false;
-    }
-    return base.StopAsync(cancellationToken);
-  }
 
   private int _noServiceLogged;
 
@@ -156,17 +146,32 @@ public partial class DeadLetterRecoveryWorker(
   public bool IsLoopBreakerOpen => _breakerOpenedAt is not null;
 
   /// <inheritdoc />
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup arms the notification listener, the generation replay and the held-message campaign, each optional and each allowed to fail without stopping the worker, and the loop then separates shutdown cancellation from a scan that threw.")]
+  /// <remarks>
+  /// The DeadLetterReady handler is added and removed here, by the run that owns it (#2409). The host runs this method
+  /// on a thread of its own, so a StopAsync that removed the handler could run while this was still adding it and leave
+  /// it attached to a listener that outlives the worker; removing it in this method's own <c>finally</c> leaves none.
+  /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    LogStarted(_logger, _options.ScanIntervalMinutes);
-
-    // Slice 7c — subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
+    // Slice 7c: subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
     // AFTER INSERT trigger (migration 056) fires this on every new DLQ row so the
     // worker wakes within ms instead of waiting up to ScanIntervalMinutes.
-    if (_notificationListener.IsConfigured && !_signalSubscribed) {
+    var listensForSignals = _notificationListener.IsConfigured;
+    if (listensForSignals) {
       _notificationListener.OnSignal += _onSignal;
-      _signalSubscribed = true;
     }
+    try {
+      await _runAsync(stoppingToken).ConfigureAwait(false);
+    } finally {
+      if (listensForSignals) {
+        _notificationListener.OnSignal -= _onSignal;
+      }
+    }
+  }
+
+  /// <summary>The worker's run: the startup sweeps, then the scan loop until stopped.</summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup runs the generation replay and the held-message campaign, each optional and each allowed to fail without stopping the worker, and the loop then separates shutdown cancellation from a scan that threw.")]
+  private async Task _runAsync(CancellationToken stoppingToken) {
+    LogStarted(_logger, _options.ScanIntervalMinutes);
 
     if (!_options.Enabled) {
       LogDisabled(_logger);

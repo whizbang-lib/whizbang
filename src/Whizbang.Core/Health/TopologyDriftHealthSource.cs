@@ -18,7 +18,7 @@ namespace Whizbang.Core.Health;
 /// away.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#ownership-drift</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyDriftStateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyDriftStateTests.cs</tests>
 public sealed class TopologyDriftHealthSource : IWhizbangHealthSource {
   private readonly TopologyDriftState _state;
 

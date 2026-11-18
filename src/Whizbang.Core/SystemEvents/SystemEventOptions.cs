@@ -7,9 +7,9 @@ namespace Whizbang.Core.SystemEvents;
 /// Controls which events are audited when event audit is enabled.
 /// </summary>
 /// <docs>fundamentals/events/system-events#audit-mode</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventOptionsTests.cs:AuditMode_DefaultsToOptOut_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventOptionsTests.cs:AuditMode_CanBeSetToOptIn_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:ShouldAudit_OptOut_AuditsRegularEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventOptionsTests.cs:AuditMode_DefaultsToOptOut_Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventOptionsTests.cs:AuditMode_CanBeSetToOptIn_Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:ShouldAudit_OptOut_AuditsRegularEventsAsync</tests>
 public enum AuditMode {
   /// <summary>
   /// All events are audited unless marked with <c>[AuditEvent(Exclude = true)]</c>.
@@ -28,7 +28,7 @@ public enum AuditMode {
 /// <c>[AuditEvent(IncludeBody = true)]</c>.
 /// </summary>
 /// <docs>fundamentals/events/system-events#audit-body</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:AppendAsync_TheDefaultSetToInclude_RecordsEveryBodyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:AppendAsync_TheDefaultSetToInclude_RecordsEveryBodyAsync</tests>
 public enum AuditBodyDefault {
   /// <summary>
   /// The record points at the event (id, type, stream, position) and carries its scope, but not its body.
@@ -211,8 +211,8 @@ public sealed class SystemEventOptions {
   /// Configuration key <c>Whizbang:SystemEvents:AccessDeniedEnabled</c>.
   /// </summary>
   /// <docs>fundamentals/events/system-events#security-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:Defaults_StoreDenialsAndPermissionChanges_NotGrantsOrScopeEstablishmentsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessDeniedEnabled_Off_StopsStoringDenialsOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:Defaults_StoreDenialsAndPermissionChanges_NotGrantsOrScopeEstablishmentsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessDeniedEnabled_Off_StopsStoringDenialsOnlyAsync</tests>
   public bool AccessDeniedEnabled { get; set; } = true;
 
   /// <summary>
@@ -221,7 +221,7 @@ public sealed class SystemEventOptions {
   /// Configuration key <c>Whizbang:SystemEvents:PermissionChangedEnabled</c>.
   /// </summary>
   /// <docs>fundamentals/events/system-events#security-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:PermissionChangedEnabled_Off_StopsStoringPermissionChangesOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:PermissionChangedEnabled_Off_StopsStoringPermissionChangesOnlyAsync</tests>
   public bool PermissionChangedEnabled { get; set; } = true;
 
   /// <summary>
@@ -230,7 +230,7 @@ public sealed class SystemEventOptions {
   /// Configuration key <c>Whizbang:SystemEvents:AccessGrantedEnabled</c>.
   /// </summary>
   /// <docs>fundamentals/events/system-events#security-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessGrantedEnabled_On_StoresGrantsOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessGrantedEnabled_On_StoresGrantsOnlyAsync</tests>
   public bool AccessGrantedEnabled { get; set; }
 
   /// <summary>
@@ -239,7 +239,7 @@ public sealed class SystemEventOptions {
   /// Configuration key <c>Whizbang:SystemEvents:ScopeContextEstablishedEnabled</c>.
   /// </summary>
   /// <docs>fundamentals/events/system-events#security-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:ScopeContextEstablishedEnabled_On_StoresScopeEstablishmentsOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:ScopeContextEstablishedEnabled_On_StoresScopeEstablishmentsOnlyAsync</tests>
   public bool ScopeContextEstablishedEnabled { get; set; }
 
   /// <summary>

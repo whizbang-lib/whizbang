@@ -14,15 +14,15 @@ namespace Whizbang.Core.SystemEvents;
 /// Both writers of an event audit record (the auditing event-store decorator and the system event
 /// emitter) build it from the same envelope facts, so they build it here, the same way.
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/EventAuditScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/EventAuditScopeTests.cs</tests>
 internal static class EventAuditScope {
   /// <summary>The scope dictionary, or null when the event carries none of it.</summary>
   /// <param name="scopeContext">The audited envelope's current scope, if any.</param>
   /// <param name="correlationId">The audited envelope's correlation id, if any.</param>
   /// <returns>The non-empty scope, or null.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/EventAuditScopeTests.cs:Build_Everything_CarriesItAllAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/EventAuditScopeTests.cs:Build_Nothing_NullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/EventAuditScopeTests.cs:Build_ScopeWithoutIds_EmptyNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/EventAuditScopeTests.cs:Build_Everything_CarriesItAllAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/EventAuditScopeTests.cs:Build_Nothing_NullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/EventAuditScopeTests.cs:Build_ScopeWithoutIds_EmptyNullAsync</tests>
   internal static Dictionary<string, string?>? Build(IScopeContext? scopeContext, CorrelationId? correlationId) {
     var scope = new Dictionary<string, string?>();
     if (scopeContext?.Scope.TenantId is { } tenantId) {
