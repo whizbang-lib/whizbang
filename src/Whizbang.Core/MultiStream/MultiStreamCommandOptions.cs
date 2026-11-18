@@ -5,8 +5,8 @@ namespace Whizbang.Core.MultiStream;
 
 /// <summary>How each instance works its share of multi-stream command runs. Bound from <c>Whizbang:MultiStreamCommands</c>.</summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:Options_Validate_RefusesANonPositiveSettingAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:Options_Validate_AcceptsTheDefaultsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:Options_Validate_RefusesANonPositiveSettingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:Options_Validate_AcceptsTheDefaultsAsync</tests>
 public sealed class MultiStreamCommandOptions {
   /// <summary>The configuration section the options bind from.</summary>
   public const string SECTION = "Whizbang:MultiStreamCommands";

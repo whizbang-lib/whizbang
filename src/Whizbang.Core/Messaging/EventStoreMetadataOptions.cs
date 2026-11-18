@@ -8,7 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// full form.
 /// </summary>
 /// <docs>data/event-store#stored-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs</tests>
 public enum EventStoreMetadataWriteForm {
   /// <summary>
   /// The row keeps the full metadata: every hop as the envelope carried it. Nothing is staged, so no routes or traces
@@ -43,7 +43,7 @@ public enum EventStoreMetadataWriteForm {
 /// </para>
 /// </remarks>
 /// <docs>data/event-store#stored-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreMetadataSettingsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreMetadataSettingsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:EventStoreMetadata_BindsFromItsSectionAsync</tests>
 public sealed class EventStoreMetadataOptions {
   /// <summary>The configuration section these options bind from.</summary>

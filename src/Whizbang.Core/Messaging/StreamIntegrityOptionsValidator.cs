@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// re-asking storm the timeout exists to stop (#2029). Registered by <c>AddWhizbangWorkers</c> and checked at host start.
 /// </remarks>
 /// <docs>resilience/stream-integrity#repair-caps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
 public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamIntegrityOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, StreamIntegrityOptions options) {

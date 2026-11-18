@@ -30,7 +30,7 @@ public interface IIntegritySweepRunner {
   /// <param name="check">The check to run.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#full-history-compare</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerCheckGatingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityAuditWorkerCheckGatingTests.cs</tests>
   Task RunCheckOnceAsync(IntegrityCheck check, CancellationToken cancellationToken);
 }
 

@@ -38,7 +38,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
 /// <param name="timeProvider">The clock entries are aged by; the system clock when omitted.</param>
 public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncEventTracker {
   // Event id -> perspective name -> entry, so the same event is tracked once per perspective. Guarded by _gate.

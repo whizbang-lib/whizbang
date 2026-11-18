@@ -9,8 +9,8 @@ namespace Whizbang.Core.Workers;
 /// source registered has always done. The assigner's registration replaces it.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:ForClaimAsync_NeverHasAnAssignmentAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:MarkStaleAndSubscribing_ChangeNothingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:ForClaimAsync_NeverHasAnAssignmentAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:MarkStaleAndSubscribing_ChangeNothingAsync</tests>
 public sealed class NullPartitionAssignmentSource : IPartitionAssignmentSource, INullDefault {
   /// <summary>The single instance.</summary>
   public static NullPartitionAssignmentSource Instance { get; } = new();

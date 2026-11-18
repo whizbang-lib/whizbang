@@ -42,7 +42,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="logger">The step's logger.</param>
 /// <param name="timeProvider">The clock the claim window is read from.</param>
 /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
 public sealed partial class QueueIndexReindexStep(
     IOptions<MaintenanceWorkerOptions> options,

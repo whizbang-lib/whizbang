@@ -14,7 +14,7 @@ namespace Whizbang.Core.Workers;
 /// itself is <c>postgres/pg_repack</c>, required by the strategy in either mode.
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public static class PgRepackClient {
   /// <summary>The key that selects the run mode.</summary>
   internal const string MODE_KEY = "Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode";
@@ -80,7 +80,7 @@ public static class PgRepackClient {
 /// <param name="options">The maintenance options: the strategy, the mode and the client path.</param>
 /// <param name="runner">Starts the client.</param>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public sealed class PgRepackClientCapabilityProvider(IOptions<MaintenanceWorkerOptions> options, IExternalProcessRunner runner)
   : ICapabilityProvider {
   /// <inheritdoc />
@@ -124,7 +124,7 @@ public sealed class PgRepackClientCapabilityProvider(IOptions<MaintenanceWorkerO
 /// </summary>
 /// <param name="options">The maintenance options: the strategy and the mode in force.</param>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public sealed class PgRepackClientRequirementSource(IOptions<MaintenanceWorkerOptions> options) : ICapabilityRequirementSource {
   /// <inheritdoc />
   public IReadOnlyList<ActiveCapabilityRequirement> Resolve(IConfiguration? configuration) {

@@ -26,7 +26,7 @@ namespace Whizbang.Core.Workers;
 /// older service that still advertises a command inbox or the shared topic keeps receiving there.
 /// </remarks>
 /// <docs>resilience/stream-integrity#directed-integrity-traffic</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RepairTopicResolverTests.cs</tests>
 public static partial class RepairTopicResolver {
   // Once per consumer configuration (one per host), so the warning is written once per service, not per call.
   private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TransportConsumerOptions, object> _warnedShared = [];
@@ -38,11 +38,11 @@ public static partial class RepairTopicResolver {
   /// <param name="configured">The configured <see cref="StreamIntegrityOptions.RepairTopic"/>, if any.</param>
   /// <param name="services">The scope's services, read for <see cref="TransportConsumerOptions"/>.</param>
   /// <returns>The topic, or null when the service names none and consumes none.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Configured_WinsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_FirstDestinationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_NoDestinations_NullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_NoConsumer_NullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RepairTopicResolverTests.cs:Unset_ServiceControlInbox_IsPreferredOverCommandInboxesAndSharedTopicsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RepairTopicResolverTests.cs:Configured_WinsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RepairTopicResolverTests.cs:Unset_FirstDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RepairTopicResolverTests.cs:Unset_NoDestinations_NullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RepairTopicResolverTests.cs:Unset_NoConsumer_NullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RepairTopicResolverTests.cs:Unset_ServiceControlInbox_IsPreferredOverCommandInboxesAndSharedTopicsAsync</tests>
   public static string? Resolve(string? configured, IServiceProvider services) {
     ArgumentNullException.ThrowIfNull(services);
     if (configured is not null) {

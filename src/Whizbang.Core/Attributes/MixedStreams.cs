@@ -8,7 +8,7 @@ namespace Whizbang.Core.Attributes;
 /// lets one stream hold the ephemeral and the Sourced events it applies (#2255).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_TheDefaultRefuse_AllowsNothingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_TheDefaultRefuse_AllowsNothingAsync</tests>
 public enum MixedStreams {
   /// <summary>
   /// The default: the attribute only silences WHIZ130. A stream still never holds both kinds (WHIZ133), and the history

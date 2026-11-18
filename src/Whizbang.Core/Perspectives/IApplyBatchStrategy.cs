@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#flush-policy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/FlushEveryBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FlushEveryBatchStrategyTests.cs</tests>
 public interface IApplyBatchStrategy {
   /// <summary>Writes a batch's prepared rows through <paramref name="sink"/>, when the policy decides.</summary>
   /// <param name="sink">The write sink of the writes' DbContext.</param>
@@ -31,7 +31,7 @@ public interface IApplyBatchStrategy {
 
 /// <summary>The default flush policy: every batch's rows are written as soon as the batch is prepared.</summary>
 /// <docs>fundamentals/perspectives/write-modes#flush-policy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/FlushEveryBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FlushEveryBatchStrategyTests.cs</tests>
 public sealed class FlushEveryBatchStrategy : IApplyBatchStrategy {
   /// <inheritdoc/>
   public Task<IReadOnlyList<PerspectiveWriteOutcome>> FlushAsync(

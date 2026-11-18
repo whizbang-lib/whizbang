@@ -16,12 +16,12 @@ namespace Whizbang.Core.Dispatch;
 /// </remarks>
 /// <param name="KeyPrefix">The literal key prefix.</param>
 /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimedEmissionPruneStepTests.cs:Run_KeepsEveryRegisteredPrefix_OnceEachAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ClaimedEmissionPruneStepTests.cs:Run_KeepsEveryRegisteredPrefix_OnceEachAsync</tests>
 public sealed record RetainedClaimKeyPrefix(string KeyPrefix);
 
 /// <summary>Registration for <see cref="RetainedClaimKeyPrefix"/>.</summary>
 /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimedEmissionPruneStepTests.cs:AddRetainedClaimKeyPrefix_RejectsABlankPrefixAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ClaimedEmissionPruneStepTests.cs:AddRetainedClaimKeyPrefix_RejectsABlankPrefixAsync</tests>
 public static class RetainedClaimKeyPrefixServiceCollectionExtensions {
   /// <summary>
   /// Keeps the claims whose key starts with <paramref name="keyPrefix"/> out of the general expiry prune.

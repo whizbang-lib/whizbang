@@ -9,7 +9,7 @@ namespace Whizbang.Core.MultiStream;
 /// </summary>
 /// <typeparam name="TCommand">The command type this handler works.</typeparam>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#handlers</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_ReadsThePayloadBackAndCallsTheHandlerForThatStreamAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_ReadsThePayloadBackAndCallsTheHandlerForThatStreamAsync</tests>
 public interface IMultiStreamCommandHandler<in TCommand> where TCommand : IMultiStreamCommand {
   /// <summary>
   /// Does the command's work for one stream. Throwing records an attempt that failed; the stream is retried up to the

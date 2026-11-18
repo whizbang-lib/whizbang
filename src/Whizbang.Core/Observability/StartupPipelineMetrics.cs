@@ -23,7 +23,7 @@ namespace Whizbang.Core.Observability;
 /// </list>
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
 public sealed class StartupPipelineMetrics {
 #pragma warning disable CA1707
   /// <summary>OpenTelemetry meter name.</summary>

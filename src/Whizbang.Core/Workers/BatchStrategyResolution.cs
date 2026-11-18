@@ -14,7 +14,7 @@ namespace Whizbang.Core.Workers;
 /// to wrap it. A host without the batch buffer (no worker pipeline) gets the registered strategy as it is.
 /// </summary>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BatchStrategyResolutionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchStrategyResolutionTests.cs</tests>
 internal static class BatchStrategyResolution {
   /// <summary>The outbox batch strategy to append to, bounded; null when none is registered.</summary>
   public static IOutboxBatchStrategy? Outbox(IServiceProvider services) {

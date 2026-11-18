@@ -51,9 +51,9 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>extending/attributes/generatestreamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/GenerateStreamIdGeneratorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:PublishAsync_EventWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithoutGenerateStreamId_DoesNotAutoGenerateAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:PublishAsync_EventWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithoutGenerateStreamId_DoesNotAutoGenerateAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithNoStreamIdOfItsOwn_InheritsTheBasesGenerateStreamIdAsync</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Class, AllowMultiple = false, Inherited = true)]

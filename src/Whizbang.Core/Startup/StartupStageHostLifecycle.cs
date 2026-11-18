@@ -29,7 +29,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageHostLifecycleTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageHostLifecycleTests.cs</tests>
 public sealed class StartupStageHostLifecycle : IHostedLifecycleService {
   private readonly IStartupStageReporter _stages;
   private readonly IWhizbangInstanceExit _instanceExit;

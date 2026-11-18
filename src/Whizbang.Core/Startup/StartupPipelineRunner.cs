@@ -86,7 +86,7 @@ public interface IStartupStep {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineRunnerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupPipelineRunnerTests.cs</tests>
 public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
   private readonly IReadOnlyList<IStartupStepObserver> _observers;

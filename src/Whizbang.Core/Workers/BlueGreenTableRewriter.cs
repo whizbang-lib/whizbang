@@ -34,7 +34,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="scopeFactory">The scope the swapper and the rebuilder are resolved from.</param>
 /// <param name="logger">Where a rebuild that did not complete is reported.</param>
 /// <docs>operations/infrastructure/storage-maintenance#blue-green-rewrite</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.cs</tests>
 public sealed partial class BlueGreenTableRewriter(IServiceScopeFactory scopeFactory, ILogger<BlueGreenTableRewriter> logger) : ITableRewriter {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);

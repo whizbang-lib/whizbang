@@ -20,7 +20,7 @@ namespace Whizbang.Core.Archival;
 /// about to truncate.
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events#scheduling-a-prefix-truncate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/PrefixTruncateScheduleTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/PrefixTruncateScheduleTests.cs</tests>
 public static class PrefixTruncateSchedule {
   /// <summary>Serializes the payload with the framework's combined (source-generated) JSON type info, so the occurrence
   /// round-trips back to <see cref="ScheduledPrefixTruncate"/> on dispatch without reflection.</summary>

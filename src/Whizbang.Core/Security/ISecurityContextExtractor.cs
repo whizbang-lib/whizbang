@@ -19,7 +19,7 @@ namespace Whizbang.Core.Security;
 /// the next extractor in priority order to try.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#extractors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
 /// <example>
 /// public class JwtPayloadExtractor : ISecurityContextExtractor {
 ///   public int Priority => 50; // Run before MessageHop extractor (100)

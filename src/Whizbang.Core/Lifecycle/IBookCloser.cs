@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lifecycle;
 /// predecessor is then disposed of by its type's action once its grace has passed, like any sealed stream.
 /// </summary>
 /// <docs>fundamentals/events/closing-the-books</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/BookCloserTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/BookCloserTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CloseBooksSqlTests.cs</tests>
 public interface IBookCloser {
   /// <summary>

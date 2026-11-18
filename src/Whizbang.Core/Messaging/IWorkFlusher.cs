@@ -12,15 +12,15 @@ namespace Whizbang.Core.Messaging;
 /// independent of the configured WorkCoordinatorStrategy's automatic flushing.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:FlushAsync_WithCancellationToken_PassesThroughAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:FlushAsync_WithCancellationToken_PassesThroughAsync</tests>
 public interface IWorkFlusher {
   /// <summary>
   /// Immediately flushes all queued messages to the database. Delegates to the
   /// underlying strategy's <c>FlushAndGetBatchAsync</c>, forcing persistence regardless
   /// of the strategy's batching window (used by end-of-request middleware).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs</tests>
   Task FlushAsync(CancellationToken ct = default);
 }

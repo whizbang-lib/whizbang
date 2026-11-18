@@ -14,7 +14,7 @@ namespace Whizbang.Core.Transports;
 /// code. A section for a transport the host does not run is never read.
 /// </summary>
 /// <docs>operations/configuration/configuration-reference#transport-sections</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerOptionsConfigurationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerOptionsConfigurationTests.cs</tests>
 public sealed class TransportConfigurationSection {
   /// <summary>The parent of every transport's section.</summary>
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores

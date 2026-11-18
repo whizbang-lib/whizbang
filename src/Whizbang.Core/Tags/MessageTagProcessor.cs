@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#processing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs</tests>
 public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// <summary>
   /// Groups tag processing parameters that travel together through the processing pipeline.
@@ -236,8 +236,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// again on every check, per tag, and counted UTF-16 characters rather than bytes.
   /// </remarks>
   /// <docs>fundamentals/messages/message-tags#payload-size-thresholds</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_CountsUtf8Bytes_NotCharactersAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_DoesNotAllocateInProportionToThePayloadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_CountsUtf8Bytes_NotCharactersAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_DoesNotAllocateInProportionToThePayloadAsync</tests>
   internal static int PayloadByteLength(JsonElement payload) =>
     System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(payload).Length;
 

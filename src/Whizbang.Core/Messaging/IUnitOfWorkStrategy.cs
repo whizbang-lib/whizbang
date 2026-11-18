@@ -13,9 +13,9 @@ namespace Whizbang.Core.Messaging;
 /// Controls WHEN to flush units to IWorkBatchCoordinator via async callback pattern.
 /// Implementations: Immediate (flush per message), Scoped (flush on dispose), Interval (flush on timer).
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 public interface IUnitOfWorkStrategy : IAsyncDisposable {
   /// <summary>

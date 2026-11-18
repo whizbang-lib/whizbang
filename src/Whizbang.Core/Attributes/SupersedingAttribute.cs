@@ -37,7 +37,7 @@ namespace Whizbang.Core.Attributes;
 /// </example>
 /// <docs>fundamentals/events/superseding-events</docs>
 /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogGeneratorTests.cs:Generator_SupersedingEvent_StampsTheEntryAndRegistersTheKeyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/SupersedingEventsTests.cs:AttributedTypesInThisAssembly_AreRegisteredByTheGenerator_WithTheirKeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/SupersedingEventsTests.cs:AttributedTypesInThisAssembly_AreRegisteredByTheGenerator_WithTheirKeyAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class SupersedingAttribute : Attribute {
   /// <summary>

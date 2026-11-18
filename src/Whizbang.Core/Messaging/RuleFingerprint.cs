@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// mismatch too.
 /// </summary>
 /// <docs>resilience/stream-integrity#rule-fingerprint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RuleFingerprintWireTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RuleFingerprintWireTests.cs</tests>
 public sealed record RuleFingerprint {
   /// <summary>The sender's <see cref="RuleSemantics.VERSION"/>.</summary>
   public required int SemanticsVersion { get; init; }

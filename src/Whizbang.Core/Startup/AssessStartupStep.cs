@@ -100,7 +100,7 @@ public interface IStartupAssessor {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/AssessStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/AssessStartupStepTests.cs</tests>
 /// <remarks>Creates the step over the driver-supplied assessor; the framework's null default reports itself not configured and the step is skipped.</remarks>
 public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger<AssessStartupStep> logger) : IStartupStep {
   private readonly IStartupAssessor _assessor = assessor;

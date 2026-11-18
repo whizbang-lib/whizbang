@@ -34,7 +34,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <param name="logger">Where a host with no elector is told, once, that rebuilds are guarded on this instance alone.</param>
 /// <docs>fundamentals/perspectives/rebuild#one-blue-green-rebuild-per-table</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.cs</tests>
 internal sealed partial class PerspectiveRebuildGuard(ILogger logger) {
   private readonly ConcurrentDictionary<string, byte> _rebuildingHere = new(StringComparer.Ordinal);

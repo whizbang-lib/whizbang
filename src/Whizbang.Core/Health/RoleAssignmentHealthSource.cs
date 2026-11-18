@@ -22,7 +22,7 @@ namespace Whizbang.Core.Health;
 /// component reports reachability, and this one must not turn that into a second, noisier failure.
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/RoleAssignmentHealthSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/RoleAssignmentHealthSourceTests.cs</tests>
 public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
   private readonly IRoleAssignmentReader _reader;
   private readonly RoleAssignmentOptions _options;

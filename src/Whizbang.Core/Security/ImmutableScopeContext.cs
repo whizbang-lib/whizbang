@@ -19,7 +19,7 @@ namespace Whizbang.Core.Security;
 /// <para>The wrapper delegates all IScopeContext methods to the inner context.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#immutable-context</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ImmutableScopeContextTests.cs</tests>
 /// <remarks>
 /// Creates an immutable scope context from an extraction result.
 /// </remarks>
@@ -93,7 +93,7 @@ public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool sh
   /// <see cref="SecurityExtraction.PropagatedClaimTypes"/>). Claims of any other type stay in this process.
   /// </summary>
   /// <docs>fundamentals/security/message-security#hop-scope</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Security/HopScopeTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/HopScopeTests.cs</tests>
   public IReadOnlySet<string> PropagatedClaimTypes => _extraction.PropagatedClaimTypes;
 
   /// <inheritdoc />

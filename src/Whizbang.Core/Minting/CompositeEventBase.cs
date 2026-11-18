@@ -34,7 +34,7 @@ namespace Whizbang.Core.Minting;
 /// events are.
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeEventBaseTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeEventBaseTests.cs</tests>
 /// <docs>fundamentals/messaging/composite-events</docs>
 public abstract class CompositeEventBase : ICompositeEvent {
   /// <summary>

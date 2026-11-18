@@ -27,7 +27,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ReceiveConsumerGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceiveConsumerGateTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerStoresBeforeSkippingTests.cs:AnUnconsumedEventInAnAbsorbedNamespace_IsStoredLive_SoTheEventStoreCapturesItAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerDropGateTests.cs:HandleMessage_UnconsumedEventInAnAbsorbedNamespace_IsStoredLive_SoTheEventStoreCapturesItAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AbsorbedEventReachesEventStoreTests.cs:AnUnconsumedEventInAnAbsorbedNamespace_IsCopiedIntoTheEventStoreAsync</tests>
@@ -91,7 +91,7 @@ internal static class ReceiveConsumerGate {
   /// <returns><see cref="InboxReceiveDiscard.FOREIGN_TARGET"/>, <see cref="InboxReceiveDiscard.NO_LOCAL_CONSUMER"/>, or
   /// <see langword="null"/>.</returns>
   /// <docs>messaging/transports/transport-consumer#framework-traffic-discarded-on-receipt</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceiveConsumerGateTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceiveConsumerGateTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs:ForeignTarget_FrameworkMintedMessage_IsDiscardedWithoutARowAsync</tests>
   internal static string? FrameworkDiscardOnReceipt(string? envelopeType, string? target, string? serviceName, bool unconsumed) {
     if (!IsFrameworkMessage(envelopeType)) {
@@ -156,7 +156,7 @@ internal static class ReceiveConsumerGate {
   /// <param name="markerResolver">Recognizes composites; null recognizes none.</param>
   /// <param name="discardPolicy">The shared discard policy, when the worker pipeline registered one.</param>
   /// <returns>True when the message is kept.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
   internal static bool Keeps(
       string innerMessageType,
       IConsumerRegistry? registry,

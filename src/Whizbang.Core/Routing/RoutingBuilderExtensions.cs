@@ -68,7 +68,7 @@ internal sealed class RoutingConfiguredMarker : IRoutingConfigured;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#with-routing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingBuilderExtensionsTests.cs</tests>
 public static class RoutingBuilderExtensions {
   /// <summary>
   /// Configures message routing options including inbox/outbox strategies and event subscriptions.
@@ -104,7 +104,7 @@ public static class RoutingBuilderExtensions {
   /// </code>
   /// </example>
   /// <docs>fundamentals/dispatcher/routing#with-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_RegistersRoutingOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_RegistersRoutingOptionsAsync</tests>
   public static WhizbangBuilder WithRouting(
       this WhizbangBuilder builder,
       Action<RoutingOptions> configure) {

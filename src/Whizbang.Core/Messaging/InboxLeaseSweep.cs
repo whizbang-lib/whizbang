@@ -23,7 +23,7 @@ public enum InboxHoldState {
 /// <param name="Renew">Rows to renew now. Their renewal is already counted.</param>
 /// <param name="Lapsed">Rows past their renewal cap, removed from the held set by the sweep.</param>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
 public sealed record InboxLeaseSweep(IReadOnlyList<Guid> Renew, IReadOnlyList<LapsedInboxLease> Lapsed) {
   /// <summary>A sweep that found nothing to renew or release.</summary>
   public static InboxLeaseSweep Empty { get; } = new([], []);

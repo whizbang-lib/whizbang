@@ -19,7 +19,7 @@ namespace Whizbang.Core.Workers;
 /// held in the dead-letter table rather than the queues being purged.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterControlPlaneDropTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterControlPlaneDropTests.cs</tests>
 public static class DeadLetterDropPolicy {
   /// <summary>
   /// True when <paramref name="messageType"/> names control-plane traffic, which is dropped

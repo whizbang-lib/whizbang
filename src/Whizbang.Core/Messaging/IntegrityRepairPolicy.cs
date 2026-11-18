@@ -40,7 +40,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairSpinTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairSpinTests.cs</tests>
 public sealed class IntegrityRepairPolicy {
 
   /// <summary>Why a repair was or was not requested.</summary>

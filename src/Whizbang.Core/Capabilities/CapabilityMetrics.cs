@@ -17,7 +17,7 @@ namespace Whizbang.Core.Capabilities;
 /// anywhere") without decoding a number. Each collection reads the registry's latest answer.
 /// </remarks>
 /// <docs>operations/observability/metrics#capabilities</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityMetricsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityMetricsTests.cs</tests>
 public sealed class CapabilityMetrics {
 #pragma warning disable CA1707
   /// <summary>The OpenTelemetry meter name for this metrics group.</summary>

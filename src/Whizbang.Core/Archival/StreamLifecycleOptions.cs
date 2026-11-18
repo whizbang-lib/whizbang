@@ -10,7 +10,7 @@ namespace Whizbang.Core.Archival;
 /// <c>IdleTtl</c>, <c>MaxAge</c>, <c>KeepTailVersions</c>, <c>TenantByteCap</c> and <c>Action</c> (#1740).
 /// </summary>
 /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public sealed class StreamLifecycleOptions {
   /// <summary>The configuration section the options bind from.</summary>
   public const string SECTION = "Whizbang:StreamLifecycle";
@@ -106,6 +106,6 @@ public sealed class StreamTypeLifecycleOptions {
 /// <param name="TenantByteCap">The per-tenant byte cap, or null.</param>
 /// <param name="Action">What happens to a stream a trigger picks.</param>
 /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public sealed record StreamEndOfLifePolicy(
   string StreamType, TimeSpan? IdleTtl, TimeSpan? MaxAge, long? KeepTailVersions, long? TenantByteCap, StreamLifecycleAction Action);

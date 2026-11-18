@@ -12,7 +12,7 @@ namespace Whizbang.Core.Security;
 /// the dead-letter reason each action maps to, and the text the dead-letter record carries.
 /// </summary>
 /// <docs>fundamentals/security/security#denied-action</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerReceptorDenialTests.cs</tests>
 internal static class ReceptorDenial {
   /// <summary>The stages inbox delivery runs a message's receptors at, which the interceptors are asked about first.</summary>

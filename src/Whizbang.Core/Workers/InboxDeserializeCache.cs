@@ -36,7 +36,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDeserializeCacheTests.cs</tests>
 public sealed class InboxDeserializeCache {
   private const int DEFAULT_MAX_ENTRIES = 10_000;
 
@@ -114,7 +114,7 @@ public sealed class InboxDeserializeCache {
   /// oldest entries are evicted until it fits; a payload larger than the whole budget is not cached, and any older
   /// entry for the key is dropped so a stale copy is never served.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
   public void Set(Guid messageId, object message, long sizeBytes) {
     ArgumentNullException.ThrowIfNull(message);
     var size = Math.Max(0, sizeBytes);
@@ -130,7 +130,7 @@ public sealed class InboxDeserializeCache {
   }
 
   /// <summary>Drops the entry for a row that completed (#1793); its payload will not be parsed again.</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
   public void Remove(Guid messageId) {
     lock (_evictionLock) {
       _removeLocked(messageId);

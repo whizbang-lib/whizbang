@@ -9,15 +9,15 @@ namespace Whizbang.Core.Transports.AzureServiceBus;
 /// <summary>
 /// Generates Aspire AppHost configuration code for Service Bus topics and subscriptions.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithNoRequirements_ReturnsEmptyMessageAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSingleRequirement_GeneratesCorrectCodeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithMultipleRequirements_GeneratesCorrectCodeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GroupsByTopic_WhenMultipleSubscriptionsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithServiceName_IncludesServiceNameInCommentsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_IncludesHeaderAndFooterAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GeneratesValidCSharpSyntaxAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_SortsTopicsAlphabeticallyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSpecialCharacters_EscapesCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithNoRequirements_ReturnsEmptyMessageAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSingleRequirement_GeneratesCorrectCodeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithMultipleRequirements_GeneratesCorrectCodeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GroupsByTopic_WhenMultipleSubscriptionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithServiceName_IncludesServiceNameInCommentsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_IncludesHeaderAndFooterAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GeneratesValidCSharpSyntaxAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_SortsTopicsAlphabeticallyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSpecialCharacters_EscapesCorrectlyAsync</tests>
 public static class AspireConfigurationGenerator {
   private static readonly char[] _separators = ['-', '_'];
 

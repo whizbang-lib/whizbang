@@ -27,7 +27,7 @@ namespace Whizbang.Core.Attributes;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]

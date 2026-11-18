@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Each type offers different trade-offs between build time, memory, and query performance.
 /// </summary>
 /// <docs>fundamentals/perspectives/vector-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/VectorIndexTypeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/VectorIndexTypeTests.cs</tests>
 public enum VectorIndexType {
   /// <summary>
   /// No index (exact search). Use for small datasets only.

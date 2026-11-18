@@ -25,7 +25,7 @@ namespace Whizbang.Core;
 /// compile-time tables the dispatchers already carry.
 /// </remarks>
 /// <docs>fundamentals/receptors/receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherForeignLookupTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherForeignLookupTests.cs</tests>
 public interface IReceptorLookup {
   /// <summary>This assembly's invoker for a non-void async receptor, or null when it declares none.</summary>
   ReceptorInvoker<TResult>? LookupReceptorInvoker<TResult>(object message, Type messageType);

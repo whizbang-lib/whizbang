@@ -61,14 +61,14 @@ public sealed class SchemaInitializationOptions {
   /// <see cref="NonBlockingSchemaInit"/> to <see langword="false"/> instead; that hold stays opt-in.
   /// </remarks>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAZeroMaxWait_RefusesAtOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:HoldingTheApplicationUntilMigrated_StaysOptInAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAZeroMaxWait_RefusesAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:HoldingTheApplicationUntilMigrated_StaysOptInAsync</tests>
   public TimeSpan DispatchMaxWait { get; set; } = DefaultDispatchMaxWait;
 
   /// <summary>The default of <see cref="DispatchMaxWait"/>: five minutes.</summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
   internal static readonly TimeSpan DefaultDispatchMaxWait = TimeSpan.FromMinutes(5);
 }

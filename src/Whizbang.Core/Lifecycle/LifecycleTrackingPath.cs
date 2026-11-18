@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lifecycle;
 /// own stage guard, its own entry, its own end. One path ending its tracking never ends another path's (#1918).
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#live-tracking</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingPathTests.cs:EndingOnePathsTracking_NeverEndsAnotherPathsTrackingOfTheSameEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingPathTests.cs:EndingOnePathsTracking_NeverEndsAnotherPathsTrackingOfTheSameEventAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.LocalDispatchOverlap.cs:LocalDispatchOfAnEventTheWorkerIsProjecting_BothPathsCompleteTheirOwnLifecycleAsync</tests>
 public enum LifecycleTrackingPath {
   /// <summary>The dispatcher's in-process run of a message: its PostLifecycle after the local receptor.</summary>

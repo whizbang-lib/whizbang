@@ -25,7 +25,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs</tests>
 public interface IStartupStageReporter {
   /// <summary>The stage this instance is in, or <see langword="null"/> before the first one is entered.</summary>
   StartupStageSnapshot? Current { get; }
@@ -56,8 +56,8 @@ public interface IStartupStageReporter {
   /// <param name="cancellationToken">Canceled when the caller is.</param>
   /// <returns>A task that completes once the phase is written (or held).</returns>
   /// <docs>operations/startup/startup-status#pause-and-standby</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs:EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/NullStartupStageReporterTests.cs:NothingItIsTold_PutsItInAStageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs:EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/NullStartupStageReporterTests.cs:NothingItIsTold_PutsItInAStageAsync</tests>
   ValueTask EnterPhaseAsync(RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) =>
     ValueTask.CompletedTask;
 
@@ -80,7 +80,7 @@ public interface IStartupStageReporter {
 /// instance in its stage; a production observer returns promptly.
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs</tests>
 public interface IStartupStageObserver {
   /// <summary>
   /// The stage changed (a transition, progress within it, or a skip), or a held stage was written.

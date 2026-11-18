@@ -26,7 +26,7 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorGateTests.cs</tests>
 internal static partial class ReceptorInterceptorGate {
   /// <summary>
   /// The registered pipeline when it holds at least one interceptor, otherwise null. Reads the registered

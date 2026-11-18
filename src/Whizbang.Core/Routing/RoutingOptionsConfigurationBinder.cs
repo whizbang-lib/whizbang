@@ -28,10 +28,10 @@ namespace Whizbang.Core.Routing;
 /// applied ON TOP of the code-callback values. Absent section = no-op (defaults locked).
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:WithRouting_ConfigurationFlipSet_AppliedOnOptionsResolutionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/SharedInboxRetirementTests.cs:WithRouting_ConfigurationRetireSharedInbox_WithWildcardFlip_BindsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/DefaultNamespaceTopologyTests.cs:Configuration_RouteAllFalse_RollsBackTheDefaultFlipAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:WithRouting_ConfigurationList_IsMergedWithTheCodeListAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceOutboxStrategyTests.cs:WithRouting_ConfigurationFlipSet_AppliedOnOptionsResolutionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/SharedInboxRetirementTests.cs:WithRouting_ConfigurationRetireSharedInbox_WithWildcardFlip_BindsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DefaultNamespaceTopologyTests.cs:Configuration_RouteAllFalse_RollsBackTheDefaultFlipAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsExcludedEventTypesTests.cs:WithRouting_ConfigurationList_IsMergedWithTheCodeListAsync</tests>
 internal static class RoutingOptionsConfigurationBinder {
   /// <summary>The routing configuration section.</summary>
   internal const string CONFIGURATION_SECTION = "Whizbang:Routing";

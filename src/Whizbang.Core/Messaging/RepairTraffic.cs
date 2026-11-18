@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// Detection traffic (checkpoints, manifests, gap reports) is never in this set: report-only still reports.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RepairTrafficTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairTrafficTests.cs</tests>
 public static class RepairTraffic {
   /// <summary>
   /// Normalized (version-stripped) assembly-qualified names of the repair message types, in the form

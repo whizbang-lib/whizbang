@@ -34,13 +34,13 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/dispatcher#dispatch-options</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs</tests>
 public sealed class DispatchOptions {
   /// <summary>
   /// Gets a default instance with no timeout and CancellationToken.None.
   /// Each access returns a new instance to prevent shared state mutations.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_StaticProperty_ReturnsNewInstanceEachTimeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Default_StaticProperty_ReturnsNewInstanceEachTimeAsync</tests>
   public static DispatchOptions Default => new();
 
   /// <summary>
@@ -48,8 +48,8 @@ public sealed class DispatchOptions {
   /// When canceled, the dispatch will throw <see cref="OperationCanceledException"/>.
   /// Default is <see cref="CancellationToken.None"/>.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_CancellationToken_IsNone_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:CancellationToken_PropertySetter_WorksAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Default_CancellationToken_IsNone_Async</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:CancellationToken_PropertySetter_WorksAsync</tests>
   public CancellationToken CancellationToken { get; set; } = CancellationToken.None;
 
   /// <summary>
@@ -57,9 +57,9 @@ public sealed class DispatchOptions {
   /// When exceeded, the dispatch will throw <see cref="OperationCanceledException"/>.
   /// Null means no timeout (default).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_Timeout_IsNull_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Timeout_PropertySetter_WorksAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Timeout_PropertySetter_AcceptsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Default_Timeout_IsNull_Async</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Timeout_PropertySetter_WorksAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Timeout_PropertySetter_AcceptsNullAsync</tests>
   public TimeSpan? Timeout { get; set; }
 
   /// <summary>
@@ -67,7 +67,7 @@ public sealed class DispatchOptions {
   /// </summary>
   /// <param name="token">The cancellation token.</param>
   /// <returns>This options instance for fluent chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithCancellationToken_SetsToken_ReturnsSelfAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithCancellationToken_SetsToken_ReturnsSelfAsync</tests>
   public DispatchOptions WithCancellationToken(CancellationToken token) {
     CancellationToken = token;
     return this;
@@ -79,9 +79,9 @@ public sealed class DispatchOptions {
   /// <param name="timeout">The timeout duration. Must be non-negative.</param>
   /// <returns>This options instance for fluent chaining.</returns>
   /// <exception cref="ArgumentOutOfRangeException">Thrown when timeout is negative.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithTimeout_SetsTimeout_ReturnsSelfAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithTimeout_ZeroValue_SetsTimeoutAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithTimeout_NegativeValue_ThrowsArgumentOutOfRangeExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithTimeout_SetsTimeout_ReturnsSelfAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithTimeout_ZeroValue_SetsTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithTimeout_NegativeValue_ThrowsArgumentOutOfRangeExceptionAsync</tests>
   public DispatchOptions WithTimeout(TimeSpan timeout) {
     ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
     Timeout = timeout;
@@ -102,8 +102,8 @@ public sealed class DispatchOptions {
   /// internally to wait for all perspectives.
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_WaitForPerspectives_IsFalseAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WaitForPerspectives_PropertySetter_WorksAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Default_WaitForPerspectives_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WaitForPerspectives_PropertySetter_WorksAsync</tests>
   public bool WaitForPerspectives { get; set; }
 
   /// <summary>
@@ -111,8 +111,8 @@ public sealed class DispatchOptions {
   /// Only used when <see cref="WaitForPerspectives"/> is true.
   /// Default is 30 seconds.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_PerspectiveWaitTimeout_Is30SecondsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:PerspectiveWaitTimeout_PropertySetter_WorksAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:Default_PerspectiveWaitTimeout_Is30SecondsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:PerspectiveWaitTimeout_PropertySetter_WorksAsync</tests>
   public TimeSpan PerspectiveWaitTimeout { get; set; } = _defaultPerspectiveWaitTimeout;
 
   private static readonly TimeSpan _defaultPerspectiveWaitTimeout = TimeSpan.FromSeconds(30);
@@ -137,9 +137,9 @@ public sealed class DispatchOptions {
   /// var options = new DispatchOptions().WithPerspectiveWait(TimeSpan.FromMinutes(2));
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_SetsWaitForPerspectivesToTrueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_WithTimeout_SetsTimeoutAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_NoTimeout_KeepsDefaultTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_SetsWaitForPerspectivesToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_WithTimeout_SetsTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_NoTimeout_KeepsDefaultTimeoutAsync</tests>
   public DispatchOptions WithPerspectiveWait(TimeSpan? timeout = null) {
     WaitForPerspectives = true;
     if (timeout.HasValue) {
@@ -179,8 +179,8 @@ public sealed class DispatchOptions {
   /// await dispatcher.PublishAsync(watchdogTick, options);
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:ScheduledFor_PropertyExistsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:ScheduledFor_DefaultIsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:ScheduledFor_PropertyExistsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:ScheduledFor_DefaultIsNullAsync</tests>
   public DateTimeOffset? ScheduledFor { get; set; }
 
   /// <summary>
@@ -188,7 +188,7 @@ public sealed class DispatchOptions {
   /// </summary>
   /// <param name="scheduledFor">UTC instant when the message becomes eligible for delivery.</param>
   /// <returns>This options instance for fluent chaining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithScheduledFor_FluentMethodExistsAndChainsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsTests.cs:WithScheduledFor_FluentMethodExistsAndChainsAsync</tests>
   public DispatchOptions WithScheduledFor(DateTimeOffset scheduledFor) {
     ScheduledFor = scheduledFor;
     return this;
@@ -217,7 +217,7 @@ public sealed class DispatchOptions {
   public long? MaxPayloadBytes { get; set; }
 
   /// <summary>Sets <see cref="MaxPayloadBytes"/>. Returns this instance for chaining.</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DispatcherPayloadLimitTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatcherPayloadLimitTests.cs</tests>
   public DispatchOptions WithMaxPayloadBytes(long maxPayloadBytes) {
     MaxPayloadBytes = maxPayloadBytes;
     return this;
@@ -266,8 +266,8 @@ public sealed class DispatchOptions {
   /// <param name="overload">The batch overload the caller used, for the message.</param>
   /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
   /// <exception cref="NotSupportedException">The options carry a setting the default would drop.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDefaultInterfaceMethodTests.cs:BatchOverloadsWithOptions_ByDefault_RefuseASettingTheyWouldDropAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDefaultInterfaceMethodTests.cs:BatchOverloadsWithOptions_ByDefault_RefuseNullOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDefaultInterfaceMethodTests.cs:BatchOverloadsWithOptions_ByDefault_RefuseASettingTheyWouldDropAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDefaultInterfaceMethodTests.cs:BatchOverloadsWithOptions_ByDefault_RefuseNullOptionsAsync</tests>
   internal static void ThrowIfABatchDefaultWouldDrop(DispatchOptions options, string overload) {
     ArgumentNullException.ThrowIfNull(options);
     if (options._firstSettingABatchDefaultWouldDrop() is { } setting) {

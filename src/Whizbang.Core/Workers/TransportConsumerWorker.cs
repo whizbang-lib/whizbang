@@ -46,7 +46,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
@@ -287,7 +287,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   }
 
   /// <summary>The level this worker logs a dead-lettered message's record at (#1901).</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingWiringTests.cs:AddTransportConsumer_ConfiguredWarning_TheConsumerLogsDeadLettersAtWarningAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingWiringTests.cs:AddTransportConsumer_ConfiguredWarning_TheConsumerLogsDeadLettersAtWarningAsync</tests>
   internal LogLevel DeadLetterLevel => _deadLetterLevel;
 
   /// <summary>

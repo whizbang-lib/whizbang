@@ -14,8 +14,8 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <param name="rebuilder">The perspective rebuilder.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:HandleStreamAsync_RebuildsThatOneStreamUnderTheRebuildsOriginAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:HandleStreamAsync_ARebuildThatDidNotSucceed_ThrowsWithItsErrorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:HandleStreamAsync_RebuildsThatOneStreamUnderTheRebuildsOriginAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:HandleStreamAsync_ARebuildThatDidNotSucceed_ThrowsWithItsErrorAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildCommand_NamingAStream_IsRebuiltByTheStreamsOwnerThroughARunAsync</tests>
 public sealed class RebuildPerspectiveStreamsHandler(IPerspectiveRebuilder rebuilder) : IMultiStreamCommandHandler<RebuildPerspectiveStreamsCommand> {
   private readonly IPerspectiveRebuilder _rebuilder = rebuilder ?? throw new ArgumentNullException(nameof(rebuilder));

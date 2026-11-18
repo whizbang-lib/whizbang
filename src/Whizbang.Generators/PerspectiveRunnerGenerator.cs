@@ -697,7 +697,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// case wraps the model (with no action) or unpacks the ApplyResult into a (model, action) tuple.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerInterfaceDispatchTests.cs:EachEvent_IsAppliedThroughTheInterfaceThatListsItAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ExplicitApplyRunnerTests.cs:APerspectiveThatImplementsApplyOnlyExplicitly_IsRunThroughItsInterfacesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ExplicitApplyRunnerTests.cs:APerspectiveThatImplementsApplyOnlyExplicitly_IsRunThroughItsInterfacesAsync</tests>
   private static StringBuilder _buildApplyCases(PerspectiveInfo perspective, string modelSimpleName, string perspectiveSimpleName) {
     var mustExistEvents = perspective.MustExistEventTypes ?? [];
     // The runner generator resolves a dispatch for every routed event (_resolveDispatches).

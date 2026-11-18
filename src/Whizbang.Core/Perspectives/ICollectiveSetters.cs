@@ -41,8 +41,8 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSetters_ConstantSetProperty_OverloadCompilesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSetters_ComputedSetProperty_OverloadCompilesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSetters_ConstantSetProperty_OverloadCompilesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSetters_ComputedSetProperty_OverloadCompilesAsync</tests>
 public interface ICollectiveSetters<TModel> where TModel : class {
   /// <summary>
   /// Assigns <paramref name="selector"/>'s property to a constant

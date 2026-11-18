@@ -21,8 +21,8 @@ namespace Whizbang.Core.Security.Attributes;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#column-level-security</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/FieldPermissionMaskingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/FieldPermissionMaskingTests.cs</tests>
 /// <example>
 /// public class Customer {
 ///   public string Name { get; init; }
@@ -55,10 +55,10 @@ public sealed class FieldPermissionAttribute(string permission, MaskingStrategy 
 /// because a placeholder string cannot stand in for its value. See <see cref="FieldPermissionMasking"/>.
 /// </remarks>
 /// <docs>fundamentals/security/security#masking-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:MaskingStrategy_AllValues_AreDistinctAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_WithMaskingStrategy_SetsMaskingAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_DefaultMaskingIsHideAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityAttributeTests.cs:MaskingStrategy_AllValues_AreDistinctAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_WithMaskingStrategy_SetsMaskingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_DefaultMaskingIsHideAsync</tests>
 public enum MaskingStrategy {
   /// <summary>
   /// Return null/default value.

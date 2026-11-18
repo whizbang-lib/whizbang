@@ -15,7 +15,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#audit-decisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
 public readonly record struct AuditDecision {
 
   /// <summary>What the hook decided: true record, false skip, null no opinion.</summary>
@@ -81,7 +81,7 @@ public readonly record struct AuditDecision {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#audit-decisions</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
 public interface IAuditDecisionHook {
 
   /// <summary>Decides whether this occurrence should be audited.</summary>
@@ -109,7 +109,7 @@ public interface IAuditDecisionHook {
 /// </para>
 /// </remarks>
 /// <docs>operations/dependency-injection/injectable-services</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
 public sealed class NoOpinionAuditDecisionHook : IAuditDecisionHook {
 
   /// <summary>A shared instance; the type is stateless.</summary>

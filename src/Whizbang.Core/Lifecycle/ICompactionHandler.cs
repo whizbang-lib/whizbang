@@ -10,7 +10,7 @@ namespace Whizbang.Core.Lifecycle;
 /// keeps the data and logs why.
 /// </summary>
 /// <docs>fundamentals/events/stream-end-of-life#dispositions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
 public interface ICompactionHandler {
   /// <summary>
   /// Folds the detail <paramref name="context"/> describes into the developer's summary. Awaited before the detail is

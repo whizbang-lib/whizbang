@@ -7,12 +7,12 @@ namespace Whizbang.Core.Messaging;
 /// Flags passed to a work coordinator strategy flush (<see cref="IWorkCoordinatorStrategy.FlushAsync"/>).
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum WorkBatchOptions {
   /// <summary>
@@ -78,7 +78,7 @@ public enum WorkBatchOptions {
 /// This enables retrying only failed stages instead of the entire pipeline.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum MessageProcessingStatus {
   /// <summary>

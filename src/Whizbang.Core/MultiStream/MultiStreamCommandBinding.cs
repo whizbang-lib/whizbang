@@ -12,8 +12,8 @@ namespace Whizbang.Core.MultiStream;
 /// <summary>The binding for one command type. See <see cref="IMultiStreamCommandBinding"/>.</summary>
 /// <typeparam name="TCommand">The command type.</typeparam>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_ReadsThePayloadBackAndCallsTheHandlerForThatStreamAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_APayloadThatReadsAsNull_ThrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_ReadsThePayloadBackAndCallsTheHandlerForThatStreamAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_APayloadThatReadsAsNull_ThrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandReceptorRegistrarTests.cs:StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync</tests>
 public sealed class MultiStreamCommandBinding<TCommand> : IMultiStreamCommandBinding where TCommand : IMultiStreamCommand {
   /// <inheritdoc/>

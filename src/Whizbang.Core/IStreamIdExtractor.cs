@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs:ExtractStreamId_CommandWithStreamId_ReturnsStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs:ExtractStreamId_EventWithStreamIdAttribute_ExtractsStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:SendAsync_WithGeneratedExtractor_StreamIdIsExtractedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:SendAsync_WithGeneratedExtractor_StreamIdIsExtractedAsync</tests>
 public interface IStreamIdExtractor {
   /// <summary>
   /// Extracts the stream ID from a message.

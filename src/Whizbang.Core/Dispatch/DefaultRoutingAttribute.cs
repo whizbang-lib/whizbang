@@ -49,7 +49,7 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DefaultRoutingAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DefaultRoutingAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
 public sealed class DefaultRoutingAttribute(DispatchModes mode) : Attribute {
   /// <summary>

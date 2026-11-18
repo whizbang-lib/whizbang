@@ -16,7 +16,7 @@ namespace Whizbang.Core.Capabilities;
 /// per provider and per capability, by keys read where they apply (<see cref="CapabilityAutoProvision"/>).
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
 // Renamed when extension detection became the generic capability pattern.
 [Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:PostgresExtensions:ProbeOnStartup", "Whizbang:Capabilities:ProbeOnStartup")]
 public sealed class CapabilityOptions {
@@ -59,7 +59,7 @@ public sealed class CapabilityOptions {
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilitiesStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilitiesStartupStepTests.cs</tests>
 public sealed class CapabilitiesStartupStep : IStartupStep {
 #pragma warning disable CA1707
   /// <summary>The step's name in the startup pipeline.</summary>

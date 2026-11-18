@@ -10,7 +10,7 @@ namespace Whizbang.Core.Archival;
 /// so no policy applies to it.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchivedStreamRowPoliciesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchivedStreamRowPoliciesTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRowsSqlTests.cs</tests>
 public enum ArchivedStreamRowPolicy {
   /// <summary>The default. The row stays in the perspective's table, readable as it was, while its stream is archived.</summary>

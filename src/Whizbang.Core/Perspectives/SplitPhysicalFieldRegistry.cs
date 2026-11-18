@@ -19,7 +19,7 @@ namespace Whizbang.Core.Perspectives;
 /// <para>A model with no registration is not stored Split, and its store reads the document alone.</para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/SplitPhysicalFieldRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/SplitPhysicalFieldRegistryTests.cs</tests>
 public static class SplitPhysicalFieldRegistry {
   private static readonly ConcurrentDictionary<Type, object> _maps = new();
 

@@ -11,7 +11,7 @@ namespace Whizbang.Testing.Lifecycle;
 /// asserts on <see cref="Requests"/>, or waits for <see cref="FirstRequest"/>: the exit's own signal, never a delay.
 /// </summary>
 /// <docs>operations/startup/instance-exits</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageHostLifecycleTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageHostLifecycleTests.cs</tests>
 public sealed class RecordingInstanceExit : IWhizbangInstanceExit {
   private readonly Lock _gate = new();
   private readonly List<InstanceExitRequest> _requests = [];

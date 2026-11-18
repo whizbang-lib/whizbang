@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
 internal static class CanonicalTemporalRenderings {
   private const string INFINITY = "infinity";
   private const string NEGATIVE_INFINITY = "-infinity";

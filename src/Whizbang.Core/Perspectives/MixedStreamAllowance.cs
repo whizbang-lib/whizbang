@@ -12,7 +12,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="EphemeralType">The ephemeral event type, <c>Ns.Type, Assembly</c>.</param>
 /// <param name="DurableType">The Sourced event type, <c>Ns.Type, Assembly</c>.</param>
 /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_AnAllowingReadModel_AllowsItsPairsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_AnAllowingReadModel_AllowsItsPairsAsync</tests>
 public sealed record MixedStreamPair(string EphemeralType, string DurableType);
 
 /// <summary>
@@ -28,7 +28,7 @@ public sealed record MixedStreamPair(string EphemeralType, string DurableType);
 /// ephemeral history walk and the rebuild's state-based guard.
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs</tests>
 public static class MixedStreamAllowance {
   /// <summary>
   /// The allowed pairs: applied by a read model with <see cref="MixedStreams.Allow"/>, and by no read model without it.
@@ -36,7 +36,7 @@ public static class MixedStreamAllowance {
   /// </summary>
   /// <param name="perspectives">Every registered read model.</param>
   /// <returns>The allowed pairs; empty when no read model allows mixing.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_ASecondReadModelWithoutTheOptIn_KeepsThePairRefusedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_ASecondReadModelWithoutTheOptIn_KeepsThePairRefusedAsync</tests>
   public static IReadOnlyList<MixedStreamPair> Allowed(IEnumerable<PerspectiveRegistrationInfo> perspectives) {
     ArgumentNullException.ThrowIfNull(perspectives);
     var allowed = new SortedSet<(string Ephemeral, string Durable)>();
@@ -55,7 +55,7 @@ public static class MixedStreamAllowance {
   /// <summary>The allowed pairs of a host's registry; empty without one.</summary>
   /// <param name="registry">The host's perspective registry, or null.</param>
   /// <returns>The allowed pairs.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_WithoutARegistry_IsEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:Allowed_WithoutARegistry_IsEmptyAsync</tests>
   public static IReadOnlyList<MixedStreamPair> Allowed(IPerspectiveRunnerRegistry? registry) =>
     registry is null ? [] : Allowed(registry.GetRegisteredPerspectives());
 
@@ -66,7 +66,7 @@ public static class MixedStreamAllowance {
   /// <param name="pairs">The allowed pairs.</param>
   /// <param name="catalog">The application's message types, or null.</param>
   /// <returns>Each pair once per combination of stored names, ordered.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:Stored_AddsEachTypesFormerNames_FromTheCatalogAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:Stored_AddsEachTypesFormerNames_FromTheCatalogAsync</tests>
   public static IReadOnlyList<MixedStreamPair> Stored(IReadOnlyList<MixedStreamPair> pairs, IMessageTypeCatalog? catalog) {
     ArgumentNullException.ThrowIfNull(pairs);
     var stored = new SortedSet<(string Ephemeral, string Durable)>();
@@ -86,7 +86,7 @@ public static class MixedStreamAllowance {
   /// <param name="typeName">The type's stored name.</param>
   /// <param name="catalog">The application's message types, or null.</param>
   /// <returns>The names, the given one first.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:Stored_AddsEachTypesFormerNames_FromTheCatalogAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:Stored_AddsEachTypesFormerNames_FromTheCatalogAsync</tests>
   public static IReadOnlyList<string> StoredNames(string typeName, IMessageTypeCatalog? catalog) {
     ArgumentException.ThrowIfNullOrWhiteSpace(typeName);
     var names = new List<string> { typeName };
@@ -112,7 +112,7 @@ public static class MixedStreamAllowance {
   /// <param name="perspective">The read model being rebuilt, or null when it is not registered.</param>
   /// <param name="allowed">The allowed pairs (<see cref="Allowed(IEnumerable{PerspectiveRegistrationInfo})"/>).</param>
   /// <returns>The ephemeral types, ordered; empty when nothing may be passed over.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/MixedStreamAllowanceTests.cs:IgnoredByRebuild_IsTheEphemeralSide_OfPairsTheReadModelDoesNotApplyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MixedStreamAllowanceTests.cs:IgnoredByRebuild_IsTheEphemeralSide_OfPairsTheReadModelDoesNotApplyAsync</tests>
   public static IReadOnlyList<string> IgnoredByRebuild(PerspectiveRegistrationInfo? perspective, IReadOnlyList<MixedStreamPair> allowed) {
     ArgumentNullException.ThrowIfNull(allowed);
     if (perspective is null || allowed.Count == 0) {

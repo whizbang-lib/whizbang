@@ -38,7 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 public static partial class CompositeInboxFanout {
   private const string LOG_CATEGORY = "Whizbang.Core.Messaging.CompositeInboxFanout";
 
@@ -70,7 +70,7 @@ public static partial class CompositeInboxFanout {
   /// <see cref="EventFlags"/> derivation. A catalog miss means "unknown here", not "composite".
   /// </remarks>
   /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync</tests>
   public static bool IsCompositeWireType(string? wireTypeName, IEventMarkerResolver? markerResolver) {
     if (markerResolver is null || EventFlagsDeriver.ToClrTypeName(wireTypeName) is not { } clrTypeName) {
       return false;
@@ -115,8 +115,8 @@ public static partial class CompositeInboxFanout {
   /// Under <see cref="FanoutAtomicity.Independent"/>, a dropped inner event is logged (first-drop
   /// detail + count summary) so a partially-lost fan-out is diagnosable rather than silent.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:TryExpand_AtomicCompositeWithUnresolvedInner_ExpandsResolvableChildrenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:TryExpand_AtomicCompositeWithUnresolvedInner_ExpandsResolvableChildrenAsync</tests>
   /// <param name="composite">The composite payload, or null when the row is not a composite.</param>
   /// <param name="source">The composite's own inbox envelope.</param>
   /// <param name="scope">The dispatch scope (serializer, catalog, resolvers, logging).</param>
@@ -125,7 +125,7 @@ public static partial class CompositeInboxFanout {
   /// <param name="ownerOf">For a redelivery bundle: a child type's true owner when the origin the bundle names does not own
   /// it (<see cref="MisattributedOrigin.ForBundle"/>), or null when the bundle's origin stands. Such a child is stored
   /// under the owner with no origin sequence, and counted (#2116). Null keeps every child's origin.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Expanding a composite checks five things that can disagree (the inner count against the cap, against the carried ids, against the carried sequences, each inner against null, and each child against the consumer's subscriptions) and every disagreement has a different outcome under Atomic than under Independent. The branching is the atomicity contract, and the two modes have to be read together to see that a drop is logged exactly once.")]
   public static FanoutResult TryExpand(
       ICompositeEvent? composite,

@@ -12,7 +12,7 @@ namespace Whizbang.Core.Lenses;
 /// scope applies only if the write creates the row.
 /// </param>
 /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/ScopeInheritanceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/ScopeInheritanceTests.cs</tests>
 public readonly record struct ScopeWrite(PerspectiveScope? Scope, bool ForceUpdate);
 
 /// <summary>
@@ -31,7 +31,7 @@ public readonly record struct ScopeWrite(PerspectiveScope? Scope, bool ForceUpda
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/ScopeInheritanceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/ScopeInheritanceTests.cs</tests>
 public static class ScopeInheritance {
   /// <summary>Decides the scope a perspective write carries.</summary>
   /// <param name="messageScope">The scope of the latest message applied in this write, or null.</param>

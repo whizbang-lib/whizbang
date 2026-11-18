@@ -39,7 +39,7 @@ public enum PerspectiveRowVersionState {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
 public readonly record struct PerspectiveRowVersion {
   private PerspectiveRowVersion(PerspectiveRowVersionState state, long value) {
     State = state;
@@ -91,7 +91,7 @@ public readonly record struct PerspectiveRowVersion {
 /// the store did not read it.
 /// </param>
 /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
 public sealed record PerspectiveApplyRead(
     PerspectiveRowVersion Version,
     PerspectiveMetadata? Metadata,

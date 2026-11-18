@@ -28,7 +28,7 @@ namespace Whizbang.Core.Messaging;
 /// convention, type-name suffix).
 /// </param>
 /// <docs>extending/internals/receptor-registry-query</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/InboxRoutingStrategyTests.cs:InboxSubscriptionContext_CarriesAllComponentsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/InboxRoutingStrategyTests.cs:InboxSubscriptionContext_CarriesAllComponentsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorRegistryQueryGeneratorTests.cs:Generator_WithCommandReceptor_EmitsHandledMessageWithCommandKindAsync</tests>
 public sealed record HandledMessageInfo(
   string MessageTypeName,

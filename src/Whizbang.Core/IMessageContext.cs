@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesAllNewIdentifiersAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCorrelationId_GeneratesNewMessageIdAndCausationIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ScopedMessageContextTests.cs:UserId_WithInitiatingContext_ReturnsInitiatingUserIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ScopedMessageContextTests.cs:UserId_WithInitiatingContext_ReturnsInitiatingUserIdAsync</tests>
 public interface IMessageContext {
   /// <summary>
   /// Unique identifier for this specific message.

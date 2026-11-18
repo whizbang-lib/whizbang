@@ -20,7 +20,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </code>
 /// </example>
 /// <docs>fundamentals/events/closing-the-books</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/BookCloserTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/BookCloserTests.cs</tests>
 public abstract record OpeningBalance : IEvent {
   /// <summary>The successor stream this event opens: its stream id, chosen by the framework.</summary>
   [StreamId]

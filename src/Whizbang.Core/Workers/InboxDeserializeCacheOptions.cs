@@ -38,6 +38,6 @@ public sealed class InboxDeserializeCacheOptions {
   /// than the whole budget is not cached at all. The cache is a performance aid; an evicted entry is parsed again.
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDeserializeCacheByteBudgetTests.cs</tests>
   public long MaxBytes { get; set; } = InboxDeserializeCache.DEFAULT_MAX_BYTES;
 }

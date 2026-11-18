@@ -418,7 +418,7 @@ public sealed partial class PerspectiveRebuilder(
   /// pair's ephemeral type, under every stored name, is passed over for it (<see cref="MixedStreamAllowance.IgnoredByRebuild"/>).
   /// The opted-in read model applies the ephemeral type, so its full rebuild of the stream stays refused.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_AnAllowedMixedStream_RebuildsForADurableOnlyReadModel_AndStaysRefusedForTheOptedInOneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_AnAllowedMixedStream_RebuildsForADurableOnlyReadModel_AndStaysRefusedForTheOptedInOneAsync</tests>
   private async Task<List<Guid>> _withoutStateBasedStreamsAsync(
       IServiceProvider sp, IPerspectiveRunnerRegistry registry, string perspectiveName, List<Guid> streamIds, CancellationToken ct) {
     var stateBasedGuard = sp.GetService<IWorkCoordinator>();

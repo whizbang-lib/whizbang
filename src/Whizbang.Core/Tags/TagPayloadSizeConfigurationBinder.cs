@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPayloadSizeConfigurationBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagPayloadSizeConfigurationBinderTests.cs</tests>
 public static class TagPayloadSizeConfigurationBinder {
   /// <summary>The section every key lives under.</summary>
   internal const string CONFIGURATION_SECTION = "Whizbang:Tags";

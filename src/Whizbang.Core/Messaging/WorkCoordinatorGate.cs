@@ -252,8 +252,8 @@ public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Con
   /// "stuck row that never DLQ-promotes" pattern.
   /// </remarks>
   /// <docs>fundamentals/workers/pinned-connection-pool</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGatePinnedExemptionTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateHolderDiagnosticsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorGatePinnedExemptionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorGateHolderDiagnosticsTests.cs</tests>
   public async ValueTask<Releaser> AcquireAsync(
       CancellationToken cancellationToken = default,
       [CallerMemberName] string caller = "<unknown>") {

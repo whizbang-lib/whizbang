@@ -7,10 +7,10 @@ namespace Whizbang.Core.Lenses;
 /// Constants for tenant identification in multi-tenant scenarios.
 /// </summary>
 /// <docs>fundamentals/security/multi-tenancy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:TenantConstants_AllTenants_IsAsteriskAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:AsSystem_ForAllTenants_SetsTenantIdToAllTenantsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTagScopePropagationTests.cs:InvokeAsync_WithSystemAllTenantsScope_PropagatesScopeToTagHook_AtStageAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/SystemDispatcherBuilderTests.cs:TenantConstants_AllTenants_IsAsteriskAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:AsSystem_ForAllTenants_SetsTenantIdToAllTenantsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTagScopePropagationTests.cs:InvokeAsync_WithSystemAllTenantsScope_PropagatesScopeToTagHook_AtStageAsync</tests>
 public static class TenantConstants {
   /// <summary>
   /// Represents "all tenants" for cross-tenant system operations.

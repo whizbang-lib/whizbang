@@ -38,11 +38,11 @@ namespace Whizbang.Core;
 /// nothing needs removing in the first place.
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/RegistrationCollisionsTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AContributionWhoseRegistryWasRemoved_IsSkipped_AndTheHostStillBuildsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AContributionWhoseRegistryWasRemoved_IsSkipped_AndTheHostStillBuildsAsync</tests>
 internal static class ContributionServiceCollectionExtensions {
   /// <summary>
   /// Adds <typeparamref name="TContribution"/> under <paramref name="contributionKey"/> and serves

@@ -77,7 +77,7 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   /// </summary>
   /// <param name="routingPattern">A pattern from <see cref="BuildRoutingPatterns"/>.</param>
   /// <returns>True for the control-plane family's pattern.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_EveryFrameworkPatternIsStillCoveredExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_EveryFrameworkPatternIsStillCoveredExactlyOnceAsync</tests>
   internal static bool IsControlPlanePattern(string routingPattern) =>
     string.Equals(routingPattern, CONTROL_PLANE_NAMESPACE + ".#", StringComparison.Ordinal);
 
@@ -127,7 +127,7 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   /// <returns>A one-element list containing today's singular subscription.</returns>
   /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#shared-topic-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/InboxRoutingStrategyTests.cs:SharedTopicInboxStrategy_GetSubscriptions_BitIdenticalToSingularAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/InboxRoutingStrategyTests.cs:SharedTopicInboxStrategy_GetSubscriptions_BitIdenticalToSingularAsync</tests>
   public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
     ArgumentNullException.ThrowIfNull(context);
     return [GetSubscription(context.OwnedDomains, context.ServiceName, MessageKind.Command)];

@@ -29,7 +29,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/registry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/MultiAssemblyPerspectiveRunnerRegistryTests.cs:TwoPerspectiveAssemblies_TheServedRegistry_FindsBothAssembliesRunnersAsync</tests>
 public static class PerspectiveRunnerRegistryServiceCollectionExtensions {
   /// <summary>The service key each assembly's registry is registered under as a contribution.</summary>
@@ -43,10 +43,10 @@ public static class PerspectiveRunnerRegistryServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
   /// <remarks>Idempotent per registry type: an assembly registered twice contributes once.</remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AnAssemblyRegisteredTwice_ListsItsPerspectivesOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AHostsOwnRegistry_RegisteredFirst_IsTheOneServedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:SamePerspectiveInTwoAssemblies_IsReportedAsACollisionAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_EventTypes_AreTheUnion_OnTheRegistryAndTheServedProviderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AnAssemblyRegisteredTwice_ListsItsPerspectivesOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:AHostsOwnRegistry_RegisteredFirst_IsTheOneServedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:SamePerspectiveInTwoAssemblies_IsReportedAsACollisionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerRegistryContributionTests.cs:TwoAssemblies_EventTypes_AreTheUnion_OnTheRegistryAndTheServedProviderAsync</tests>
   public static IServiceCollection AddPerspectiveRunnerRegistryContribution<TRegistry>(this IServiceCollection services)
       where TRegistry : class, IPerspectiveRunnerRegistry {
     ArgumentNullException.ThrowIfNull(services);

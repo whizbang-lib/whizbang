@@ -21,7 +21,7 @@ namespace Whizbang.Core.Workers;
 /// throwing. An unreadable name fails SAFE: discard requires a positive match.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DisabledSubsystemDiscardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DisabledSubsystemDiscardTests.cs</tests>
 public static class DisabledSubsystemDiscardPolicy {
 
   private static readonly string _checkpoint = EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.Format(typeof(IntegrityCheckpoint)));

@@ -45,7 +45,7 @@ namespace Whizbang.Core.Transports;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transports#transport-namespaces</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/NamespaceRoutingTransportTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/NamespaceRoutingTransportTests.cs</tests>
 public sealed class NamespaceRoutingTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private readonly ITransport _default;
   private readonly IReadOnlyDictionary<string, ITransport> _byNamespace;

@@ -30,16 +30,16 @@ namespace Whizbang.Core.Commands.System;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditRebuildRequestReceptorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/SystemControlTagTests.cs:DurableSystemCommands_DoNotCarryTheControlTagAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/SystemControlTagTests.cs:DurableSystemCommands_DoNotCarryTheControlTagAsync</tests>
 [PinnedId("1cd01d44-ef74-4cd5-881e-08e958aada64")]
 public sealed record RequestAuditRebuildCommand : ICommand, IControlPlaneMessage, Whizbang.Core.Audit.IBoundedCommandAudit {
   private static readonly string[] _idLists = [nameof(StreamIds)];
 
   /// <inheritdoc />
   /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:RequestAuditRebuildCommand_IsAuditedWithItsStreamCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs:RequestAuditRebuildCommand_IsAuditedWithItsStreamCountAsync</tests>
   public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
 
   /// <summary>Optional tenant filter (the stored scope's <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>

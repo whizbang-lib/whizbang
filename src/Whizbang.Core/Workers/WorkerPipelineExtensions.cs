@@ -37,8 +37,8 @@ public static class WorkerPipelineExtensions {
   /// </summary>
   /// <docs>operations/workers/housekeeping-arbitration</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
       new Whizbang.Core.Observability.HousekeepingMetrics(
@@ -79,7 +79,7 @@ public static class WorkerPipelineExtensions {
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
   /// <docs>operations/deployment/troubleshooting#workers-not-wired</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A registration list: each branch registers one worker, and the order is the wiring the documentation describes.")]
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);

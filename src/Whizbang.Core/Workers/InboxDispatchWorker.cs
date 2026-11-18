@@ -310,7 +310,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// which is what happened before the keeper existed, and the next pass tries again.
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
   internal async Task RenewHeldLeasesOnceAsync(CancellationToken cancellationToken) {
     var leaseSeconds = _leaseRenewalOptions.LeaseSeconds;
     var sweep = _inboxChannelWriter.SweepLeases(TimeSpan.FromSeconds(leaseSeconds / 2.0), _leaseHandleOptions.MaxRenewalsPerWork);
@@ -387,8 +387,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// Logs the dead-letter record (#1901) for a row this worker dead-lettered or finished for good, at the dead-letter
   /// level, with its type and its last failure.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs:Dispatch_PayloadRefused_DeadLetterRecordCarriesTheRefusalAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs:Dispatch_PayloadRefused_DeadLetterRecordCarriesTheRefusalAtErrorAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerBranchCoverageTests.cs:CompositeOverOwnCap_MovedToTheDeadLetterStore_LogsTheDeadLetterRecordAtErrorAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerBranchCoverageTests.cs:CompositeOverConsumerBudget_NoDeadLetterStore_LogsTheRecordForTheTerminalCompletionAsync</tests>
   private void _logDeadLettered(InboxWork work, MessageFailureReason reason, string? lastError, Exception? exception) =>
@@ -407,7 +407,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// held unless its completion is waiting in the commit channel. A dispatch that throws is routed to the failure
   /// channel; a shutdown is not a failure and propagates.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
   internal async Task DispatchQueuedAsync(InboxWork work, CancellationToken stoppingToken) {
     if (!_inboxChannelWriter.TryBeginDispatch(work.MessageId)) {
       LogCopyNotHeldSkipped(_logger, work.MessageId);
@@ -512,7 +512,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   /// <param name="error">The row's last recorded error, or null.</param>
   /// <returns>The cause, worded for a log line.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerControlPlaneDropLogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerControlPlaneDropLogTests.cs</tests>
   internal static string DescribeLastFailure(string? error) => error switch {
     null => "none recorded",
     _ when PoisonAdmissionPolicy.IsLeaseExpiryCasualty(error) => "its lease lapsed without a reported outcome",
@@ -789,7 +789,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   /// <param name="ex">The exception the deserializer raised, possibly wrapped.</param>
   /// <returns><see langword="true"/> when a refusal was found.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
   internal static bool IsPayloadRefusal(Exception ex) {
     for (Exception? current = ex; current is not null; current = current.InnerException) {
       if (current is System.Text.Json.JsonException or NotSupportedException) {
@@ -810,7 +810,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// keeps its body and the attempts bound governs it, rather than the completion that deletes it.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#unreadable-messages</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
   private async Task _deadLetterUndeserializableAsync(InboxWork work, Exception refusal, CancellationToken ct) {
     const MessageFailureReason reason = Whizbang.Core.Messaging.MessageFailureReason.SerializationError;
     var cause = refusal.GetBaseException();
@@ -879,7 +879,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// runs and nothing is completed.
   /// </summary>
   /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
   private async Task _handleReceptorDenialAsync(InboxWork work, InterceptorResult denial, CancellationToken ct) {
     var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
     LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, ReceptorDenial.ReasonOf(denial));

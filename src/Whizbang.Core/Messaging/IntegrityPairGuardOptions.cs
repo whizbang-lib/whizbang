@@ -8,7 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// apply the same eligibility rules to the event types they share.
 /// </summary>
 /// <docs>resilience/stream-integrity#the-pair-guard</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityPairGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityPairGuardTests.cs</tests>
 public sealed class IntegrityPairGuardOptions {
   /// <summary>
   /// How long a pair may stay halted before the guard alerts (<c>Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter</c>,
@@ -16,6 +16,6 @@ public sealed class IntegrityPairGuardOptions {
   /// halted past this is a rollout that did not finish, or two services built from different rules.
   /// </summary>
   /// <docs>resilience/stream-integrity#the-pair-guard</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityPairGuardTests.cs:Options_AlertAfterTwoHoursByDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityPairGuardTests.cs:Options_AlertAfterTwoHoursByDefaultAsync</tests>
   public TimeSpan HaltedAlertAfter { get; set; } = TimeSpan.FromHours(2);
 }

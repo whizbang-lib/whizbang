@@ -38,9 +38,9 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorAtPostInboxInline_ShouldInvokeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsEvent_ShouldCascadeEventAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerServiceRegistrationTests.cs:ReceptorInvoker_RegisteredAsScoped_HasCorrectLifetimeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorAtPostInboxInline_ShouldInvokeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorReturnsEvent_ShouldCascadeEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerServiceRegistrationTests.cs:ReceptorInvoker_RegisteredAsScoped_HasCorrectLifetimeAsync</tests>
 public interface IReceptorInvoker {
   /// <summary>
   /// Invokes all receptors for the message at the specified lifecycle stage.
@@ -76,7 +76,7 @@ public interface IReceptorInvoker {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The first loud denial, or <see cref="Security.InterceptorResult.Allowed"/>.</returns>
   /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
   ValueTask<Security.InterceptorResult> EvaluateAdmissionAsync(
       IMessageEnvelope envelope,
       IReadOnlyList<LifecycleStage> stages,
@@ -106,7 +106,7 @@ public interface IReceptorInvoker {
   /// <param name="failures">Receives each receptor that throws, with its exception.</param>
   /// <param name="cancellationToken">Cancellation token. A cancellation is thrown, never reported as a failure.</param>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerFailureIsolationTests.cs</tests>
   ValueTask InvokeEveryReceptorAsync(
       IMessageEnvelope envelope,
       LifecycleStage stage,

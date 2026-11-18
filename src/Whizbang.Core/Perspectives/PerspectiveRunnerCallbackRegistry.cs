@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// Tracks which callbacks have been invoked per ServiceCollection to prevent duplicate registrations.
 /// Uses ConditionalWeakTable to track per-ServiceCollection without preventing garbage collection.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs</tests>
 public static class PerspectiveRunnerCallbackRegistry {
   private static readonly List<(string? Assembly, Action<IServiceCollection> Callback)> _callbacks = [];
   private static readonly ConditionalWeakTable<IServiceCollection, HashSet<int>> _invoked = [];
@@ -26,7 +26,7 @@ public static class PerspectiveRunnerCallbackRegistry {
   /// Supports multiple assemblies registering callbacks (thread-safe).
   /// </summary>
   /// <param name="callback">Callback that registers perspective runners with the service collection.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:RegisterCallback_WithValidCallback_StoresCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:RegisterCallback_WithValidCallback_StoresCallbackAsync</tests>
   public static void RegisterCallback(Action<IServiceCollection> callback) {
     ArgumentNullException.ThrowIfNull(callback);
 
@@ -90,9 +90,9 @@ public static class PerspectiveRunnerCallbackRegistry {
   /// Uses ConditionalWeakTable to track per-ServiceCollection, allowing test scenarios where each test creates a new ServiceCollection.
   /// </summary>
   /// <param name="services">The service collection to register services in.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_WithNoCallback_DoesNotThrowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_PassesCorrectServicesToCallbackAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_SameServiceCollection_OnlyInvokesOncePerCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_WithNoCallback_DoesNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_PassesCorrectServicesToCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_SameServiceCollection_OnlyInvokesOncePerCallbackAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceScope/ServiceScopedRegistrationTests.cs:AnExcludedRunnerCallback_IsNotSpent_SoALaterAnchorOnItsServiceStillRegistersItAsync</tests>
   public static void InvokeRegistration(IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);

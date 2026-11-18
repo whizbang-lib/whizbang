@@ -14,11 +14,11 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.Component.Tests/DispatcherTransportBridgeTests.cs</tests>
 public interface IServiceInstanceProvider {
   /// <summary>

@@ -16,8 +16,8 @@ namespace Whizbang.Core.MultiStream;
 /// <param name="store">Where the run is recorded.</param>
 /// <param name="logger">Logger.</param>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#intake</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_RecordsOneRunCarryingTheCommandAndItsStreamsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_AnEmptyStreamList_IsRefusedAndRecordsNothingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_RecordsOneRunCarryingTheCommandAndItsStreamsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_AnEmptyStreamList_IsRefusedAndRecordsNothingAsync</tests>
 public sealed partial class MultiStreamCommandIntake<TCommand>(
     IMultiStreamCommandStore store,
     ILogger<MultiStreamCommandIntake<TCommand>> logger) : IReceptor<TCommand> where TCommand : IMultiStreamCommand {

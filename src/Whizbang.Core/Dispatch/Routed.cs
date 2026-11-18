@@ -69,10 +69,10 @@ public readonly struct RoutedNone : IRouted {
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs:IRouted_CanPatternMatch_OnRoutedTypeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs:IRouted_Mode_ReturnsSameModeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Local_Result_ImplementsIRoutedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RoutedTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RoutedTests.cs:IRouted_CanPatternMatch_OnRoutedTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RoutedTests.cs:IRouted_Mode_ReturnsSameModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RouteTests.cs:Local_Result_ImplementsIRoutedAsync</tests>
 public interface IRouted {
   /// <summary>
   /// Gets the wrapped value as an object.
@@ -115,7 +115,7 @@ public interface IRouted {
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/RoutedTests.cs</tests>
 /// <remarks>
 /// Creates a new routed wrapper with the specified value and dispatch mode.
 /// </remarks>

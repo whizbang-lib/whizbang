@@ -18,8 +18,8 @@ namespace Whizbang.Core.Transports;
 /// - Kafka: Create topics via AdminClient</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_DefaultImplementation_CompletesWithoutThrowingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/InfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_DefaultImplementation_CompletesWithoutThrowingAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithProvisionerAndOwnedDomains_CallsProvisionerBeforeSubscriptionsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithEmptyOwnedDomains_SkipsProvisioningAsync</tests>
 public interface IInfrastructureProvisioner {
@@ -79,7 +79,7 @@ public interface IInfrastructureProvisioner {
   /// existence so a re-provision performs no management operations.
   /// </remarks>
   /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionManifestAsync_DefaultImplementation_IsNoOpAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionManifestAsync_DefaultImplementation_IsNoOpAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithManifestResolvable_CallsProvisionManifestBeforeSubscriptionsAsync</tests>
   Task ProvisionManifestAsync(
     Whizbang.Core.Routing.TopologyManifest manifest,

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Aligns with SQL Server temporal table patterns for tracking row history.
 /// </summary>
 /// <docs>fundamentals/perspectives/temporal</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/TemporalPerspectiveRowTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/TemporalPerspectiveRowTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Temporal perspectives track the full history of changes to data.

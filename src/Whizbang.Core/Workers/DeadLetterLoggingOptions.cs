@@ -24,8 +24,8 @@ namespace Whizbang.Core.Workers;
 /// outbox dispatch paths).</para>
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingWiringTests.cs</tests>
 public sealed class DeadLetterLoggingOptions {
   /// <summary>The configuration section the options bind from.</summary>
   public const string SECTION = "Whizbang:DeadLetterLogging";
@@ -35,8 +35,8 @@ public sealed class DeadLetterLoggingOptions {
   /// <see cref="LogLevel.Warning"/>. Any other level is refused at startup.
   /// </summary>
   /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Default_IsErrorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Turnkey_LevelWarning_BindsFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Default_IsErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Turnkey_LevelWarning_BindsFromConfigurationAsync</tests>
   public LogLevel Level { get; set; } = LogLevel.Error;
 }
 
@@ -46,8 +46,8 @@ public sealed class DeadLetterLoggingOptions {
 /// and checked when the host starts.
 /// </summary>
 /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Validator_RefusesEveryOtherLevel_NamingTheKeyAndTheChoicesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Turnkey_UnsupportedLevel_IsRefusedAtStartupAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Validator_RefusesEveryOtherLevel_NamingTheKeyAndTheChoicesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs:Turnkey_UnsupportedLevel_IsRefusedAtStartupAsync</tests>
 public sealed class DeadLetterLoggingOptionsValidator : IValidateOptions<DeadLetterLoggingOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, DeadLetterLoggingOptions options) {

@@ -47,7 +47,7 @@ public class ScopeExtension {
 /// Stored as JSONB/JSON in scope column using EF Core ComplexProperty().ToJson().
 /// </summary>
 /// <docs>fundamentals/security/scoping#perspective-scope</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/PerspectiveScopeTests.cs</tests>
 /// <example>
 /// var scope = new PerspectiveScope {
 ///   TenantId = "tenant-123",
@@ -245,7 +245,7 @@ public class PerspectiveScope {
   /// <see cref="IsSystem"/> and <see cref="IsDeclaredUnscoped"/> are kept from this scope.
   /// </remarks>
   /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Scoping/ScopeInheritanceTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/ScopeInheritanceTests.cs</tests>
   public PerspectiveScope WithFieldsFrom(PerspectiveScope source, ScopeFields fields) {
     ArgumentNullException.ThrowIfNull(source);
     return new PerspectiveScope {

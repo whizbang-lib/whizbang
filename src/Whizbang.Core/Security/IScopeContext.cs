@@ -10,7 +10,7 @@ namespace Whizbang.Core.Security;
 /// Populated from HTTP claims, message headers, or explicit injection.
 /// </summary>
 /// <docs>fundamentals/security/security#scope-context</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ScopeContextTests.cs</tests>
 /// <example>
 /// // Check permissions
 /// if (scopeContext.HasPermission(Permission.Read("orders"))) {
@@ -29,8 +29,8 @@ namespace Whizbang.Core.Security;
 ///   // Team-specific functionality
 /// }
 /// </example>
-/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Constructor_WithValidExtraction_CreatesContextAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs:Scope_DelegatesToExtractionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ImmutableScopeContextTests.cs:Constructor_WithValidExtraction_CreatesContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ImmutableScopeContextTests.cs:Scope_DelegatesToExtractionAsync</tests>
 public interface IScopeContext {
   /// <summary>
   /// Current scope values (TenantId, UserId, etc.).

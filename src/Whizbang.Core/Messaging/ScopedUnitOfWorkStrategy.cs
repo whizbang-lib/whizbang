@@ -14,8 +14,8 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Web APIs, message handlers, transactional operations, scoped lifetimes.
 /// All messages in scope share single unit with time-ordered UUIDv7 ID.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private DispatchUnitOfWork? _currentUnit;
   private bool _disposed;

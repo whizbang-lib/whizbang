@@ -28,6 +28,6 @@ namespace Whizbang.Core.Archival;
 /// <param name="ThroughVersion">The last version truncated.</param>
 /// <param name="Archive">Whether the prefix is archived (<see cref="Whizbang.Core.Lifecycle.Disposition.Archive"/>) rather than discarded.</param>
 /// <docs>fundamentals/events/ephemeral-events#scheduling-a-prefix-truncate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ScheduledPrefixTruncateRenameTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ScheduledPrefixTruncateRenameTests.cs</tests>
 [PinnedId("b6f3c2a1-7d84-4e59-9c0b-2a1f8e6d3b70")]
 public sealed record ScheduledPrefixTruncate(Guid StreamId, long ThroughVersion, bool Archive) : ICommand;

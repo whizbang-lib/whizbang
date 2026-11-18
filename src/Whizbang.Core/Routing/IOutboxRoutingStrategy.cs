@@ -9,8 +9,8 @@ namespace Whizbang.Core.Routing;
 /// Determines where this service publishes events (outbox destination).
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#outbox-routing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:Outbox_UseCustomStrategy_SetsCustomStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/OutboxRoutingStrategyTests.cs:DomainTopicOutboxStrategy_GetDestination_ReturnsFullNamespaceAsTopicAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RoutingOptionsTests.cs:Outbox_UseCustomStrategy_SetsCustomStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OutboxRoutingStrategyTests.cs:DomainTopicOutboxStrategy_GetDestination_ReturnsFullNamespaceAsTopicAsync</tests>
 public interface IOutboxRoutingStrategy {
   /// <summary>
   /// Gets the destination for publishing an event.
@@ -45,8 +45,8 @@ public interface IOutboxRoutingStrategy {
   /// <returns>A canonical, deterministic group key.</returns>
   /// <exception cref="ArgumentNullException">Thrown when constituentType or ownedDomains is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#outbox-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/OutboxRoutingStrategyTests.cs:GetCompositeGroupKey_SameKeyIffSameDestination_AcrossStrategiesTypesAndKindsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/OutboxRoutingStrategyTests.cs:GetCompositeGroupKey_CanonicalShape_AddressPipeRoutingKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OutboxRoutingStrategyTests.cs:GetCompositeGroupKey_SameKeyIffSameDestination_AcrossStrategiesTypesAndKindsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/OutboxRoutingStrategyTests.cs:GetCompositeGroupKey_CanonicalShape_AddressPipeRoutingKeyAsync</tests>
   string GetCompositeGroupKey(
     Type constituentType,
     IReadOnlySet<string> ownedDomains,

@@ -23,8 +23,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:Ledger_CollectsEachSourceOnceAndHandsOverOnlyTouchedRowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:Rebuild_FoldsEachRekeyedRowOnceFromEverySourceAfterReadingTheStreamsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:Ledger_CollectsEachSourceOnceAndHandsOverOnlyTouchedRowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:Rebuild_FoldsEachRekeyedRowOnceFromEverySourceAfterReadingTheStreamsAsync</tests>
 public sealed class RebuildRekeyLedger {
   private static readonly AsyncLocal<RebuildRekeyLedger?> _current = new();
 

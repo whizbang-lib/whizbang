@@ -11,7 +11,7 @@ namespace Whizbang.Core.Transports;
 /// manifest or answer expires at the broker instead of accumulating on a stopped service's subscription.
 /// </summary>
 /// <docs>resilience/stream-integrity#directed-integrity-traffic</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/IntegrityControlDestinationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/IntegrityControlDestinationTests.cs</tests>
 public static class IntegrityControlDestination {
   /// <summary>A destination for <paramref name="address"/>, keyed by <paramref name="sessionStreamId"/>, expiring
   /// after <see cref="StreamIntegrityOptions.ControlMessageTimeToLiveMinutes"/>.</summary>

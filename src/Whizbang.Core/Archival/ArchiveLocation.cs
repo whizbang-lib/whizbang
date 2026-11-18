@@ -22,7 +22,7 @@ namespace Whizbang.Core.Archival;
 /// names were.</param>
 /// <param name="Container">The container (or prefix) the objects live in.</param>
 /// <docs>fundamentals/events/archive-store#archive-locations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveLocationMismatchExceptionTests.cs:ALocationRecordedBeforeEndpointsWere_ReadsAsNotRecordedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveLocationMismatchExceptionTests.cs:ALocationRecordedBeforeEndpointsWere_ReadsAsNotRecordedAsync</tests>
 public sealed record ArchiveLocation(string Provider, string? Endpoint, string? ConnectionName, string Container) {
   private const string NOT_RECORDED = "(not recorded)";
 

@@ -35,7 +35,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="SupersededSatisfied">Of <paramref name="Present"/>, the bundle's copies of a superseding key the store did
 /// not store again because it already holds a newer copy of that key (#2350): satisfied, never a deficit.</param>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcilerTests.cs:Reconcile_ACopyANewerHeldCopySupersedes_IsCountedSatisfied_AndNotADeficitAsync</tests>
 public readonly record struct RedeliveredBucketPresence(
   Guid StreamId, string? TenantScope, string EventType, int Present, int Adopted, int RefusedTruncated = 0,
   int RefusedForeignOrigin = 0, int? OriginsFilled = null, int SupersededSatisfied = 0);
@@ -95,7 +95,7 @@ public readonly record struct RedeliveryReconciliation(
   /// counts are those of nothing reconciled yet.
   /// </summary>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:Reconcile_WithTheQueue_IsRecordedForTheMaintainer_NotRunHereAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:Reconcile_WithTheQueue_IsRecordedForTheMaintainer_NotRunHereAsync</tests>
   public bool Deferred { get; init; }
 
   /// <summary>A reconcile recorded for the maintainer's drain.</summary>
@@ -122,8 +122,8 @@ public readonly record struct RedeliveryReconciliation(
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcileDeferralTests.cs</tests>
 public static partial class RedeliveryReconciler {
   /// <summary>The integrity delivery type a deferred reconcile is recorded under (#2001).</summary>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
@@ -251,7 +251,7 @@ public static partial class RedeliveryReconciler {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>A task that completes when the reconcile is done.</returns>
   /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:TheDrain_ReconcilesWithExactlyWhatTheInlineReconcilePassesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcileDeferralTests.cs:TheDrain_ReconcilesWithExactlyWhatTheInlineReconcilePassesAsync</tests>
   internal static async Task HandleDeferredAsync(string payload, IServiceProvider services, CancellationToken cancellationToken) {
     var bundle = _readDeferred(payload);
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -373,7 +373,7 @@ public static partial class RedeliveryReconciler {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>A task that completes when every reconcile is done.</returns>
   /// <docs>resilience/stream-integrity#redelivery-reconciles-run-as-a-batch</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcileBatchTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcileBatchTests.cs</tests>
   internal static async Task HandleDeferredBatchAsync(
       IReadOnlyList<string> payloads, IServiceProvider services, CancellationToken cancellationToken) {
     List<BundleAdoption> bundles = [.. payloads.Select(_readDeferred)];
@@ -557,7 +557,7 @@ public static partial class RedeliveryReconciler {
   /// <param name="bundleEnvelope">The redelivery bundle's envelope as received.</param>
   /// <returns>The origin's service name, or null.</returns>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryReconcilerTests.cs</tests>
   public static string? OriginServiceNameOf(IMessageEnvelope bundleEnvelope) {
     ArgumentNullException.ThrowIfNull(bundleEnvelope);
     var hops = bundleEnvelope.Hops;

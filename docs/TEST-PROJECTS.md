@@ -116,9 +116,11 @@ the tags that were already broken, each with a reason.
 
 ## Projects
 
-### Unit (37)
+### Unit (41)
 
-`tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
+`tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`,
+`Whizbang.Core.Unit.Dispatcher.Tests`, `Whizbang.Core.Unit.Messaging.Tests`, `Whizbang.Core.Unit.Perspectives.Tests`,
+`Whizbang.Core.Unit.Workers.Tests`, `Whizbang.Data.Schema.Tests`,
 `Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
@@ -127,6 +129,16 @@ the tags that were already broken, each with a reason.
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
 `Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.HotChocolate.Ids.Tests`, `Whizbang.Transports.Mutations.Tests`,
 `Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
+
+The unit tests of `Whizbang.Core` are split across `Whizbang.Core.Tests` and the four `Whizbang.Core.Unit.*.Tests`
+projects by folder, so that no one test compile dominates the build's memory (#2392): Dispatcher (Dispatcher, Security,
+Dispatch, SystemEvents, Audit), Messaging (Messaging, Tags, Lifecycle, Transports), Perspectives (Perspectives, Lenses,
+MultiStream, Scoping, Archival, Temporal), Workers (Workers, Routing, Startup, Capabilities, Health, Schema), and
+`Whizbang.Core.Tests` for the rest. Namespaces stay `Whizbang.Core.Tests.*`. The `Unit` in the name keeps the assembly
+name, and with it the namespace of its generated code, out of `Whizbang.Core`'s own namespaces (`Whizbang.Core.Dispatcher`
+is a type, and `Whizbang.Core.Perspectives.System` would capture the generated code's `System.` names). A helper
+used by more than one of them has one home and is linked into the others (`<Compile Include ... Link>`); a file that
+holds tests is never linked, so a test that needs another test class's members lives in that class's project.
 
 `samples/ECommerce/`: `ECommerce.BFF.API.Tests`, `ECommerce.Contracts.Tests`,
 `ECommerce.IntegrationTests` (in-memory checks;

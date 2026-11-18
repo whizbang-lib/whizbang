@@ -14,7 +14,7 @@ namespace Whizbang.Core.Routing;
 /// <param name="Entity">The broker entity (topic/subscription/queue) the surface consumes.</param>
 /// <param name="Detail">Human-readable diagnosis for logs and health detail.</param>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
 public sealed record PoisonDetectionCapabilityFinding(
   string Transport,
   string Entity,
@@ -34,7 +34,7 @@ public sealed record PoisonDetectionCapabilityFinding(
 /// </para>
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
 public sealed class PoisonDetectionCapabilityState {
   private readonly ConcurrentDictionary<(string Transport, string Entity), bool> _surfaces = new();
 

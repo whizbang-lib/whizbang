@@ -129,7 +129,7 @@ public sealed class MaintenanceMetrics {
   /// <summary>Records the rows one retention batch removed from a category's table (#2354).</summary>
   /// <param name="category">The table's category.</param>
   /// <param name="expired">Rows removed.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
   public void RecordOperationalRowsExpired(Whizbang.Core.Workers.OperationalCategory category, long expired) {
     if (expired > 0) {
       OperationalRowsExpired.Add(expired, new KeyValuePair<string, object?>(CATEGORY_TAG, category.ToString()));
@@ -141,7 +141,7 @@ public sealed class MaintenanceMetrics {
   /// over its tables, and its oldest age the oldest table's.
   /// </summary>
   /// <param name="reading">The last batch's results.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
   public void UpdateOperationalRetention(IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult> reading) {
     ArgumentNullException.ThrowIfNull(reading);
     Volatile.Write(ref _operational, reading);

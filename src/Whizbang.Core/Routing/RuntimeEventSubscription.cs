@@ -26,7 +26,7 @@ namespace Whizbang.Core.Routing;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#runtime-event-subscriptions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscription_SubscribesToTheEventsTopicAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscription_SubscribesToTheEventsTopicAsync</tests>
 public interface IRuntimeEventSubscription {
   /// <summary>The consumed event type. Its topic is derived the same way the publisher derives it.</summary>
   Type EventType { get; }
@@ -38,7 +38,7 @@ public interface IRuntimeEventSubscription {
 /// </summary>
 /// <typeparam name="TEvent">The consumed event type.</typeparam>
 /// <docs>fundamentals/dispatcher/routing#runtime-event-subscriptions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:EventType_IsTheDeclaredEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:EventType_IsTheDeclaredEventAsync</tests>
 public sealed class RuntimeEventSubscription<TEvent> : IRuntimeEventSubscription where TEvent : IEvent {
   /// <inheritdoc />
   public Type EventType => typeof(TEvent);
@@ -56,8 +56,8 @@ public static class RuntimeEventSubscriptionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The same service collection.</returns>
   /// <docs>fundamentals/dispatcher/routing#runtime-event-subscriptions</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:AddRuntimeEventSubscription_CalledTwiceForOneEvent_RegistersItOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:WithRouting_ResolvedDiscovery_IncludesRuntimeSubscriptionsRegisteredInAnyOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:AddRuntimeEventSubscription_CalledTwiceForOneEvent_RegistersItOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/RuntimeEventSubscriptionTests.cs:WithRouting_ResolvedDiscovery_IncludesRuntimeSubscriptionsRegisteredInAnyOrderAsync</tests>
   public static IServiceCollection AddRuntimeEventSubscription<TEvent>(this IServiceCollection services) where TEvent : IEvent {
     ArgumentNullException.ThrowIfNull(services);
     // TryAddEnumerable deduplicates on the implementation type, which is closed over TEvent: the same

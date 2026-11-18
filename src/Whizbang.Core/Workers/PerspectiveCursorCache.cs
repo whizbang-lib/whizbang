@@ -167,7 +167,7 @@ public sealed class PerspectiveCursorCache {
   /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
   /// <param name="commitSequence">The replay's frontier.</param>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
   public void RecordReplayedThrough(Guid streamId, string perspectiveName, long commitSequence) {
     _touch(streamId);
     _replayedThrough.AddOrUpdate((streamId, perspectiveName), commitSequence, (_, held) => Math.Max(held, commitSequence));
@@ -182,7 +182,7 @@ public sealed class PerspectiveCursorCache {
   /// <param name="commitSequence">The event's commit sequence, or null when it is not stamped yet.</param>
   /// <returns>True when a completed replay read through the event.</returns>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
   public bool WasReplayedThrough(Guid streamId, string perspectiveName, long? commitSequence) =>
     commitSequence is long seq
       && _replayedThrough.TryGetValue((streamId, perspectiveName), out var through)
@@ -195,7 +195,7 @@ public sealed class PerspectiveCursorCache {
   /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
   /// <param name="triggerEventId">The flag's trigger; null when the cursor is not flagged.</param>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
   public void SetRewindRequest(Guid streamId, string perspectiveName, Guid? triggerEventId) {
     _touch(streamId);
     if (triggerEventId is Guid trigger) {
@@ -213,7 +213,7 @@ public sealed class PerspectiveCursorCache {
   /// <param name="triggerEventId">The flag's trigger.</param>
   /// <returns>True when the cursor is flagged for a rewind.</returns>
   /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
   public bool TryGetRewindRequest(Guid streamId, string perspectiveName, out Guid triggerEventId) =>
     _rewindRequests.TryGetValue((streamId, perspectiveName), out triggerEventId);
 
@@ -224,7 +224,7 @@ public sealed class PerspectiveCursorCache {
   /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
   /// <param name="eventIds">The events the rewind was run for.</param>
   /// <docs>fundamentals/perspectives/rewind#a-rewind-covers-what-it-replayed</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
   public void MarkReplayed(Guid streamId, string perspectiveName, IEnumerable<Guid> eventIds) {
     ArgumentNullException.ThrowIfNull(eventIds);
     _touch(streamId);
@@ -247,7 +247,7 @@ public sealed class PerspectiveCursorCache {
   /// <param name="eventId">The event.</param>
   /// <returns>True when a completed rewind was run for this event.</returns>
   /// <docs>fundamentals/perspectives/rewind#a-rewind-covers-what-it-replayed</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
   public bool WasReplayed(Guid streamId, string perspectiveName, Guid eventId) {
     if (!_replayed.TryGetValue((streamId, perspectiveName), out var set)) {
       return false;

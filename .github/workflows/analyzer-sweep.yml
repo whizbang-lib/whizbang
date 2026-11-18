@@ -16,6 +16,10 @@ name: Analyzer Sweep
 # Every other test project completes locally in well under a gigabyte. A hosted runner has 16 GB
 # and is disposable, so a run that dies costs a job rather than someone's machine.
 #
+# Those figures predate #2392, which split the Core unit tests into Whizbang.Core.Tests and four
+# Whizbang.Core.Unit.*.Tests projects (Dispatcher, Messaging, Perspectives, Workers). A sweep runs
+# on one project; run it once per project to cover all of the Core unit tests.
+#
 # One diagnostic per invocation, always, AND --fix-scope document: together they bound the
 # working set. Do not "optimize" this by passing the whole list or by dropping the fix scope.
 #

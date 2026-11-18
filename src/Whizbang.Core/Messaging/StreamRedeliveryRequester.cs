@@ -21,7 +21,7 @@ namespace Whizbang.Core.Messaging;
 /// its perspectives apply what was missing.
 /// </remarks>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 public sealed record StreamRedeliveryRequest {
   /// <summary>The origin service's logical name: the service that stored the events.</summary>
   public required string OriginService { get; init; }
@@ -67,7 +67,7 @@ public sealed record StreamRedeliveryReceipt(string OriginService, string Reques
 /// operator's repair path for events lost in transport.
 /// </summary>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 public interface IStreamRedeliveryRequester {
   /// <summary>
   /// Sends the origin a redelivery request for <paramref name="request"/>'s streams. The request is the operator's
@@ -102,7 +102,7 @@ public interface IStreamRedeliveryRequester {
 /// <param name="logger">Logger.</param>
 /// <param name="timeProvider">The clock the request's hop is stamped with.</param>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 public sealed partial class StreamRedeliveryRequester(
     IServiceScopeFactory scopeFactory,
     ILogger<StreamRedeliveryRequester> logger,

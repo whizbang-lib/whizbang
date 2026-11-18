@@ -34,7 +34,7 @@ namespace Whizbang.Core.Routing;
 /// transitional topic with <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/>.</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs</tests>
 /// <remarks>
 /// Creates the strategy bound to its service's <see cref="RoutingOptions"/> (topology arc
 /// phase 7): <see cref="RoutingOptions.SharedInboxRetired"/> is consulted LIVE on every
@@ -76,7 +76,7 @@ public sealed class NamespaceInboxStrategy(
   /// <summary>True when <paramref name="metadata"/> carries the service-control-inbox marker set to true.</summary>
   /// <param name="metadata">A subscription's metadata.</param>
   /// <returns>True for this service's own control inbox.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:IsServiceControlInbox_NoMetadataOrNoMarker_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:IsServiceControlInbox_NoMetadataOrNoMarker_IsFalseAsync</tests>
   public static bool IsServiceControlInbox(IReadOnlyDictionary<string, object>? metadata) {
     if (metadata is null || !metadata.TryGetValue(SERVICE_CONTROL_INBOX_METADATA_KEY, out var marker)) {
       return false;
@@ -112,7 +112,7 @@ public sealed class NamespaceInboxStrategy(
   /// </summary>
   /// <param name="subscription">The subscription to test.</param>
   /// <returns>True for control-class subscriptions.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_AddsADedicatedControlEntityAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_AddsADedicatedControlEntityAsync</tests>
   public static bool IsControlClassSubscription(InboxSubscription? subscription) =>
     subscription?.Metadata?.TryGetValue(CONTROL_CLASS_METADATA_KEY, out var marker) == true
       && marker is true;
@@ -138,7 +138,7 @@ public sealed class NamespaceInboxStrategy(
   /// <inheritdoc />
   /// <exception cref="InvalidOperationException">Thrown when
   /// <see cref="RoutingOptions.SharedInboxRetired"/> is set on the bound options.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscription_Singular_UnderRetirement_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscription_Singular_UnderRetirement_ThrowsAsync</tests>
   public InboxSubscription GetSubscription(
     IReadOnlySet<string> ownedDomains,
     string serviceName,
@@ -166,10 +166,10 @@ public sealed class NamespaceInboxStrategy(
   /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
   /// <exception cref="InvalidOperationException">Thrown when retirement is enabled while the
   /// command-namespace flip is incomplete (the retirement guard).</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_UnderRetirement_ExactlyPerNamespaceInboxesPlusBroadcastAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_UnderRetirement_ExactlyPerNamespaceInboxesPlusBroadcastAsync</tests>
   /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_HandledCommandNamespaces_OnePerDistinctNamespaceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_ContainsTodaysSharedSubscriptionUnchangedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_HandledCommandNamespaces_OnePerDistinctNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_ContainsTodaysSharedSubscriptionUnchangedAsync</tests>
   public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
     ArgumentNullException.ThrowIfNull(context);
 
@@ -277,8 +277,8 @@ public sealed class NamespaceInboxStrategy(
   /// <param name="messageTypeName">The handled type's dotted full name.</param>
   /// <param name="contractNamespace">Its lowercase contract namespace.</param>
   /// <returns>One or two exact routing patterns.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_NestedCommandType_MatchesBothWireSpellingsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_TypeNameOutsideItsNamespace_UsesTheSimpleNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_NestedCommandType_MatchesBothWireSpellingsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_TypeNameOutsideItsNamespace_UsesTheSimpleNameAsync</tests>
   internal static IEnumerable<string> CommandSubjectPatterns(string messageTypeName, string contractNamespace) {
     var lowered = messageTypeName.ToLowerInvariant();
     var prefix = contractNamespace + ".";
@@ -305,7 +305,7 @@ public sealed class NamespaceInboxStrategy(
   /// <param name="context">The subscription context.</param>
   /// <returns>Lowercase-invariant namespace set; empty when the service consumes nothing.</returns>
   /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:ComputeConsumedNamespaces_UnionsHandledAndConsumedEventNamespacesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceInboxStrategyTests.cs:ComputeConsumedNamespaces_UnionsHandledAndConsumedEventNamespacesAsync</tests>
   public static IReadOnlySet<string> ComputeConsumedNamespaces(InboxSubscriptionContext context) {
     ArgumentNullException.ThrowIfNull(context);
 

@@ -67,9 +67,9 @@ public class InMemoryEventStore : IEventStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
   public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 

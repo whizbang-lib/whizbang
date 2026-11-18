@@ -158,7 +158,7 @@ public sealed record DestructionResult {
   /// </summary>
   /// <param name="disposition">The disposition to run instead of the declared one; null keeps the declared one.</param>
   /// <returns>The decision.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs:AHookThatProceedsWithoutNamingADisposition_KeepsTheDeclaredOne_NeverDeletesAnArchiveAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs:AHookThatProceedsWithoutNamingADisposition_KeepsTheDeclaredOne_NeverDeletesAnArchiveAsync</tests>
   public static DestructionResult Proceed(Disposition? disposition = null) =>
     new() { Disposition = disposition };
 

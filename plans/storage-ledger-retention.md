@@ -122,7 +122,7 @@ PR #1570 (#1548). `v1.0.0/fundamentals/perspectives/row-retention.md` is publish
   `..._` abbreviates `Whizbang__Workers__Maintenance_`. The three `table_rewrite_*` keys
   (`089_TableRewriteRequests.sql:26-31`) belong to WS-4, which owns the rewriter seam. Keys added by
   S3 and S4 join this table.
-- **RED tests** (`tests/Whizbang.Core.Tests/Workers/DebugRetentionBridgeTests.cs` grows into
+- **RED tests** (`tests/Whizbang.Core.Unit.Workers.Tests/Workers/DebugRetentionBridgeTests.cs` grows into
   `RetentionSettingsBridgeTests.cs`): each property maps to its key and literal; unset properties are
   not written; a configured value reaches `wh_settings` within one cycle on both engines; a failed
   sync never fails the cycle; options validation rejects negative values.

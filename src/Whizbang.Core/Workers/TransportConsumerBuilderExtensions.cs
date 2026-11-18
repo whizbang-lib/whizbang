@@ -26,9 +26,9 @@ namespace Whizbang.Core.Workers;
 /// are appended after auto-generated inbox and event subscriptions.
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#additional-destinations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultAdditionalDestinations_IsEmptyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultAdditionalDestinations_IsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync</tests>
 public sealed class TransportConsumerConfiguration {
   /// <summary>
   /// Gets the list of additional destinations to subscribe to beyond auto-generated ones.
@@ -47,9 +47,9 @@ public sealed class TransportConsumerConfiguration {
   /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
   public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 
@@ -72,7 +72,7 @@ public sealed class TransportConsumerConfiguration {
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
 public static class TransportConsumerBuilderExtensions {
   private const string HEALTH_CHECK_NAME = "subscriptions";
 
@@ -126,7 +126,7 @@ public static class TransportConsumerBuilderExtensions {
   /// </code>
   /// </example>
   /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs:AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs:AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync</tests>
   public static WhizbangBuilder AddTransportConsumer(
       this WhizbangBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
@@ -346,9 +346,9 @@ public static class TransportConsumerBuilderExtensions {
   /// <see cref="InProcessTransport"/> in a test, turns the worker on.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_BuildsUnderContainerValidationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_StartsNoConsumerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithTheInProcessTransport_StartsTheConsumerAsBeforeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_BuildsUnderContainerValidationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_StartsNoConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithTheInProcessTransport_StartsTheConsumerAsBeforeAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithoutATransport_IsNotAGapAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithATransport_IsCheckedForWhatItsWorkerNeedsAsync</tests>
   private static void _addConsumerWorker(IServiceCollection services) {

@@ -21,7 +21,7 @@ namespace Whizbang.Core.Routing;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
 public sealed class PoisonMessageOptions {
 
 #pragma warning disable CA1707 // Repo style: public const/static-readonly fields are ALL_CAPS_SNAKE per editorconfig.

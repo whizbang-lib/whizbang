@@ -20,8 +20,8 @@ namespace Whizbang.Core.Workers;
 /// applies the event, so there the receive path still fires them.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedEventPostPerspectiveStagesTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerCollectiveLifecycleTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceivedEventPostPerspectiveStagesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerCollectiveLifecycleTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.LifecycleOnce.cs</tests>
 internal static class ReceivedEventPostPerspectiveStages {
   /// <summary>

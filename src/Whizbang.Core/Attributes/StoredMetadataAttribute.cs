@@ -7,7 +7,7 @@ namespace Whizbang.Core.Attributes;
 /// The form an event type's metadata takes in the event store row (<c>wh_event_body.metadata</c>).
 /// </summary>
 /// <docs>data/event-store#stored-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StoredMetadataRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StoredMetadataRegistryTests.cs</tests>
 public enum StoredMetadataForm {
   /// <summary>
   /// The form <c>Whizbang:EventStore:Metadata:WriteForm</c> chooses (by default the slim row with its full form staged).
@@ -46,7 +46,7 @@ public enum StoredMetadataForm {
 /// <param name="form">The form the type's rows take.</param>
 /// <docs>data/event-store#keeping-an-event-type-full</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StoredMetadataRegistryGeneratorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StoredMetadataRegistryTests.cs:TheAttribute_CarriesTheFormItIsGivenAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StoredMetadataRegistryTests.cs:TheAttribute_CarriesTheFormItIsGivenAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface, AllowMultiple = false, Inherited = true)]
 public sealed class StoredMetadataAttribute(StoredMetadataForm form) : Attribute {
   /// <summary>The form the type's rows take.</summary>

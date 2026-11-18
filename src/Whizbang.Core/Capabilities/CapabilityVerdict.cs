@@ -7,7 +7,7 @@ namespace Whizbang.Core.Capabilities;
 
 /// <summary>What the verdict does about one required capability in one scope.</summary>
 /// <docs>operations/infrastructure/capabilities#validation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityVerdictTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityVerdictTests.cs</tests>
 public enum CapabilityVerdictOutcome {
   /// <summary>Required explicitly and Ready: proceed.</summary>
   Proceed,
@@ -30,7 +30,7 @@ public enum CapabilityVerdictOutcome {
 /// <param name="RequiredBy">Every requirement in force on the capability, in the order the sources declared them.</param>
 /// <param name="Outcome">What the verdict does about it.</param>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityVerdictTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityVerdictTests.cs</tests>
 public sealed record CapabilityVerdictEntry(
   CapabilityStatus Status,
   IReadOnlyList<ActiveCapabilityRequirement> RequiredBy,
@@ -105,7 +105,7 @@ public sealed record CapabilityVerdictEntry(
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityVerdictTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityVerdictTests.cs</tests>
 public sealed class CapabilityVerdict {
   private const string UNDESCRIBED_PURPOSE = "not described by any registered provider";
   private const string UNDESCRIBED_REASON = "no registered provider describes it";

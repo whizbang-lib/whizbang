@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// and a type this service owns itself all answer null: the record is left as it is.
 /// </remarks>
 /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MisattributedOriginTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MisattributedOriginTests.cs</tests>
 public static class MisattributedOrigin {
   /// <summary>
   /// The owner of <paramref name="storedEventType"/> when it is a known service other than
@@ -32,7 +32,7 @@ public static class MisattributedOrigin {
   /// <returns>The true owner's service id, or null when the record stands.</returns>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="ownership"/> or
   /// <paramref name="localOwnedDomains"/> is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MisattributedOriginTests.cs:TrueOwner_ATypeAnotherServiceOwns_IsThatOwnerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MisattributedOriginTests.cs:TrueOwner_ATypeAnotherServiceOwns_IsThatOwnerAsync</tests>
   public static Guid? TrueOwner(
       string storedEventType, Guid namedOrigin, IntegrityDomainOwnership ownership, IReadOnlyCollection<string> localOwnedDomains) {
     ArgumentNullException.ThrowIfNull(ownership);
@@ -57,7 +57,7 @@ public static class MisattributedOrigin {
   /// <returns>The lookup, or null when no owner is known.</returns>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="ownership"/> or
   /// <paramref name="localOwnedDomains"/> is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/MisattributedOriginTests.cs:ForBundle_WithNoKnownOwner_IsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MisattributedOriginTests.cs:ForBundle_WithNoKnownOwner_IsNullAsync</tests>
   public static Func<string, Guid?>? ForBundle(
       Guid bundleOrigin, IntegrityDomainOwnership ownership, IReadOnlyCollection<string> localOwnedDomains) {
     ArgumentNullException.ThrowIfNull(ownership);

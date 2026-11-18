@@ -56,8 +56,8 @@ namespace Whizbang.Core.Perspectives;
 /// global default. Emitted from <c>[CollectiveApplyFor(StatementTimeoutSeconds = …)]</c>.
 /// </param>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveEventApplierTests.cs:ApplyAsync_EventTypeMismatch_ThrowsArgumentExceptionAsync</tests>
 public sealed record CollectiveApplyEntry(
   Type ModelType,
@@ -80,8 +80,8 @@ public sealed record CollectiveApplyEntry(
   /// model between an apply's attempts gives the retry a new key, and the retry then applies the collective in full again.
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#resuming-an-apply</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_NamesTheHandlerTheMethodAndTheModelAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_DiffersForTwoMethodsOfOneHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_NamesTheHandlerTheMethodAndTheModelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_DiffersForTwoMethodsOfOneHandlerAsync</tests>
   public string EntryKey =>
     TypeNameFormatter.FormatClrTypeName(HandlerType) + "." + MethodName + ":" + TypeNameFormatter.FormatClrTypeName(ModelType);
 }

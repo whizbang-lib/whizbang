@@ -59,8 +59,8 @@ internal readonly record struct FlushContext(
 /// </summary>
 /// <docs>messaging/work-coordinator#inbox-completions</docs>
 /// <docs>operations/observability/metrics#work-coordinator</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperTests.cs:AFlush_RecordsItsDurationTaggedWithTheStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorFlushHelperTests.cs:AFlush_RecordsItsDurationTaggedWithTheStrategyAsync</tests>
 /// <remarks>
 /// <para>
 /// The legacy implementation routed every flush through <c>process_work_batch</c> (since removed), which

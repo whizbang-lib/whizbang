@@ -182,7 +182,7 @@ public partial class PerspectiveWorker(
   /// the same rows. A gate at or below zero is disabled and imposes nothing.
   /// </summary>
   /// <docs>operations/workers/perspective-worker</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerParallelismTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWorkerParallelismTests.cs</tests>
   internal static int ClampWidthToGate(int consumers, int width, int gateMaxConcurrent) {
     var requested = Math.Max(1, width);
     if (gateMaxConcurrent <= 0) {
@@ -2171,7 +2171,7 @@ public partial class PerspectiveWorker(
   /// <param name="lifecycleCoordinator">The batch's lifecycle coordinator, when one is registered.</param>
   /// <returns>The rows to parse, in fetch order.</returns>
   /// <docs>operations/workers/perspective-worker#cooled-rows-are-not-parsed</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs:LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync</tests>
   internal static List<StreamEventData> _rowsOutsideCooldown(
       List<StreamEventData> rawEvents, RecentlyProcessedEventCache? cache, ILifecycleCoordinator? lifecycleCoordinator) {
@@ -2484,7 +2484,7 @@ public partial class PerspectiveWorker(
   /// The perspectives registered for an event type, or none when no registered perspective takes it: a
   /// stream can hold events this service registers no perspective for, and those feed nothing here.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerPerspectivesForTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWorkerPerspectivesForTests.cs</tests>
   internal static IReadOnlyList<string> PerspectivesFor(
       IReadOnlyDictionary<string, IReadOnlyList<string>> perspectivesPerEventType, string eventTypeKey) =>
     perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives) ? perspectives : [];
@@ -3299,7 +3299,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Logs diagnostic information about the batch composition.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerBatchCompositionLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWorkerBatchCompositionLoggingTests.cs</tests>
   internal static void LogBatchComposition(
       ILogger logger,
       WorkBatch workBatch,
@@ -5999,7 +5999,7 @@ public class PerspectiveWorkerOptions {
   /// is always written per stream.
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#selection</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
   public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
 
   /// <summary>

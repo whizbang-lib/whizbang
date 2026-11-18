@@ -48,9 +48,9 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#treatment-flags</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTransportTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
 [Flags]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "EventFlags is the natural name for the [Flags] enum stored in the wh_event_store / wh_outbox / wh_inbox 'flags' column. CA1711's 'Flags' suffix rule is exactly the case where the suffix carries semantic meaning that the rule was not designed for.")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2344:Enumeration type names should not have Flags or Enum suffixes", Justification = "Public API; the rename is scheduled with the other 1.0 breaking changes.")]

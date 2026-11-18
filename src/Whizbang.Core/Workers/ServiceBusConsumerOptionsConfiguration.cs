@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 /// without a redeploy. <c>AddAzureServiceBusTransport</c> calls it.
 /// </summary>
 /// <docs>operations/configuration/configuration-reference#transport-sections</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerOptionsConfigurationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ServiceBusConsumerOptionsConfigurationTests.cs</tests>
 public static class ServiceBusConsumerOptionsConfiguration {
   /// <summary>The Service Bus consumer's section.</summary>
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores

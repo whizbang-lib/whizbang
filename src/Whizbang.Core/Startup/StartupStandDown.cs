@@ -37,7 +37,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#standing-down</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStandDownTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStandDownTests.cs</tests>
 public sealed partial class StartupStandDown {
   private const string STANDING_DOWN = "standing down: ";
 

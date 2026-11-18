@@ -39,7 +39,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#failed-batches</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportBatchGuardTests.cs</tests>
 public static partial class TransportBatchGuard {
 
   /// <summary>

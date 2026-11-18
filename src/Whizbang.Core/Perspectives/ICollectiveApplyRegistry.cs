@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// <see cref="CollectiveApplyRegistryServiceCollectionExtensions.GetCollectiveApplyEntries"/>.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events#di-wiring</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyRegistryContributionTests.cs</tests>
 public interface ICollectiveApplyRegistry {
   /// <summary>The handlers. Order carries no meaning beyond the composite's latest-first answer.</summary>
   IReadOnlyList<CollectiveApplyEntry> Entries { get; }

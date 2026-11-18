@@ -35,8 +35,8 @@ namespace Whizbang.Core.Routing;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#control-class</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassOptionsTests.cs:DeriveTimeToLive_IsMaxOfFloorAndCadenceTimesMultiplierAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassOptionsTests.cs:Options_BindFromConfigurationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ControlClassOptionsTests.cs:DeriveTimeToLive_IsMaxOfFloorAndCadenceTimesMultiplierAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ControlClassOptionsTests.cs:Options_BindFromConfigurationAsync</tests>
 public sealed class ControlClassOptions {
 #pragma warning disable CA1707 // project convention: public const/static readonly use UPPER_CASE with underscores
   /// <summary>

@@ -18,7 +18,7 @@ namespace Whizbang.Core.Security;
 /// containment operators (@&gt;, ?|, etc.).
 /// </remarks>
 /// <docs>fundamentals/security/security#security-principals</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityPrincipalIdJsonConverterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityPrincipalIdJsonConverterTests.cs</tests>
 public sealed class SecurityPrincipalIdJsonConverter : JsonConverter<SecurityPrincipalId> {
   /// <inheritdoc/>
   public override SecurityPrincipalId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {

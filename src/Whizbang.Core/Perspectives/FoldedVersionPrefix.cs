@@ -17,7 +17,7 @@ namespace Whizbang.Core.Perspectives;
 /// does not read again, so only the events it reads are counted.
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind#snapshot-selection</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/FoldedVersionPrefixTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FoldedVersionPrefixTests.cs</tests>
 public sealed class FoldedVersionPrefix {
   private readonly List<long> _readVersions = [];
   private bool _sorted = true;
@@ -28,7 +28,7 @@ public sealed class FoldedVersionPrefix {
   /// <summary>Records the events a pass read, before any of them is folded.</summary>
   /// <param name="events">The stream's own events the pass read.</param>
   /// <docs>fundamentals/perspectives/rewind#snapshot-selection</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FoldedVersionPrefixTests.cs:Folded_InVersionOrder_IsAPrefixAtEveryEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FoldedVersionPrefixTests.cs:Folded_InVersionOrder_IsAPrefixAtEveryEventAsync</tests>
   public void Read(IEnumerable<MessageEnvelope<IEvent>> events) {
     ArgumentNullException.ThrowIfNull(events);
     foreach (var envelope in events) {
@@ -48,7 +48,7 @@ public sealed class FoldedVersionPrefix {
   /// <param name="envelope">The event just folded.</param>
   /// <returns>The snapshot's event, or null when the fold is not a version prefix.</returns>
   /// <docs>fundamentals/perspectives/rewind#snapshot-selection</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FoldedVersionPrefixTests.cs:Folded_AheadOfAnEarlierVersion_IsNoPrefixUntilItIsFoldedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FoldedVersionPrefixTests.cs:Folded_AheadOfAnEarlierVersion_IsNoPrefixUntilItIsFoldedAsync</tests>
   public MessageEnvelope<IEvent>? Folded(MessageEnvelope<IEvent> envelope) {
     ArgumentNullException.ThrowIfNull(envelope);
     _folded++;

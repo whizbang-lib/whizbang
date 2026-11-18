@@ -39,7 +39,7 @@ namespace Whizbang.Core.Workers;
 /// two are complementary rather than alternatives. See <c>operations/workers/claim-backpressure</c>.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
 public sealed class AdaptiveClaimWindow {
   private readonly int _ceiling;
   private readonly int _floor;
@@ -89,8 +89,8 @@ public sealed class AdaptiveClaimWindow {
   /// shrinking never is.
   /// </param>
   /// <docs>operations/workers/claim-backpressure</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowSampleSizeTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveClaimWindowSampleSizeTests.cs</tests>
   public void Observe(int claimedRows, int reclaimedRows, bool drainMeasured = true) {
     // An empty claim says nothing about capacity — the queue was simply empty. Treating it as a
     // clean cycle would inflate the window during idle periods and guarantee an overshoot the

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// has no knobs of its own: floor and ceiling come from options the worker already has.
 /// </remarks>
 /// <docs>fundamentals/workers/idle-footprint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveIdleBackoffTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveIdleBackoffTests.cs</tests>
 public sealed class AdaptiveIdleBackoff {
   private readonly double _multiplier;
 

@@ -10,7 +10,7 @@ namespace Whizbang.Core.Archival;
 /// <c>Archive</c>; it outranks the perspective's <see cref="Attributes.ArchivedStreamRowsAttribute"/>.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchivedStreamRowsOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchivedStreamRowsOptionsBinderTests.cs</tests>
 public sealed class ArchivedStreamRowsOptions {
   /// <summary>The configuration section the options bind from.</summary>
   public const string SECTION = "Whizbang:Perspectives:ArchivedStreamRows";

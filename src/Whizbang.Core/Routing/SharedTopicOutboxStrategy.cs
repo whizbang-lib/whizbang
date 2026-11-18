@@ -50,7 +50,7 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
   /// its configured inbox topic — the one address every command rides.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxAddressResolverTests.cs:SharedTopicOutboxStrategy_ImplementsTheSeam_DefaultIsInboxTopic_NeverFlipsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxAddressResolverTests.cs:SharedTopicOutboxStrategy_ImplementsTheSeam_DefaultIsInboxTopic_NeverFlipsAsync</tests>
   public string DefaultCommandInboxAddress => InboxTopic;
 
   /// <summary>

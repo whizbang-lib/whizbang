@@ -53,7 +53,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="logger">The step's logger.</param>
 /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
 /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OnlineTableRewriteStepTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
 public sealed partial class OnlineTableRewriteStep(
     IEnumerable<ITableRewriter> rewriters,

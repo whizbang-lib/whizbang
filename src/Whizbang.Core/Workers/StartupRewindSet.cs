@@ -18,7 +18,7 @@ namespace Whizbang.Core.Workers;
 /// concurrent dictionary and <see cref="AllCleared"/> completes, once, whichever of them removes the last key.
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/StartupRewindSetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/StartupRewindSetTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs</tests>
 internal sealed class StartupRewindSet {
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _pending = new();

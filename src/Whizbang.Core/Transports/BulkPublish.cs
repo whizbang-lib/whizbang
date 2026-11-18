@@ -116,6 +116,6 @@ public record BulkPublishItemResult {
   /// memory with backoff, the same as a batch call that throws a throttle.
   /// </summary>
   /// <docs>messaging/transports/transports</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyThrottleRetryTests.cs:PublishBatchAsync_EveryItemThrottled_RetriesTheBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyThrottleRetryTests.cs:PublishBatchAsync_EveryItemThrottled_RetriesTheBatchAsync</tests>
   public MessageFailureReason? Reason { get; init; }
 }
