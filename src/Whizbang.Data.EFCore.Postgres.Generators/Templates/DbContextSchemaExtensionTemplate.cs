@@ -2314,26 +2314,15 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
-  private static (string Name, string Sql)[]? _migrationScripts;
-  private static (string Name, string Sql)[]? _bootstrapMigrationScripts;
-
   /// <summary>
   /// Returns migration scripts as (name, sql) tuples.
-  /// Scripts are embedded by the source generator.
   /// </summary>
   /// <remarks>
-  /// Each text is embedded as a UTF-8 literal, which the compiler keeps out of the capped
-  /// user-string heap, and decoded here. The list is decoded on first use and kept, as the string
-  /// literals it replaces were loaded once; a race on first use decodes the same list twice and
-  /// keeps either.
+  /// The scripts are embedded once per assembly, in WhizbangMigrationScripts, and shared by every context: the text is
+  /// the same for all of them, and a copy per context made an assembly with many contexts compile many copies (#2388).
   /// </remarks>
-  private static (string Name, string Sql)[] GetMigrationScripts() {
-    return _migrationScripts ??= new[] {
-      #region MIGRATIONS
-      // Migration scripts will be embedded here by the source generator
-      #endregion
-    };
-  }
+  private static (string Name, string Sql)[] GetMigrationScripts() =>
+    global::__MIGRATION_SCRIPTS_NAMESPACE__.WhizbangMigrationScripts.GetMigrationScripts();
 
   /// <summary>
   /// Each migration with the text its ledger hash is computed over: the embedded text with the schema substituted.
@@ -2359,15 +2348,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <remarks>
   /// A subset of <see cref="GetMigrationScripts"/>, not a replacement for any of it. The bootstrap
   /// only makes objects exist and records nothing; the ordinary pass still applies and records these
-  /// same files afterward. Decoded once and kept, as <see cref="GetMigrationScripts"/> is.
+  /// same files afterward. Embedded once per assembly with the full list.
   /// </remarks>
-  private static (string Name, string Sql)[] GetBootstrapMigrationScripts() {
-    return _bootstrapMigrationScripts ??= new[] {
-      #region BOOTSTRAP_MIGRATIONS
-      // Bootstrap regions will be embedded here by the source generator
-      #endregion
-    };
-  }
+  private static (string Name, string Sql)[] GetBootstrapMigrationScripts() =>
+    global::__MIGRATION_SCRIPTS_NAMESPACE__.WhizbangMigrationScripts.GetBootstrapMigrationScripts();
 
   /// <summary>
   /// Everything the bootstrap applies, in order: the core tables, then the marked migration regions.

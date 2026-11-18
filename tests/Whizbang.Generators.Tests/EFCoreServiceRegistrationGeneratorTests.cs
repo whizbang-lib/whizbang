@@ -868,9 +868,11 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Migration SQL is carried in tuples as verbatim UTF-8 literals decoded at run time (#1622)
+    // Migration SQL is carried in tuples as verbatim UTF-8 literals decoded at run time (#1622), once for the
+    // assembly in the shared migration set (#2388).
     // Pattern: ("migration_name.sql", global::System.Text.Encoding.UTF8.GetString(@"SQL content"u8))
-    await Assert.That(sourceText).Contains(".sql\", global::System.Text.Encoding.UTF8.GetString(@\"");
+    var migrationScripts = result.GeneratedSources.Single(s => s.HintName == "WhizbangMigrationScripts.g.cs").SourceText.ToString();
+    await Assert.That(migrationScripts).Contains(".sql\", global::System.Text.Encoding.UTF8.GetString(@\"");
 
     // Should call ExecuteSqlRawAsync with migration SQL (variable names may vary: sql, transformedSql, etc.)
     await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(");
@@ -1025,8 +1027,10 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     // Should have outer retry loop with _isRetryableError
     await Assert.That(sourceText).Contains("_isRetryableError");
 
-    // Should set 600s command timeout for DDL
-    await Assert.That(sourceText).Contains("600");
+    // The DDL command timeout is resolved for the pass (SchemaCommandTimeout: 600s unless the init settings say
+    // otherwise; SchemaCommandTimeoutTests pins the default). This used to look for "600" anywhere in the file, which
+    // only the embedded migration text satisfied.
+    await Assert.That(sourceText).Contains("Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(");
 
     // Should have owner column for migration categorization
     await Assert.That(sourceText).Contains("owner");
