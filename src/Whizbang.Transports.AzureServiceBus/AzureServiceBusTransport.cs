@@ -2159,36 +2159,49 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       // the transport ends the pause early, and then the processor is not restarted (#1721).
       // The pause runs on the transport's clock, like every other time this transport measures.
       var pauseStopped = _throttlePauseStop.Stopped;
-      Volatile.Write(ref _throttlePause, Task.Run(async () => {
-        try {
-          await stopProcessingAsync();
-          await Task.Delay(pause, _timeProvider, pauseStopped);
-          // A subscription paused meanwhile stays stopped until it is resumed (#2406): restarting it here would put a
-          // standing-down instance back to taking deliveries it can only hand back.
-          if (!subscription.IsActive) {
-            var pausedSubscription = _subscriptionOf(destination);
-            LogThrottlePauseEndedWhilePaused(_logger, destination.Address, pausedSubscription);
-            return;
-          }
-          await startProcessingAsync();
-          if (_logger.IsEnabled(LogLevel.Information)) {
-            _logger.LogInformation(
-              "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
-              destination.Address,
-              _subscriptionOf(destination));
-          }
-        } catch (OperationCanceledException ended) when (pauseStopped.IsCancellationRequested) {
-          var subscription = _subscriptionOf(destination);
-          LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, subscription);
-        } catch (Exception ex) {
-          _logger.LogError(ex,
-            "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
-            destination.Address,
-            _subscriptionOf(destination));
-        } finally {
-          _throttlePolicy.EndPause();
-        }
-      }, CancellationToken.None));
+      Volatile.Write(ref _throttlePause, Task.Run(
+        () => _runThrottlePauseAsync(pause, destination, subscription, stopProcessingAsync, startProcessingAsync, pauseStopped),
+        CancellationToken.None));
+    }
+  }
+
+  // The detached throttle pause: stop accepting, wait out the pause on the transport's clock, then restart unless the
+  // subscription was paused meanwhile or the transport was disposed.
+  private async Task _runThrottlePauseAsync(
+    TimeSpan pause,
+    TransportDestination destination,
+    AzureServiceBusSubscription subscription,
+    Func<Task> stopProcessingAsync,
+    Func<Task> startProcessingAsync,
+    CancellationToken pauseStopped
+  ) {
+    try {
+      await stopProcessingAsync();
+      await Task.Delay(pause, _timeProvider, pauseStopped);
+      // A subscription paused meanwhile stays stopped until it is resumed (#2406): restarting it here would put a
+      // standing-down instance back to taking deliveries it can only hand back.
+      if (!subscription.IsActive) {
+        var pausedSubscription = _subscriptionOf(destination);
+        LogThrottlePauseEndedWhilePaused(_logger, destination.Address, pausedSubscription);
+        return;
+      }
+      await startProcessingAsync();
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation(
+          "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
+          destination.Address,
+          _subscriptionOf(destination));
+      }
+    } catch (OperationCanceledException ended) when (pauseStopped.IsCancellationRequested) {
+      var endedSubscription = _subscriptionOf(destination);
+      LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, endedSubscription);
+    } catch (Exception ex) {
+      _logger.LogError(ex,
+        "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
+        destination.Address,
+        _subscriptionOf(destination));
+    } finally {
+      _throttlePolicy.EndPause();
     }
   }
 
