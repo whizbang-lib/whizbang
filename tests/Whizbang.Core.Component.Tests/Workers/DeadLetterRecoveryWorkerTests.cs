@@ -191,6 +191,45 @@ public class DeadLetterRecoveryWorkerTests {
   /// Test double for the NOTIFY listener. Tracks subscribe/unsubscribe and can raise a
   /// signal of any category so the worker's <c>_onSignal</c> filter can be exercised.
   /// </summary>
+  /// <summary>
+  /// A listener whose subscription does not return until the test releases it, so ExecuteAsync can be held between
+  /// adding its handler and anything it does after.
+  /// </summary>
+  private sealed class HeldSubscribeNotificationListener : IWorkNotificationListener, IDisposable {
+    private readonly ManualResetEventSlim _release = new(initialState: false);
+    private readonly Lock _gate = new();
+    private Action<WorkSignalCategory>? _onSignal;
+    /// <summary>How many handlers are attached now.</summary>
+    public int SubscriberCount {
+      get {
+        lock (_gate) {
+          return _onSignal?.GetInvocationList().Length ?? 0;
+        }
+      }
+    }
+    public bool IsHealthy => true;
+    public DateTimeOffset? LastSignalAt => null;
+    /// <summary>Completes once the worker has entered the subscription and is held there.</summary>
+    public TaskCompletionSource Subscribing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public event Action<WorkSignalCategory>? OnSignal {
+      add {
+        lock (_gate) {
+          _onSignal += value;
+        }
+        Subscribing.TrySetResult();
+        _release.Wait();
+      }
+      remove {
+        lock (_gate) {
+          _onSignal -= value;
+        }
+      }
+    }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
+    public void ReleaseSubscribe() => _release.Set();
+    public void Dispose() => _release.Dispose();
+  }
+
   private sealed class FakeNotificationListener : Whizbang.Core.Notifications.IWorkNotificationListener {
     public bool IsHealthy => true;
     public DateTimeOffset? LastSignalAt => null;
@@ -373,7 +412,7 @@ public class DeadLetterRecoveryWorkerTests {
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
       DeadLetterRecoveryOptions? options = null,
       string generation = "test/0.0.1",
-      FakeNotificationListener? listener = null,
+      IWorkNotificationListener? listener = null,
       Whizbang.Core.Messaging.StreamIntegrityOptions? integrity = null,
       TimeProvider? timeProvider = null,
       ILogger<DeadLetterRecoveryWorker>? logger = null) {
@@ -388,7 +427,7 @@ public class DeadLetterRecoveryWorkerTests {
       integrityOptions: Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(generation),
       logger: logger ?? NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: (IWorkNotificationListener?)listener ?? new NoOpWorkNotificationListener(),
+      notificationListener: listener ?? new NoOpWorkNotificationListener(),
       metrics: null,
       timeProvider: timeProvider);
     return (worker, svc);
@@ -896,6 +935,31 @@ public class DeadLetterRecoveryWorkerTests {
     // StopAsync unsubscribes the handler.
     await Assert.That(listener.SubscriberCount).IsEqualTo(0)
       .Because("StopAsync removes the OnSignal subscription so the worker leaves no dangling handler");
+  }
+
+  /// <summary>
+  /// StopAsync can run while ExecuteAsync is still subscribing (#2409): the host runs ExecuteAsync on its own thread, so a
+  /// stop that lands between the subscription and whatever records it must still leave no handler behind. The listener
+  /// holds ExecuteAsync inside the subscription until StopAsync has begun, which is that interleaving every time.
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_StopDuringSubscribe_LeavesNoHandlerAsync() {
+    using var listener = new HeldSubscribeNotificationListener();
+    var (worker, _) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // ExecuteAsync is now inside the subscription, held there.
+    await listener.Subscribing.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+    var stopping = worker.StopAsync(CancellationToken.None);
+    listener.ReleaseSubscribe();
+    await stopping.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(listener.SubscriberCount).IsEqualTo(0)
+      .Because("a stop that lands while the worker is subscribing must still leave no handler on the listener");
   }
 
   /// <summary>
