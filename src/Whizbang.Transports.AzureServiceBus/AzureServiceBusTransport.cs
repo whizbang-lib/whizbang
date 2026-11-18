@@ -2017,6 +2017,12 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   private readonly (CancellationTokenSource Source, CancellationToken Stopped) _throttlePauseStop = _newThrottlePauseStop();
   private Task _throttlePause = Task.CompletedTask;
 
+  /// <summary>
+  /// The throttle pause in progress, or a completed task when none is. It completes after the pause has released its
+  /// single-flight claim, which its own log lines come before, so a caller that must know the claim is free waits on this.
+  /// </summary>
+  internal Task ThrottlePause => Volatile.Read(ref _throttlePause);
+
   private static (CancellationTokenSource Source, CancellationToken Stopped) _newThrottlePauseStop() {
     var source = new CancellationTokenSource();
     return (source, source.Token);

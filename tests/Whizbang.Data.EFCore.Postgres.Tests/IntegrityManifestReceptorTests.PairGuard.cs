@@ -52,6 +52,30 @@ public partial class IntegrityManifestReceptorTests {
   }
 
   [Test]
+  public async Task RequestReceptor_ARequesterWithOtherRules_OnAHostWithoutAServiceName_IsAnsweredWithAnEmptyOriginNameAsync() {
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult { Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)], ComputedThrough = 300 },
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport, withInstanceProvider: false);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = _otherRules,
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      Level = ManifestLevel.Types,
+      Windowed = true,
+    });
+
+    var answer = _deserializeManifest(transport.Published.Single().Envelope);
+    await Assert.That(answer.PairHalted).IsTrue().Because("a host without a service name still answers a halted pair");
+    await Assert.That(answer.OriginServiceName).IsEqualTo(string.Empty);
+    await Assert.That(answer.OriginServiceId).IsEqualTo(coordinator.LocalServiceId);
+  }
+
+  [Test]
   public async Task RequestReceptor_ARequesterWithNoRules_IsNotAnsweredAsync() {
     var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult { Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)], ComputedThrough = 300 },

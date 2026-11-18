@@ -460,7 +460,7 @@ public static class WorkerPipelineExtensions {
     // guard every integrity receptor asks before comparing, repairing or redelivering.
     services.TryAddSingleton<Whizbang.Core.Messaging.IRuleFingerprintSource>(sp => new Whizbang.Core.Messaging.CatalogRuleFingerprintSource(
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>() ?? Whizbang.Core.NullMessageTypeCatalog.Instance,
-      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()));
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Messaging.IntegrityPairGuard(
       sp.GetRequiredService<Whizbang.Core.Messaging.IRuleFingerprintSource>(),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(),

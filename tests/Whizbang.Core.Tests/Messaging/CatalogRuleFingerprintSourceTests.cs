@@ -35,7 +35,8 @@ public class CatalogRuleFingerprintSourceTests {
   [Test]
   public async Task For_CoversTheNamedTypesItKnows_InAnyForm_AndLeavesOutTheRestAsync() {
     var source = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed)), _event(typeof(Pinged)),
-      new MessageTypeCatalogEntry(typeof(Ship), TypeNameFormatter.FormatClrTypeName(typeof(Ship)), "command", null)));
+      new MessageTypeCatalogEntry(typeof(Ship), TypeNameFormatter.FormatClrTypeName(typeof(Ship)), "command", null)),
+      Options.Create(new StreamLifecycleOptions()));
 
     var rules = source.RulesFor([TypeNameFormatter.Format(typeof(Placed)), "Contracts.Unknown, Contracts"]);
 
@@ -76,11 +77,13 @@ public class CatalogRuleFingerprintSourceTests {
     var lifecycle = new StreamLifecycleOptions();
     lifecycle.Types[_placed] = new StreamTypeLifecycleOptions { Action = StreamLifecycleAction.Purge };
     var withPolicy = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(lifecycle));
-    var without = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))));
+    var without = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(new StreamLifecycleOptions()));
 
     await Assert.That(withPolicy.RulesFor([_placed]).TypeHashes[_placed]).IsNotEqualTo(without.RulesFor([_placed]).TypeHashes[_placed]);
     await Assert.That(CatalogRuleFingerprintSource.Empty.RulesFor([_placed]).TypeHashes).IsEmpty();
-    await Assert.That(() => new CatalogRuleFingerprintSource(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CatalogRuleFingerprintSource(null!, Options.Create(lifecycle))).Throws<ArgumentNullException>();
+    await Assert.That(() => new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), null!)).Throws<ArgumentNullException>()
+      .Because("the lifecycle settings are a required dependency: a construction site that drops them fails loudly");
     await Assert.That(() => CatalogRuleFingerprintSource.RulesOf(null!, null)).Throws<ArgumentNullException>();
     await Assert.That(RuleTypeName.Of("global::Contracts.Placed, Contracts ")).IsEqualTo("Contracts.Placed");
   }
