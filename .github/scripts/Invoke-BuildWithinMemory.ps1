@@ -13,9 +13,11 @@
     times out and leaves no log (#2388). Compiler memory grows quietly with what one project compiles, so this
     measures it on every build and fails at a budget below the runner, while there is still room to see why.
 
-    Every few seconds it adds up the resident memory of the build and every process under it (the build nodes and
-    the compiler server they start) and keeps the highest total. Only the build's own tree is counted, so another
-    job on a shared self-hosted machine does not count against it. When the build ends it prints the peak, adds it
+    Every few seconds it adds up the resident memory of the build and every process under it (the build nodes), plus
+    the compiler server (VBCSCompiler), and keeps the highest total. The compiler server is counted wherever it sits:
+    every build of the same user and SDK shares one, so a server an earlier build started is not under this build
+    but compiles for it. Other processes outside the build's tree are not counted, so another job on a shared
+    self-hosted machine does not count against it. When the build ends it prints the peak, adds it
     to the job summary, and exits with the build's own exit code, or 1 when the build succeeded with a peak over
     -BudgetMb.
 
@@ -75,15 +77,17 @@ function Get-MemoryVerdict([int]$BuildExitCode, [long]$PeakMb, [long]$BudgetMb) 
 }
 
 <#
-    The resident memory, in bytes, of a process and every process under it, from a list of processes with their
-    parents ($Processes: objects with Id, ParentId and Bytes). A parent that is not in the list ends the walk, and the
-    walk is bounded, so a loop in the list (a reused id) cannot make it run for ever.
+    The resident memory, in bytes, of a process and every process under it, and of the compiler server wherever it
+    is, from a list of processes ($Processes: objects with Id, ParentId, Bytes and, optionally, Name). A parent that is
+    not in the list ends the walk, and the walk is bounded, so a loop in the list (a reused id) cannot make it run for
+    ever.
 #>
 function Measure-TreeBytes([object[]]$Processes, [int]$RootId) {
   $parentOf = @{}
   foreach ($p in $Processes) { $parentOf[$p.Id] = $p.ParentId }
   $total = 0L
   foreach ($p in $Processes) {
+    if ($p.PSObject.Properties['Name'] -and $p.Name -eq 'VBCSCompiler') { $total += $p.Bytes; continue }
     $id = $p.Id
     for ($depth = 0; $depth -lt 64 -and $null -ne $id; $depth++) {
       if ($id -eq $RootId) { $total += $p.Bytes; break }
@@ -98,7 +102,10 @@ function Get-ProcessSnapshot {
   foreach ($process in @(Get-Process)) {
     try {
       $parent = $process.Parent
-      [pscustomobject]@{ Id = $process.Id; ParentId = $(if ($parent) { $parent.Id } else { $null }); Bytes = $process.WorkingSet64 }
+      [pscustomobject]@{
+        Id = $process.Id; ParentId = $(if ($parent) { $parent.Id } else { $null }); Bytes = $process.WorkingSet64
+        Name = $process.ProcessName
+      }
     } catch [System.InvalidOperationException] {
       continue
     }

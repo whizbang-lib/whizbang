@@ -58,6 +58,12 @@ Describe 'Measure-TreeBytes' {
     Measure-TreeBytes $script:Tree 99 | Should -Be 0
   }
 
+  It 'counts the compiler server wherever it hangs, since every build of the same user and SDK shares it' {
+    # An earlier build started it, so it is not under this one, but this build compiles in it.
+    $tree = $script:Tree + @([pscustomobject]@{ Id = 9; ParentId = 1000; Bytes = 7000000L; Name = 'VBCSCompiler' })
+    Measure-TreeBytes $tree 1 | Should -Be 7003210
+  }
+
   It 'ends on a loop of parent ids instead of running for ever' {
     $loop = @([pscustomobject]@{ Id = 7; ParentId = 8; Bytes = 1L }, [pscustomobject]@{ Id = 8; ParentId = 7; Bytes = 1L })
     Measure-TreeBytes $loop 1 | Should -Be 0
