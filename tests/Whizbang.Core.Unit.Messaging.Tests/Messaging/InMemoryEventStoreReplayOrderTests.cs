@@ -100,4 +100,64 @@ public class InMemoryEventStoreReplayOrderTests {
     Guid[] expected = [_appendOrder[0]];
     await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
+
+  // ── The between-checkpoint reads (#2381): what lifecycle receptors are handed for a perspective's batch ──────────────
+
+  /// <summary>
+  /// The events between two checkpoints are those after the lower one's version, through the upper one's, in stream
+  /// order (#2381). An id range named the wrong set: after version 1, whose id here is the highest, it selected nothing.
+  /// </summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_BetweenTwoEvents_ReadsByTheirVersionsInStreamOrderAsync() {
+    var (store, streamId) = await _seedAsync();
+
+    var read = await store.GetEventsBetweenPolymorphicAsync(streamId, _appendOrder[0], _appendOrder[2], [typeof(TestEvent)]);
+
+    Guid[] expected = [_appendOrder[1], _appendOrder[2]];
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the batch after version 1 through version 3 is versions 2 and 3, whatever their ids");
+  }
+
+  [Test]
+  public async Task GetEventsBetweenAsync_FromTheStartThroughAnEvent_ReadsThroughItsVersionInStreamOrderAsync() {
+    var (store, streamId) = await _seedAsync();
+
+    var read = await store.GetEventsBetweenAsync<TestEvent>(streamId, null, _appendOrder[1]);
+
+    Guid[] expected = [_appendOrder[0], _appendOrder[1]];
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the events through version 2 are versions 1 and 2, not the events whose ids sort at or below it");
+  }
+
+  /// <summary>Checkpoints the stream does not hold have no position in it, so the read keeps their ids (#2381).</summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_BetweenEventsTheStreamDoesNotHold_SelectsByTheirIdsAsync() {
+    var (store, streamId) = await _seedAsync();
+    var unheldJustBelowTheHighestId = Guid.Parse("019df109-0004-7000-8000-000000000001");
+    var unheldJustAboveTheLowestId = Guid.Parse("019df109-0002-7000-8000-000000000001");
+
+    var after = await store.GetEventsBetweenPolymorphicAsync(streamId, unheldJustBelowTheHighestId, Guid.Empty, [typeof(TestEvent)]);
+    var through = await store.GetEventsBetweenPolymorphicAsync(streamId, null, unheldJustAboveTheLowestId, [typeof(TestEvent)]);
+
+    Guid[] afterExpected = [_appendOrder[0]];
+    Guid[] throughExpected = [_appendOrder[3]];
+    await Assert.That(after.Select(e => e.MessageId.Value)).IsEquivalentTo(afterExpected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(through.Select(e => e.MessageId.Value)).IsEquivalentTo(throughExpected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>A stream whose ids follow its versions reads exactly as it did by id (#2381).</summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_IdsFollowingVersions_ReadsTheSameEventsAsBeforeAsync() {
+    var store = new InMemoryEventStore();
+    var streamId = Guid.NewGuid();
+    Guid[] ids = [.. _appendOrder.Reverse()];
+    for (var i = 0; i < ids.Length; i++) {
+      await store.AppendAsync(streamId, _envelope(ids[i], i));
+    }
+
+    var read = await store.GetEventsBetweenPolymorphicAsync(streamId, ids[0], ids[2], [typeof(TestEvent)]);
+
+    Guid[] expected = [ids[1], ids[2]];
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
 }

@@ -222,6 +222,56 @@ public class ArchiveAwareEventStoreDecoratorTests {
     await Assert.That(typed.Select(_n)).IsEquivalentTo([1, 2]);
   }
 
+  // #2381: the upper checkpoint bounds the archived events by its position in the stream, as the stores bound theirs. An
+  // archived event minted after its successors carries an id above the checkpoint and was dropped by an id bound.
+
+  [Test]
+  public async Task ABetweenRead_ThroughAnArchivedEvent_KeepsTheArchivedEventsThroughItsVersion_WhateverTheirIdsAsync() {
+    var (_, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 4);
+    _giveTheFirstArchivedEventTheHighestId(archive);
+    var upTo = archive.Events[1].EventId;
+
+    var read = await store.GetEventsBetweenPolymorphicAsync(_stream, null, upTo, _types);
+    var typed = await store.GetEventsBetweenAsync<ArchiveProbeEvent>(_stream, null, upTo);
+
+    await Assert.That(read.Select(_n)).IsEquivalentTo([1, 2], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the events through version 2 are versions 1 and 2, whatever their ids");
+    await Assert.That(typed.Select(_n)).IsEquivalentTo([1, 2], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task ABetweenRead_ThroughAHotEvent_KeepsEveryArchivedEvent_WhateverTheirIdsAsync() {
+    var (hot, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 5);
+    _giveTheFirstArchivedEventTheHighestId(archive);
+    var upTo = hot.Hot[0].MessageId.Value;
+
+    var read = await store.GetEventsBetweenPolymorphicAsync(_stream, null, upTo, _types);
+    var typed = await store.GetEventsBetweenAsync<ArchiveProbeEvent>(_stream, null, upTo);
+
+    await Assert.That(read.Select(_n)).IsEquivalentTo([1, 2, 3, 4], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("every archived event precedes the hot version 4 in the stream");
+    await Assert.That(typed.Select(_n)).IsEquivalentTo([1, 2, 3, 4], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task ABetweenRead_ThroughAnEventNeitherStoreHolds_KeepsTheArchivedEventsAtOrBeforeItsIdAsync() {
+    var (_, archive, store) = _archivedPrefix(archivedThrough: 3, hotThrough: 4);
+    for (var i = 0; i < 3; i++) {
+      archive.Events[i] = archive.Events[i] with { EventId = Guid.Parse($"0199f0a1-0000-7000-8000-0000000000{i + 1}0") };
+    }
+    // An id between the second and third archived events', held by no store; the hot events' ids sort above it.
+    var unheld = Guid.Parse("0199f0a1-0000-7000-8000-000000000025");
+
+    var read = await store.GetEventsBetweenPolymorphicAsync(_stream, null, unheld, _types);
+
+    await Assert.That(read.Select(_n)).IsEquivalentTo([1, 2], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a checkpoint with no position in the stream keeps the id bound");
+  }
+
+  // Mints the first archived event's id after every other event's, as an event stored first but minted later is.
+  private static void _giveTheFirstArchivedEventTheHighestId(ArchiveFake archive) =>
+    archive.Events[0] = archive.Events[0] with { EventId = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddHours(1)) };
+
   // #1931: a rebuild reads no archived data unless it opts in. The seam is where every reader of a rebuild reads (the
   // runner, the collective replay), so it is where the choice holds.
   [Test]

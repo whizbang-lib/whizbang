@@ -263,6 +263,52 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   }
 
   /// <summary>
+  /// The events between two checkpoints are those after the lower one's version, through the upper one's, in stream order
+  /// (#2381): what lifecycle receptors are handed for a perspective's batch. By id, the batch after the first event (the
+  /// highest id) selected nothing.
+  /// </summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_AfterTheEventWithTheHighestId_ReadsByVersionThroughTheUpperAsync() {
+    var store = _createStore();
+    var streamId = (Guid)TrackedGuid.New();
+    var first = Guid.Parse("00000000-0000-7000-8000-000000000009");
+    var second = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var third = Guid.Parse("00000000-0000-7000-8000-000000000002");
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "first"), _metadataJson(first), version: 1, eventId: first);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "second"), _metadataJson(second), version: 2, eventId: second);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "third"), _metadataJson(third), version: 3, eventId: third);
+
+    var batch = await store.GetEventsBetweenPolymorphicAsync(streamId, first, third, [typeof(TestEvent)]);
+    var throughSecond = await store.GetEventsBetweenAsync<TestEvent>(streamId, null, second);
+
+    await Assert.That(batch.Select(e => e.MessageId.Value)).IsEquivalentTo([second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the batch after version 1 through version 3 is versions 2 and 3, whatever their ids");
+    await Assert.That(throughSecond.Select(e => e.MessageId.Value)).IsEquivalentTo([first, second], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the events through version 2 are versions 1 and 2, in stream order");
+  }
+
+  /// <summary>Checkpoints the stream does not hold have no position in it, so the between read keeps their ids (#2381).</summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_BetweenEventsTheStreamDoesNotHold_SelectsByTheirIdsAsync() {
+    var store = _createStore();
+    var streamId = (Guid)TrackedGuid.New();
+    var first = Guid.Parse("00000000-0000-7000-8000-000000000009");
+    var second = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var third = Guid.Parse("00000000-0000-7000-8000-000000000005");
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "first"), _metadataJson(first), version: 1, eventId: first);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "second"), _metadataJson(second), version: 2, eventId: second);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "third"), _metadataJson(third), version: 3, eventId: third);
+
+    var after = await store.GetEventsBetweenPolymorphicAsync(
+      streamId, Guid.Parse("00000000-0000-7000-8000-000000000003"), Guid.Empty, [typeof(TestEvent)]);
+    var through = await store.GetEventsBetweenPolymorphicAsync(
+      streamId, null, Guid.Parse("00000000-0000-7000-8000-000000000006"), [typeof(TestEvent)]);
+
+    await Assert.That(after.Select(e => e.MessageId.Value)).IsEquivalentTo([first, third], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(through.Select(e => e.MessageId.Value)).IsEquivalentTo([second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>
   /// An event the stream does not hold has no position in it, so the read keeps the order it always had for one: after
   /// its id (#2379).
   /// </summary>
