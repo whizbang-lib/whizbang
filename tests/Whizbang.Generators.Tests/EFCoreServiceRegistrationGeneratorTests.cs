@@ -2831,7 +2831,7 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("\"wh_per_model_b\"");
 
     // The table names in multi-model registration should be in a Dictionary
-    await Assert.That(sourceText).Contains("System.Collections.Generic.Dictionary<System.Type, string>");
+    await Assert.That(sourceText).Contains("global::System.Collections.Generic.Dictionary<global::System.Type, string>");
   }
 
   #endregion

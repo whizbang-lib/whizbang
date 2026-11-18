@@ -408,7 +408,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("/// Module initializer that wires GeneratedMessageTypeCatalog into AddWhizbang().");
     source.AppendLine("/// </summary>");
     source.AppendLine("internal static class MessageTypeCatalogModuleInitializer {");
-    source.AppendLine("  [System.Runtime.CompilerServices.ModuleInitializer]");
+    source.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
     source.AppendLine("  internal static void Initialize() {");
     // #2243: named by this assembly, so a host's catalog unions only its own service's
     source.AppendLine($"    ServiceRegistrationCallbacks.RegisterMessageTypeCatalog({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, static services =>");

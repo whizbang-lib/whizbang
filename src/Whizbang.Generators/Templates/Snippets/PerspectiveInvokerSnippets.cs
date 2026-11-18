@@ -11,7 +11,7 @@ namespace Whizbang.Generators.Templates.Snippets;
 internal static class PerspectiveInvokerSnippets {
 
   // Example method showing snippet structure (for IDE support only)
-  private static async Task ExampleRoutingMethod(IServiceProvider serviceProvider, IEvent @event, System.Type eventType) {
+  private static async Task ExampleRoutingMethod(IServiceProvider serviceProvider, IEvent @event, global::System.Type eventType) {
     #region PERSPECTIVE_ROUTING_SNIPPET
     if (eventType == typeof(__EVENT_TYPE__)) {
       // ✅ IMPLEMENTED: PerspectiveRunner architecture for pure function perspectives

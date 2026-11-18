@@ -91,7 +91,6 @@ public class SystemChildNamespaceGenerationTests {
         [StreamId] public Guid OrderId { get; init; }
         [PhysicalField] public OrderStatus Status { get; init; }
         [PhysicalField] public decimal Total { get; init; }
-        [VectorField(3)] public float[]? Embedding { get; init; }
         public List<string> Notes { get; init; } = [];
         public Dictionary<string, int> Counts { get; init; } = [];
       }

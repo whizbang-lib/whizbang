@@ -85,7 +85,7 @@ public static class PerspectiveRegistrationExtensions {
   /// </summary>
   /// <param name="serviceName">The service name (assembly name)</param>
   /// <returns>Read-only list of message associations</returns>
-  public static System.Collections.Generic.IReadOnlyList<MessageAssociation> GetMessageAssociations(string serviceName) {
+  public static global::System.Collections.Generic.IReadOnlyList<MessageAssociation> GetMessageAssociations(string serviceName) {
     #region MESSAGE_ASSOCIATIONS_ARRAY
     // This region gets replaced with generated association array
     #endregion
@@ -97,7 +97,7 @@ public static class PerspectiveRegistrationExtensions {
   /// <param name="eventType">Fully qualified event type name</param>
   /// <param name="serviceName">The service name (assembly name)</param>
   /// <returns>Enumerable of perspective names</returns>
-  public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(string eventType, string serviceName) {
+  public static global::System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(string eventType, string serviceName) {
     return GetMessageAssociations(serviceName)
       .Where(a => a.MessageType == eventType && a.AssociationType == "perspective")
       .Select(a => a.TargetName);
@@ -109,7 +109,7 @@ public static class PerspectiveRegistrationExtensions {
   /// <param name="perspectiveName">Name of the perspective</param>
   /// <param name="serviceName">The service name (assembly name)</param>
   /// <returns>Enumerable of event type names</returns>
-  public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(string perspectiveName, string serviceName) {
+  public static global::System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(string perspectiveName, string serviceName) {
     return GetMessageAssociations(serviceName)
       .Where(a => a.TargetName == perspectiveName && a.AssociationType == "perspective")
       .Select(a => a.MessageType);
@@ -129,7 +129,7 @@ public static class PerspectiveRegistrationExtensions {
   /// - MatchStrictness.SimpleNameCaseInsensitive: Match simple name, case-insensitive
   /// Multiple flags can be combined using bitwise OR.
   /// </remarks>
-  public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(
+  public static global::System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(
       string eventType,
       string serviceName,
       MatchStrictness strictness) {
@@ -150,7 +150,7 @@ public static class PerspectiveRegistrationExtensions {
   /// - new Regex(".*Event$") : Match any event type ending with "Event"
   /// - new Regex("^ECommerce\..*") : Match any event type starting with "ECommerce."
   /// </remarks>
-  public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(
+  public static global::System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(
       Regex eventPattern,
       string serviceName) {
     return GetMessageAssociations(serviceName)
@@ -165,7 +165,7 @@ public static class PerspectiveRegistrationExtensions {
   /// <param name="serviceName">The service name (assembly name)</param>
   /// <param name="strictness">Flags controlling matching behavior</param>
   /// <returns>Enumerable of event type names</returns>
-  public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(
+  public static global::System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(
       string perspectiveName,
       string serviceName,
       MatchStrictness strictness) {
@@ -180,7 +180,7 @@ public static class PerspectiveRegistrationExtensions {
   /// <param name="perspectivePattern">Regex pattern to match perspective names</param>
   /// <param name="serviceName">The service name (assembly name)</param>
   /// <returns>Enumerable of event type names</returns>
-  public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(
+  public static global::System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(
       Regex perspectivePattern,
       string serviceName) {
     return GetMessageAssociations(serviceName)
@@ -209,7 +209,7 @@ public static class PerspectiveRegistrationExtensions {
   /// </code>
   /// </remarks>
   /// <docs>fundamentals/perspectives/typed-associations</docs>
-  public static System.Collections.Generic.IReadOnlyList<PerspectiveAssociationInfo<TModel, TEvent>> GetPerspectiveAssociations<TModel, TEvent>(string serviceName)
+  public static global::System.Collections.Generic.IReadOnlyList<PerspectiveAssociationInfo<TModel, TEvent>> GetPerspectiveAssociations<TModel, TEvent>(string serviceName)
     where TEvent : IEvent {
     #region PERSPECTIVE_ASSOCIATIONS_TYPED
     // This region gets replaced with generated typed association array

@@ -1009,7 +1009,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // rare enough in a healthy system to afford the level — the partial case below stays at Debug.
           if (_logger.IsEnabled(LogLevel.Warning)) {
             var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
-            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(global::System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
             _logger.LogWarning(
                 "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
                 events.Count - filtered.Count,
@@ -1037,7 +1037,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // they were already in ProcessedLineNumbers / equivalent idempotency state.
           if (_logger.IsEnabled(LogLevel.Debug)) {
             var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
-            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(global::System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
             _logger.LogDebug(
                 "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
                 events.Count - filtered.Count,
@@ -1161,7 +1161,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Check if per-event tracing is enabled
       var enableEventSpans = _tracingOptions?.CurrentValue.EnablePerspectiveEventSpans ?? false;
-      var appliedEventTypes = new System.Collections.Generic.List<string>();
+      var appliedEventTypes = new global::System.Collections.Generic.List<string>();
 
       // Replay/rebuild only: interleave this tenant's collective events for the model into the stream's replay,
       // ordered by message id among the per-stream events — so a set-based collective mutation is reproduced
@@ -1406,7 +1406,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // production run measured a much lower than expected events/sec drain despite high
         // concurrency configured — need to know whether DB write or in-memory apply or
         // lifecycle dominates per drain.
-        state.SaveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        state.SaveStartTicks = global::System.Diagnostics.Stopwatch.GetTimestamp();
         // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
         JsonDocument? snapshotBeforeWrite = null;
         // Issue #1002: whether this run ends in a snapshot, decided before the write, so a model the write strips in
@@ -1581,8 +1581,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - state.SaveStartTicks)
-            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          var saveMs = (global::System.Diagnostics.Stopwatch.GetTimestamp() - state.SaveStartTicks)
+            * 1000.0 / global::System.Diagnostics.Stopwatch.Frequency;
           if (saveMs > 50 || eventsProcessed >= 10) {
             _logger.LogDebug(
               "PERF SaveModelAndCheckpoint {PerspectiveName} stream {StreamId}: {EventCount} events in {SaveMs:F1}ms ({MsPerEvent:F2}ms/evt)",
@@ -2626,7 +2626,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Read events from the current anchor. First pass uses replayFromEventId
       // (snapshot or null=from-beginning). Subsequent passes use the last event
       // we applied, so we only pick up the delta of events appended since.
-      var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+      var events = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
       // #1738: the first pass from a snapshot an archive covers reads the archived events after it, then the hot ones; every
       // later pass resumes after the last event applied, which is hot.
       var read = rewindCatchUpIterations == 1 && readThroughArchiveAfterVersion is long afterVersion
@@ -3209,7 +3209,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private bool _modelHasCollectives() => _collectiveEventTypeNames().Count > 0;
 
   /// <summary>The stored event-type names of the model's collectives; none without a collective replay applier.</summary>
-  private System.Collections.Generic.IReadOnlyList<string> _collectiveEventTypeNames() =>
+  private global::System.Collections.Generic.IReadOnlyList<string> _collectiveEventTypeNames() =>
       _collectiveReplayApplier?.CollectiveEventTypeNamesFor(
           global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(__MODEL_TYPE_NAME__)).Replace('+', '.')) ?? [];
 
@@ -3226,7 +3226,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>One read of the collective fence, with what the read after the write needs to ask it again.</summary>
   private sealed record CollectiveFenceRead(
       string? TenantId,
-      System.Collections.Generic.IReadOnlyList<string> CollectiveEventTypes,
+      global::System.Collections.Generic.IReadOnlyList<string> CollectiveEventTypes,
       global::Whizbang.Core.Perspectives.CollectiveSnapshotFenceReading Reading);
 
   /// <summary>The mark a snapshot records, or that it is deferred (#1963).</summary>
@@ -3294,7 +3294,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// known otherwise, and the pass then folds no collective.
   /// </summary>
   private static (bool Known, string? TenantId) _collectiveTenant(
-      System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
       global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead,
       bool firstPassFromASnapshot) {
     if (events.Count > 0) {

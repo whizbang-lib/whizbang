@@ -32,7 +32,7 @@ namespace Whizbang.Core.Generated {
     /// Module initializer that registers the dispatcher callback with the global registry.
     /// Runs automatically when the assembly is loaded - no explicit call needed.
     /// </summary>
-    [System.Runtime.CompilerServices.ModuleInitializer]
+    [global::System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Initialize() {
       // Register dispatcher callback - includes receptors, registry, and all dispatcher infrastructure
       global::Whizbang.Core.ServiceRegistrationCallbacks.RegisterDispatcher({{ASSEMBLY_NAME_LITERAL}}, services => {

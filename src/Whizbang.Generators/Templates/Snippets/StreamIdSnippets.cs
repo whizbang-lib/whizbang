@@ -38,10 +38,10 @@ public class StreamIdSnippets {
     public static string Extract(__EVENT_TYPE__ @event) {
       var key = @event.__PROPERTY_NAME__;
       if (key is null) {
-        throw new System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __EVENT_NAME__ cannot be null.");
+        throw new global::System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __EVENT_NAME__ cannot be null.");
       }
       if (key is string str && string.IsNullOrWhiteSpace(str)) {
-        throw new System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __EVENT_NAME__ cannot be empty.");
+        throw new global::System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __EVENT_NAME__ cannot be empty.");
       }
       return key.ToString()!;
     }
@@ -316,10 +316,10 @@ public class StreamIdSnippets {
     public static string ExtractFromCommand(__COMMAND_TYPE__ command) {
       var key = command.__PROPERTY_NAME__;
       if (key is null) {
-        throw new System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __COMMAND_NAME__ cannot be null.");
+        throw new global::System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __COMMAND_NAME__ cannot be null.");
       }
       if (key is string str && string.IsNullOrWhiteSpace(str)) {
-        throw new System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __COMMAND_NAME__ cannot be empty.");
+        throw new global::System.InvalidOperationException("Stream ID '__PROPERTY_NAME__' on __COMMAND_NAME__ cannot be empty.");
       }
       return key.ToString()!;
     }

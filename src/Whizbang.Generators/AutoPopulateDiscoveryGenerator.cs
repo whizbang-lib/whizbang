@@ -623,7 +623,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
           isStringTarget ? "hop.ServiceInstance.InstanceId.ToString()" : "hop.ServiceInstance.InstanceId",
       POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.HostName" => "hop.ServiceInstance.HostName",
       POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.ProcessId" =>
-          isStringTarget ? "hop.ServiceInstance.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)" : "hop.ServiceInstance.ProcessId",
+          isStringTarget ? "hop.ServiceInstance.ProcessId.ToString(global::System.Globalization.CultureInfo.InvariantCulture)" : "hop.ServiceInstance.ProcessId",
       POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.MessageId" =>
           isStringTarget ? "messageId.Value.ToString()" : "messageId.Value",
       POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.CorrelationId" =>
@@ -649,7 +649,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private static string _coerceStringSource(string stringExpr, AutoPopulateInfo info) {
     return info.PropertyTypeFullName switch {
       "global::System.Guid?" => $"_parseGuid({stringExpr})",
-      "global::System.Guid" => $"(_parseGuid({stringExpr}) ?? System.Guid.Empty)",
+      "global::System.Guid" => $"(_parseGuid({stringExpr}) ?? global::System.Guid.Empty)",
       _ => stringExpr
     };
   }
@@ -663,7 +663,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private static string _fillIfEmpty(string currentExpr, string sourceExpr, AutoPopulateInfo info) {
     return info.PropertyTypeFullName switch {
       "global::System.Guid?" => $"({currentExpr} ?? {sourceExpr})",
-      "global::System.Guid" => $"({currentExpr} == System.Guid.Empty ? {sourceExpr} : {currentExpr})",
+      "global::System.Guid" => $"({currentExpr} == global::System.Guid.Empty ? {sourceExpr} : {currentExpr})",
       "string" or "string?" => $"(string.IsNullOrEmpty({currentExpr}) ? {sourceExpr} : {currentExpr})",
       _ => sourceExpr
     };
@@ -699,8 +699,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("    return null;");
     sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine("  private static System.Guid? _parseGuid(string? value) {");
-    sb.AppendLine("    return System.Guid.TryParse(value, out var parsed) ? parsed : (System.Guid?)null;");
+    sb.AppendLine("  private static global::System.Guid? _parseGuid(string? value) {");
+    sb.AppendLine("    return global::System.Guid.TryParse(value, out var parsed) ? parsed : (global::System.Guid?)null;");
     sb.AppendLine("  }");
     sb.AppendLine();
     sb.AppendLine("  private static string? _extractExtensionValue(MessageHop hop, string headerKey) {");
