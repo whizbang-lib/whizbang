@@ -644,9 +644,20 @@ public partial class PerspectiveWorker(
       return;
     }
 
-    // Subscribe to new perspective work signals so we poll immediately when events arrive
+    // Subscribe to new perspective work signals so we poll immediately when events arrive. The channel writer is a
+    // singleton that outlives this worker, so the run that adds the handler removes it (#2409).
     workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
+    try {
+      await _runConsumersAsync(startupRewinds, stoppingToken).ConfigureAwait(false);
+    } finally {
+      workChannelWriter.OnNewPerspectiveWorkAvailable -= RequestImmediatePoll;
+    }
+  }
 
+  /// <summary>
+  /// The consumer loops, with the wait for the startup rewinds they perform, until stopped; then the shutdown drain.
+  /// </summary>
+  private async Task _runConsumersAsync(StartupRewindSet? startupRewinds, CancellationToken stoppingToken) {
     // The work-pump decomposition migrated perspective traffic to the channel architecture
     // (ClaimWorker → IPerspectiveChannelWriter / IPerspectiveDrainChannel → here). Channel deps
     // are optional in the constructor only so existing test fixtures compile unchanged; runtime
