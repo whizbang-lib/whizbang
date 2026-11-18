@@ -252,7 +252,7 @@ public class MaintenanceWorkerIntegrityBacklogTests {
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     // The test reads no clock of its own: a reading was taken, at a real UTC instant, with nothing registered.
-    await Assert.That(coordinator.SealReadArgs!.Value.Now).IsNotEqualTo(default(DateTimeOffset))
+    await Assert.That(coordinator.SealReadArgs!.Value.Now).IsNotEqualTo(default)
       .Because("with no clock registered the worker falls back to the system clock rather than skipping the reading");
     await Assert.That(coordinator.SealReadArgs!.Value.Now.Offset).IsEqualTo(TimeSpan.Zero);
     await Assert.That(ProbeMeterReader.ReadSeries(metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier").Count)
