@@ -59,6 +59,14 @@ public partial class RedeliveryRequestReceptorTests {
   }
 
   [Test]
+  public async Task Receptor_ARequestWithEmptyStreamAndEventLists_IsAWholeTypeRequestAsync() {
+    var bundles = await _answerPartsAsync(_wholeType() with { StreamIds = [], EventIds = [] }, _evt(_first, TrackedGuid.New().Value, 1));
+
+    await Assert.That(bundles.Count).IsEqualTo(1);
+    await Assert.That(bundles[0].AnswersWholeType).IsTrue().Because("an empty filter names nothing, as an absent one does");
+  }
+
+  [Test]
   public async Task Receptor_TwoRequests_AreTwoAnswersAsync() {
     var first = await _answerPartsAsync(_wholeType(), _evt(_first, TrackedGuid.New().Value, 1));
     var second = await _answerPartsAsync(_wholeType(), _evt(_first, TrackedGuid.New().Value, 1));
