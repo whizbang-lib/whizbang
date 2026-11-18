@@ -1371,10 +1371,9 @@ public partial class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   /// <summary>
   /// A single stream failing mid-rebuild must not abort the remaining streams. PerspectiveRebuilder
-  /// wraps each runner.RunAsync call in a try/catch and logs per-stream failures. The batch-level
-  /// Success flag is still true and StreamsProcessed reflects the successful streams only. Pins
-  /// that behavior so any future "fail the batch on first error" change lands deliberately with
-  /// this test flipping.
+  /// wraps each runner.RunAsync call in a try/catch and logs per-stream failures, and the other streams
+  /// are rebuilt and kept. The failure is counted (StreamsFailed) and the rebuild is not reported as a
+  /// success (#2376); StreamsProcessed reflects the successful streams only.
   /// </summary>
   [Test]
   public async Task RebuildInPlaceAsync_ContinuesAfterPerStreamFailureAsync() {
@@ -1401,11 +1400,11 @@ public partial class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
       var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
 
-      // Rebuilder treats per-stream failures as non-fatal — Success is unconditional after
-      // the loop completes (see PerspectiveRebuilder.cs:111).
-      await Assert.That(result.Success).IsTrue();
+      // A per-stream failure does not stop the rest, but it is reported (#2376).
+      await Assert.That(result.Success).IsFalse();
+      await Assert.That(result.StreamsFailed).IsEqualTo(1);
       await Assert.That(result.StreamsProcessed).IsEqualTo(3);
-      await Assert.That(result.Error).IsNull();
+      await Assert.That(result.Error).Contains("1 of 4 stream(s) failed to replay");
     } finally {
       _poisonStreams.Remove(poisonStream);
     }
@@ -1711,7 +1710,8 @@ public partial class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
 
       var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
-      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.Success).IsFalse().Because("a failed stream is reported, not a clean success (#2376)");
+      await Assert.That(result.StreamsFailed).IsEqualTo(1);
       await Assert.That(result.StreamsProcessed).IsEqualTo(2);
     } finally {
       _poisonStreams.Remove(poisonStream);
