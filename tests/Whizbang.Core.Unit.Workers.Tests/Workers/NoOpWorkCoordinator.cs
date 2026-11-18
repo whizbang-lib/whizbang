@@ -10,7 +10,10 @@ namespace Whizbang.Core.Tests.Workers;
 /// Minimal no-op IWorkCoordinator stub for tests that only need IWorkCoordinatorStrategy
 /// but where TransportConsumerWorker resolves IWorkCoordinator from DI.
 /// </summary>
+// Not sealed: tests derive from it. The file is also compiled into test assemblies where nothing does (#2392).
+#pragma warning disable CA1852 // Type can be sealed
 internal class NoOpWorkCoordinator : IWorkCoordinator {
+#pragma warning restore CA1852
   /// <summary>Number of inbox messages stored via StoreInboxMessagesAsync (cumulative across calls).</summary>
   public int StoredInboxCount { get; private set; }
 
