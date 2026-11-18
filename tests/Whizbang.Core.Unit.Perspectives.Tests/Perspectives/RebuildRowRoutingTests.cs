@@ -212,7 +212,9 @@ public class RebuildRowRoutingTests {
 
     var result = await rebuilder.RebuildStreamsAsync("P", [first, second]);
 
-    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.Success).IsFalse().Because("a row whose fold failed is a failed stream, so the rebuild is not a clean success (#2376)");
+    await Assert.That(result.StreamsFailed).IsEqualTo(1);
+    await Assert.That(result.Error).Contains(failing.ToString());
     await Assert.That(runner.RekeyedFolds.Count).IsEqualTo(2);
     var sourceCount = runner.RekeyedFolds.Single(f => f.Row == target).SourceCount;
     await Assert.That(sourceCount).IsEqualTo(2).Because("both sources re-keyed onto the row are folded together, once");
