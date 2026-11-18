@@ -78,7 +78,7 @@ public class MigrationScriptsEmittedOnceGenerationTests {
 
     await Assert.That(result.GeneratedSources.Count(s => s.HintName.EndsWith("_SchemaExtensions.g.cs", StringComparison.Ordinal)))
       .IsEqualTo(2).Because("both contexts get their schema extensions, or this test says nothing about sharing");
-    await Assert.That(carrying).IsEquivalentTo(new[] { SHARED_HINT })
+    await Assert.That(carrying).IsEquivalentTo([SHARED_HINT])
       .Because("the migration text is the same for every context, so it is compiled once, not once per context");
   }
 
