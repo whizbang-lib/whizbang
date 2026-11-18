@@ -11,8 +11,8 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
-using Whizbang.Core.Unit.Dispatcher.Tests.Generated;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Unit.Dispatcher.Tests.Generated;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

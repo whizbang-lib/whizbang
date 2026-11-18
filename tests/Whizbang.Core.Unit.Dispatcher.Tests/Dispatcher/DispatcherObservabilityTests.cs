@@ -9,8 +9,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Unit.Dispatcher.Tests.Generated;
 using Whizbang.Core.Tests.Observability;
+using Whizbang.Core.Unit.Dispatcher.Tests.Generated;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

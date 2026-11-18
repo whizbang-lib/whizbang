@@ -13,8 +13,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
-using Whizbang.Core.Unit.Dispatcher.Tests.Generated;
 using Whizbang.Core.Tests.Security;
+using Whizbang.Core.Unit.Dispatcher.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Dispatcher;
