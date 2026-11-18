@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.RabbitMQ;
@@ -932,7 +933,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     channel.BasicConsumeAsync(
       queue: queueName,
       autoAck: false,
-      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
+      consumerTag: $"{queueName}-{TrackedGuid.New().Value:N}",
       noLocal: false,
       exclusive: false,
       arguments: null,

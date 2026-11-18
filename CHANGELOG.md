@@ -779,13 +779,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
-- **Service Bus deliveries explain themselves in the logs (#2406).** Every delivery the transport gives back to the
-  broker without completing or dead-lettering it is a Warning naming the message id, its type, the subscription, the
-  delivery count and the reason (a paused or disposed subscription, or a failed handler); a paused subscription used to
-  abandon silently. Every delivery handed to the handler is a Debug line with its id and delivery count, and a delivery
-  that arrives with a delivery count above 1 is one Information line naming it. Together they tell "the handler never
-  saw this delivery" from "the handler saw it and did not settle it" for a message the broker dead-letters with
-  MaxDeliveryCountExceeded. With a level off, its line costs one level check and allocates nothing.
 - **The perspective worker's cooldown cache reports when it goes over its cap (#1828).** `RecentlyProcessedEventCache.OnCapacityExceeded` (`Action<int>`, the resident count) is raised when an insert takes
   the cache past `MaxEntries`, before it evicts. Each raise is followed by evicting entries still inside their TTL, so
   a steady stream of raises means `MaxEntries` is too small for the drain. It costs nothing below the cap.
@@ -1431,17 +1424,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
 
 ### Fixed
-- **A paused Service Bus subscription stops receiving (#2406).** Pausing a subscription (the run-control path does it
-  when an instance stands down for a newer version during a rolling upgrade, and on a pause or a stop) left its
-  processor running, and every delivery it took was abandoned. Each abandon counted a delivery, and a session whose
-  messages keep arriving (all of an origin's integrity checkpoints share one) stayed on the standing-down instance
-  while every message in it burned to the dead-letter queue with `MaxDeliveryCountExceeded`. Pausing now stops the
-  processor, so nothing is taken or counted and another instance takes the session at once; resuming starts it
-  again, and a namespace-throttle pause that ends while the subscription is paused leaves it stopped. The
-  receive-liveness watchdog no longer treats a paused subscription's silence as a stall: it neither counts it nor
-  re-subscribes it, and watches it again from a fresh silence window once it is resumed. RabbitMQ had the same defect
-  (a paused consumer stayed on the queue and nacked every delivery with requeue, raising its delivery count): pausing
-  now cancels the consumer and resuming starts one again.
 - **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
   longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
   state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
