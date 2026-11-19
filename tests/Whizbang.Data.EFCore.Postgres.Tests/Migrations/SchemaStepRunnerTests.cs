@@ -104,7 +104,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
 
     await using var after = new NpgsqlConnection(_database.ConnectionString);
     await after.OpenAsync();
-    await Assert.That(heldElsewhereDuring).IsEqualTo(true);
+    await Assert.That(heldElsewhereDuring).IsTrue();
     await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(after, _lockId, CancellationToken.None)).IsFalse()
       .Because("a transaction-scoped lock ends with the step's transaction; nothing session-scoped can leak");
   }

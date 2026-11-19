@@ -83,6 +83,6 @@ public static class AdvisoryLockProbe {
 
     await using var command = new NpgsqlCommand(SQL, connection);
     command.Parameters.AddWithValue(key);
-    return await command.ExecuteScalarAsync(cancellationToken) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken), "advisory lock probe");
   }
 }

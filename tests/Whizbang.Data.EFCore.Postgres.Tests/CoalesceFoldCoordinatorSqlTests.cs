@@ -115,6 +115,36 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task FetchPendingCoalesce_ARowWithNoStreamDestinationOrSchedule_ReadsThemAsMissingAsync() {
+    // The seed below leaves the envelope type unset; this row sets it and leaves the stream, the destination and the
+    // schedule unset instead, so each optional column is read both ways.
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    var connection = await _openAsync(dbContext);
+    var messageId = (Guid)TrackedGuid.New();
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = """
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
+           created_at, stream_id, partition_number, coalesce_group, scheduled_for)
+        VALUES (@msg, NULL, 'TestEvent', 'TestEnvelope',
+          jsonb_build_object('id', @msg::text, 'p', '{"record":"data"}'::jsonb, 'h', '[]'::jsonb),
+          '{}'::jsonb, 0, 0, NOW(), NULL, 0, 'group-unset', NULL)
+        """;
+      ins.Parameters.AddWithValue("msg", messageId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var fetched = await coordinator.FetchPendingCoalesceAsync("group-unset", limit: 10);
+
+    await Assert.That(fetched.Count).IsEqualTo(1);
+    await Assert.That(fetched[0].StreamId.HasValue).IsFalse();
+    await Assert.That(fetched[0].Destination).IsNull();
+    await Assert.That(fetched[0].EnvelopeType).IsEqualTo("TestEnvelope");
+    await Assert.That(fetched[0].ScheduledFor.HasValue).IsFalse();
+  }
+
+  [Test]
   public async Task FetchPendingCoalesce_WhenStoredMetadataIsJsonNull_SynthesizesMinimalMetadataAsync() {
     // A JSON null is a stored value, not a missing column: it deserializes to no metadata at all.
     // The fold only needs the payload, so the row ships with minimal metadata instead of stranding.

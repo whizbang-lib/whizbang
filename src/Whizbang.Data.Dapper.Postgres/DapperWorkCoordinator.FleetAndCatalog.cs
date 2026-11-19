@@ -121,14 +121,14 @@ public partial class DapperWorkCoordinator {
   /// <inheritdoc />
   public async Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(version);
-    return await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.ScalarFunctionAsync(
-      cmd, prefix, "request_standby", cancellationToken, ("id", instanceId), ("version", version)), cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.ScalarFunctionAsync(
+      cmd, prefix, "request_standby", cancellationToken, ("id", instanceId), ("version", version)), cancellationToken).ConfigureAwait(false), "standby request");
   }
 
   /// <inheritdoc />
   public async Task<bool> ClearStandbyRequestAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
-    await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.ScalarFunctionAsync(
-      cmd, prefix, "clear_standby", cancellationToken, ("id", instanceId)), cancellationToken).ConfigureAwait(false) is true;
+    BooleanScalar.Read(await _withGatedCommandAsync((cmd, prefix) => CoordinatorFleetSql.ScalarFunctionAsync(
+      cmd, prefix, "clear_standby", cancellationToken, ("id", instanceId)), cancellationToken).ConfigureAwait(false), "standby clear");
 
   /// <inheritdoc />
   public Task EvictInstanceAsync(Guid instanceId, Guid evictedBy, string reason, CancellationToken cancellationToken = default) {

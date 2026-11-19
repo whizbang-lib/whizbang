@@ -88,6 +88,45 @@ public class RebuildBackgroundWorkerTests {
   }
 
   [Test]
+  public async Task StoppingWhileWaitingForARebuild_EndsTheWorkerNormallyAsync() {
+    // The worker has run one rebuild and is waiting on the queue, which is never completed: stopping cancels the wait,
+    // and the worker ends normally rather than faulted.
+    var (worker, queue, _) = _worker();
+    var finished = new TaskCompletionSource<RebuildResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnRebuildFinished += r => finished.TrySetResult(r);
+    await worker.StartAsync(CancellationToken.None);
+    queue.Enqueue("Test.Once", _origin);
+    await finished.Task.WaitAsync(_deadline);
+
+    await worker.StopAsync(CancellationToken.None);
+
+    await worker.ExecuteTask!.WaitAsync(_deadline);
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+  }
+
+  [Test]
+  public async Task ARebuildQueuedAfterAStop_IsRunByTheNextWorkerOnTheSameQueueAsync() {
+    // The queue outlives a stopped worker: what is queued after the stop waits for the next worker, as before.
+    var (first, queue, rebuilder) = _worker();
+    await first.StartAsync(CancellationToken.None);
+    await first.StopAsync(CancellationToken.None);
+    queue.Enqueue("Test.AfterStop", _origin);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRebuilder>(rebuilder);
+    await using var sp = services.BuildServiceProvider();
+    var second = new RebuildBackgroundWorker(queue, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RebuildBackgroundWorker>.Instance);
+    var finished = new TaskCompletionSource<RebuildResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+    second.OnRebuildFinished += r => finished.TrySetResult(r);
+    await second.StartAsync(CancellationToken.None);
+    try {
+      await Assert.That((await finished.Task.WaitAsync(_deadline)).PerspectiveName).IsEqualTo("Test.AfterStop");
+    } finally {
+      await second.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
   public async Task StoppingDuringARebuild_EndsTheWorkerWithoutReportingAFailureAsync() {
     var (worker, queue, rebuilder) = _worker(blockUntilCanceled: true);
     var failures = new List<Exception>();

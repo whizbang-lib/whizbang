@@ -123,7 +123,8 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
       return null;
     }
     var snapshotEventId = reader.GetGuid(0);
-    long? snapshotCommitSequence = await reader.IsDBNullAsync(1, ct) ? null : reader.GetInt64(1);
+    // The query keeps only rows whose snapshot_commit_sequence IS NOT NULL.
+    long? snapshotCommitSequence = reader.GetInt64(1);
     var snapshotJson = reader.GetString(2);
     return (snapshotEventId, snapshotCommitSequence, JsonDocument.Parse(snapshotJson));
   }

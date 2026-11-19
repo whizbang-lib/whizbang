@@ -30,7 +30,7 @@ public sealed class PostgresPerspectivePurgeMarkerStore(
     command.Parameters.AddWithValue(streamId);
     command.Parameters.AddWithValue(perspectiveName);
     command.Parameters.AddWithValue(PerspectivePurgeMarkers.ALL_PERSPECTIVES);
-    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "purge marker");
   }
 
   /// <inheritdoc />

@@ -9,6 +9,8 @@ using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Registry;
 
+using Whizbang.Core.Tests.Helpers;
+
 namespace Whizbang.Core.Tests.ServiceScope;
 
 /// <summary>
@@ -34,7 +36,7 @@ public class ScopedReceptorRegistryQueryTests {
   }
 
   [After(Test)]
-  public void TeardownRegistry() => ResetRegistry();
+  public void TeardownRegistry() => GeneratedRegistrations.RestoreReceptors();
 
   private static void _contribute(string? assembly, string type) =>
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {

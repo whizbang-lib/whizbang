@@ -343,7 +343,7 @@ public sealed class SchemaStepRunner {
     command.Transaction = (NpgsqlTransaction)transaction;
     command.CommandText = "SELECT pg_try_advisory_xact_lock($1)";
     command.Parameters.Add(new NpgsqlParameter { Value = _lockId });
-    return await command.ExecuteScalarAsync(ct).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(ct).ConfigureAwait(false), "schema step lock");
   }
 
   /// <summary>Detaches the step's transaction from the context and ends it.</summary>

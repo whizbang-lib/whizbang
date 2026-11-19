@@ -76,7 +76,7 @@ public class WhizbangActivitySourceTests {
     await Assert.That(activity.GetTagItem("exception.message")).IsEqualTo("Test exception");
     // Note: exception.stacktrace is null for unthrown exceptions, so we just verify the code added it
     _ = activity.GetTagItem("exception.stacktrace");
-    await Assert.That(activity.GetTagItem("defensive.code")).IsEqualTo(true);
+    await Assert.That(activity.GetTagItem("defensive.code") as bool?).IsTrue();
   }
 
   [Test]
@@ -111,8 +111,8 @@ public class WhizbangActivitySourceTests {
     await Assert.That(activity.StatusDescription).IsEqualTo("Unexpected cancellation: Worker cancellation");
 
     // Verify tags using GetTagItem (tags added with AddTag)
-    await Assert.That(activity.GetTagItem("cancellation.unexpected")).IsEqualTo(true);
-    await Assert.That(activity.GetTagItem("defensive.code")).IsEqualTo(true);
+    await Assert.That(activity.GetTagItem("cancellation.unexpected") as bool?).IsTrue();
+    await Assert.That(activity.GetTagItem("defensive.code") as bool?).IsTrue();
   }
 
   [Test]
@@ -208,6 +208,8 @@ public class WhizbangActivitySourceTests {
 
   [Test]
   public async Task TracingActivity_WithoutParent_HasNoParentIdAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange - Only listen to Tracing source (no parent activity)
     using var listener = new ActivityListener {
       ShouldListenTo = s => s.Name == "Whizbang.Tracing",

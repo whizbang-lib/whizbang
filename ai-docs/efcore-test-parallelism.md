@@ -33,10 +33,19 @@ suite to finish in every CI run.
 
 ### How TUnit schedules the three kinds
 
-TUnit 1.x runs a session in phases: every unconstrained test first (in parallel, under the limit), then every keyed
-test (tests with different keys in parallel, the same key one at a time, still under the limit), then every keyless
-`[NotInParallel]` test, one at a time, alone. A keyed test never overlaps an unconstrained one, but it does overlap
-keyed tests with other keys; only the keyless attribute guarantees nothing else is running.
+Every test project here runs a session in phases: every unconstrained test first (in parallel, under the limit), then
+every keyed test (tests with different keys in parallel, the same key one at a time, still under the limit), then every
+keyless `[NotInParallel]` test, one at a time, alone. A keyed test never overlaps an unconstrained one, but it does
+overlap keyed tests with other keys; only the keyless attribute guarantees nothing else is running.
+
+TUnit itself stopped keeping the keyed phase apart in 1.40: it starts the keyed tests beside the unconstrained ones
+(thomhurst/TUnit#5740). The suite's keys are shared among the tests that change a resource, and the tests that only read
+it carry none, so under plain 1.40 a reader ran beside a writer and the merge queue failed on a different test each run.
+`tests/KeyedNotInParallelRunsApart.cs`, compiled into every test executable by `tests/Directory.Build.props`, puts each
+keyed test without a parallel group of its own into one group, which TUnit runs after the unconstrained tests and with
+the keys still honored inside it: the phase above. `Whizbang.Testing.Tests/TestIsolation/KeyedNotInParallelRunsApartTests`
+pins it. Unconstrained tests still run beside each other, so two tests that both hold a process-wide gate take its key
+even when neither resets anything: the integrity receptors' compare gate declines a manifest while another test holds it.
 
 A test gets one `[NotInParallel]`, and when its class has one the class's wins: the method's keys are dropped without
 a warning. A class that serializes therefore names on the class every key any of its tests needs (a test running

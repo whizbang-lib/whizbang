@@ -177,21 +177,20 @@ internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
   }
 
   private async Task _runLoopAsync(CancellationToken stopToken) {
+    // Stopping disposes the timer, which ends the wait with false: the loop's own exit is the way
+    // out on shutdown, so the wait itself takes no token.
     using var timer = new PeriodicTimer(_options.ReceiveLivenessProbeInterval, _timeProvider);
-    try {
-      while (await timer.WaitForNextTickAsync(stopToken)) {
-        try {
-          await ProbeAsync(stopToken);
-        } catch (OperationCanceledException) when (stopToken.IsCancellationRequested) {
-          return;
-        } catch (Exception ex) {
-          // The loop must survive any sweep failure — a watchdog that dies on first
-          // error reproduces the very blind spot it exists to remove.
-          LogSweepFailed(_logger, ex);
-        }
+    await using var stopping = stopToken.Register(timer.Dispose);
+    while (await timer.WaitForNextTickAsync(CancellationToken.None)) {
+      try {
+        await ProbeAsync(stopToken);
+      } catch (OperationCanceledException) when (stopToken.IsCancellationRequested) {
+        return;
+      } catch (Exception ex) {
+        // The loop must survive any sweep failure: a watchdog that dies on first
+        // error reproduces the very blind spot it exists to remove.
+        LogSweepFailed(_logger, ex);
       }
-    } catch (OperationCanceledException) {
-      // Normal shutdown.
     }
   }
 

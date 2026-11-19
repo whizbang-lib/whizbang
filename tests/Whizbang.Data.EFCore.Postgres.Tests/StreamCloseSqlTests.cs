@@ -305,6 +305,32 @@ public class StreamCloseSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task GetArchivedEvents_AnEventArchivedWithoutItsBody_ComesBackWithoutOneAsync() {
+    // An event whose body was already reaped (an ephemeral one) is archived from its pointer alone: its body and
+    // metadata are NULL in cold storage.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    await using (var insert = connection.CreateCommand()) {
+      insert.CommandText = """
+        INSERT INTO wh_event_archive (event_id, stream_id, event_type, event_data, metadata, version)
+        VALUES (@event, @stream, 'Contracts.Reaped', NULL, NULL, 1)
+        """;
+      insert.Parameters.AddWithValue("event", eventId);
+      insert.Parameters.AddWithValue("stream", streamId);
+      await insert.ExecuteNonQueryAsync();
+    }
+
+    var archived = await coordinator.GetArchivedEventsAsync(streamId);
+
+    await Assert.That(archived.Count).IsEqualTo(1);
+    await Assert.That(archived[0].EventDataJson).IsNull();
+    await Assert.That(archived[0].MetadataJson).IsNull();
+  }
+
+  [Test]
   public async Task CloseStream_Discard_LeavesArchiveEmptyAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

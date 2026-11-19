@@ -72,6 +72,10 @@ stream" whenever a parallel test registered sagas in between. The fix:
 - Tests that assert on exact counts from shared resources
 - Tests that use shared external resources (ServiceBus topics, database connections)
 
+A keyed test never runs beside an unconstrained one in this repository, as in TUnit before 1.40:
+`tests/KeyedNotInParallelRunsApart.cs` restores that in every test project (see
+`ai-docs/efcore-test-parallelism.md`, "How TUnit schedules the three kinds").
+
 ---
 
 ## Pattern 2: Missing Event Waiters

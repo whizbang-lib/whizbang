@@ -311,6 +311,28 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
     await Assert.That(members).IsEquivalentTo([queue[1]]);
   }
 
+  [Test]
+  public async Task FetchCollectiveSinkQueue_RowsTheStamperHasNotReached_CarryNoCommitSequenceAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using (var conn = await _openAsync()) {
+      await _emitCollectiveAsync(conn, _firstCommitted, keyStream);
+      await _emitCollectiveAsync(conn, _secondCommitted, keyStream);
+    }
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var queue = await coordinator.FetchCollectiveSinkQueueAsync(keyStream);
+    var head = await coordinator.FetchCollectiveSinkQueueHeadAsync(keyStream, []);
+    var members = await coordinator.FetchCollectiveSinkQueueMembersAsync(
+      keyStream, workIds: [queue![1].EventWorkId], eventIds: []);
+
+    await Assert.That(queue.All(q => q.CommitSequence is null)).IsTrue()
+      .Because("neither row has been stamped, and the queue still holds them");
+    await Assert.That(head!.Single().CommitSequence.HasValue).IsFalse();
+    await Assert.That(members!.Single().CommitSequence.HasValue).IsFalse();
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
   private async Task<NpgsqlConnection> _openAsync() {

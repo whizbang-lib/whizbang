@@ -46,7 +46,7 @@ public class InstanceRegistrationLivenessTests {
 
   [Test]
   public async Task WithNoServices_NothingIsDeclaredAsync() {
-    await Assert.That(InstanceRegistrationLiveness.Of(null)).IsEqualTo(default(InstanceRegistrationLiveness))
+    await Assert.That(InstanceRegistrationLiveness.Of(null)).IsEqualTo(default)
       .Because("a registration with nothing to read keeps what the row records");
   }
 

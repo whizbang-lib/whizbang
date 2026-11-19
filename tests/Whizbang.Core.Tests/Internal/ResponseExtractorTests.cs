@@ -537,7 +537,7 @@ public class ResponseExtractorTests {
 
     // Assert - RoutedNone should NOT be extractable
     await Assert.That(extracted).IsFalse();
-    await Assert.That(response).IsEqualTo(default(RoutedNone));
+    await Assert.That(response).IsEqualTo(default);
   }
 
   [Test]

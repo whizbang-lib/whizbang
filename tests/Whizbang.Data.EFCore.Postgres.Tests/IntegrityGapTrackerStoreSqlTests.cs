@@ -68,6 +68,17 @@ public class IntegrityGapTrackerStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task AnOriginThatNeverAnnouncedAnAddress_IsKeptWithoutOneAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+
+    await coordinator.IntegrityRecordOriginCheckpointAsync(origin, "quiet-svc", requestTopic: null, _t0);
+
+    var kept = (await _coordinator().IntegrityLoadGapTrackerStateAsync())!.Origins.Single();
+    await Assert.That(kept).IsEqualTo(new IntegrityKnownOrigin(origin, "quiet-svc", null, _t0));
+  }
+
+  [Test]
   public async Task PendingGaps_AreReplacedPerOrigin_AndReadBackAsync() {
     var coordinator = _coordinator();
     var (origin, other) = (TrackedGuid.New().Value, TrackedGuid.New().Value);

@@ -70,6 +70,24 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A stuck row written without a stream (a message with no stream id) surfaces with no stream, not a failed read.
+  /// </summary>
+  [Test]
+  public async Task FindStuckOutboxRows_ARowWithoutAStream_SurfacesWithNoStreamAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    Guid messageId = TrackedGuid.New();
+    await _insertOutboxRowAsync(conn, messageId, streamId: null, "Consumer.StreamlessCommand", attempts: 12);
+
+    var coordinator = _buildCoordinator(ctx);
+    var stuck = await coordinator.FindStuckOutboxRowsAsync(maxAttempts: 10, limit: 50);
+
+    await Assert.That(stuck.Count).IsEqualTo(1);
+    await Assert.That(stuck[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(stuck[0].StreamId.HasValue).IsFalse();
+  }
+
+  /// <summary>
   /// Healthy table returns empty list — no false positives.
   /// </summary>
   [Test]
@@ -94,7 +112,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
     => new(ctx, new JsonSerializerOptions());
 
   private static async Task _insertOutboxRowAsync(
-      NpgsqlConnection conn, Guid messageId, Guid streamId, string messageType, int attempts) {
+      NpgsqlConnection conn, Guid messageId, Guid? streamId, string messageType, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_outbox
@@ -103,7 +121,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
       VALUES (@msg, 'topic', @type, 'TestEnvelope', '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
-    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.Add(new NpgsqlParameter("stream", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)streamId ?? DBNull.Value });
     ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }

@@ -185,8 +185,8 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
   [Timeout(30_000)]
   public async Task ShutdownEndsTheSweepLoopWithoutReportingFailureAsync(
       CancellationToken cancellationToken) {
-    // The loop parks on a PeriodicTimer; stopping cancels that wait. A deploy is not a sweep
-    // failure, so the cancellation must be absorbed rather than left as a faulted worker.
+    // The loop parks on a PeriodicTimer; stopping disposes the timer, which ends the wait and the
+    // loop. A deploy is not a sweep failure, so the worker must end normally, not faulted.
     var log = new RecordingLogger();
     var worker = new RecentlyProcessedEventCacheSweepWorker(
       new RecentlyProcessedEventCache(new SystemTimeProvider()),

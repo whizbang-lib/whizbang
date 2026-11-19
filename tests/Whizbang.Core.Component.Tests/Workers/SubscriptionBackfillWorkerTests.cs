@@ -388,6 +388,24 @@ public class SubscriptionBackfillWorkerTests {
   }
 
   /// <summary>
+  /// The pacing timer belongs to the worker and is disposed with it. A worker whose timer is gone has nothing left to
+  /// wait for, so its loop ends rather than waiting or ticking.
+  /// </summary>
+  [Test]
+  [Timeout(30_000)]
+  public async Task ExecuteAsync_WithItsTimerDisposed_EndsWithoutATickAsync(CancellationToken testToken) {
+    var clock = new FakeTimeProvider(_now);
+    var (worker, coordinator, _) = _build(_options(), [_cursor(_orders, "orders-svc", PLACED)], clock: clock);
+    worker.Dispose();
+
+    await worker.StartAsync(testToken);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(coordinator.Reads).IsEqualTo(0);
+  }
+
+  /// <summary>
   /// #2346: with no backfill running the tick only reads an empty list, so the loop waits longer each time, doubling from
   /// one second up to <see cref="StreamIntegrityOptions.IdlePollCeilingSeconds"/>; the first tick that finds a running
   /// backfill returns it to one second, where the window pacing needs it. Read from the periods the loop sets on its timer.

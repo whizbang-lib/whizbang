@@ -226,7 +226,7 @@ public partial class RedeliveryAnswerCoverageTests {
   public async Task Composite_WithoutATraceLink_CarriesNeitherIdNorParentAsync() {
     IIdentityPreservingComposite other = new BareComposite();
 
-    await Assert.That(other.TraceLink).IsEqualTo(default(Whizbang.Core.Observability.IntegrityTraceLink))
+    await Assert.That(other.TraceLink).IsEqualTo(default)
       .Because("an origin that predates #2365 says nothing, and the repair starts its own trace");
   }
 

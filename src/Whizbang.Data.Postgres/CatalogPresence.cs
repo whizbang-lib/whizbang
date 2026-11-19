@@ -42,6 +42,6 @@ internal static class CatalogPresence {
     await using var command = new NpgsqlCommand(RELATION_EXISTS_SQL, connection);
     command.Parameters.AddWithValue(schema);
     command.Parameters.AddWithValue(relation);
-    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "relation presence");
   }
 }

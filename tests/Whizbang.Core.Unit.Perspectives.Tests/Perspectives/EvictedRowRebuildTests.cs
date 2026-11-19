@@ -254,6 +254,8 @@ public class EvictedRowRebuildTests {
   }
 
   [Test]
+  // Reads the generated stream group memberships, which the tests under this key clear and put back.
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
   public async Task CascadedGroupMember_EvictedRow_NextEventRebuildsTheWholeRowFromHistoryAsync() {
     var streamId = Guid.NewGuid();
     var store = new HistoryEventStore { HandledHistory = true };

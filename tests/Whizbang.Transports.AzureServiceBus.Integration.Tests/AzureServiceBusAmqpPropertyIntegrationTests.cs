@@ -126,8 +126,8 @@ public class AzureServiceBusAmqpPropertyIntegrationTests(ServiceBusEmulatorFixtu
     await Assert.That(props["float"]).IsEqualTo(1.5d);
 
     // Booleans stay booleans, not "True"/"False".
-    await Assert.That(props["yes"]).IsEqualTo(true);
-    await Assert.That(props["no"]).IsEqualTo(false);
+    await Assert.That(props["yes"] as bool?).IsTrue();
+    await Assert.That(props["no"] as bool?).IsFalse();
 
     // Null stays null rather than becoming the string "null".
     await Assert.That(props["nothing"]).IsNull();
