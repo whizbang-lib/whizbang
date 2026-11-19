@@ -31,8 +31,8 @@ BeforeAll {
     # one does), unless FAKE_BUILD_NO_OUTPUT is set; `dotnet test` prints FAKE_TEST_OUTPUT and exits
     # FAKE_TEST_EXIT; `dotnet run` (the -Coverage path) does the same after writing a cobertura report under
     # its configuration's TestResults; `dotnet tool list` reports reportgenerator installed; `dotnet msbuild
-    # -getProperty:TargetFrameworks` answers net10.0, the one framework the fake builds; anything else
-    # succeeds. The fake reportgenerator only records its call.
+    # -getProperty:TargetFrameworks` answers FAKE_FRAMEWORKS, or net10.0, the one framework the fake builds;
+    # anything else succeeds. The fake reportgenerator only records its call.
     Set-Content -LiteralPath (Join-Path $bin 'dotnet') -Value @'
 #!/bin/sh
 echo "dotnet $*" >> "$FAKE_LOG"
@@ -60,8 +60,9 @@ case "$1" in
     echo "dotnet-reportgenerator-globaltool   5.4.0   reportgenerator"
     exit 0;;
   msbuild)
-    # The runner reads the frameworks to test from Directory.Build.props (#2135); this repository builds one.
-    case "$*" in *TargetFrameworks*) echo "net10.0";; esac
+    # The runner reads the frameworks to test from Directory.Build.props (#2135); this repository builds one
+    # unless a test names more, as a release build does.
+    case "$*" in *TargetFrameworks*) echo "${FAKE_FRAMEWORKS:-net10.0}";; esac
     exit 0;;
   *) exit 0;;
 esac
@@ -73,21 +74,24 @@ esac
   }
 
   # Marks the test project as built for a configuration, as a CI download of the build output does.
-  function Set-Built([string]$Repo, [string]$Configuration) {
-    $dir = Join-Path $Repo 'tests' 'A.Tests' 'bin' $Configuration 'net10.0'
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    New-Item -ItemType File -Path (Join-Path $dir 'A.Tests.dll') -Force | Out-Null
+  function Set-Built([string]$Repo, [string]$Configuration, [string[]]$Frameworks = @('net10.0')) {
+    foreach ($framework in $Frameworks) {
+      $dir = Join-Path $Repo 'tests' 'A.Tests' 'bin' $Configuration $framework
+      New-Item -ItemType Directory -Path $dir -Force | Out-Null
+      New-Item -ItemType File -Path (Join-Path $dir 'A.Tests.dll') -Force | Out-Null
+    }
   }
 
   # Runs the copied Run-Tests.ps1 in a child pwsh with the fakes first on PATH. `dotnet test` prints
-  # $TestOutput and exits $TestExitCode. Returns the exit code, the combined output and the fake's call log.
+  # $TestOutput and exits $TestExitCode. $Frameworks is what the build targets, ';'-separated as MSBuild
+  # prints it (net10.0 when empty). Returns the exit code, the combined output and the fake's call log.
   function Invoke-RunTests {
-    param([string]$Repo, [string[]]$Arguments, [string]$TestOutput = '', [int]$TestExitCode = 0, [switch]$BuildWritesNothing)
+    param([string]$Repo, [string[]]$Arguments, [string]$TestOutput = '', [int]$TestExitCode = 0, [switch]$BuildWritesNothing, [string]$Frameworks = '')
     $outputFile = Join-Path $Repo '.fake' 'test-output.txt'
     $log = Join-Path $Repo '.fake' 'calls.log'
     Set-Content -LiteralPath $outputFile -Value $TestOutput
     Set-Content -LiteralPath $log -Value ''
-    $saved = @{ PATH = $env:PATH; FAKE_LOG = $env:FAKE_LOG; FAKE_REPO = $env:FAKE_REPO; FAKE_TEST_OUTPUT = $env:FAKE_TEST_OUTPUT; FAKE_TEST_EXIT = $env:FAKE_TEST_EXIT; FAKE_BUILD_NO_OUTPUT = $env:FAKE_BUILD_NO_OUTPUT; GITHUB_ACTIONS = $env:GITHUB_ACTIONS }
+    $saved = @{ PATH = $env:PATH; FAKE_LOG = $env:FAKE_LOG; FAKE_REPO = $env:FAKE_REPO; FAKE_TEST_OUTPUT = $env:FAKE_TEST_OUTPUT; FAKE_TEST_EXIT = $env:FAKE_TEST_EXIT; FAKE_BUILD_NO_OUTPUT = $env:FAKE_BUILD_NO_OUTPUT; FAKE_FRAMEWORKS = $env:FAKE_FRAMEWORKS; GITHUB_ACTIONS = $env:GITHUB_ACTIONS }
     try {
       $env:PATH = "$(Join-Path $Repo '.fake' 'bin')$([IO.Path]::PathSeparator)$($saved.PATH)"
       $env:FAKE_LOG = $log
@@ -95,6 +99,7 @@ esac
       $env:FAKE_TEST_OUTPUT = $outputFile
       $env:FAKE_TEST_EXIT = "$TestExitCode"
       $env:FAKE_BUILD_NO_OUTPUT = if ($BuildWritesNothing) { '1' } else { $null }
+      $env:FAKE_FRAMEWORKS = if ($Frameworks) { $Frameworks } else { $null }
       $env:GITHUB_ACTIONS = $null
       Push-Location $Repo
       try {
@@ -256,6 +261,81 @@ Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
     $r.ExitCode | Should -Not -Be 0
     $r.Output | Should -Match '-Coverage and -ModuleCoverage are alternatives'
     $r.Output | Should -Not -Match 'ScriptHalted'
+  }
+}
+
+# A release build tests net10.0 and net11.0. An integration test module of each framework shares one broker and one
+# database server with the other's, so two run at once read each other's dead letters and contend for the server.
+Describe 'Get-TestModuleParallelism' {
+  BeforeAll {
+    Import-Module (Join-Path $Root 'scripts' 'lib' 'TestModuleParallelism.psm1') -Force
+  }
+
+  It 'runs one module at a time in a <Mode> run on net10.0 and net11.0' -ForEach @(
+    @{ Mode = 'Integration' }, @{ Mode = 'AiIntegrations' }) {
+    Get-TestModuleParallelism -Mode $Mode -Frameworks @('net10.0', 'net11.0') -Requested 0 -ProcessorCount 8 | Should -Be 1
+  }
+
+  It 'gives a <Mode> run on <Frameworks> the processor count' -ForEach @(
+    @{ Mode = 'Integration'; Frameworks = @('net11.0') }
+    @{ Mode = 'Unit'; Frameworks = @('net10.0', 'net11.0') }
+    @{ Mode = 'Component'; Frameworks = @('net10.0', 'net11.0') }) {
+    Get-TestModuleParallelism -Mode $Mode -Frameworks $Frameworks -Requested 0 -ProcessorCount 8 | Should -Be 8
+  }
+
+  It 'keeps a parallelism the caller asked for, on any frameworks' {
+    Get-TestModuleParallelism -Mode 'Integration' -Frameworks @('net10.0', 'net11.0') -Requested 4 -ProcessorCount 8 | Should -Be 4
+  }
+}
+
+# A release build tests net10.0 and net11.0, and CI runs each framework as its own job (#2427): -Framework narrows
+# the run to one of the frameworks the build has, so the integration modules run in parallel again.
+Describe 'Run-Tests.ps1 -Framework (#2427)' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net11.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+    $script:Processors = [Environment]::ProcessorCount
+  }
+
+  It 'runs only the <Framework> modules of a build on net10.0 and net11.0' -ForEach @(
+    @{ Framework = 'net10.0'; Other = 'net11.0' }, @{ Framework = 'net11.0'; Other = 'net10.0' }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-Framework', $Framework) -TestOutput $Passing
+    $calls = ($r.Calls -join "`n")
+    $calls | Should -Match "(?m)^dotnet test .*--test-modules tests/A\.Tests/bin/Release/$([regex]::Escape($Framework))/A\.Tests\.dll"
+    $calls | Should -Not -Match "bin/Release/$([regex]::Escape($Other))/"
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'runs the integration modules of one framework in parallel on a build on net10.0 and net11.0' {
+    $repo = New-FakeRepo -TestType 'Integration'
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Integration', '-Configuration', 'Release', '-NoBuild', '-Framework', 'net11.0') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Match "(?m)^dotnet test --max-parallel-test-modules $Processors .*bin/Release/net11\.0/A\.Tests\.dll"
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'runs the integration modules one at a time on net10.0 and net11.0 without it' {
+    $repo = New-FakeRepo -TestType 'Integration'
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Integration', '-Configuration', 'Release', '-NoBuild') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Match '(?m)^dotnet test --max-parallel-test-modules 1 '
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'refuses a framework the build does not target' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-Framework', 'net9.0') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet test '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match '-Framework net9\.0 is not one this build targets \(net10\.0;net11\.0\)'
   }
 }
 
