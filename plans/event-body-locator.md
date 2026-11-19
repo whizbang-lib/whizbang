@@ -2,7 +2,7 @@
 
 Part of [storage-reclamation.md](storage-reclamation.md). Builds on [storage-event-slimming.md](storage-event-slimming.md)
 (superseding types, WS-2) and [storage-stream-end-of-life.md](storage-stream-end-of-life.md) (archive store and
-read-through, WS-3). Absorbs #1975 (event-level archive). Release: 1.0. Status: approved plan, owner questions decided (2026-11-19).
+read-through, WS-3). Absorbs #1975 (event-level archive). Release: 1.0. Tracking: #2431. Status: approved plan, owner questions decided (2026-11-19).
 
 ## Context
 
@@ -153,16 +153,16 @@ Each slice is one red/green increment and one pull request unless noted.
 
 ### Prerequisites (bug fixes, before slice 1)
 
-- **P1. A cursor that names an event its perspective has passed** (new issue). 104 cursors in the evidence deployment
+- **P1. A cursor that names an event its perspective has passed** (#2432). 104 cursors in the evidence deployment
   name the older copy although the perspective applied the newer one and its row is at the newer version; 95 date from
   one day. Find the write path that applies an event without moving the cursor; RED test first.
-- **P2. The reaper's cursor gate.** When the newer copy of the key is already applied, the cursor moves on to it (as a
+- **P2. The reaper's cursor gate** (#2433). When the newer copy of the key is already applied, the cursor moves on to it (as a
   slot is handed on), so a lagging pointer cannot hold space forever.
-- **P3. Tables larger than the online-rewrite budget are never rewritten.** `OnlineRewriteMaxBytesPerCycle` (16 GB in
+- **P3. Tables larger than the online-rewrite budget are never rewritten** (#2434). `OnlineRewriteMaxBytesPerCycle` (16 GB in
   the evidence deployment) excludes the event store and event body tables, which hold most of the index bloat (about
   4 GB in the busiest service). A table over the budget gets a cycle of its own.
 
-### S1. The locator, with Inline and Superseded (option D)
+### S1. The locator, with Inline and Superseded (option D) (#2435)
 
 - **Schema.** A locator kind and target on the body row (new migration; existing rows read as Inline). A free
   `EventFlags` bit marks a row whose body is not Inline, so the common read pays nothing.
@@ -182,7 +182,7 @@ Each slice is one red/green increment and one pull request unless noted.
 - **Docs.** `fundamentals/events/superseding-events` rewritten around layouts; a new `fundamentals/events/body-locator`
   page.
 
-### S2. Layered (option C)
+### S2. Layered (option C) (#2436)
 
 - **Diff format.** JSON Merge Patch (RFC 7386) over the stored JSON body: simple, deterministic and readable in SQL.
 - **Adaptive.** A newer copy is stored layered only when its diff is under a threshold of its full body
@@ -198,7 +198,7 @@ Each slice is one red/green increment and one pull request unless noted.
   cannot be deleted while a layer points at it; a type whose diffs stay above the threshold raises the warning, and
   the setting silences it.
 
-### S3. Archived and Shredded
+### S3. Archived and Shredded (#1975)
 
 - **Archived** is #1975, brought into 1.0: event-level archive in both stores, body fetched in place, one object per
   stream per cycle with a minimum batch, archive retention under its own rules. It is the default superseding layout
@@ -207,7 +207,7 @@ Each slice is one red/green increment and one pull request unless noted.
 - **RED tests.** A read of an archived body equals the original; a shredded event keeps its position and returns the
   erasure marker; erasing a base erases its layers.
 
-### S4. Stream-level archive as locators
+### S4. Stream-level archive as locators (#2437)
 
 - The whole-stream and prefix archive (WS-3) writes Archived locators and keeps the envelope rows, instead of deleting
   them and filling the gap through the read-through decorator. Judged necessary: it leaves one read path and one
@@ -216,7 +216,7 @@ Each slice is one red/green increment and one pull request unless noted.
 - **RED tests.** An archived prefix keeps its envelopes and versions; a read of an archived body equals the original;
   integrity answers for an archived range without fetching it.
 
-### S5. Shared
+### S5. Shared (#2438)
 
 - Content-hash bodies stored once, with a reference count. Smallest measured win (about 0.6% exact duplicates), so it
   comes last and only if a later measurement justifies it.
