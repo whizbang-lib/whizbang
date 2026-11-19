@@ -60,6 +60,13 @@ case "$1" in
     echo "dotnet-reportgenerator-globaltool   5.4.0   reportgenerator"
     exit 0;;
   msbuild)
+    # A project's own frameworks (-Framework asks which a selected project targets, #2427): its fake-targets file,
+    # or the build's.
+    case "$*" in *-getProperty:TargetFramework\ *)
+      t=$(cat "$(dirname "$2")/fake-targets" 2>/dev/null || echo "${FAKE_FRAMEWORKS:-net10.0}")
+      echo "{\"Properties\":{\"TargetFramework\":\"\",\"TargetFrameworks\":\"$t\"}}"
+      exit 0;;
+    esac
     # The runner reads the frameworks to test from Directory.Build.props (#2135); this repository builds one
     # unless a test names more, as a release build does.
     case "$*" in *TargetFrameworks*) echo "${FAKE_FRAMEWORKS:-net10.0}";; esac
@@ -71,6 +78,21 @@ esac
     Set-Content -LiteralPath (Join-Path $bin 'docker') -Value "#!/bin/sh`nexit 0"
     chmod +x (Join-Path $bin 'dotnet') (Join-Path $bin 'reportgenerator') (Join-Path $bin 'docker')
     $repo
+  }
+
+  # Adds a second Unit test project, B.Tests, to the solution, targeting $Targets (';'-separated, as MSBuild
+  # evaluates it) and built for $Built.
+  function Add-ProjectB([string]$Repo, [string]$Targets, [string[]]$Built) {
+    $dir = Join-Path $Repo 'tests' 'B.Tests'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $dir 'B.Tests.csproj') -Value '<Project><PropertyGroup><IsTestProject>true</IsTestProject><WhizbangTestType>Unit</WhizbangTestType><WhizbangTestTags>Fake</WhizbangTestTags></PropertyGroup></Project>'
+    Set-Content -LiteralPath (Join-Path $dir 'fake-targets') -Value $Targets
+    Set-Content -LiteralPath (Join-Path $Repo 'Whizbang.slnx') -Value '<Solution><Project Path="tests/A.Tests/A.Tests.csproj" /><Project Path="tests/B.Tests/B.Tests.csproj" /></Solution>'
+    foreach ($framework in $Built) {
+      $bin = Join-Path $dir 'bin' 'Release' $framework
+      New-Item -ItemType Directory -Path $bin -Force | Out-Null
+      New-Item -ItemType File -Path (Join-Path $bin 'B.Tests.dll') -Force | Out-Null
+    }
   }
 
   # Marks the test project as built for a configuration, as a CI download of the build output does.
@@ -327,6 +349,29 @@ Test run summary: Passed! - A.Tests.dll (net11.0|arm64)
     $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Integration', '-Configuration', 'Release', '-NoBuild') -TestOutput $Passing
     ($r.Calls -join "`n") | Should -Match '(?m)^dotnet test --max-parallel-test-modules 1 '
     $r.ExitCode | Should -Be 0
+  }
+
+  # The samples target net11.0 alone, also in a release build, so a net10.0 leg has no output for them (#2427).
+  It 'skips a project that does not target <Framework>, and runs one that does' -ForEach @(
+    @{ Framework = 'net10.0'; RunsB = $false }, @{ Framework = 'net11.0'; RunsB = $true }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    Add-ProjectB $repo 'net11.0' -Built @('net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-Framework', $Framework) -TestOutput $Passing
+    $test = (($r.Calls | Where-Object { $_ -match '^dotnet test ' }) -join "`n")
+    $test | Should -Match "tests/A\.Tests/bin/Release/$([regex]::Escape($Framework))/A\.Tests\.dll"
+    if ($RunsB) { $test | Should -Match 'tests/B\.Tests/bin/Release/net11\.0/B\.Tests\.dll' } else { $test | Should -Not -Match 'B\.Tests' }
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'still refuses -NoBuild for a project that targets the framework and has no output for it' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    Add-ProjectB $repo 'net10.0;net11.0' -Built @('net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-Framework', 'net10.0') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet test '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match '-NoBuild: this run selects 1 test project\(s\) with no Release build output.*B\.Tests'
   }
 
   It 'refuses a framework the build does not target' {

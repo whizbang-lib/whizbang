@@ -1671,6 +1671,29 @@ try {
         return $testType
     }
 
+    # Whether a project targets -Framework, from its evaluated TargetFramework and TargetFrameworks (#2427), not from
+    # its bin/: the samples target net11.0 alone, also in a release build, so a net10.0 leg must not select them,
+    # while a project that does target the framework and has no output for it must still fail -NoBuild. True for
+    # every project without -Framework, and when the evaluation cannot be read (the guard then names the project).
+    # One evaluation per project asked about, cached for the run.
+    $script:projectTargetsFrameworkCache = @{}
+    function Test-ProjectTargetsFramework {
+        param([string]$CsprojPath)
+        if (-not $Framework) { return $true }
+        if (-not $script:projectTargetsFrameworkCache.ContainsKey($CsprojPath)) {
+            $targets = $true
+            try {
+                $evaluated = ((& dotnet msbuild $CsprojPath -getProperty:TargetFramework -getProperty:TargetFrameworks 2>$null) | Out-String | ConvertFrom-Json).Properties
+                $frameworks = @("$($evaluated.TargetFrameworks);$($evaluated.TargetFramework)" -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($frameworks.Count -gt 0) { $targets = $Framework -in $frameworks }
+            } catch {
+                $targets = $true
+            }
+            $script:projectTargetsFrameworkCache[$CsprojPath] = $targets
+        }
+        return $script:projectTargetsFrameworkCache[$CsprojPath]
+    }
+
     # Cache for project tags (project path -> array of tags)
     $script:projectTagsCache = @{}
 
@@ -1817,7 +1840,8 @@ try {
                     (Get-ProjectTestType $_.FullName) -in $selectedTestTypes -and
                     (-not $Tag -or (@(Get-ProjectTags $_.FullName) -contains $Tag)) -and
                     (-not $ProjectFilter -or $name -match $ProjectFilter) -and
-                    (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter)
+                    (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter) -and
+                    (Test-ProjectTargetsFramework $_.FullName)
                 })
                 if ($selected.Count -gt 0) {
                     $names = ($selected | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
@@ -1829,6 +1853,9 @@ try {
                 }
                 return
             }
+            # A project that does not target -Framework never has its output, so it is not unbuilt.
+            $unbuilt = @($unbuilt | Where-Object { Test-ProjectTargetsFramework $_.FullName })
+            if ($unbuilt.Count -eq 0) { return }
             if (-not $useAiOutput) {
                 Write-Host "$($unbuilt.Count) declared test project(s) have no $Configuration build output; building solution first..." -ForegroundColor Yellow
             } else {
