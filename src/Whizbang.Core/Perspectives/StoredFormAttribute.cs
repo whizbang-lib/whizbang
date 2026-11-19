@@ -20,7 +20,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/stored-form-migrations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// public record OrderModel {

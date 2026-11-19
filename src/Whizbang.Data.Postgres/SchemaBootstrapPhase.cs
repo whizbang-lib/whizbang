@@ -428,7 +428,7 @@ public static class SchemaBootstrapPhase {
   /// a database that stays unavailable is asked at a bounded rate. No jitter: instances retrying together serialize on
   /// the schema lock anyway.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaBootstrapRetryTests.cs:TheRetryDelay_DoublesFromOneSecond_ToAThirtySecondCapAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaBootstrapRetryTests.cs:TheRetryDelay_DoublesFromOneSecond_ToAThirtySecondCapAsync</tests>
   internal static TimeSpan RetryDelay(int attempt) =>
     TimeSpan.FromSeconds(Math.Min(1 << Math.Clamp(attempt - 1, 0, 5), 30));
 

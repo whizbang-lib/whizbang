@@ -19,7 +19,7 @@ namespace Whizbang.Core.Perspectives;
 /// removes the marker as an orphan) all keep the coverage gate, which holds bodies rather than losing them.
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events#snapshots-follow-what-a-read-model-consumes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/EphemeralRewindFloorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/EphemeralRewindFloorTests.cs</tests>
 public static class EphemeralRewindFloor {
   /// <summary>
   /// The association type of the marker. The migrations spell it <c>__ASSOCIATION_NO_REWIND_FLOOR__</c>

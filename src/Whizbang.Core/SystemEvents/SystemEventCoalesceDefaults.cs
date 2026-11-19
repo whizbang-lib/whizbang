@@ -19,11 +19,11 @@ namespace Whizbang.Core.SystemEvents;
 /// per-event shipping.
 /// </summary>
 /// <docs>fundamentals/security/audit-logging#audit-shipping</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_AuditEnabled_RegistersTheBuiltInBindingFromTheKnobsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_SlideZero_RegistersNothingAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_HostBindingForSysAudit_AlwaysWinsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_BuiltInBinding_FoldsWithTheLeastUrgentMemberAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:AuditComposite_WithOneBelowBandMember_StaysInTheIdleBandAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_AuditEnabled_RegistersTheBuiltInBindingFromTheKnobsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_SlideZero_RegistersNothingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_HostBindingForSysAudit_AlwaysWinsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_BuiltInBinding_FoldsWithTheLeastUrgentMemberAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:AuditComposite_WithOneBelowBandMember_StaysInTheIdleBandAsync</tests>
 public static class SystemEventCoalesceDefaults {
   /// <summary>
   /// Applies the built-in audit coalesce binding to <paramref name="tagOptions"/> when
@@ -59,7 +59,7 @@ public static class SystemEventCoalesceDefaults {
   /// </summary>
   /// <param name="batch">The fold batch.</param>
   /// <returns>The built audit composite.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   public static CompositeEventBase BuildAuditComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     // The ledger (#1485): records of one tenant share one stream, and a fold never mixes tenants, so a bundle of

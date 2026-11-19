@@ -53,6 +53,7 @@ public partial class RedeliveryRequestReceptorTests {
     var typeFilter = new List<string> { "Contracts.ProbeHappened" };
     var streamFilter = new List<Guid> { streamId };
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       TenantScope = "tenant-a",
       EventTypes = typeFilter,
       StreamIds = streamFilter,
@@ -102,6 +103,7 @@ public partial class RedeliveryRequestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       MaxEvents = 50_000,
       RequesterService = "svc",
       Topic = "t"
@@ -111,6 +113,7 @@ public partial class RedeliveryRequestReceptorTests {
                "(SelectPageSize defaults above this cap, so the first page IS the cap).");
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       MaxEvents = null,
       RequesterService = "svc",
       Topic = "t"
@@ -139,7 +142,7 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t" });
 
     // Memory bound: every select asked for at most one page.
     foreach (var request in coordinator.Requests) {
@@ -169,6 +172,7 @@ public partial class RedeliveryRequestReceptorTests {
 
     // A enters its select synchronously and parks on the gate INSIDE the build.
     var taskA = receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventTypes = ["A"],
       RequesterService = "svc-a",
       Topic = "t"
@@ -178,6 +182,7 @@ public partial class RedeliveryRequestReceptorTests {
     // B starts while A holds the build gate: without the gate it would enter its select
     // synchronously right here and the log would already show "B".
     var taskB = receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventTypes = ["B"],
       RequesterService = "svc-b",
       Topic = "t"
@@ -202,7 +207,7 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t" });
 
     await Assert.That(transport.Published.Count).IsEqualTo(0)
       .Because("nothing selected means nothing to repair — no empty bundles on the wire.");
@@ -223,7 +228,7 @@ public partial class RedeliveryRequestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     // Must not throw — a host without the re-delivery infrastructure ignores the command.
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t" });
 
     await Assert.That(transport.Published).IsEmpty()
       .Because("an origin that cannot select anything has nothing to repair with — it must ignore the "
@@ -300,6 +305,7 @@ public partial class RedeliveryRequestReceptorTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RequestRedeliveryCommand _request(Guid streamId) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     TenantScope = "tenant-a",
     EventTypes = ["Contracts.ProbeHappened"],
     StreamIds = [streamId],
@@ -577,7 +583,7 @@ public partial class RedeliveryRequestReceptorTests {
     await using var sp = _buildOwningProvider(coordinator, transport, new CaptureSerializer(), "orders-svc", metrics);
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "Orders-Svc", Topic = "inbox", StateOnly = true });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "Orders-Svc", Topic = "inbox", StateOnly = true });
     listener.RecordObservableInstruments();
 
     await Assert.That(coordinator.Requests).IsEmpty()
@@ -593,7 +599,7 @@ public partial class RedeliveryRequestReceptorTests {
     await using var sp = _buildOwningProvider(coordinator, transport, new CaptureSerializer(), "orders-svc");
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "orders-svc", Topic = "inbox", StateOnly = true });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "orders-svc", Topic = "inbox", StateOnly = true });
 
     await Assert.That(coordinator.Requests).IsEmpty();
     await Assert.That(transport.Published).IsEmpty();
@@ -605,7 +611,7 @@ public partial class RedeliveryRequestReceptorTests {
     await using var sp = _buildOwningProvider(coordinator, new CaptureTransport(), new CaptureSerializer(), "orders-svc");
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(coordinator.Requests[0].AuthoredBy).IsEqualTo("orders-svc")
       .Because("the bundle names this service as origin, so it may carry only events this service wrote");
@@ -629,7 +635,7 @@ public partial class RedeliveryRequestReceptorTests {
     await using var sp = _buildOwningProvider(coordinator, transport, serializer, "orders-svc", ownedDomains: "App.Contracts.Orders");
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds)).IsEquivalentTo([owned])
       .Because("events of a type this service does not own were authored elsewhere; receivers refuse them (#1844)");
@@ -659,6 +665,7 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       StreamIds = [stream],
       EventIds = [missing],
       FromCommitSequence = 0,
@@ -685,6 +692,7 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       StreamIds = [named, unnamed],
       EventIds = [e1, TrackedGuid.New().Value],
       FromCommitSequence = 0,
@@ -712,6 +720,7 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       StreamIds = [stream],
       EventIds = [e1],
       RequesterService = "damaged-svc",
@@ -732,6 +741,7 @@ public partial class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventIds = [e1, TrackedGuid.New().Value],
       RequesterService = "damaged-svc",
       Topic = "events-topic",

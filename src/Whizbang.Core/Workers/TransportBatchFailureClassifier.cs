@@ -37,7 +37,7 @@ public enum TransportBatchFailure {
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/transport-consumer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchFailureIsolationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportBatchFailureIsolationTests.cs</tests>
 public static class TransportBatchFailureClassifier {
 
   /// <summary>PostgreSQL SQLSTATE for a statement canceled by request (typically a timeout).</summary>

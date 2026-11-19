@@ -32,5 +32,5 @@ namespace Whizbang.Core;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/scoping#stream-scope-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/IStreamScopeEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/IStreamScopeEventTests.cs</tests>
 public interface IStreamScopeEvent : IScopeEvent;

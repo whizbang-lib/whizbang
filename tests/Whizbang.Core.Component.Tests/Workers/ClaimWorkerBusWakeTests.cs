@@ -38,7 +38,9 @@ public class ClaimWorkerBusWakeTests {
   }
 
   private sealed class CountingCoordinator : IWorkCoordinator {
-    public int CallCount { get; private set; }
+    // Read from the counter itself: it is incremented before either signal is set, so a test woken by SecondCall always
+    // reads at least 2. A copy assigned after the signal raced the woken test and could still read 1.
+    public int CallCount => Volatile.Read(ref _count);
     public TaskCompletionSource FirstCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -46,7 +48,6 @@ public class ClaimWorkerBusWakeTests {
       var c = Interlocked.Increment(ref _count);
       if (c == 1) { FirstCall.TrySetResult(); }
       if (c == 2) { SecondCall.TrySetResult(); }
-      CallCount = c;
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }
     private int _count;

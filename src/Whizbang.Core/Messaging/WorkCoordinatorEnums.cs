@@ -7,12 +7,12 @@ namespace Whizbang.Core.Messaging;
 /// Flags passed to a work coordinator strategy flush (<see cref="IWorkCoordinatorStrategy.FlushAsync"/>).
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum WorkBatchOptions {
   /// <summary>
@@ -78,7 +78,7 @@ public enum WorkBatchOptions {
 /// This enables retrying only failed stages instead of the entire pipeline.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum MessageProcessingStatus {
   /// <summary>
@@ -115,10 +115,6 @@ public enum MessageProcessingStatus {
   /// </summary>
   Failed = 1 << 15
 
-  // Note: Receptor and perspective processing are now tracked separately in
-  // wh_receptor_processing and wh_perspective_cursors tables.
-  // This allows for:
-  // - Multiple receptors to process the same event independently
-  // - Perspectives to catch up via time-travel (replay from event store)
-  // - Better visibility into which handlers have processed which events
+  // Note: perspective processing is tracked separately in wh_perspective_cursors, so perspectives catch up
+  // by replaying from the event store.
 }

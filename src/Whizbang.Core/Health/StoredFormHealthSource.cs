@@ -15,7 +15,7 @@ namespace Whizbang.Core.Health;
 /// scrolled away, with enough detail to know which perspective and where in the document.
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/StoredFormHealthSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/StoredFormHealthSourceTests.cs</tests>
 public sealed class StoredFormHealthSource : IWhizbangHealthSource {
   private readonly StoredFormFailureRegistry _registry;
 

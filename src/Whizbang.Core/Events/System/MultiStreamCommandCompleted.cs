@@ -15,7 +15,7 @@ namespace Whizbang.Core.Events.System;
 /// <param name="Succeeded">How many succeeded.</param>
 /// <param name="Failed">How many failed after their last attempt.</param>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#outcomes</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_ARunThatCompleted_IsPublishedAndAnnouncedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_ARunThatCompleted_IsPublishedAndAnnouncedAsync</tests>
 [PinnedId("31f2fa19-a55f-40bc-a6cc-314c2a2d0dc3")]
 public record MultiStreamCommandCompleted(
     [property: StreamId] Guid StreamId,

@@ -166,6 +166,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer);
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       FromCommitSequence = from,
@@ -175,7 +176,7 @@ public partial class RedeliveryWindowAnswerTests {
     await Assert.That(serializer.Composites).Count().IsEqualTo(3).Because("precondition: one bundle per stream");
     foreach (var bundle in serializer.Composites) {
       // #2311: whether more of the answer follows is asserted on its own; here only the window.
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(from, to));
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false, Part = null }).IsEqualTo(new RedeliveryAnswerWindow(from, to));
     }
   }
 
@@ -190,6 +191,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, transport, serializer);
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       StreamIds = streams,
@@ -213,6 +215,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, transport, serializer, new RedeliveryPumpOptions { SelectPageSize = 2 });
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       AcceptsStreamSpanningBundles = true,
@@ -234,6 +237,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer);
 
     await _receptor(sp).HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "damaged-svc",
       Topic = "inbox",
       StreamIds = [_s1, _s2],
@@ -245,7 +249,7 @@ public partial class RedeliveryWindowAnswerTests {
     await Assert.That(serializer.Composites).IsNotEmpty();
     foreach (var bundle in serializer.Composites) {
       // #2311: whether more of the answer follows is asserted on its own; here only the window.
-      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false }).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
+      await Assert.That(((IIdentityPreservingComposite)bundle).AnsweredWindow!.Value with { Continues = false, Part = null }).IsEqualTo(new RedeliveryAnswerWindow(2, 8));
     }
   }
 
@@ -262,7 +266,7 @@ public partial class RedeliveryWindowAnswerTests {
     await _receptor(sp).HandleAsync(_window(TrackedGuid.New().Value, window: 1, from: null, max: 100));
 
     // #2311: whether more of the answer follows is asserted on its own; here only each page's window.
-    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false }))
+    await Assert.That(serializer.Composites.Select(c => ((IIdentityPreservingComposite)c).AnsweredWindow!.Value with { Continues = false, Part = null }))
       .IsEquivalentTo(new RedeliveryAnswerWindow[] { new(null, 2), new(2, 4), new(4, null) });
   }
 
@@ -278,7 +282,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer,
       new RedeliveryPumpOptions { MaxEventsPerRequest = 2 }, metrics);
 
-    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(capped.Total("ordinary")).IsEqualTo(1L);
     await Assert.That(serializer.Answers).IsEmpty().Because("only a windowed request is answered with a window answer");
@@ -293,7 +297,7 @@ public partial class RedeliveryWindowAnswerTests {
     await using var sp = _provider(coordinator, new CaptureTransport(), new CaptureSerializer(),
       new RedeliveryPumpOptions { MaxEventsPerRequest = 2 }, metrics);
 
-    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(capped.Sum()).IsEqualTo(0L).Because("exactly the bound, with nothing after it, is a complete answer");
   }
@@ -304,7 +308,7 @@ public partial class RedeliveryWindowAnswerTests {
     var serializer = new CaptureSerializer();
     await using var sp = _provider(coordinator, new CaptureTransport(), serializer, new RedeliveryPumpOptions { MaxEventsPerRequest = 2 });
 
-    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RequesterService = "damaged-svc", Topic = "inbox" });
+    await _receptor(sp).HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
 
     await Assert.That(serializer.Composites.SelectMany(c => c.InnerEventIds)).Count().IsEqualTo(2);
   }
@@ -336,6 +340,7 @@ public partial class RedeliveryWindowAnswerTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RequestRedeliveryCommand _window(Guid backfill, long window, long? from, int? max) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     EventTypes = ["Contracts.ProbeHappened"],
     RequesterService = "damaged-svc",
     Topic = "inbox.whizbang.service.damaged-svc",

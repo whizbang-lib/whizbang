@@ -11,7 +11,7 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
 /// <remarks>
 /// Creates a new FactoryOwnedLensQuery that wraps the specified factory.
 /// </remarks>

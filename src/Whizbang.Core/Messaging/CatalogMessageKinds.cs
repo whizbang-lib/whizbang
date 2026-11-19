@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// own marker can say it is an event, but the catalog the generator emits for its contracts assembly can.
 /// </summary>
 /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ReceivedInboxMessageBuilderClassificationTests.cs</tests>
 internal sealed class CatalogMessageKinds {
   private const string EVENT_KIND = "event";
   private readonly Dictionary<string, bool> _isEventByClrName = new(StringComparer.Ordinal);

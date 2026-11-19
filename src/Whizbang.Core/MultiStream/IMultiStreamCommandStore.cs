@@ -9,7 +9,7 @@ namespace Whizbang.Core.MultiStream;
 /// <see cref="IsConfigured"/> false.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#storage</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_NoStoreRegistered_ThrowsInsteadOfDroppingTheCommandAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_NoStoreRegistered_ThrowsInsteadOfDroppingTheCommandAsync</tests>
 public interface IMultiStreamCommandStore {
   /// <summary>True when a real store is registered.</summary>
   bool IsConfigured => true;
@@ -67,7 +67,7 @@ public interface IMultiStreamCommandStore {
 /// <see cref="IsConfigured"/> false, and the intake refuses a command rather than accept one nothing would run.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#storage</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_WithNoStore_LeavesTheNullDefaultForADriverToReplaceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_WithNoStore_LeavesTheNullDefaultForADriverToReplaceAsync</tests>
 public sealed class NullMultiStreamCommandStore : IMultiStreamCommandStore, INullDefault {
   private const string NOT_REGISTERED =
     "No multi-stream command store is registered; a storage driver supplies one. Check IsConfigured before calling.";

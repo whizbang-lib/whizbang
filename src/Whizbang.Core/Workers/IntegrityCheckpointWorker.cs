@@ -118,6 +118,7 @@ public sealed partial class IntegrityCheckpointWorker(
     // so it is not counted as an emission; the owned domains ride the checkpoint so consumers learn who authors what.
     var ownedDomains = _ownedDomains(scope.ServiceProvider);
 
+    List<CheckpointBucket> buckets = [.. window.Buckets.Where(b => OwnedNamespaceMatcher.IsLocalEventType(b.EventType, ownedDomains))];
     var checkpoint = new IntegrityCheckpoint {
       CheckpointStreamId = originServiceId,
       OriginServiceId = originServiceId,
@@ -128,8 +129,10 @@ public sealed partial class IntegrityCheckpointWorker(
       RequestTopic = RepairTopicResolver.Resolve(_options.RepairTopic, scope.ServiceProvider),
       FromCommitSequence = window.FromCommitSequence,
       ToCommitSequence = window.ToCommitSequence,
-      Buckets = [.. window.Buckets.Where(b => OwnedNamespaceMatcher.IsLocalEventType(b.EventType, ownedDomains))],
+      Buckets = buckets,
       OwnedDomains = [.. ownedDomains.Select(OwnedNamespaceMatcher.NormalizeDomain).Distinct(StringComparer.OrdinalIgnoreCase)],
+      // #2362: the origin's rules for the counted types; a consumer whose rules differ verifies nothing from it.
+      RuleFingerprint = IntegrityPairGuard.Resolve(scope.ServiceProvider).Stamp(buckets.Select(b => b.EventType)),
     };
 
     // ROUTING: the checkpoint rides the ORIGIN'S OWN event topics — the topics its consumers

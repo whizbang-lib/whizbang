@@ -30,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/receptors#unregistered-suppressed-receptor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/SuppressedReceptorRouteTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SuppressedReceptorRouteTests.cs</tests>
 public static partial class SuppressedReceptorRoute {
   /// <summary>The logger category the skip is logged under.</summary>
   public const string LOGGER_CATEGORY = "Whizbang.Core.Messaging.SuppressedReceptorRoute";
@@ -47,7 +47,7 @@ public static partial class SuppressedReceptorRoute {
   /// <param name="key">The key the receptor would be registered under: its class name.</param>
   /// <returns>The owner's instance, or null to skip the receptor.</returns>
   /// <docs>fundamentals/receptors/receptors#unregistered-suppressed-receptor</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/SuppressedReceptorRouteTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SuppressedReceptorRouteTests.cs</tests>
   public static TService? Resolve<TService, TReceptor>(IServiceProvider services, string key)
       where TService : class
       where TReceptor : class, TService {

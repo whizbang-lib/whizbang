@@ -50,6 +50,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
     await transport.InitializeAsync();
 
     var checkpoint = new IntegrityCheckpoint {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       CheckpointStreamId = TrackedGuid.New().Value,
       OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "origin-svc",
@@ -117,6 +118,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
     MessageEnvelope<IntegrityCheckpoint> _mk() => new() {
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new IntegrityCheckpoint {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         CheckpointStreamId = sessionId,
         OriginServiceId = TrackedGuid.New().Value,
         OriginServiceName = "origin-svc",
@@ -175,6 +177,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
     var envelope = new MessageEnvelope<IntegrityCheckpoint> {
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new IntegrityCheckpoint {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         CheckpointStreamId = TrackedGuid.New().Value,
         OriginServiceId = TrackedGuid.New().Value,
         OriginServiceName = "origin-svc",

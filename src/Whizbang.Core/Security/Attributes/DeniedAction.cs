@@ -10,10 +10,10 @@ namespace Whizbang.Core.Security.Attributes;
 /// or silently drop for best-effort receptors.
 /// </summary>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_OnDeniedQuarantine_DeniesWithQuarantineAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorTests.cs:MultipleDenials_StrictestActionWinsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_PicksStrictestActionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs:PermissionMissing_OnDeniedQuarantine_DeniesWithQuarantineAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorTests.cs:MultipleDenials_StrictestActionWinsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorPipelineTests.cs:EvaluateAll_PicksStrictestActionAsync</tests>
 public enum DeniedAction {
   /// <summary>
   /// Refuse loudly. A local dispatch throws <see cref="Exceptions.ReceptorInvocationDeniedException"/> (an

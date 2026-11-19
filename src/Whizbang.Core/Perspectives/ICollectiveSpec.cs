@@ -31,7 +31,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSpec_Setters_IsLinqExpressionTreeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSpec_Setters_IsLinqExpressionTreeAsync</tests>
 public interface ICollectiveSpec<TModel> : ICollectiveSpecSetters where TModel : class {
   /// <summary>
   /// The LINQ expression tree describing the set of property assignments
@@ -66,7 +66,7 @@ public interface ICollectiveSpec<TModel> : ICollectiveSpecSetters where TModel :
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Framework_WithHandlerWhere_AndsScopeAndHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveWhereComposerTests.cs:Framework_WithHandlerWhere_AndsScopeAndHandlerAsync</tests>
   Expression<Func<PerspectiveRow<TModel>, bool>>? Where => null;
 }
 
@@ -76,7 +76,7 @@ public interface ICollectiveSpec<TModel> : ICollectiveSpecSetters where TModel :
 /// <see cref="ICollectiveSpec{TModel}"/> provides it; nothing implements it directly.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveChangedPropertiesTests.cs:AnySpec_ExposesItsSettersUntypedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveChangedPropertiesTests.cs:AnySpec_ExposesItsSettersUntypedAsync</tests>
 public interface ICollectiveSpecSetters {
   /// <summary>The spec's <see cref="ICollectiveSpec{TModel}.Setters"/>.</summary>
   LambdaExpression UntypedSetters { get; }

@@ -49,12 +49,12 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingHigherRankDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
 public sealed class HousekeepingCoordinator {
 
   /// <summary>A periodic background activity that contends for store locks.</summary>
@@ -94,7 +94,7 @@ public sealed class HousekeepingCoordinator {
     /// </para>
     /// </remarks>
     /// <docs>operations/workers/housekeeping-arbitration</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityAdmissionTests.cs</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingIntegrityAdmissionTests.cs</tests>
     Integrity,
 
     /// <summary>The heavy cleanup sweep: reaping, pruning, and stale-row collection.</summary>
@@ -144,9 +144,9 @@ public sealed class HousekeepingCoordinator {
     /// never interrupted.
     /// </remarks>
     /// <docs>operations/workers/housekeeping-arbitration#a-higher-rank-spends-the-ceiling</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:ARefusalBehindIntegrity_StartsTheCeiling_SoTheFirstFreeAskPastItIsForcedAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:PastTheCeiling_IntegrityIsStillNeverInterruptedAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:IntegrityRefusedByRecovery_SpendsItsOwnRequestersBudgetOnlyAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:ARefusalBehindIntegrity_StartsTheCeiling_SoTheFirstFreeAskPastItIsForcedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:PastTheCeiling_IntegrityIsStillNeverInterruptedAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingHigherRankDeferralTests.cs:IntegrityRefusedByRecovery_SpendsItsOwnRequestersBudgetOnlyAsync</tests>
     HigherPriorityRunning,
 
     /// <summary>This activity is already running and must not stack a second copy.</summary>
@@ -167,7 +167,7 @@ public sealed class HousekeepingCoordinator {
   /// </para>
   /// </remarks>
   /// <docs>operations/workers/housekeeping-arbitration#precedence-over-the-legacy-count</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
   public sealed class Settings {
     private int _maxConsecutiveDeferrals = 6;
     private bool _maxConsecutiveDeferralsSet;
@@ -180,7 +180,7 @@ public sealed class HousekeepingCoordinator {
     /// is really the count times each activity's tick and moves whenever the tick does.
     /// </summary>
     /// <docs>operations/workers/housekeeping-arbitration#precedence-over-the-legacy-count</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:WithOnlyTheCountConfigured_TheCountStillGovernsAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:WithOnlyTheCountConfigured_TheCountStillGovernsAsync</tests>
     public int MaxConsecutiveDeferrals {
       get => _maxConsecutiveDeferrals;
       set {
@@ -203,11 +203,11 @@ public sealed class HousekeepingCoordinator {
     /// first deferral and this process's own, so it survives a restart (#2288).
     /// </remarks>
     /// <docs>operations/workers/housekeeping-arbitration#tick-idle-gate-and-forced-ceiling</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AShortTick_DoesNotForceTheSweepBeforeMaxDeferralAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheSweepIsNotForcedOneMomentBeforeMaxDeferral_AndIsForcedAtItAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheEarlierOfTheStoredAndTheInMemoryFirstDeferral_GovernsAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AShortTick_DoesNotForceTheSweepBeforeMaxDeferralAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheSweepIsNotForcedOneMomentBeforeMaxDeferral_AndIsForcedAtItAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AfterARestart_TheCeilingRunsFromTheStoredFirstDeferralAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheEarlierOfTheStoredAndTheInMemoryFirstDeferral_GovernsAsync</tests>
     public TimeSpan MaxDeferral {
       get => _maxDeferral;
       set {
@@ -246,7 +246,7 @@ public sealed class HousekeepingCoordinator {
     /// without this budget: the store already holding it, or not holding the figure at all, leaves nothing to write.
     /// </remarks>
     /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheFirstDeferral_IsReportedForTheStore_AndOnlyOnceItHoldsNoneAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs:TheFirstDeferral_IsReportedForTheStore_AndOnlyOnceItHoldsNoneAsync</tests>
     public DeferralRecord? DeferralToRecord { get; init; }
 
     /// <summary>
@@ -254,7 +254,7 @@ public sealed class HousekeepingCoordinator {
     /// (<see cref="IWorkCoordinator.ClearHousekeepingDeferralAsync"/>); null when the store held none (#2288).
     /// </summary>
     /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
-    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AGrantWhileTheStoreHoldsTheBudget_AsksForItToBeClearedOnceThePassEndsAsync</tests>
+    /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs:AGrantWhileTheStoreHoldsTheBudget_AsksForItToBeClearedOnceThePassEndsAsync</tests>
     public string? DeferralToClear { get; init; }
   }
 
@@ -265,7 +265,7 @@ public sealed class HousekeepingCoordinator {
   /// </param>
   /// <param name="FirstDeferredAt">The first deferral of the current run of deferrals.</param>
   /// <docs>operations/workers/housekeeping-arbitration#the-ceiling-survives-a-restart</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingPersistedDeferralTests.cs:EachIntegrityRequester_HasItsOwnStoredBudgetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingPersistedDeferralTests.cs:EachIntegrityRequester_HasItsOwnStoredBudgetAsync</tests>
   public readonly record struct DeferralRecord(string BudgetKey, DateTimeOffset FirstDeferredAt);
 
   private readonly Settings _settings;
@@ -328,8 +328,8 @@ public sealed class HousekeepingCoordinator {
   /// <param name="metrics">Optional observability; null records nothing.</param>
   /// <param name="timeProvider">The clock; null uses <see cref="TimeProvider.System"/>.</param>
   /// <docs>operations/workers/housekeeping-arbitration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AForcedPassByTime_IsCountedAsADeferralLimitVerdictAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AForcedPassByTime_IsCountedAsADeferralLimitVerdictAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
   public HousekeepingCoordinator(Settings settings, Observability.HousekeepingMetrics? metrics, TimeProvider? timeProvider)
     : this(settings, timeProvider ?? TimeProvider.System) {
     _metrics = metrics;
@@ -358,7 +358,7 @@ public sealed class HousekeepingCoordinator {
   /// A gate that samples only when it wants to run cannot tell a trough from an ending: its
   /// resolution is its own interval. Any worker holding a fresh reading can feed it here.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCooldownTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingCooldownTests.cs</tests>
   public void Observe(ServiceBacklog? backlog) {
     lock (_gate) {
       _trackSettled(backlog);
@@ -419,9 +419,9 @@ public sealed class HousekeepingCoordinator {
   /// hold the band back (#2263); without that figure every row counts, as <see cref="ServiceBacklog.IsSettled"/>.
   /// </remarks>
   /// <docs>operations/workers/housekeeping-arbitration#what-counts-as-work</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:IntegrityOnlyTraffic_AdmitsTheIdleDrainAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:ApplicationWork_StillHoldsTheIdleDrainBackAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:WithoutTheFigure_TheIdleDrainStillReadsEveryRowAsWorkAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:IntegrityOnlyTraffic_AdmitsTheIdleDrainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:ApplicationWork_StillHoldsTheIdleDrainBackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingIntegrityTrafficTests.cs:WithoutTheFigure_TheIdleDrainStillReadsEveryRowAsWorkAsync</tests>
   public bool ServiceReadsSettled(TimeSpan maxAge) {
     lock (_gate) {
       return _serviceReadsSettled
@@ -453,7 +453,7 @@ public sealed class HousekeepingCoordinator {
   /// </param>
   /// <returns>Whether to proceed, and why.</returns>
   /// <docs>operations/workers/housekeeping-arbitration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingIntegrityAdmissionTests.cs:Integrity_EachRequesterSpendsAndRearmsItsOwnBudgetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingIntegrityAdmissionTests.cs:Integrity_EachRequesterSpendsAndRearmsItsOwnBudgetAsync</tests>
   public Decision TryBegin(Activity activity, ServiceBacklog? backlog, string requester) {
     ArgumentNullException.ThrowIfNull(requester);
     var decision = _tryBeginCore(activity, backlog, requester);

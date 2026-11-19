@@ -63,7 +63,7 @@ public enum NonHolderBehavior {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStepOrderResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStepOrderResolverTests.cs</tests>
 public sealed record StartupStepDescriptor {
   /// <summary>
   /// A stable name, unique across the pipeline. It is what other steps depend on and what appears in

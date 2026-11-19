@@ -215,9 +215,24 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
 /// OnProcessMessageAsync / OnProcessErrorAsync mocking hooks.
 /// </summary>
 internal sealed class RaisableProcessor : ServiceBusProcessor {
-  public override Task StartProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+  /// <summary>Total StartProcessingAsync invocations; the initial subscribe start counts as 1.</summary>
+  public int StartProcessingAsyncCallCount { get; private set; }
 
-  public override Task StopProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+  /// <summary>Total StopProcessingAsync invocations.</summary>
+  public int StopProcessingAsyncCallCount { get; private set; }
+
+  /// <summary>When set, StopProcessingAsync returns a faulted task with this exception.</summary>
+  public Exception? StopProcessingException { get; set; }
+
+  public override Task StartProcessingAsync(CancellationToken cancellationToken = default) {
+    StartProcessingAsyncCallCount++;
+    return Task.CompletedTask;
+  }
+
+  public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
+    StopProcessingAsyncCallCount++;
+    return StopProcessingException is null ? Task.CompletedTask : Task.FromException(StopProcessingException);
+  }
 
   public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -288,10 +303,14 @@ internal sealed class RaisableSessionProcessor : ServiceBusSessionProcessor {
     return StartProcessingException is null ? Task.CompletedTask : Task.FromException(StartProcessingException);
   }
 
+  /// <summary>When set, StopProcessingAsync returns a faulted task with this exception instead of completing. Null by
+  /// default.</summary>
+  public Exception? StopProcessingException { get; set; }
+
   public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
     StopProcessingAsyncCallCount++;
     Stopped?.Invoke();
-    return Task.CompletedTask;
+    return StopProcessingException is null ? Task.CompletedTask : Task.FromException(StopProcessingException);
   }
 
   public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

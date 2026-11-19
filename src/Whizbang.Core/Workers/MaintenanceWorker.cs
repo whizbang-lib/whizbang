@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// dead-letter cleanup, dedup pruning) light up automatically.
 /// </remarks>
 /// <docs>fundamentals/workers/maintenance-steps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
 public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
   IOptions<MaintenanceWorkerOptions> options,
@@ -105,8 +105,8 @@ public sealed partial class MaintenanceWorker(
   /// </para>
   /// </remarks>
   /// <docs>resilience/stream-integrity</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:AnInstanceThatIsNotTheMaintainer_StillPublishesTheLedgerReadingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:ATickTheIdleGateDefers_StillPublishesTheLedgerReadingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:AnInstanceThatIsNotTheMaintainer_StillPublishesTheLedgerReadingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:ATickTheIdleGateDefers_StillPublishesTheLedgerReadingAsync</tests>
   private async Task _refreshLedgerGaugesAsync(IServiceProvider sp, CancellationToken ct) {
     var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
     var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
@@ -117,6 +117,8 @@ public sealed partial class MaintenanceWorker(
     try {
       var summary = await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
       integrityMetrics.UpdateLedgerGauges(summary);
+      // #2365: whether each opt-in check is on, so an alert can tell a check that is off from one that stopped.
+      integrityMetrics.UpdateChecksEnabled(integrity.SealRecheck.Enabled, integrity.FullHistoryCompare.Enabled);
       // #2261: derived from the seals just read, on every instance as sealed_through is.
       integrityMetrics.UpdateVerifiedPercent(integrity.VerifiedPercentGaugeEnabled
         ? Whizbang.Core.Observability.IntegrityCompletion.Verified(summary.Seals)
@@ -141,7 +143,7 @@ public sealed partial class MaintenanceWorker(
   /// stopping host and propagates.
   /// </remarks>
   /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityBacklogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityBacklogTests.cs</tests>
   private async Task _refreshLedgerBacklogAsync(IServiceProvider sp, CancellationToken ct) {
     var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
     var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
@@ -153,11 +155,20 @@ public sealed partial class MaintenanceWorker(
       var backlog = await coordinator.GetIntegrityLedgerBacklogAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
       integrityMetrics.UpdateLedgerBacklog(backlog);
       integrityMetrics.UpdateRepairProgress(await _readRepairProgressAsync(sp, coordinator, integrity, backlog, ct).ConfigureAwait(false));
+      // #2365: each lane's seal and the re-check's coverage, read by the holder as the backlog is.
+      var clock = sp.GetService<TimeProvider>() ?? TimeProvider.System;
+      integrityMetrics.UpdateSealReading(await coordinator.GetIntegritySealReadingAsync(
+        integrity.SealRecheck.Lookback, integrity.SealRecheck.RecheckEvery, clock.GetUtcNow(), ct).ConfigureAwait(false));
+      // #2365: the streams due for a cut that the seal gate holds, a bounded count per task.
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(
+        await coordinator.GetCutsAwaitingSealAsync(CUTS_AWAITING_SEAL_COUNT_CAP, ct).ConfigureAwait(false));
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
       integrityMetrics.UpdateLedgerBacklog(null);
       integrityMetrics.UpdateRepairProgress(null);
+      integrityMetrics.UpdateSealReading(null);
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogLedgerBacklogRefreshFailed(_logger, ex);
     }
   }
@@ -187,6 +198,9 @@ public sealed partial class MaintenanceWorker(
     };
   }
 
+  /// <summary>#2365: the most rows one task's count of the cuts the seal holds reads; at the cap it reads as at least that.</summary>
+  private const int CUTS_AWAITING_SEAL_COUNT_CAP = 100_000;
+
   private static bool _tallies(Whizbang.Core.Messaging.StreamIntegrityOptions integrity) =>
     integrity.RepairProgressGaugeEnabled || integrity.BacklogEtaGaugeEnabled;
 
@@ -202,7 +216,7 @@ public sealed partial class MaintenanceWorker(
   /// process that stops between two ticks are. Skipped when both derived gauges are switched off.
   /// </remarks>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegrityCompletionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityCompletionTests.cs</tests>
   private async Task _flushLedgerTallyAsync(IServiceProvider sp, CancellationToken ct) {
     var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
     var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
@@ -241,6 +255,8 @@ public sealed partial class MaintenanceWorker(
       var withdrawn = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
       withdrawn?.UpdateLedgerBacklog(null);
       withdrawn?.UpdateRepairProgress(null);
+      withdrawn?.UpdateSealReading(null);
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogSkippedNotMaintainer(_logger);
       return;
     }
@@ -396,7 +412,7 @@ public sealed partial class MaintenanceWorker(
   /// </para>
   /// </remarks>
   /// <docs>operations/infrastructure/maintenance#a-failed-task-does-not-stop-the-cycle</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs</tests>
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     // The ledger gauges are published at the start of every tick (_refreshLedgerGaugesAsync, #2024), not here.
@@ -466,8 +482,8 @@ public sealed partial class MaintenanceWorker(
   /// the next task (#2174); cancellation is shutdown and propagates.
   /// </summary>
   /// <docs>operations/infrastructure/maintenance#a-failed-task-does-not-stop-the-cycle</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:AFailedTask_IsLoggedByName_AndEveryLaterTaskStillRunsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:Cancellation_StillStopsTheCycleAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:AFailedTask_IsLoggedByName_AndEveryLaterTaskStillRunsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:Cancellation_StillStopsTheCycleAsync</tests>
   private async Task _isolatedAsync(string taskName, Func<Task> run) {
     try {
       await run().ConfigureAwait(false);
@@ -483,8 +499,8 @@ public sealed partial class MaintenanceWorker(
   /// The maintenance call, its per-task report, and the PostDestruction hooks once the reap it ran has committed. A task
   /// the database reports failed (status <c>failed: ...</c>, #2174) is a warning by name; the call's other tasks ran.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:ATaskTheDatabaseReportsFailed_IsLoggedAsAWarningByNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:TheDestructionReadFailing_GivesTheReapNothing_AndTheCycleGoesOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:ATaskTheDatabaseReportsFailed_IsLoggedAsAWarningByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:TheDestructionReadFailing_GivesTheReapNothing_AndTheCycleGoesOnAsync</tests>
   private async Task _performMaintenanceAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, DestructionBatch destruction, CancellationToken ct) {
     var results = destruction.ReapOnly is null
@@ -519,10 +535,17 @@ public sealed partial class MaintenanceWorker(
   private async Task _closeDigestEpochsAsync(
       IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, CancellationToken ct) {
-    if (integrity is not { Sealing.Enabled: true }) {
+    if (integrity is null) {
       return;
     }
     try {
+      // #2363: a cut waits for the seal only while sealing runs, so turning sealing off never leaves cuts waiting for a
+      // seal that cannot come. Written every cycle; the store rewrites a setting only when it changed.
+      await coordinator.SetCutGatesAsync(integrity.Sealing.Enabled, integrity.Sealing.CutWaitsForConsumers, ct)
+        .ConfigureAwait(false);
+      if (!integrity.Sealing.Enabled) {
+        return;
+      }
       var closed = await coordinator.CloseDigestEpochsAsync(
         integrity.AuditSettleWindowMinutes * 60, integrity.Sealing.MaxClosuresPerCycle, integrity.Sealing.EpochWidth, ct);
       if (closed > 0) {
@@ -561,6 +584,16 @@ public sealed partial class MaintenanceWorker(
       }
     }
     metrics?.UpdateOperationalRetention(reading);
+    // #2363: the carried detail of cuts rests like every operational record, then rolls off. It is columns on digest
+    // buckets that stay, not rows the table sweep removes, so it has its own bounded pass.
+    var carriedRest = options.RetentionFor(OperationalCategory.CarriedDetail);
+    for (var batch = 0; batch < options.MaxBatchesPerCycle; batch++) {
+      var cleared = await coordinator.RollOffCarriedDetailAsync(carriedRest, options.BatchSize, ct).ConfigureAwait(false);
+      metrics?.RecordOperationalRowsExpired(OperationalCategory.CarriedDetail, cleared);
+      if (cleared < options.BatchSize) {
+        break;
+      }
+    }
   }
 
   /// <summary>
@@ -609,7 +642,7 @@ public sealed partial class MaintenanceWorker(
   /// window it was applying and retried next cycle; cancellation is shutdown and propagates.
   /// </summary>
   /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerBestEffortStepsTests.cs:HandledLedger_IsSweptEveryCycle_ToTheRepairReceptorLookback_AtTheHostsTimeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerBestEffortStepsTests.cs:HandledLedger_IsSweptEveryCycle_ToTheRepairReceptorLookback_AtTheHostsTimeAsync</tests>
   private async Task _sweepHandledLedgerAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
     var keep = (integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()).RepairReceptorLookback;
@@ -1326,7 +1359,7 @@ public sealed partial class MaintenanceWorker(
   /// </para>
   /// </remarks>
   /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs</tests>
   private async Task _concludeExhaustedInboxRowsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     if (sp.GetService<IOptions<InboxDispatchWorkerOptions>>()?.Value.MaxInboxAttempts is not int maxAttempts) {
       return;
@@ -1427,7 +1460,7 @@ public sealed partial class MaintenanceWorker(
   /// is shutdown and propagates.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
   private async Task _syncStreamTypePoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var policies = (sp.GetService<IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()?.Value
       ?? new Whizbang.Core.Archival.StreamLifecycleOptions()).AppendToArchivedPolicies();
@@ -1447,7 +1480,7 @@ public sealed partial class MaintenanceWorker(
   /// Cancellation is shutdown and propagates.
   /// </summary>
   /// <docs>data/event-store#stored-metadata</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerEventStoreMetadataSyncTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerEventStoreMetadataSyncTests.cs</tests>
   private async Task _syncEventStoreMetadataSettingsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     string? published = null;
     try {
@@ -1472,7 +1505,7 @@ public sealed partial class MaintenanceWorker(
   /// unstored and the tick goes on. Cancellation is shutdown and propagates.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerArchivedStreamRowsSyncTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerArchivedStreamRowsSyncTests.cs</tests>
   private async Task _syncArchivedStreamRowPoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     string? published = null;
     try {
@@ -1813,7 +1846,7 @@ public sealed class MaintenanceWorkerOptions {
   /// One index is rebuilt per cycle, fleet-wide, the one with the most bytes to give back (#1746).
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
   public double ReindexBloatThreshold { get; set; } = QueueIndexReindexStep.DEFAULT_THRESHOLD;
 
   /// <summary>
@@ -1828,7 +1861,7 @@ public sealed class MaintenanceWorkerOptions {
   /// <c>wh_settings</c> on every start, so a value edited there by hand is put back on the next start (#2319).
   /// </remarks>
   /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
   public double? TableRewriteBloatThreshold { get; set; }
 
   /// <summary>
@@ -1838,7 +1871,7 @@ public sealed class MaintenanceWorkerOptions {
   /// must be zero or greater. Written on every start, as <see cref="TableRewriteBloatThreshold"/> is.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
   public long? TableRewriteMinRows { get; set; }
 
   /// <summary>
@@ -1856,7 +1889,7 @@ public sealed class MaintenanceWorkerOptions {
   /// the floor says (#2319).
   /// </remarks>
   /// <docs>operations/infrastructure/storage-maintenance#post-rewrite-floor</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs</tests>
   public double? TableRewriteRegrowthFactor { get; set; }
 
@@ -1880,7 +1913,7 @@ public sealed class MaintenanceWorkerOptions {
   /// next cold start counts as a reassignment too.
   /// </remarks>
   /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
   public bool MaintainOnReassignment { get; set; } = true;
 
   /// <summary>
@@ -1893,7 +1926,7 @@ public sealed class MaintenanceWorkerOptions {
   /// finds the tables just vacuumed and leaves them.
   /// </remarks>
   /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs:SkipAcquisitionVacuumWithin_DefaultsToTenMinutesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs:SkipAcquisitionVacuumWithin_DefaultsToTenMinutesAsync</tests>
   public TimeSpan SkipAcquisitionVacuumWithin { get; set; } = TimeSpan.FromMinutes(10);
 
   /// <summary>
@@ -1918,8 +1951,8 @@ public sealed class MaintenanceWorkerOptions {
   /// noisy and you want to disable it independently of the rest of maintenance.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
   public bool StuckRowSentinelEnabled { get; set; } = true;
 
   /// <summary>
@@ -1929,9 +1962,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <see cref="OutboxDrainWorkerOptions.MaxOutboxAttempts"/> default.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
   public int StuckRowSentinelMaxAttempts { get; set; } = 10;
 
   /// <summary>
@@ -1940,9 +1973,9 @@ public sealed class MaintenanceWorkerOptions {
   /// low enough that log volume stays manageable.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_MultipleStuckRows_OneWarningEachAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_MultipleStuckRows_OneWarningEachAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
   public int StuckRowSentinelLimit { get; set; } = 50;
 
   /// <summary>
@@ -1952,14 +1985,14 @@ public sealed class MaintenanceWorkerOptions {
   /// claim keeps charging that never reaches a dispatcher is otherwise retried for ever.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:Disabled_ConcludesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:Disabled_ConcludesNothingAsync</tests>
   public bool ConcludeExhaustedInboxRows { get; set; } = true;
 
   /// <summary>
   /// The most exhausted inbox rows one maintenance cycle concludes. Default 500; the rest are concluded on later cycles.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:ExhaustedDomainRow_IsMovedToTheDeadLetterStore_AsMaxAttemptsExceededAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:ExhaustedDomainRow_IsMovedToTheDeadLetterStore_AsMaxAttemptsExceededAsync</tests>
   public int ExhaustedInboxConcludeLimit { get; set; } = 500;
 
   /// <summary>
@@ -2035,7 +2068,7 @@ public sealed class MaintenanceWorkerOptions {
   /// <c>Whizbang:Workers:Maintenance:Retention</c>. Every window is unset by default, which leaves the stored value alone.
   /// </summary>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public MaintenanceRetentionOptions Retention { get; set; } = new();
 
   /// <summary>
@@ -2043,6 +2076,6 @@ public sealed class MaintenanceWorkerOptions {
   /// intervals created ahead. See <see cref="MaintenancePartitioningOptions"/>.
   /// </summary>
   /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs:Partitioning_BindsFromItsEnvironmentVariablesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitioningOptionsTests.cs:Partitioning_BindsFromItsEnvironmentVariablesAsync</tests>
   public MaintenancePartitioningOptions Partitioning { get; set; } = new();
 }

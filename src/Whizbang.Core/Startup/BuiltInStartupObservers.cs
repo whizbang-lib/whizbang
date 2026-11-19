@@ -18,7 +18,7 @@ namespace Whizbang.Core.Startup;
 /// and the log is the one place people grep during a slow boot.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
 public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
   private readonly ILogger _logger;
 
@@ -86,7 +86,7 @@ public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
 /// observer, riding the same seam as everything else.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupBuiltInObserversTests.cs</tests>
 public sealed class MetricsStartupStepObserver : IStartupStepObserver {
   private readonly StartupPipelineMetrics _metrics;
 

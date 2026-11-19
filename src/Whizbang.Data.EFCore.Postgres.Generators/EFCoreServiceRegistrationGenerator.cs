@@ -381,7 +381,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       .SelectMany(p => p.PhysicalFields.Where(f => f.IsVector).Select(f => _csharpString($"{p.TableName}.{f.ColumnName}")))
       .Distinct(StringComparer.Ordinal)
       .ToList();
-    return columns.Count == 0 ? "System.Array.Empty<string>()" : $"new string[] {{ {string.Join(", ", columns)} }}";
+    return columns.Count == 0 ? "global::System.Array.Empty<string>()" : $"new string[] {{ {string.Join(", ", columns)} }}";
   }
 
   /// <summary>
@@ -601,7 +601,31 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           : null,
         DeclaredConverters: declaredConverters,
         KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol),
-        IsRecursive: MappedPathDiscovery.IsRecursive(modelType as INamedTypeSymbol));
+        IsRecursive: MappedPathDiscovery.IsRecursive(modelType as INamedTypeSymbol),
+        StreamIdPropertyName: _guidStreamIdProperty(modelType));
+  }
+
+  /// <summary>
+  /// The model's <c>[StreamId]</c> property when it is a <see cref="System.Guid"/> or nullable one, so a
+  /// filter on it can also be answered by the row's primary key; null otherwise.
+  /// </summary>
+  /// <remarks>
+  /// Looks at the model's own members only, as the perspective runner does when it seeds a new model with
+  /// its stream id. A string or strongly-typed key is left out: the row's id is a <see cref="System.Guid"/>,
+  /// and there is no comparison between the two the database could serve with its primary key.
+  /// </remarks>
+  /// <param name="modelType">The perspective's model type.</param>
+  private static string? _guidStreamIdProperty(ITypeSymbol modelType) {
+    foreach (var property in modelType.GetMembers().OfType<IPropertySymbol>()) {
+      if (property.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute"))) {
+        var type = property.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+          ? nullable.TypeArguments[0]
+          : property.Type;
+        return TypeNameUtilities.IsNamed(type, "System.Guid") ? property.Name : null;
+      }
+    }
+
+    return null;
   }
 
   /// <summary>
@@ -710,7 +734,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelCopy: candidate.ModelCopy,
         DeclaredConverters: candidate.DeclaredConverters,
         KeptObjects: candidate.KeptObjects,
-        IsRecursive: candidate.IsRecursive);
+        IsRecursive: candidate.IsRecursive,
+        StreamIdPropertyName: candidate.StreamIdPropertyName);
   }
 
 
@@ -1445,7 +1470,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          global::Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);");
       sb.AppendLine($"          var factory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
       sb.AppendLine("          var context = factory.CreateDbContext();");
-      sb.AppendLine("          var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {");
+      sb.AppendLine("          var tableNames = new global::System.Collections.Generic.Dictionary<global::System.Type, string> {");
 
       for (int i = 0; i < query.ModelTypeNames.Length; i++) {
         var modelType = query.ModelTypeNames[i];
@@ -1981,6 +2006,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     foreach (var model in group.Models) {
+      // A filter on the model's stream id is also answered by the row's primary key (#2302).
+      if (model.StreamIdPropertyName is { } streamIdProperty) {
+        sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.StreamIdRegistry.Register<{model.ModelTypeName}>(\"{streamIdProperty}\");");
+      }
+    }
+
+    foreach (var model in group.Models) {
       _appendDataCoalescerRegistration(sb, model);
     }
 
@@ -2281,7 +2313,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // Mirrors the same emit in the DbContextRegistrationRegistry callback so both");
       sb.AppendLine("    // wiring paths land at the SAME key. Guarded so an explicit");
       sb.AppendLine("    // Whizbang:Database:ConnectionStringKey in appsettings still wins.");
-      sb.AppendLine("    services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<System.IServiceProvider>((opts, sp) => {");
+      sb.AppendLine("    services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<global::System.IServiceProvider>((opts, sp) => {");
       sb.AppendLine("      if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
       sb.AppendLine("        opts.ConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
       sb.AppendLine("          sp.GetService<IConfiguration>(), connectionStringKey, legacyConnectionStringKey);");
@@ -2433,7 +2465,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      // the class-name convention), and notifications silently fall back to the pooled");
     sb.AppendLine("      // (pgbouncer) connection. Guarded so an explicit Whizbang:Database:ConnectionStringKey");
     sb.AppendLine("      // in appsettings still wins.");
-    sb.AppendLine("      services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<System.IServiceProvider>((opts, sp) => {");
+    sb.AppendLine("      services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<global::System.IServiceProvider>((opts, sp) => {");
     sb.AppendLine("        if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
     sb.AppendLine("          opts.ConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
     sb.AppendLine("            sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), connectionStringKey, legacyConnectionStringKey);");
@@ -2611,13 +2643,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         "Whizbang.Data.EFCore.Postgres.Generators.Templates"
     );
 
-    // Load migration files (once for all DbContexts)
-    // Note: Core infrastructure schema is now generated at runtime by PostgresSchemaBuilder
-    string migrationsCode = _generateMigrationsCode(context);
-    // The subset that has to exist before a migrator can be elected at all. Marked in the SQL
-    // rather than listed here, because a list goes stale the first time a migration gains a
-    // dependency and a marker sits next to the statement it describes.
-    string bootstrapMigrationsCode = _generateBootstrapMigrationsCode();
+    // The migration set is emitted once for the assembly and every context reads it from there: the text is the same
+    // for all of them, and a copy per context made an assembly with many contexts compile many copies (#2388). It sits
+    // in the first context's generated namespace, as the model registration does, and is reached by its full name.
+    var migrationScriptsNamespace = _generatedNamespace(dbContexts[0].Namespace);
+    _generateMigrationScripts(context, migrationScriptsNamespace);
 
     // Loop through each DbContext and generate extension method
     foreach (var dbContext in dbContexts) {
@@ -2670,18 +2700,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = TemplateUtilities.ReplaceRegion(template, "RECURSIVE_PERSPECTIVES",
         _generateRecursivePerspectivesCode(matchingPerspectives));
 
-      // Replace MIGRATIONS region with embedded migration scripts
-      template = TemplateUtilities.ReplaceRegion(
-          template,
-          "MIGRATIONS",
-          migrationsCode
-      );
-      // The bootstrap subset, applied before anything is elected.
-      template = TemplateUtilities.ReplaceRegion(
-          template,
-          "BOOTSTRAP_MIGRATIONS",
-          bootstrapMigrationsCode
-      );
+      template = template.Replace("__MIGRATION_SCRIPTS_NAMESPACE__", migrationScriptsNamespace);
 
       // Get assembly name for service identification
       var assemblyName = compilation.AssemblyName ?? "Unknown";
@@ -2744,6 +2763,37 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, dbContext.ClassName, matchingPerspectives.Count));
     }
+  }
+
+  /// <summary>
+  /// Emits the assembly's one copy of the migration set, which every context's schema extensions read.
+  /// </summary>
+  /// <remarks>
+  /// The full list and its bootstrap subset go into the regions of their own template, indented exactly as they were
+  /// in the per-context template: the indentation is part of each decoded text, hence of every content hash recorded
+  /// for an applied migration (MigrationUtf8LiteralGenerationTests pins the decoded text).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/MigrationScriptsEmittedOnceGenerationTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MigrationUtf8LiteralGenerationTests.cs</tests>
+  private static void _generateMigrationScripts(SourceProductionContext context, string generatedNamespace) {
+    var template = TemplateUtilities.GetEmbeddedTemplate(
+        typeof(EFCoreServiceRegistrationGenerator).Assembly,
+        "MigrationScriptsTemplate.cs",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates"
+    );
+    template = TemplateUtilities.ReplaceRegion(
+        template,
+        "HEADER",
+        $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
+    );
+    // Load migration files. Note: core infrastructure schema is generated at runtime by PostgresSchemaBuilder.
+    template = TemplateUtilities.ReplaceRegion(template, "MIGRATIONS", _generateMigrationsCode(context));
+    // The subset that has to exist before a migrator can be elected at all. Marked in the SQL rather than listed here,
+    // because a list goes stale the first time a migration gains a dependency and a marker sits next to the statement
+    // it describes.
+    template = TemplateUtilities.ReplaceRegion(template, "BOOTSTRAP_MIGRATIONS", _generateBootstrapMigrationsCode());
+    template = template.Replace("__GENERATED_NAMESPACE__", generatedNamespace);
+    context.AddSource("WhizbangMigrationScripts.g.cs", template);
   }
 
   /// <summary>
@@ -3989,6 +4039,7 @@ internal sealed record DbContextInfo(
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 /// <param name="PerspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c>): the name its work rows carry</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the hydrators copy it; null otherwise</param>
+/// <param name="StreamIdPropertyName">The model's <c>Guid</c> <c>[StreamId]</c> property, registered so a filter on it can use the primary key (#2302); null otherwise</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -4011,7 +4062,8 @@ internal sealed record PerspectiveModelInfo(
     ModelCopyInfo? ModelCopy = null,
     ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
     ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default,
-    bool IsRecursive = false);
+    bool IsRecursive = false,
+    string? StreamIdPropertyName = null);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -4037,6 +4089,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 /// <param name="PerspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c>): the name its work rows carry</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the hydrators copy it; null otherwise</param>
+/// <param name="StreamIdPropertyName">The model's <c>Guid</c> <c>[StreamId]</c> property, registered so a filter on it can use the primary key (#2302); null otherwise</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -4059,7 +4112,8 @@ internal sealed record PerspectiveModelCandidate(
     ModelCopyInfo? ModelCopy = null,
     ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
     ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default,
-    bool IsRecursive = false);
+    bool IsRecursive = false,
+    string? StreamIdPropertyName = null);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

@@ -79,6 +79,16 @@
           "Mono.Cecil": "0.11.6"
         }
       },
+      "Microsoft.Testing.Extensions.HangDump": {
+        "type": "Direct",
+        "requested": "[2.5.3, )",
+        "resolved": "2.5.3",
+        "contentHash": "GoEUNX+/qTKD394NvLTHo+Vp/CNYc8Fi3VdM8UwTzkRXMWGL2dPzh5ha4Fc42aBsIeVjw4Z+IoSJ5/n82bGSOg==",
+        "dependencies": {
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.607501",
+          "Microsoft.Testing.Platform": "[2.5.3, 3.0.0)"
+        }
+      },
       "Microsoft.Testing.Extensions.Retry": {
         "type": "Direct",
         "requested": "[2.5.3, )",
@@ -514,6 +524,11 @@
           "SQLitePCLRaw.core": "2.1.13"
         }
       },
+      "Microsoft.Diagnostics.NETCore.Client": {
+        "type": "Transitive",
+        "resolved": "0.2.607501",
+        "contentHash": "17Yxzao41A1oZZ5lCCAnnXOy9up5i/GVEGazBjJAUZ4UISsNAotUt6h7zvCDgfKIC46CD7jszgLzLZoscSIJQA=="
+      },
       "Microsoft.DiaSymReader": {
         "type": "Transitive",
         "resolved": "2.2.10",
@@ -702,7 +717,10 @@
         }
       },
       "SoftwareExtravaganza.Whizbang.Core": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
+        }
       },
       "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom": {
         "type": "Project",
@@ -773,6 +791,9 @@
         "dependencies": {
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "SoftwareExtravaganza.Whizbang.Testing": {
         "type": "Project",
@@ -983,6 +1004,16 @@
           "Mono.Cecil": "0.11.6"
         }
       },
+      "Microsoft.Testing.Extensions.HangDump": {
+        "type": "Direct",
+        "requested": "[2.5.3, )",
+        "resolved": "2.5.3",
+        "contentHash": "GoEUNX+/qTKD394NvLTHo+Vp/CNYc8Fi3VdM8UwTzkRXMWGL2dPzh5ha4Fc42aBsIeVjw4Z+IoSJ5/n82bGSOg==",
+        "dependencies": {
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.607501",
+          "Microsoft.Testing.Platform": "[2.5.3, 3.0.0)"
+        }
+      },
       "Microsoft.Testing.Extensions.Retry": {
         "type": "Direct",
         "requested": "[2.5.3, )",
@@ -1418,6 +1449,11 @@
           "SQLitePCLRaw.core": "2.1.13"
         }
       },
+      "Microsoft.Diagnostics.NETCore.Client": {
+        "type": "Transitive",
+        "resolved": "0.2.607501",
+        "contentHash": "17Yxzao41A1oZZ5lCCAnnXOy9up5i/GVEGazBjJAUZ4UISsNAotUt6h7zvCDgfKIC46CD7jszgLzLZoscSIJQA=="
+      },
       "Microsoft.DiaSymReader": {
         "type": "Transitive",
         "resolved": "2.2.10",
@@ -1606,7 +1642,10 @@
         }
       },
       "SoftwareExtravaganza.Whizbang.Core": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
+        }
       },
       "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom": {
         "type": "Project",
@@ -1677,6 +1716,9 @@
         "dependencies": {
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "SoftwareExtravaganza.Whizbang.Testing": {
         "type": "Project",

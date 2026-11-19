@@ -36,7 +36,7 @@ public delegate Task IntegrityDeliveryBatchHandler(
 /// will drain what it records; on a host without it, integrity receptors run inline, as before.
 /// </remarks>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs</tests>
 public sealed class IntegrityDeliveryRegistry {
   private readonly ConcurrentDictionary<string, IntegrityDeliveryHandler> _handlers = new(StringComparer.Ordinal);
   private readonly ConcurrentDictionary<string, IntegrityDeliveryBatchHandler> _batchHandlers = new(StringComparer.Ordinal);
@@ -53,7 +53,7 @@ public sealed class IntegrityDeliveryRegistry {
   /// </summary>
   /// <param name="deliveryType">The delivery type.</param>
   /// <param name="handler">The handler.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheFirstRegistrationOfAType_WinsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheFirstRegistrationOfAType_WinsAsync</tests>
   public void Register(string deliveryType, IntegrityDeliveryHandler handler) {
     ArgumentNullException.ThrowIfNull(deliveryType);
     ArgumentNullException.ThrowIfNull(handler);
@@ -64,7 +64,7 @@ public sealed class IntegrityDeliveryRegistry {
   /// <param name="deliveryType">The delivery type.</param>
   /// <param name="handler">The handler, when one is registered.</param>
   /// <returns>Whether a handler is registered.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:AnUnknownType_HasNoHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:AnUnknownType_HasNoHandlerAsync</tests>
   public bool TryGetHandler(string deliveryType, out IntegrityDeliveryHandler? handler) =>
     _handlers.TryGetValue(deliveryType, out handler);
 
@@ -75,7 +75,7 @@ public sealed class IntegrityDeliveryRegistry {
   /// </summary>
   /// <param name="deliveryType">The delivery type.</param>
   /// <param name="handler">The batch handler.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheRedeliveryReconcile_HasABatchHandler_AndTheFirstBatchRegistrationWinsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheRedeliveryReconcile_HasABatchHandler_AndTheFirstBatchRegistrationWinsAsync</tests>
   public void RegisterBatch(string deliveryType, IntegrityDeliveryBatchHandler handler) {
     ArgumentNullException.ThrowIfNull(deliveryType);
     ArgumentNullException.ThrowIfNull(handler);
@@ -86,7 +86,7 @@ public sealed class IntegrityDeliveryRegistry {
   /// <param name="deliveryType">The delivery type.</param>
   /// <param name="handler">The batch handler, when one is registered.</param>
   /// <returns>Whether a batch handler is registered.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheRedeliveryReconcile_HasABatchHandler_AndTheFirstBatchRegistrationWinsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheRedeliveryReconcile_HasABatchHandler_AndTheFirstBatchRegistrationWinsAsync</tests>
   public bool TryGetBatchHandler(string deliveryType, out IntegrityDeliveryBatchHandler? handler) =>
     _batchHandlers.TryGetValue(deliveryType, out handler);
 }

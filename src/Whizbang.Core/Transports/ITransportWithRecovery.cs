@@ -22,7 +22,7 @@ namespace Whizbang.Core.Transports;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/ITransportWithRecoveryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/ITransportWithRecoveryTests.cs</tests>
 public interface ITransportWithRecovery {
   /// <summary>
   /// Sets the handler to be called when the transport connection recovers.

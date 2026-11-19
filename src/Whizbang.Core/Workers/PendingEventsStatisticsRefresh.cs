@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/observability/metrics#perspectives</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Maintenance_StatisticsGatherFails_WarnsNamingTheQuery_AndCountsTheFailureAsync</tests>
 /// <param name="queryPendingEvents">Runs the pending-events statistics query and returns the pending count.</param>
 /// <param name="metrics">The perspective metrics whose gauge and failure counter this updates, if metrics are on.</param>
@@ -39,7 +39,7 @@ internal sealed partial class PendingEventsStatisticsRefresh(
 
   /// <summary>Runs the query once and updates the gauge, or reports why it could not.</summary>
   /// <param name="cancellationToken">Cancels the query.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
   public async Task RefreshAsync(CancellationToken cancellationToken) {
     long pending;
     try {

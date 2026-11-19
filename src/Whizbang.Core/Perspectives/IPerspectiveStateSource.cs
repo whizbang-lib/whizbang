@@ -30,7 +30,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
 public interface IPerspectiveStateSource {
   /// <summary>Plans the reads of one batch.</summary>
@@ -61,7 +61,7 @@ public readonly record struct PerspectiveStateRequest(
   /// <param name="cursor">The pair's cursor (the last event it processed), or null when it has none.</param>
   /// <param name="events">The batch's events, in the order they are applied.</param>
   /// <returns>True when no row, purge marker or earlier history can exist for the stream.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:IsKnownNew_OnlyWithoutACursor_AndWhenTheFirstEventStartsTheStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:IsKnownNew_OnlyWithoutACursor_AndWhenTheFirstEventStartsTheStreamAsync</tests>
   public static bool IsKnownNew(Guid? cursor, IReadOnlyList<Observability.MessageEnvelope<IEvent>> events) {
     ArgumentNullException.ThrowIfNull(events);
     return cursor is null && events.Count > 0 && events[0].IsFirstInLocalStream;
@@ -73,7 +73,7 @@ public readonly record struct PerspectiveStateRequest(
 /// not have it, and the runner then reads per stream.
 /// </summary>
 /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
 public interface IPerspectiveBatchState {
   /// <summary>Whether the batch knows the pair's stream is new, so its row, purge marker and history need no read.</summary>
   /// <param name="streamId">The stream.</param>

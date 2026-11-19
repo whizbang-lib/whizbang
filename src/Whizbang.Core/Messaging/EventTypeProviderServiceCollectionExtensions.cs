@@ -25,7 +25,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/MultiAssemblyEventTypeProviderTests.cs:TwoPerspectiveAssemblies_TheServedProvider_ListsBothAsync</tests>
 public static class EventTypeProviderServiceCollectionExtensions {
   /// <summary>The service key each assembly's provider is registered under as a contribution.</summary>
@@ -38,8 +38,8 @@ public static class EventTypeProviderServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
   /// <remarks>Idempotent per provider type: an assembly registered twice contributes once.</remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs:AnAssemblyRegisteredTwice_ContributesItsTypesOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs:AHostsOwnProvider_RegisteredFirst_IsTheOneServedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventTypeProviderContributionTests.cs:AnAssemblyRegisteredTwice_ContributesItsTypesOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventTypeProviderContributionTests.cs:AHostsOwnProvider_RegisteredFirst_IsTheOneServedAsync</tests>
   public static IServiceCollection AddEventTypeProviderContribution<TProvider>(this IServiceCollection services)
       where TProvider : class, IEventTypeProvider {
     ArgumentNullException.ThrowIfNull(services);

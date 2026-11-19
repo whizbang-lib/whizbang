@@ -18,8 +18,8 @@ namespace Whizbang.Core.Messaging;
 /// each candidate perspective row.
 /// </param>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_ScopeKind_IsTenantAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_CarriesTenantIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_ScopeKind_IsTenantAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:TenantCollectiveScope_CarriesTenantIdAsync</tests>
 public sealed record TenantCollectiveScope(string TenantId) : CollectiveScope {
   /// <summary>
   /// Routing key for the tenant scope resolver. Stable across versions —

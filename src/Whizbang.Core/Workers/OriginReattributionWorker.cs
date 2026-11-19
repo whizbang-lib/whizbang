@@ -33,7 +33,7 @@ namespace Whizbang.Core.Workers;
 /// owner learned later. A service with no owned domains registered is left exactly as it was.
 /// </remarks>
 /// <docs>resilience/stream-integrity#re-attribution</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OriginReattributionWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OriginReattributionWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OriginReattributionWorkerLoopTests.cs</tests>
 public sealed partial class OriginReattributionWorker(
     IServiceScopeFactory scopeFactory,

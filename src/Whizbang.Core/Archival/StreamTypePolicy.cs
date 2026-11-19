@@ -11,5 +11,5 @@ namespace Whizbang.Core.Archival;
 /// event, without its assembly (for example <c>MyApp.Orders.OrderPlaced</c>).</param>
 /// <param name="AppendToArchived">What an append to an archived stream of that type does.</param>
 /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public sealed record StreamTypePolicy(string StreamType, AppendToArchivedPolicy AppendToArchived);

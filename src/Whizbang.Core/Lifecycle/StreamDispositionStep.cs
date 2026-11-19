@@ -47,7 +47,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#scheduled-disposition</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamDispositionStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamDispositionStepTests.cs</tests>
 public sealed partial class StreamDispositionStep : IMaintenanceStep {
   /// <summary>The step's name in logs.</summary>
   public const string STEP_NAME = "stream-disposition";

@@ -24,7 +24,7 @@ namespace Whizbang.Core.Messaging;
 /// traffic (report-only) and unpublished report events (publishing is opt-in).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityTrafficTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityTrafficTests.cs</tests>
 public static class IntegrityTraffic {
   private static readonly string _checkpoint = _name(typeof(IntegrityCheckpoint));
   private static readonly string _manifest = _name(typeof(IntegrityManifest));

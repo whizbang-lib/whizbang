@@ -23,7 +23,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitioningOptionsTests.cs</tests>
 public sealed class MaintenancePartitioningOptions {
   /// <summary>The number of intervals created ahead unless configured otherwise.</summary>
   public const int DEFAULT_CREATE_AHEAD = 3;
@@ -47,14 +47,14 @@ public sealed class MaintenancePartitioningOptions {
   /// otherwise. Expired partitions are always dropped by the built-in manager.
   /// </summary>
   /// <docs>operations/infrastructure/partitioned-ledgers#pg-partman</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitionManagementStrategyTests.cs:TheSetting_DefaultsToAuto_AndBindsFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitionManagementStrategyTests.cs:TheSetting_DefaultsToAuto_AndBindsFromConfigurationAsync</tests>
   public PartitionManagementStrategy Strategy { get; set; } = PartitionManagementStrategy.Auto;
 
   /// <summary>Configuration errors in the partitioning options, by key.</summary>
   /// <param name="partitioning">The bound options.</param>
   /// <returns>One message per invalid value; empty when the options are valid.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs:CreateAheadBelowOne_IsRejectedByNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs:NullPartitioning_IsRejectedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitioningOptionsTests.cs:CreateAheadBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitioningOptionsTests.cs:NullPartitioning_IsRejectedAsync</tests>
   internal static List<string> Validate(MaintenancePartitioningOptions? partitioning) {
     if (partitioning is null) {
       return [$"{SECTION} must not be null."];

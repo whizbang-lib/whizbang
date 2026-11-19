@@ -39,10 +39,10 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DerivedIdentityTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DerivedIdentityPropertyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EmissionIdentityTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DerivedIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DerivedIdentityPropertyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EmissionIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
 internal static class DerivedIdentity {
   private const int MAX_ORDINAL_FIELD = 0xFFF;
 

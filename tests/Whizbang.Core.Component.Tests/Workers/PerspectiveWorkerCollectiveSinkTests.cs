@@ -1200,7 +1200,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.AllDispatched.WaitAsync(cancellationToken);
-    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(cancellationToken);
+    // Completions are reported in batches, so the first one can land while the other is still in flight (#2396):
+    // wait for both rows' completion signals, not the first of them.
+    await harness.CompletionCapture.EventWorkIdsCaptured(gone.WorkId, present.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);

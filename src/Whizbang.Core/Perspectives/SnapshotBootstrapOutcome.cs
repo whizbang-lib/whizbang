@@ -7,7 +7,7 @@ namespace Whizbang.Core.Perspectives;
 /// What <see cref="IPerspectiveRunner.TryBootstrapSnapshotAsync"/> did (#2294).
 /// </summary>
 /// <docs>fundamentals/perspectives/snapshots#bootstrap</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/SnapshotBootstrapOutcomeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/SnapshotBootstrapOutcomeTests.cs</tests>
 public enum SnapshotBootstrapOutcome {
   /// <summary>A snapshot of the row was written at the requested event.</summary>
   Written = 0,

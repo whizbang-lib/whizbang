@@ -52,7 +52,7 @@ public enum PerspectiveWriteStatus {
 /// <param name="ActualVersion">For a conflict, the version the row is actually at (absent when there is no row).</param>
 /// <param name="Error">For a failure, what the database reported.</param>
 /// <docs>fundamentals/perspectives/write-modes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PendingPerspectiveWriteTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs</tests>
 public readonly record struct PerspectiveWriteOutcome(
     PerspectiveWriteStatus Status, PerspectiveRowVersion ActualVersion, Exception? Error) {
   /// <summary>The row was written.</summary>

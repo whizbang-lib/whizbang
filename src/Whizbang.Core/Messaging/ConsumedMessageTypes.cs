@@ -30,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// </remarks>
 /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
 public static class ConsumedMessageTypes {
   /// <summary>
   /// The event types this service consumes, in the assembly-qualified wire form, deduplicated and in ordinal order.

@@ -38,7 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#deterministic-child-ids</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
 public static class CompositeChildIdentity {
   private const string PREFIX = "whizbang.composite-child.v2";
 
@@ -51,8 +51,8 @@ public static class CompositeChildIdentity {
   /// <param name="childType">The child's runtime type.</param>
   /// <returns>The id every path derives for this child.</returns>
   /// <exception cref="ArgumentNullException">The type is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_TheTypeAndEveryRenderingOfItsName_DeriveOneIdAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_ANullType_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_TheTypeAndEveryRenderingOfItsName_DeriveOneIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:ForChild_ANullType_ThrowsAsync</tests>
   public static Guid ForChild(Guid compositeMessageId, int ordinal, Type childType) =>
     _derive(compositeMessageId, ordinal, HashedTypeName(childType));
 
@@ -64,7 +64,7 @@ public static class CompositeChildIdentity {
   /// <param name="ordinal">Zero-based position of the child within the composite.</param>
   /// <param name="wireTypeName">The child's type name, with or without the assembly version decoration.</param>
   /// <returns>The id every path derives for this child.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:TryExpand_TheTypedAndTheRawPath_DeriveTheSameIds_WhenThePublisherRanAnotherBuildAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:TryExpand_TheTypedAndTheRawPath_DeriveTheSameIds_WhenThePublisherRanAnotherBuildAsync</tests>
   public static Guid ForChild(Guid compositeMessageId, int ordinal, string wireTypeName) =>
     _derive(compositeMessageId, ordinal, wireTypeName);
 
@@ -78,8 +78,8 @@ public static class CompositeChildIdentity {
   /// <param name="childType">The child's runtime type.</param>
   /// <returns>The name the child id is derived from.</returns>
   /// <exception cref="ArgumentNullException">The type is null.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_IsOneDefinition_ForTheTypeAndForEveryRenderingOfItsNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_ForATypeWithoutTypeArguments_IsTheCanonicalWireFormAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_IsOneDefinition_ForTheTypeAndForEveryRenderingOfItsNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityCanonicalTests.cs:HashedTypeName_ForATypeWithoutTypeArguments_IsTheCanonicalWireFormAsync</tests>
   internal static string HashedTypeName(Type childType) {
     ArgumentNullException.ThrowIfNull(childType);
     return TypeNameFormatter.Format(childType);

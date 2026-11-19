@@ -50,9 +50,9 @@ namespace Whizbang.Core.Startup;
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
 /// <docs>operations/infrastructure/storage-maintenance#fillfactor-decrease</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FillFactorDecreaseRewriteTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepCoverageTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/TableRewriteStartupStepCoverageTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed partial class TableRewriteStartupStep : IStartupStep {
   private readonly IServiceScopeFactory _scopeFactory;

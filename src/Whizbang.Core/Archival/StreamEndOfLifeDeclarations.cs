@@ -12,7 +12,7 @@ namespace Whizbang.Core.Archival;
 /// configuration wins key by key.
 /// </summary>
 /// <docs>fundamentals/events/stream-end-of-life#declaring-a-policy-on-the-event-type</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamEndOfLifeDeclarationsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamEndOfLifeDeclarationsTests.cs</tests>
 public static class StreamEndOfLifeDeclarations {
   private static readonly ConcurrentDictionary<string, StreamEndOfLifeDeclaration> _declarations = new(StringComparer.Ordinal);
 

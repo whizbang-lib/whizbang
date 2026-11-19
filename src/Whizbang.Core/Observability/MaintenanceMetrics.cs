@@ -96,6 +96,11 @@ public sealed class MaintenanceMetrics {
       "whizbang.maintenance.pending_rows",
       _observePendingRows,
       description: "Rows a maintenance task would remove now; tagged by task, and capped=true when the count stopped at the cap (at least that many)");
+    // #2365: cleanup lag the seal gate holds back.
+    meter.CreateObservableGauge(
+      "whizbang.maintenance.eligible_not_yet_deleted",
+      _observeCutsAwaitingSeal,
+      description: "Streams due for a cut (task: truncate | archive) that the seal gate holds, this service's seal or a consumer's; counted up to a cap (capped=true: at least that many); reported by the maintainer duty's holder only");
     meter.CreateObservableGauge(
       "whizbang.ephemeral.history_walk_remaining",
       _observeHistoryWalkRemaining,
@@ -124,12 +129,33 @@ public sealed class MaintenanceMetrics {
     Volatile.Write(ref _pending, reading);
   }
 
+  // The latest reading of the streams the seal gate holds (#2365), replaced whole by each one.
+  private CutsAwaitingSeal _cutsAwaitingSeal = CutsAwaitingSeal.NotReported;
+
+  /// <summary>
+  /// Replaces the reading of the streams due for a cut that the seal gate holds (#2365), for
+  /// <c>whizbang.maintenance.eligible_not_yet_deleted</c>; null withdraws it, so an instance without the maintainer duty
+  /// reports no series.
+  /// </summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MaintenanceMetricsEligibleTests.cs</tests>
+  public void UpdateCutsAwaitingSeal(CutsAwaitingSeal? reading) =>
+    Volatile.Write(ref _cutsAwaitingSeal, reading ?? CutsAwaitingSeal.NotReported);
+
+  private IEnumerable<Measurement<long>> _observeCutsAwaitingSeal() {
+    foreach (var (task, rows) in Volatile.Read(ref _cutsAwaitingSeal).Tasks) {
+      yield return new Measurement<long>(
+        rows.Rows, new KeyValuePair<string, object?>("task", task), new KeyValuePair<string, object?>("capped", rows.Capped));
+    }
+  }
+
   private const string CATEGORY_TAG = "category";
 
   /// <summary>Records the rows one retention batch removed from a category's table (#2354).</summary>
   /// <param name="category">The table's category.</param>
   /// <param name="expired">Rows removed.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
   public void RecordOperationalRowsExpired(Whizbang.Core.Workers.OperationalCategory category, long expired) {
     if (expired > 0) {
       OperationalRowsExpired.Add(expired, new KeyValuePair<string, object?>(CATEGORY_TAG, category.ToString()));
@@ -141,7 +167,7 @@ public sealed class MaintenanceMetrics {
   /// over its tables, and its oldest age the oldest table's.
   /// </summary>
   /// <param name="reading">The last batch's results.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerOperationalRetentionTests.cs:TheCycle_ReportsRowsRemovedAndLeft_AndTheOldestAge_PerCategoryAsync</tests>
   public void UpdateOperationalRetention(IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult> reading) {
     ArgumentNullException.ThrowIfNull(reading);
     Volatile.Write(ref _operational, reading);

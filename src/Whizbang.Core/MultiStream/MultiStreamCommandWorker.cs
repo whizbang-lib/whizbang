@@ -20,9 +20,9 @@ namespace Whizbang.Core.MultiStream;
 /// least every <see cref="MultiStreamCommandOptions.PollInterval"/>; a full batch is followed by another pass at once.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#worker</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CallsTheHandlerOncePerClaimedStreamAndRecordsEachSuccessAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_AHandlerThatThrows_RecordsTheFailureAndWorksTheRestAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CanceledMidBatch_RecordsTheStreamsAlreadyDoneAndStopsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CallsTheHandlerOncePerClaimedStreamAndRecordsEachSuccessAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_AHandlerThatThrows_RecordsTheFailureAndWorksTheRestAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CanceledMidBatch_RecordsTheStreamsAlreadyDoneAndStopsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandWorkerLoopTests.cs:Loop_ANewRunNotice_WakesTheWorkerAsync</tests>
 public sealed partial class MultiStreamCommandWorker : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit {
   private readonly IMultiStreamCommandStore _store;

@@ -75,3 +75,7 @@ __INTEGRITY_COUNTED__(e) = (COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event
 # Why a repair child was settled instead of stored: a newer copy of its superseding key is already held here (454,
 # #2350). store_inbox_messages writes it to wh_inbox_state.error and the bundle reconciles read it back as present.
 __REPAIR_SATISFIED_SUPERSEDED__ = 'repair satisfied: a newer copy of its superseding key is held'
+
+# Why a redelivered event was refused instead of stored: its stream was purged here, and a purge is never undone by a
+# resend (460, #2363). store_inbox_messages writes it to wh_inbox_state.error.
+__REPAIR_REFUSED_PURGED__ = 'repair refused: stream purged'

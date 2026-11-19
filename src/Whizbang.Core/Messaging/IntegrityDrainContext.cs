@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// admission, so deferring again would only queue the work behind itself.
 /// </summary>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheDrainContext_EndsWithItsScope_AndNestsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheDrainContext_EndsWithItsScope_AndNestsAsync</tests>
 internal static class IntegrityDrainContext {
   private static readonly AsyncLocal<bool> _active = new();
 

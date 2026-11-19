@@ -35,7 +35,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveStreamBatchTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveStreamBatchTests.cs</tests>
 public sealed class AdaptiveStreamBatch {
   private readonly int _ceiling;
   private readonly int _floor;

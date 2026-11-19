@@ -21,7 +21,7 @@ namespace Whizbang.Core.Generated {
     [DebuggerNonUserCode]
     static ReceptorDiscoveryDiagnostics() {
       // Build a detailed message about discovered receptors
-      var message = new System.Text.StringBuilder();
+      var message = new global::System.Text.StringBuilder();
       message.AppendLine("Discovered {{RECEPTOR_COUNT}} receptor(s):");
       #region DIAGNOSTIC_MESSAGES
       // This region will be replaced with diagnostic message generation

@@ -1005,7 +1005,7 @@ namespace TestNamespace {
     // Assert - GetMessageAssociations() should exist and return associations
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("public static System.Collections.Generic.IReadOnlyList<MessageAssociation> GetMessageAssociations(string serviceName)");
+    await Assert.That(generatedSource).Contains("public static global::System.Collections.Generic.IReadOnlyList<MessageAssociation> GetMessageAssociations(string serviceName)");
 
     // Should return array with 2 associations (OrderCreated and OrderUpdated)
     await Assert.That(generatedSource).Contains("new MessageAssociation");
@@ -1045,7 +1045,7 @@ namespace TestNamespace {
     // Assert - GetPerspectivesForEvent() should be generated
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(string eventType, string serviceName)");
+    await Assert.That(generatedSource).Contains("public static global::System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(string eventType, string serviceName)");
     await Assert.That(generatedSource).Contains("Where(a => a.MessageType == eventType && a.AssociationType == \"perspective\")");
     await Assert.That(generatedSource).Contains("Select(a => a.TargetName)");
   }
@@ -1080,7 +1080,7 @@ namespace TestNamespace {
     // Assert - GetEventsForPerspective() should be generated
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(string perspectiveName, string serviceName)");
+    await Assert.That(generatedSource).Contains("public static global::System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(string perspectiveName, string serviceName)");
     await Assert.That(generatedSource).Contains("Where(a => a.TargetName == perspectiveName && a.AssociationType == \"perspective\")");
     await Assert.That(generatedSource).Contains("Select(a => a.MessageType)");
   }

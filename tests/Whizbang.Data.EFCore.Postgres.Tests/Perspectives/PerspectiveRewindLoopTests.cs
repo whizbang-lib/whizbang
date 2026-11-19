@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
-public class PerspectiveRewindLoopTests : EFCoreTestBase {
+public partial class PerspectiveRewindLoopTests : EFCoreTestBase {
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
   // A fixed instant the event ids are minted from: only their order matters, never their distance from now.
   private static readonly DateTimeOffset _minted = new(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
@@ -92,18 +92,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     }
     var rewindsWhenSettled = rewinds.Count;
 
-    var reclaims = 0;
-    var polls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var seen = 0;
-    pipeline.ClaimWorker.OnBatchClaimed += batch => {
-      if (batch.PerspectiveStreamIds.Contains(streamId) || batch.PerspectiveWork.Any(w => w.StreamId == streamId)) {
-        Interlocked.Increment(ref reclaims);
-      }
-      if (Interlocked.Increment(ref seen) >= QUIET_POLLS) {
-        polls.TrySetResult();
-      }
-    };
-    await polls.Task.WaitAsync(_signalDeadline, ct);
+    var reclaims = await _reclaimsOverQuietPollsAsync(pipeline, conn, streamId, ct);
 
     var flagged = await _scalarAsync<bool>(conn,
       "SELECT COALESCE(bool_or((status & 32) = 32), false) FROM wh_perspective_cursors WHERE stream_id = @id", streamId, ct);
@@ -441,18 +430,28 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     return ids;
   }
 
-  /// <summary>Counts the claims of the stream over the next <see cref="QUIET_POLLS"/> claim polls.</summary>
   /// <summary>
   /// Counts the claim loop's next <see cref="QUIET_POLLS"/> polls and how many of them claimed the stream again.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// <see cref="ClaimWorker.OnBatchClaimed"/> is raised only by a claim that returned work, so an idle loop raises
   /// nothing: a wait for polls on a settled store would time out with none seen although the loop polls on its cadence.
   /// The pipeline's poll beacon is an outbox row that nothing in this pipeline publishes, so every claim offers it again
   /// and every poll is observed.
+  /// </para>
+  /// <para>
+  /// Only claims that start after the call are counted. A claim re-offers the rows leased to this instance until their
+  /// completion is written, and it raises <see cref="ClaimWorker.OnBatchClaimed"/> after its hand-off, so a claim whose
+  /// query ran just before the stream's last completion could raise it after the counting began, with a batch that
+  /// predates the settle. The claim loop takes a run-permit hold around each claim and its hand-off, one claim at a
+  /// time, so once nothing is held the claim that was in flight has ended, and every claim counted began after the
+  /// stream settled.
+  /// </para>
   /// </remarks>
   private static async Task<int> _reclaimsOverQuietPollsAsync(Pipeline pipeline, NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
     await pipeline.EnsurePollBeaconAsync(conn, ct);
+    await pipeline.ClaimWorker.RunPermit.WhenNothingHeldAsync(ct).WaitAsync(_signalDeadline, ct);
     var reclaims = 0;
     var seen = 0;
     var polls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -560,6 +559,8 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
 
     public int Count => Volatile.Read(ref _count);
 
+    public ConcurrentQueue<string> All { get; } = new();
+
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning;
@@ -567,6 +568,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter) {
       var message = formatter(state, exception);
+      All.Enqueue($"{logLevel}: {message} {exception}");
       if (message.Contains("triggering rewind", StringComparison.Ordinal)
           || message.StartsWith("Perspective rewind required", StringComparison.Ordinal)) {
         Interlocked.Increment(ref _count);
@@ -579,7 +581,9 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
+    var runnerRewinds = new RunnerRewindTally();
     services.AddLogging();
+    services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(runnerRewinds);
     services.AddScoped(_ => CreateDbContext());
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
@@ -590,6 +594,14 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     services.AddPerspectiveRunners();
     EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
       services, typeof(WorkCoordinationDbContext), typeof(Order), "wh_per_order",
+      new PostgresUpsertStrategy());
+    // #2379: the per-item models with the strict event-id ordering a fan-out's per-item rows opt into. Both fold the same
+    // event types, so a runner for each is resolved whichever one the test drives.
+    EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
+      services, typeof(WorkCoordinationDbContext), typeof(ItemProgress), "wh_per_item_progress",
+      new PostgresUpsertStrategy());
+    EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
+      services, typeof(WorkCoordinationDbContext), typeof(ItemTrail), "wh_per_item_trail",
       new PostgresUpsertStrategy());
     services.AddMetrics();
     if (snapshots) {
@@ -663,6 +675,7 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
       ClaimWorker = claimWorker,
       PerspectiveWorker = perspectiveWorker,
       Completion = completion,
+      RunnerRewinds = runnerRewinds,
     };
   }
 
@@ -672,6 +685,8 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     public required ClaimWorker ClaimWorker { get; init; }
     public required PerspectiveWorker PerspectiveWorker { get; init; }
     public required SignalingCompletionChannel Completion { get; init; }
+    /// <summary>The rewinds the runners started (#2379): each restore or full replay they announce.</summary>
+    public required RunnerRewindTally RunnerRewinds { get; init; }
     private bool _started;
 
     public Task CompletionOf(Guid workId) => Completion.WaitForAsync(workId);
@@ -725,23 +740,28 @@ public class PerspectiveRewindLoopTests : EFCoreTestBase {
     /// Commits the events in one handler result, in the order given, each with its own id and amount, and stamps them as
     /// the commit-order stamper would: the first lands at the lowest version and commit sequence.
     /// </summary>
-    public async Task CommitAsync(NpgsqlConnection conn, Guid streamId, IReadOnlyList<(Guid EventId, decimal Amount)> events, CancellationToken ct) {
+    public Task CommitAsync(NpgsqlConnection conn, Guid streamId, IReadOnlyList<(Guid EventId, decimal Amount)> events, CancellationToken ct) =>
+      CommitEventsAsync(conn, streamId,
+        [.. events.Select(e => (e.EventId, (IEvent)new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = e.Amount }))],
+        ct);
+
+    /// <summary>Commits the events in one handler result, in the order given, each with its own id, and stamps them.</summary>
+    public async Task CommitEventsAsync(NpgsqlConnection conn, Guid streamId, IReadOnlyList<(Guid EventId, IEvent Payload)> events, CancellationToken ct) {
       var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
       var messages = new List<string>();
-      foreach (var (eventId, amount) in events) {
-        var payload = new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = amount };
+      foreach (var (eventId, payload) in events) {
         var envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(eventId),
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = [],
-          Payload = JsonSerializer.SerializeToElement(payload, jsonOptions.GetTypeInfo(typeof(SampleOrderCreatedEvent))),
+          Payload = JsonSerializer.SerializeToElement(payload, jsonOptions.GetTypeInfo(payload.GetType())),
         };
         var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
         messages.Add($$"""
           {
             "MessageId": "{{eventId}}",
             "Destination": "order-events",
-            "MessageType": "{{TypeNameFormatter.Format(typeof(SampleOrderCreatedEvent))}}",
+            "MessageType": "{{TypeNameFormatter.Format(payload.GetType())}}",
             "EnvelopeType": null,
             "Envelope": {{envelopeJson}},
             "Metadata": {},

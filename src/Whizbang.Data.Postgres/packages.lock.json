@@ -289,10 +289,14 @@
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
           "Microsoft.Extensions.Hosting": "[10.0.14, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )"
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Data.Schema": {
+        "type": "Project"
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
         "type": "Project"
       },
       "Microsoft.Extensions.DependencyInjection": {
@@ -561,10 +565,14 @@
           "Microsoft.Extensions.DependencyInjection": "[10.0.14, )",
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
-          "Microsoft.Extensions.Hosting": "[10.0.14, )"
+          "Microsoft.Extensions.Hosting": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Data.Schema": {
+        "type": "Project"
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
         "type": "Project"
       },
       "Microsoft.Extensions.DependencyInjection": {

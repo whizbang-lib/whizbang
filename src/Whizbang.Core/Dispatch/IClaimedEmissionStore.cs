@@ -27,9 +27,9 @@ namespace Whizbang.Core.Dispatch;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/publish-once</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_DistinctKeys_BothReturnTrueAndBothFireAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_EmitsClaimsWonMetricOnWinAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_EmitsClaimsLostMetricOnLossAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_DistinctKeys_BothReturnTrueAndBothFireAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_EmitsClaimsWonMetricOnWinAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_EmitsClaimsLostMetricOnLossAsync</tests>
 public interface IClaimedEmissionStore {
 
   /// <summary>
@@ -80,7 +80,7 @@ public interface IClaimedEmissionStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The held subset of <paramref name="claimKeys"/>, or <see langword="null"/> when the store cannot tell.</returns>
   /// <docs>fundamentals/dispatcher/publish-once</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:FindClaimed_Default_CannotTellAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:FindClaimed_Default_CannotTellAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:FindClaimed_ReturnsExactlyTheHeldKeysAsync</tests>
   Task<IReadOnlySet<string>?> FindClaimedAsync(IReadOnlyCollection<string> claimKeys, CancellationToken cancellationToken)
     => Task.FromResult<IReadOnlySet<string>?>(null);
@@ -97,7 +97,7 @@ public interface IClaimedEmissionStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns><see langword="true"/> when a held claim was released.</returns>
   /// <docs>fundamentals/dispatcher/publish-once</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:Release_Default_ReleasesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:Release_Default_ReleasesNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:Release_HeldKey_CanBeClaimedAgain_AndAFreeKeyReportsNothingReleasedAsync</tests>
   Task<bool> ReleaseAsync(string claimKey, CancellationToken cancellationToken)
     => Task.FromResult(false);
@@ -116,7 +116,7 @@ public interface IClaimedEmissionStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>How many claims were deleted.</returns>
   /// <docs>fundamentals/dispatcher/publish-once</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:Prune_Default_PrunesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:Prune_Default_PrunesNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:Prune_RemovesOnlyThePrefixesClaimsTakenBeforeTheCutoffAsync</tests>
   Task<int> PruneAsync(string keyPrefix, DateTimeOffset claimedBefore, CancellationToken cancellationToken)
     => Task.FromResult(0);
@@ -145,7 +145,7 @@ public interface IClaimedEmissionStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>How many claims were deleted.</returns>
   /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:PruneExpired_Default_PrunesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:PruneExpired_Default_PrunesNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:PruneExpired_RemovesExpiredClaims_AndKeepsRetainedPrefixesAndUnexpiredOnesAsync</tests>
   Task<int> PruneExpiredAsync(
       DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken)

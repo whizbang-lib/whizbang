@@ -11,7 +11,7 @@ namespace Whizbang.Core.Messaging;
 /// For batch operations requiring multiple queries in one scope, use <see cref="IEventStoreQueryFactory"/>.
 /// </summary>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
 public interface IScopedEventStoreQuery {
   /// <summary>
   /// Executes a query with auto-created scope.
@@ -20,7 +20,7 @@ public interface IScopedEventStoreQuery {
   /// <param name="queryBuilder">Function that builds the query using the scoped IEventStoreQuery.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Async enumerable of event store records.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IScopedEventStoreQuery_HasQueryAsyncMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:IScopedEventStoreQuery_HasQueryAsyncMethodAsync</tests>
   IAsyncEnumerable<EventStoreRecord> QueryAsync(
       Func<IEventStoreQuery, IQueryable<EventStoreRecord>> queryBuilder,
       CancellationToken cancellationToken = default);
@@ -33,7 +33,7 @@ public interface IScopedEventStoreQuery {
   /// <param name="queryExecutor">Function that executes the query and materializes results.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The query result.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IScopedEventStoreQuery_HasExecuteAsyncMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:IScopedEventStoreQuery_HasExecuteAsyncMethodAsync</tests>
   Task<TResult> ExecuteAsync<TResult>(
       Func<IEventStoreQuery, CancellationToken, Task<TResult>> queryExecutor,
       CancellationToken cancellationToken = default);
@@ -44,8 +44,8 @@ public interface IScopedEventStoreQuery {
 /// Use for batch operations where multiple queries should share one scope (and DbContext).
 /// </summary>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_IsInterfaceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_HasCreateScopedMethodAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_IsInterfaceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_HasCreateScopedMethodAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs:EventStoreQueryFactory_CreateScoped_SharesScopeAcrossQueriesAsync</tests>
 public interface IEventStoreQueryFactory {
   /// <summary>
@@ -53,7 +53,7 @@ public interface IEventStoreQueryFactory {
   /// IMPORTANT: Caller MUST dispose the returned object to release scope.
   /// </summary>
   /// <returns>Disposable wrapper containing the scoped event store query.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_HasCreateScopedMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:IEventStoreQueryFactory_HasCreateScopedMethodAsync</tests>
   EventStoreQueryScope CreateScoped();
 }
 
@@ -61,7 +61,7 @@ public interface IEventStoreQueryFactory {
 /// Disposable wrapper for scoped IEventStoreQuery instances.
 /// Ensures proper scope and DbContext disposal.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
 /// <remarks>
 /// Creates a new event store query scope wrapper.
 /// </remarks>
@@ -74,13 +74,13 @@ public sealed class EventStoreQueryScope(IServiceScope scope, IEventStoreQuery e
   /// The scoped IEventStoreQuery instance.
   /// Valid until Dispose() is called.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:EventStoreQueryScope_HasValuePropertyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:EventStoreQueryScope_HasValuePropertyAsync</tests>
   public IEventStoreQuery Value { get; } = ArgumentGuard.NotNull(eventStoreQuery);
 
   /// <summary>
   /// Disposes the service scope and releases the DbContext.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:EventStoreQueryScope_HasDisposeMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IScopedEventStoreQueryTests.cs:EventStoreQueryScope_HasDisposeMethodAsync</tests>
   public void Dispose() {
     _scope.Dispose();
   }

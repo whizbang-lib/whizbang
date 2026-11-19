@@ -26,8 +26,8 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/CoalescePolicyOptionsTests.cs:Defaults_MirrorTheAuditShipKnobsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/CoalescePolicyOptionsTests.cs:SlideSecondsZero_IsTheDisabledSentinelAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalescePolicyOptionsTests.cs:Defaults_MirrorTheAuditShipKnobsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalescePolicyOptionsTests.cs:SlideSecondsZero_IsTheDisabledSentinelAsync</tests>
 public sealed class CoalescePolicyOptions {
   /// <summary>
   /// Quiet window (seconds): pending singles for the group are folded once no new singles have

@@ -31,13 +31,11 @@ public static class MigrationSchemaQualifier {
     "wh_outbox",
     "wh_event_store",
     "wh_events", // Alias for wh_event_store
-    "wh_receptor_processing",
     "wh_perspective_cursors",
     "wh_perspective_events",
     "wh_message_associations",
     "wh_request_response",
     "wh_service_instances",
-    "wh_partition_assignments",
     "wh_message_deduplication",
     "wh_sequences",
     "wh_active_streams",

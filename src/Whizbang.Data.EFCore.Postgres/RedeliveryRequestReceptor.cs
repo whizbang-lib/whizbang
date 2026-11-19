@@ -40,6 +40,9 @@ public sealed partial class RedeliveryRequestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestRedeliveryCommand message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    // #2365: the answer joins the requester's trace; every bundle carries this span back, with the request's id.
+    using var span = IntegrityTracing.StartAnswer(IntegrityTracing.KIND_REDELIVERY, message.RequesterService,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
@@ -70,7 +73,17 @@ public sealed partial class RedeliveryRequestReceptor(
     var integrity = services.GetService<Microsoft.Extensions.Options.IOptions<StreamIntegrityOptions>>()?.Value;
     if (!message.OperatorRequested && !RepairTraffic.IsRepairEnabled(integrity)) {
       metrics?.RepairTrafficDiscarded.Add(1, new KeyValuePair<string, object?>("role", "origin_request"));
+      IntegrityTracing.SetOutcome(span, IntegrityTracing.OUTCOME_DECLINED);
       LogRepairRequestDeclined(logger, message.RequesterService, message.Topic);
+      return;
+    }
+    // #2362: a repair the integrity comparison asked for is served only while the pair applies the same rules to the
+    // types it shares; a request from a release that predates the fingerprint is refused too. An operator's request and
+    // a subscription backfill window are not judged by a digest, so they are served whatever the rules.
+    if (!message.OperatorRequested && message.BackfillId is null
+        && !IntegrityPairGuard.Resolve(services).Admit(message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint).IsAgreed) {
+      metrics?.RedeliveryRequestsIgnored.Add(1, new KeyValuePair<string, object?>("reason", "pair_halted"));
+      IntegrityTracing.SetOutcome(span, IntegrityTracing.OUTCOME_PAIR_HALTED);
       return;
     }
     var buildTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -102,6 +115,9 @@ public sealed partial class RedeliveryRequestReceptor(
         BundleStreamId = message.BackfillId,
         // #2268: a requester that files each child under its own stream is answered across streams by scope.
         BundleAcrossStreams = message.AcceptsStreamSpanningBundles,
+        // #2365: every bundle names the request it answers and carries the answer span's trace link.
+        RequestId = message.RequestId,
+        TraceParent = IntegrityTracing.CurrentTraceParent,
       };
 
       // #2008: only events of types this service owns are its own; the rest were received from their authors.
@@ -119,6 +135,7 @@ public sealed partial class RedeliveryRequestReceptor(
         return;
       }
       metrics?.RedeliveryEventsShipped.Add(totalShipped);
+      IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_EVENTS, totalShipped);
       metrics?.RedeliveryBuildDuration.Record(buildTimer.Elapsed.TotalSeconds);
       LogRedeliveryPublished(logger, totalShipped, totalComposites, message.RequesterService, message.Topic);
     } finally {
@@ -140,7 +157,7 @@ public sealed partial class RedeliveryRequestReceptor(
       RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
     // #2311: every selection publishes into one answer, whose last bundle says the answer ends with it.
     var tally = new OrdinaryTally {
-      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly),
+      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, _answersWholeType(message), serve.OriginServiceId, message.StateOnly),
     };
     if (message.EventIds is { Count: > 0 } named) {
       // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
@@ -269,7 +286,7 @@ public sealed partial class RedeliveryRequestReceptor(
     var composites = 0;
     var exhausted = false;
     // #2311: the window's pages publish into one answer, whose last bundle says the answer ends with it.
-    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly);
+    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, _answersWholeType(message), serve.OriginServiceId, message.StateOnly);
     while (selected < serve.MaxEvents) {
       var want = Math.Min(serve.PageSize, serve.MaxEvents - selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
@@ -321,6 +338,13 @@ public sealed partial class RedeliveryRequestReceptor(
     serve.Metrics?.RedeliveryEventsShipped.Add(shipped);
     LogWindowAnswered(logger, message.BackfillWindow, selected, composites, message.RequesterService, !exhausted);
   }
+
+  /// <summary>
+  /// #2341: the request named no streams and no events, so its answer covers the whole of each type it carries, and only
+  /// such an answer may mark a type lane as one repair cannot change.
+  /// </summary>
+  private static bool _answersWholeType(RequestRedeliveryCommand message) =>
+    message.StreamIds is not { Count: > 0 } && message.EventIds is not { Count: > 0 };
 
   private static List<RedeliveryEvent> _owned(IReadOnlyList<RedeliveryEvent> page, Serve serve) =>
     [.. page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, serve.OwnedDomains))];

@@ -152,12 +152,12 @@ public class EnumPhysicalFieldGenerationTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangModelBuilderExtensions.g.cs") ?? "";
 
     var lines = generated.Split('\n').Select(l => l.Trim()).ToList();
-    var stage = lines.IndexOf("entity.Property<TestApp.Stage>(\"stage\")");
+    var stage = lines.IndexOf("entity.Property<global::TestApp.Stage>(\"stage\")");
     await Assert.That(stage).IsGreaterThan(-1);
     await Assert.That(lines[stage + 2]).IsEqualTo(".HasColumnType(\"integer\")");
     await Assert.That(lines[stage + 3]).IsEqualTo(".HasConversion<global::System.Int32>();")
       .Because("Without an explicit conversion a text column made EF store the enum's name; the column holds the number.");
-    var size = lines.IndexOf("entity.Property<TestApp.Tiny?>(\"size\")");
+    var size = lines.IndexOf("entity.Property<global::TestApp.Tiny?>(\"size\")");
     await Assert.That(size).IsGreaterThan(-1);
     await Assert.That(lines[size + 2]).IsEqualTo(".HasColumnType(\"smallint\")");
     await Assert.That(lines[size + 3]).IsEqualTo(".HasConversion<global::System.Int16>();");

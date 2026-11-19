@@ -138,9 +138,8 @@ jobs:
   # Runner selection (#1762)
   #
   # Chooses where the build, test and analysis jobs run, per job class: an idle machine in the team's
-  # self-hosted pool (trusted runs only), then Blacksmith when the CI_BLACKSMITH_RUNNER variable names a
-  # label, then ubuntu-latest. The rules are .github/scripts/Select-CiRunner.ps1, tested by script-tests;
-  # setup, the label convention and the variables are in .github/WORKFLOWS.md, "Runner selection".
+  # self-hosted pool (trusted runs only), else ubuntu-latest. The rules are
+  # .github/scripts/Select-CiRunner.ps1, tested by script-tests; setup, the label convention and the variables are in .github/WORKFLOWS.md, "Runner selection".
   #
   # This job can never hold CI up or turn it red. Every step continues on error, the job does too, it is not
   # in ci-result's needs, and every output defaults to "ubuntu-latest" when the step wrote nothing. Each
@@ -156,7 +155,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
-      actions: read   # this repository's queued jobs, counted against the pool and the Blacksmith limit
+      actions: read   # this repository's queued jobs, counted against the pool
     env:
       HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
     outputs:
@@ -196,14 +195,6 @@ jobs:
         env:
           RUNNER_POOL_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ github.token }}
-          CI_BLACKSMITH_RUNNER: ${{ vars.CI_BLACKSMITH_RUNNER }}
-          CI_BLACKSMITH_RUNNER_ANY_OS: ${{ vars.CI_BLACKSMITH_RUNNER_ANY_OS }}
-          CI_BLACKSMITH_RUNNER_LINUX: ${{ vars.CI_BLACKSMITH_RUNNER_LINUX }}
-          CI_BLACKSMITH_RUNNER_COMPILE: ${{ vars.CI_BLACKSMITH_RUNNER_COMPILE }}
-          CI_BLACKSMITH_RUNNER_ANALYZE: ${{ vars.CI_BLACKSMITH_RUNNER_ANALYZE }}
-          CI_BLACKSMITH_RUNNER_LINUX_DOCKER: ${{ vars.CI_BLACKSMITH_RUNNER_LINUX_DOCKER }}
-          CI_BLACKSMITH_FORKS: ${{ vars.CI_BLACKSMITH_FORKS }}
-          CI_BLACKSMITH_MAX_QUEUED: ${{ vars.CI_BLACKSMITH_MAX_QUEUED }}
           EVENT: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
@@ -938,7 +929,15 @@ jobs:
       # are analyzed for net11.0 alone: they build net10.0 too, the same source twice, which doubles the memory
       # without adding a finding, and the net10.0 compile job below already proves net10.0 builds.
       - name: Build every project with the analyzers on
-        run: dotnet build --no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:WhizbangReleaseTargetFrameworks=net11.0
+        env:
+          # The compiler server runs server GC and holds on to what one project's compile grew to while it compiles the
+          # next, so the largest test projects stack: a cold full build peaked at 19.3 GB. Told to conserve memory it
+          # compacts instead, and the same build peaked at 12.8 GB (#2388).
+          DOTNET_GCConserveMemory: '7'
+        run: |
+          BUILD_COMMAND="$RUNNER_TEMP/build-command"
+          printf '%s\n' dotnet build --no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false -p:WhizbangReleaseTargetFrameworks=net11.0 > "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile "$BUILD_COMMAND"
 
   # Develop on .NET 11, release for .NET 10 and .NET 11 (#2135). Day to day the tests, samples and tools target
   # net11.0 only (the libraries build both), so a .NET 11-only API in them would otherwise surface first on a
@@ -980,7 +979,15 @@ jobs:
       # node: with two, the hosted runner ran out of memory and was shut down mid-build ("The runner has received a
       # shutdown signal") on three runs in a row, as the quality build did (#2135).
       - name: Build every project for net10.0
-        run: dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false
+        env:
+          # The compiler server runs server GC and holds on to what one project's compile grew to while it compiles the
+          # next, so the largest test projects stack: a cold full build peaked at 19.3 GB. Told to conserve memory it
+          # compacts instead, and the same build peaked at 12.8 GB (#2388).
+          DOTNET_GCConserveMemory: '7'
+        run: |
+          BUILD_COMMAND="$RUNNER_TEMP/build-command"
+          printf '%s\n' dotnet build --no-restore --configuration Release -p:WhizbangReleaseBuild=true -p:WhizbangReleaseTargetFrameworks=net10.0 -p:RunAnalyzers=false -mt:false -maxcpucount:1 -nodeReuse:false > "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile "$BUILD_COMMAND"
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an

@@ -64,7 +64,7 @@ namespace Whizbang.Core;
 /// <docs>fundamentals/receptors/receptors#manual-construction</docs>
 /// <docs>fundamentals/receptors/receptors#registering-a-hand-built-receptor</docs>
 /// <docs>fundamentals/receptors/receptors#unregistered-suppressed-receptor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/SuppressedReceptorRouteTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SuppressedReceptorRouteTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorRegistrationSuppressionTests.cs</tests>
 [AttributeUsage(
     AttributeTargets.Class |

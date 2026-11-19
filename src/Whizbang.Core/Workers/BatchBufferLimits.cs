@@ -12,7 +12,7 @@ namespace Whizbang.Core.Workers;
 /// <c>Whizbang:BatchBuffer</c>. One bound per process, shared by the outbox and the inbox.
 /// </summary>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferLimitsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferLimitsTests.cs</tests>
 public sealed class BatchBufferOptions {
   /// <summary>The configuration section.</summary>
   public const string SECTION = "Whizbang:BatchBuffer";
@@ -54,7 +54,7 @@ public sealed class BatchBufferOptions {
 /// and the work coordinator gate. Each derived value carries its inputs to the startup settings report.
 /// </summary>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BatchBufferLimitsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferLimitsTests.cs</tests>
 public sealed class BatchBufferLimits : IDerivedSettingSource {
   private const string MAX_BYTES_KEY = BatchBufferOptions.SECTION + ":MaxBufferedBytes";
   private const string RESERVE_NAME = BatchBufferOptions.SECTION + ":InteractiveReserveFraction";
@@ -122,7 +122,7 @@ public sealed class BatchBufferLimits : IDerivedSettingSource {
 /// the code values.
 /// </summary>
 /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OutboxBatchStrategyRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OutboxBatchStrategyRegistrationTests.cs</tests>
 internal sealed class ConfigureBatchBufferOptions(IConfiguration? configuration) : IConfigureOptions<BatchBufferOptions> {
   public void Configure(BatchBufferOptions options) {
     if (configuration is null) {

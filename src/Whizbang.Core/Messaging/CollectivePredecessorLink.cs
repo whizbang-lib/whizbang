@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
 public static class CollectivePredecessorLink {
   /// <summary>
   /// The type a linked message is named by when it is a predecessor, in the form the event store records event
@@ -29,8 +29,8 @@ public static class CollectivePredecessorLink {
   /// </summary>
   /// <param name="payload">The message being published.</param>
   /// <returns>The predecessor type name, or null.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs:TypeFor_AKeyedCollective_IsItsEventStoreTypeNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs:TypeFor_AnythingButAKeyedCollectiveBase_IsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs:TypeFor_AKeyedCollective_IsItsEventStoreTypeNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs:TypeFor_AnythingButAKeyedCollectiveBase_IsNullAsync</tests>
   public static string? TypeFor(object? payload) =>
     payload is CollectiveEventBase { OrderingKey: { } key } && !string.IsNullOrWhiteSpace(key)
       ? TypeNameFormatter.Format(payload.GetType())

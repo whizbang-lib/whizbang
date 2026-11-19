@@ -21,9 +21,9 @@ public interface IMessagePublishStrategy {
   /// Checks if the transport is ready to accept messages.
   /// Implementations should check transport connectivity and return false if not ready.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_DefaultIsReadyAsync_ShouldReturnTrueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_CustomIsReadyAsync_CanBeOverriddenAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_IsReadyAsync_RespectsCancellationTokenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_DefaultIsReadyAsync_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_CustomIsReadyAsync_CanBeOverriddenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_IsReadyAsync_RespectsCancellationTokenAsync</tests>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>True if the transport is ready to accept messages, false otherwise</returns>
   Task<bool> IsReadyAsync(CancellationToken cancellationToken = default);
@@ -32,7 +32,7 @@ public interface IMessagePublishStrategy {
   /// Publishes a single outbox message to the configured transport.
   /// Called by the publish paths of OutboxDrainWorker and OutboxPublishWorker.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_Interface_ShouldHavePublishAsyncMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_Interface_ShouldHavePublishAsyncMethodAsync</tests>
   /// <param name="work">The outbox work item containing the message to publish</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Result indicating success/failure and any error details</returns>
@@ -42,8 +42,8 @@ public interface IMessagePublishStrategy {
   /// Whether this strategy supports bulk publishing.
   /// When true, PublishBatchAsync can be called to publish multiple messages in a single transport operation.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
   bool SupportsBulkPublish => false;
 
   /// <summary>False only for the framework fallback registered when no transport is present. Workers
@@ -55,14 +55,14 @@ public interface IMessagePublishStrategy {
   /// Groups messages by resolved destination and uses bulk transport when available.
   /// Returns per-message results to enable partial failure handling.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
   /// <param name="workItems">The batch of outbox work items to publish</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Per-message results indicating success or failure</returns>
@@ -76,14 +76,14 @@ public interface IMessagePublishStrategy {
 /// Result of a message publish operation.
 /// Contains the message ID, success status, completed processing stages, and any error details.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
 public record MessagePublishResult {
   /// <summary>
   /// The message ID that was published (or attempted to publish).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public required Guid MessageId { get; init; }
 
   /// <summary>
@@ -91,8 +91,8 @@ public record MessagePublishResult {
   /// True = message was successfully published to transport.
   /// False = publish failed (Error will contain details).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public required bool Success { get; init; }
 
   /// <summary>
@@ -100,16 +100,16 @@ public record MessagePublishResult {
   /// For successful publish: MessageProcessingStatus.Published
   /// For partial completion: MessageProcessingStatus.Stored (already stored, publish failed)
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public required MessageProcessingStatus CompletedStatus { get; init; }
 
   /// <summary>
   /// Error message if Success is false. Null if successful.
   /// Contains exception details or transport-specific error information.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public string? Error { get; init; }
 
   /// <summary>
@@ -117,8 +117,8 @@ public record MessagePublishResult {
   /// Enables typed filtering and handling of different failure scenarios.
   /// Defaults to Unknown for failures, None for successes.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
 
   /// <summary>
@@ -126,14 +126,14 @@ public record MessagePublishResult {
   /// saying why, so a failed message never reaches the failure record or the dead-letter queue
   /// without an error.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_NoError_PublishFailedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_CarriesTheResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_NoError_PublishFailedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_CarriesTheResultAsync</tests>
   internal string ErrorText => Error ?? "publish failed";
 
   /// <summary>The failure record for a message this result reports as not published.</summary>
   /// <param name="messageId">The outbox message the result is for.</param>
   /// <returns>The failure, carrying this result's status, reason and <see cref="ErrorText"/>.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_CarriesTheResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_CarriesTheResultAsync</tests>
   internal MessageFailure ToFailure(Guid messageId) => new() {
     MessageId = messageId,
     CompletedStatus = CompletedStatus,

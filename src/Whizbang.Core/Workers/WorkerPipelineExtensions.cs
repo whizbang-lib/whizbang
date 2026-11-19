@@ -37,8 +37,8 @@ public static class WorkerPipelineExtensions {
   /// </summary>
   /// <docs>operations/workers/housekeeping-arbitration</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
       new Whizbang.Core.Observability.HousekeepingMetrics(
@@ -79,7 +79,7 @@ public static class WorkerPipelineExtensions {
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
   /// <docs>operations/deployment/troubleshooting#workers-not-wired</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A registration list: each branch registers one worker, and the order is the wiring the documentation describes.")]
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
@@ -456,6 +456,17 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IIntegritySweepRunner>(sp => sp.GetRequiredService<IntegrityAuditWorker>());
     services.TryAddSingleton<IntegritySweepScheduleState>();
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityGapTracker>();
+    // #2362: this service's eligibility rules, from the generated catalog and the stream lifecycle settings, and the pair
+    // guard every integrity receptor asks before comparing, repairing or redelivering.
+    services.TryAddSingleton<Whizbang.Core.Messaging.IRuleFingerprintSource>(sp => new Whizbang.Core.Messaging.CatalogRuleFingerprintSource(
+      sp.GetService<Whizbang.Core.IMessageTypeCatalog>() ?? Whizbang.Core.NullMessageTypeCatalog.Instance,
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()));
+    services.TryAddSingleton(sp => new Whizbang.Core.Messaging.IntegrityPairGuard(
+      sp.GetRequiredService<Whizbang.Core.Messaging.IRuleFingerprintSource>(),
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Messaging.IntegrityPairGuard>>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetService<Whizbang.Core.Observability.WhizbangMetrics>()));
     services.TryAddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();

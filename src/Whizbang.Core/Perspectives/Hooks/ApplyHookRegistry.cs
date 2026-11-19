@@ -22,9 +22,9 @@ public delegate IReadOnlyList<ApplyHookOp> ApplyHookProducer(ApplyHookContext co
 /// strongly-typed <c>Register</c> entry points that build the producers.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:BaseClassMarker_FiresForDerivedModelAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:BaseClassMarker_FiresForDerivedModelAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync</tests>
 public abstract class MarkerHookRegistryBase {
   private readonly List<HookRegistration> _registrations = [];
   private readonly Dictionary<string, int> _keyIndex = new(StringComparer.Ordinal);
@@ -85,9 +85,9 @@ public abstract class MarkerHookRegistryBase {
 /// Registry of <see cref="ICollectiveApplyHook{TMarker}"/> hooks for the collective (set-based UPDATE) path.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ResolveAfterFurtherRegistration_SeesNewHooksAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:ResolveAfterFurtherRegistration_SeesNewHooksAsync</tests>
 public sealed class CollectiveApplyHookRegistry : MarkerHookRegistryBase {
   /// <summary>
   /// Register a collective hook against marker <typeparamref name="TMarker"/>. Pass a <paramref name="key"/> to

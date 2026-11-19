@@ -67,7 +67,8 @@ public static partial class ConcurrentIndexBuild {
   /// <summary>
   /// The framework indexes built this way: the paced backfill's read of one type in commit order (#2092), the
   /// paced repair drain's count of the answers it is waiting for (#2184), and the claim's held-lanes walk over the inbox,
-  /// rebuilt to cover chain_emitted_at in place of 167's index (#2345). The first one's predicate also names
+  /// rebuilt to cover chain_emitted_at in place of 167's index (#2345), and the inbox leases by expiry in place of 162's
+  /// priority-led index, so the claim reads only the leases that ran out (#2345). The first one's predicate also names
   /// <c>event_type IS NOT NULL</c>, which every row satisfies (the column is NOT NULL) but only a query filtering on the
   /// type implies, so the planner never offers it to a commit-sequence probe that names no type.
   /// </summary>
@@ -75,6 +76,7 @@ public static partial class ConcurrentIndexBuild {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityAnswerPendingCountSqlTests.cs:Count_OnceTheIndexIsBuilt_IsAnsweredFromItAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkPlanShapeTests.HeldInbox.cs:ClaimWork_ReofferingHeldInbox_WalksTheCoveringIndex_IndexOnlyAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ConcurrentIndexBuildTests.Replaces.cs:TheHeldLanesIndex_IsRebuiltCovering_AndTheInboxStateKeepsItsIndexCountAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkPlanShapeTests.ExpiredLeases.cs:ClaimWork_RenewingExpiredLeases_ReadsThemThroughTheLeaseOrderIndexAsync</tests>
   public static IReadOnlyList<ConcurrentIndexDefinition> FrameworkIndexes { get; } = [
     new ConcurrentIndexDefinition(
       "wh_event_store",
@@ -97,6 +99,13 @@ public static partial class ConcurrentIndexBuild {
       "processed_at IS NULL",
       "Pending inbox rows by holder, priority bucket, kind, class, stream and arrival (#2345): claim_work's held-lanes walk reads every column it tests from here, chain_emitted_at included, so each probe is index-only and a held row it passes over costs no heap page. Replaces idx_inbox_state_held_lanes (167). Built concurrently after the migrations.",
       Replaces: "idx_inbox_state_held_lanes"),
+    new ConcurrentIndexDefinition(
+      "wh_inbox_state",
+      "idx_inbox_state_lease_order",
+      "(lease_expiry, received_at, message_id) INCLUDE (instance_id, priority, is_event, stream_id, partition_number, scheduled_for)",
+      "processed_at IS NULL AND instance_id IS NOT NULL",
+      "Leased pending inbox rows by lease expiry (#2345): the claim reaches only the leases that ran out, in the order it takes them, for the owner's renewal of its own, acquisition's two expired lanes and the expired guard. Replaces idx_inbox_state_expired (162), whose leading priority key made each of those reads walk every held row of the band. Built concurrently after the migrations.",
+      Replaces: "idx_inbox_state_expired"),
   ];
 
   /// <summary>Ensures <paramref name="index"/> exists in <paramref name="schema"/> and is valid, building it concurrently.</summary>

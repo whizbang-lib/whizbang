@@ -116,9 +116,11 @@ the tags that were already broken, each with a reason.
 
 ## Projects
 
-### Unit (37)
+### Unit (41)
 
-`tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
+`tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`,
+`Whizbang.Core.Unit.Dispatcher.Tests`, `Whizbang.Core.Unit.Messaging.Tests`, `Whizbang.Core.Unit.Perspectives.Tests`,
+`Whizbang.Core.Unit.Workers.Tests`, `Whizbang.Data.Schema.Tests`,
 `Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
@@ -127,6 +129,16 @@ the tags that were already broken, each with a reason.
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
 `Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.HotChocolate.Ids.Tests`, `Whizbang.Transports.Mutations.Tests`,
 `Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
+
+The unit tests of `Whizbang.Core` are split across `Whizbang.Core.Tests` and the four `Whizbang.Core.Unit.*.Tests`
+projects by folder, so that no one test compile dominates the build's memory (#2392): Dispatcher (Dispatcher, Security,
+Dispatch, SystemEvents, Audit), Messaging (Messaging, Tags, Lifecycle, Transports), Perspectives (Perspectives, Lenses,
+MultiStream, Scoping, Archival, Temporal), Workers (Workers, Routing, Startup, Capabilities, Health, Schema), and
+`Whizbang.Core.Tests` for the rest. Namespaces stay `Whizbang.Core.Tests.*`. The `Unit` in the name keeps the assembly
+name, and with it the namespace of its generated code, out of `Whizbang.Core`'s own namespaces (`Whizbang.Core.Dispatcher`
+is a type, and `Whizbang.Core.Perspectives.System` would capture the generated code's `System.` names). A helper
+used by more than one of them has one home and is linked into the others (`<Compile Include ... Link>`); a file that
+holds tests is never linked, so a test that needs another test class's members lives in that class's project.
 
 `samples/ECommerce/`: `ECommerce.BFF.API.Tests`, `ECommerce.Contracts.Tests`,
 `ECommerce.IntegrationTests` (in-memory checks;
@@ -191,3 +203,22 @@ outside `Whizbang.slnx`, with the reason.
 Every test project references `Microsoft.Testing.Extensions.CodeCoverage`; each CI suite collects line
 and branch coverage per test module (`Run-Tests.ps1 -ModuleCoverage`) and the quality job merges every
 suite's `coverage-*` artifact. Settings: `codecoverage.config` and `codecoverage.runsettings`.
+
+## Hang dumps
+
+Every test project except the benchmarks references `Microsoft.Testing.Extensions.HangDump`, through
+`Directory.Build.props` (and `samples/ECommerce/Directory.Build.props`), keyed on `WhizbangTestType`, so a
+new project gets it without asking. Each CI suite runs with `Run-Tests.ps1 -HangDumpTimeout` (10 minutes for
+the 20 and 30 minute suites, 15 for the 45 minute ones): a module with no test activity for that long prints
+the tests still running, writes `dotnet_<pid>_hang.dmp` and the test list `dotnet_<pid>_hang.log` to its
+`TestResults` (the process is `dotnet` under `dotnet test`), and is killed, so the suite fails with a dump instead of holding the job until its limit
+cancels it with nothing to show (#2402). The suite uploads them as `hangdump-<suite>-<attempt>` when it
+fails or is canceled; open the dump with `dotnet-dump analyze` (`clrstack -all`, `dumpasync`).
+
+The timeout counts time with no test activity, not the module's whole run, so it stays far above any wait
+a passing test makes and at most half the job's limit, so a module that starts late still dumps and uploads
+before the job is canceled. `.github/scripts/tests/TestSuiteHangDump.Tests.ps1` fails a suite that does
+not pass the timeout, passes one outside those bounds, or does not upload the dump, and runs a module whose
+test never completes (`shapes/HangRunner`) under `dotnet test` to prove the dump fires. That proof matters: at
+2.0.2 the extension accepted the options under `dotnet test` and never dumped; 2.2.3 does. 2.3.2 and later
+abort the TUnit version in use (exit 134), so a bump of the extension or the platform has to pass that test.

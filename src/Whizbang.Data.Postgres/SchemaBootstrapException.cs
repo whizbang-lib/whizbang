@@ -15,7 +15,7 @@ namespace Whizbang.Data.Postgres;
 /// </remarks>
 /// <docs>operations/diagnostics/error-reference#schema-bootstrap-exception</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaBootstrapPhaseTests.cs:ANonTransientFailure_FailsStartupLoudly_NamingWhatFailedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Schema/SchemaBootstrapRetryTests.cs:TheStandardConstructors_NameNoSchemaOrStepAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaBootstrapRetryTests.cs:TheStandardConstructors_NameNoSchemaOrStepAsync</tests>
 public sealed class SchemaBootstrapException : Exception {
   private const string UNKNOWN = "(unknown)";
 

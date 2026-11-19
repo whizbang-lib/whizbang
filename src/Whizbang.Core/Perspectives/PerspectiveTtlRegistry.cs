@@ -63,7 +63,7 @@ public static class PerspectiveTtlRegistry {
   /// <c>(true, null)</c> restores pure registered behavior.
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveTtlRegistryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveTtlRegistryTests.cs</tests>
   public static void ApplyRuntimeConfiguration(bool enabled, IReadOnlyDictionary<string, int?>? overrides) {
     _enabled = enabled;
     _runtimeOverrides = overrides is null or { Count: 0 }

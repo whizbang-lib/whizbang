@@ -187,7 +187,7 @@ public interface ISyncEventTracker {
   /// <param name="perspectiveName">The perspective, or the collective sink's name, that applied them.</param>
   /// <remarks>The default does nothing: a tracker with no applied signal leaves the answer to the ledger.</remarks>
   /// <docs>fundamentals/perspectives/perspective-sync#cross-service-wake</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
   void MarkApplied(IEnumerable<Guid> eventIds, string perspectiveName) { }
 
   /// <summary>
@@ -201,7 +201,7 @@ public interface ISyncEventTracker {
   /// <returns>A task that completes when the apply is marked, or is canceled with the token.</returns>
   /// <remarks>The default never completes on its own: it waits for the token.</remarks>
   /// <docs>fundamentals/perspectives/perspective-sync#cross-service-wake</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
   Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) =>
     Task.Delay(Timeout.Infinite, cancellationToken);
 }

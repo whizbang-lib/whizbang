@@ -23,7 +23,7 @@ namespace Whizbang.Core.Security;
 /// <para>All operations are AOT-compatible with no reflection.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#default-provider</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
 /// <remarks>
 /// Creates a new DefaultMessageSecurityContextProvider.
 /// </remarks>

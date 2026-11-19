@@ -2933,7 +2933,7 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("model = model with {");
     await Assert.That(runnerSource).Contains("Status = default!");
-    await Assert.That(runnerSource).Contains("Embedding = System.Array.Empty<float>()");
+    await Assert.That(runnerSource).Contains("Embedding = global::System.Array.Empty<float>()");
     await Assert.That(runnerSource).Contains("UpsertWithPhysicalFieldsAsync");
   }
 
@@ -2985,7 +2985,7 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("model.Status = default!;");
-    await Assert.That(runnerSource).Contains("model.Embedding = System.Array.Empty<float>();");
+    await Assert.That(runnerSource).Contains("model.Embedding = global::System.Array.Empty<float>();");
     await Assert.That(runnerSource).DoesNotContain("model = model with {");
   }
 

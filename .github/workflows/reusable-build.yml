@@ -87,6 +87,10 @@ jobs:
           # directly into a run block — the shell sees only the variable, not the value.
           VERSION: ${{ inputs.version }}
           RUN_ANALYZERS: ${{ inputs.run-analyzers }}
+          # The compiler server runs server GC and holds on to what one project's compile grew to while it compiles the
+          # next, so the largest test projects stack: a cold full build peaked at 19.3 GB. Told to conserve memory it
+          # compacts instead, and the same build peaked at 12.8 GB (#2388).
+          DOTNET_GCConserveMemory: '7'
         run: |
           # One build node and no -mt: the libraries build net10.0 and net11.0, and with two nodes the hosted runner ran
           # out of memory and was shut down mid-build in the merge queue (#2135), as the other full builds were.
@@ -94,7 +98,15 @@ jobs:
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
           # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
           if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi
-          dotnet build "${BUILD_ARGS[@]}"
+          # A hosted runner has 16 GB, and a build that needs more hangs until the job times out with no log (#2388).
+          # The guard samples the build's processes and the compiler server while the build runs and fails a build whose
+          # peak passes 13 GB, 3 GB under the runner, so growth shows up as a failed check while there is still room
+          # to find it. Measured cold on develop after #2388: this build 9.7 GB with the analyzers off, 11.6 GB as the
+          # Analyzers job runs it. The command goes through a file,
+          # one argument a line, because pwsh -File would split an argument such as -mt:false.
+          BUILD_COMMAND="$RUNNER_TEMP/build-command"
+          printf '%s\n' dotnet build "${BUILD_ARGS[@]}" > "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile "$BUILD_COMMAND"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
       # stays off the build -> test-suites critical path.
@@ -166,7 +178,7 @@ jobs:
           # drops hidden files unless told otherwise. The mapping names THIS job's checkout, so every
           # test job that downloads the build rewrites it first with
           # .github/scripts/Update-CoverageSourceRoots.ps1, whatever runner it lands on: a GitHub-hosted
-          # build and Blacksmith suites check out at different paths (#1948), and
+          # build and self-hosted suites check out at different paths (#1948), and
           # TestSuiteSourceRoots.Tests.ps1 fails a suite that skips it. The only other hidden files
           # under these paths are obj/'s generated AssemblyAttributes sources.
           include-hidden-files: true

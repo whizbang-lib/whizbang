@@ -16,7 +16,7 @@ namespace Whizbang.Core.Routing;
 /// (defaults locked).
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageWiringTests.cs</tests>
 internal sealed class PoisonMessageOptionsConfigurationBinder(IConfiguration? configuration)
   : IPostConfigureOptions<PoisonMessageOptions> {
 

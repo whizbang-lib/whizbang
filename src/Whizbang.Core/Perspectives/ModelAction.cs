@@ -45,7 +45,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ModelActionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ModelActionTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRunnerModelActionTests.cs</tests>
 public enum ModelAction {
   /// <summary>

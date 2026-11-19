@@ -55,6 +55,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"]
@@ -83,7 +84,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(transport.Published).IsEmpty()
       .Because("comparison is per-bucket — absence means nothing to audit, not an empty manifest.");
@@ -361,6 +362,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -397,6 +399,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.Consumed, Contracts"],
@@ -427,6 +430,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventNamespaces = ["contracts.jobs"],
@@ -448,6 +452,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -470,6 +475,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -497,6 +503,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -524,6 +531,7 @@ public partial class IntegrityManifestReceptorTests {
 
     // A enters its compute synchronously and parks INSIDE the answer.
     var taskA = receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "svc-a",
       Topic = "t",
       EventTypes = ["A"],
@@ -534,6 +542,7 @@ public partial class IntegrityManifestReceptorTests {
 
     // B starts while A holds the gate: without the gate it would enter its compute right here.
     var taskB = receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "svc-b",
       Topic = "t",
       EventTypes = ["B"],
@@ -562,6 +571,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
 
     await receptor.HandleAsync(new IntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.OriginId,
       OriginServiceId = coordinator.OriginId,
       OriginServiceName = "origin-svc",
@@ -593,6 +603,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     IntegrityManifest manifest(string tag) => new() {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.OriginId,
       OriginServiceId = coordinator.OriginId,
       OriginServiceName = "origin-svc",
@@ -1505,7 +1516,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     var manifest = _deserializeManifest(transport.Published[0].Envelope);
     await Assert.That(manifest.OriginGeneration).IsEqualTo(7L)
@@ -1539,6 +1550,120 @@ public partial class IntegrityManifestReceptorTests {
       .Because("no repairs from a comparison aligned to the old world");
     await Assert.That(dispatcher.Published).IsEmpty()
       .Because("and no divergence reports — deliberate change is not damage");
+  }
+
+  private static async Task<List<string>> _sealsLoweredForAsync(string? reason) {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var lowered = new List<string>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.SealLowered.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      foreach (var tag in tags) {
+        if (tag.Key == "reason" && value > 0) {
+          lowered.Add((string)tag.Value!);
+        }
+      }
+    });
+    listener.Start();
+    var coordinator = new AuditCoordinator { SealGenerationCoherent = false };
+    var sp = _provider(coordinator, new CaptureTransport(), metrics: metrics);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(TrackedGuid.New().Value, 11, 21, 2)]) with {
+      OriginGeneration = 9,
+      HistoryMovedReason = reason,
+    });
+    listener.RecordObservableInstruments();
+    return lowered;
+  }
+
+  /// <summary>
+  /// #2365: the guard lowering the seal is counted by the reason the origin's answer gives for why its history moved, and
+  /// as unknown when an origin on an older release gives none.
+  /// </summary>
+  [Test]
+  [Arguments("rewrite", "rewrite")]
+  [Arguments("rule_change", "rule_change")]
+  [Arguments(null, "unknown")]
+  [Arguments("a-reason-from-a-newer-release", "unknown")]
+  public async Task ManifestReceptor_GenerationChanged_CountsTheSealLoweredByTheOriginsReasonAsync(string? reason, string counted) {
+    await Assert.That(await _sealsLoweredForAsync(reason)).IsEquivalentTo([counted]);
+  }
+
+  /// <summary>
+  /// #2365, owner decision (a): a comparison that finds deficits counts the buckets a redelivery had filled that are short
+  /// again (the ledger answers, once per answer).
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_DeficitsAfterAnAnswer_AreCountedAsRedeliveredThenReapedAsync() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    long counted = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.RedeliveredThenReaped.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref counted, value));
+    listener.Start();
+    var coordinator = new AuditCoordinator { ShortAfterAnswer = 2 };
+    var (s1, s2) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.ReceivedDigests = [];
+    var sp = _provider(coordinator, new CaptureTransport(), metrics: metrics);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(s1, 11, 21, 2), _digest(s2, 12, 22, 3)]));
+    listener.RecordObservableInstruments();
+
+    await Assert.That(coordinator.ShortAfterAnswerKeys.Select(k => k.StreamId).Order().ToList())
+      .IsEquivalentTo(new[] { s1, s2 }.Order().ToList()).Because("the comparison's deficits are asked about");
+    await Assert.That(counted).IsEqualTo(2L);
+  }
+
+  /// <summary>
+  /// #2365: an answer to an asker behind this origin's generation says why history moved: <c>rule_change</c> when the
+  /// eligibility rules changed after the generation the asker knows, <c>rewrite</c> otherwise; an ask that names no
+  /// generation is told nothing.
+  /// </summary>
+  [Test]
+  [Arguments(9L, 10L, "rule_change")]
+  [Arguments(10L, 10L, "rewrite")]
+  [Arguments(9L, null, "rewrite")]
+  [Arguments(12L, 10L, null)]
+  [Arguments(null, 10L, null)]
+  public async Task RequestReceptor_SaysWhyHistoryMoved_SinceTheGenerationTheAskerKnowsAsync(
+      long? known, long? rulesChangedAt, string? reason) {
+    var coordinator = new AuditCoordinator {
+      OriginGeneration = 12,
+      OwnDigests = [_digest(TrackedGuid.New().Value, 11, 21, 2)],
+      RulesChangedAtGeneration = rulesChangedAt,
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      KnownOriginGeneration = known,
+    });
+
+    var manifest = _deserializeManifest(transport.Published.Single().Envelope);
+    await Assert.That(manifest.HistoryMovedReason).IsEqualTo(reason);
+    await Assert.That(coordinator.RulesNotedAtGeneration).IsEqualTo(12L)
+      .Because("the origin notes its rules beside the generation it answers with");
   }
 
   [Test]
@@ -1757,6 +1882,7 @@ public partial class IntegrityManifestReceptorTests {
   // ── #2107: one audit window is capped; the asker continues from where it stopped ───────────
 
   private static RequestIntegrityManifest _windowedAsk(long since, long? until = null, ManifestLevel level = ManifestLevel.Types) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     RequesterService = "auditor-svc",
     Topic = "inbox",
     EventTypes = ["Contracts.TypeX"],
@@ -2105,6 +2231,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -2138,6 +2265,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       Level = ManifestLevel.Types,
@@ -2169,6 +2297,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       Level = ManifestLevel.Streams,
@@ -2201,6 +2330,7 @@ public partial class IntegrityManifestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       RequesterService = "auditor-svc",
       Topic = "inbox",
       EventTypes = ["Contracts.TypeX"],
@@ -2512,7 +2642,7 @@ public partial class IntegrityManifestReceptorTests {
     var logger = new CapturingLogger<IntegrityManifestRequestReceptor>();
     var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(logger.Entries.Any(e => e.Message.Contains("required infrastructure is missing")))
       .IsTrue().Because("a request the origin cannot answer must be visibly dropped, not silently ignored");
@@ -2558,6 +2688,7 @@ public partial class IntegrityManifestReceptorTests {
     // manifest. Without the self-check this compares as a total deficit (nothing local is ever
     // recorded under an origin id nobody actually tracks) and alarms/repairs against itself.
     var selfManifest = new IntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       ManifestStreamId = coordinator.LocalServiceId,
       OriginServiceId = coordinator.LocalServiceId,
       OriginServiceName = "self-svc",
@@ -2938,6 +3069,7 @@ public partial class IntegrityManifestReceptorTests {
   private static IntegrityManifest _manifest(
       AuditCoordinator coordinator, List<StreamDigest> digests,
       ManifestLevel level = ManifestLevel.Streams, bool recomputed = false) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = coordinator.OriginId,
         OriginServiceId = coordinator.OriginId,
         OriginServiceName = "origin-svc",
@@ -3089,6 +3221,26 @@ public partial class IntegrityManifestReceptorTests {
       Task.FromResult(Seal);
     public long OriginGeneration { get; set; }
     public bool SealGenerationCoherent { get; set; } = true;
+
+    /// <summary>#2365: what the ledger answers for buckets short again after an answer, and the keys asked about.</summary>
+    public int ShortAfterAnswer { get; set; }
+    public List<IntegrityRepairLedger.DivergenceKey> ShortAfterAnswerKeys { get; } = [];
+
+    public Task<int> IntegrityCountShortAfterAnswerAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+        CancellationToken cancellationToken = default) {
+      ShortAfterAnswerKeys.AddRange(keys);
+      return Task.FromResult(ShortAfterAnswer);
+    }
+
+    /// <summary>#2365: the generation this origin's rules last changed at, and the generation it was noted beside.</summary>
+    public long? RulesChangedAtGeneration { get; set; }
+    public long? RulesNotedAtGeneration;
+
+    public Task<long?> IntegrityNoteRulesAsync(string rulesFingerprint, long currentGeneration, CancellationToken cancellationToken = default) {
+      RulesNotedAtGeneration = currentGeneration;
+      return Task.FromResult(RulesChangedAtGeneration);
+    }
     public long? GenerationGuardSeen;
 
     public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) {
@@ -3394,7 +3546,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
 
     var manifest = _deserializeManifest(transport.Published.Single().Envelope);
     await Assert.That(manifest.Digests.Select(d => d.EventType)).IsEquivalentTo(["App.Contracts.Orders.Placed, App.Contracts"])
@@ -3412,7 +3564,7 @@ public partial class IntegrityManifestReceptorTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", Level = ManifestLevel.Types });
 
     await Assert.That(transport.Published).IsEmpty();
   }

@@ -35,7 +35,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="logger">The logger; registration supplies a null logger where the host has none.</param>
 /// <param name="timeProvider">The clock expiry is read against.</param>
 /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimedEmissionPruneStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ClaimedEmissionPruneStepTests.cs</tests>
 public sealed partial class ClaimedEmissionPruneStep(
     ILogger<ClaimedEmissionPruneStep> logger,
     TimeProvider? timeProvider = null) : IMaintenanceStep {

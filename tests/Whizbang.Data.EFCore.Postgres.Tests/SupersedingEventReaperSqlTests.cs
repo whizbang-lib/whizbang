@@ -144,6 +144,11 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
 
   // ===== The reaper and its gates =====
 
+  /// <summary>
+  /// The older event of a key is deleted with its body; the newest is kept. Named before #2364, when a reap also
+  /// subtracted the deleted event's digest contribution; the name stays because shipped migrations link to it. Since
+  /// #2364 the digest counts the key once, so a reap leaves it exactly as it was.
+  /// </summary>
   [Test]
   public async Task Reap_SupersededAndConsumed_IsDeletedWithItsBodyAndItsDigestContribution_TheNewestIsKeptAsync() {
     await using var conn = await _openAsync();
@@ -151,6 +156,7 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
     var older = await _emitAsync(conn, _t0, (stream, TYPE, SUPERSEDING, "k"));
     var newer = await _emitAsync(conn, _t0.AddMinutes(1), (stream, TYPE, SUPERSEDING, "k"));
     await _stampAsync(conn);
+    var digestBefore = await _digestAsync(conn, stream, TYPE);
 
     var reaped = await _maintainAsync(conn);
 
@@ -158,10 +164,10 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
     await Assert.That(await _storedAsync(conn, stream)).IsEquivalentTo([newer[0]]);
     await Assert.That(await _scalarAsync(conn, "SELECT count(*) FROM wh_event_body WHERE event_id = @id", ("id", older[0]))).IsEqualTo(0L);
     await Assert.That(await _queuedAsync(conn)).IsEmpty();
-    await Assert.That(await _digestAsync(conn, stream, TYPE)).IsEqualTo(await _freshFoldAsync(conn, stream, TYPE))
-      .Because("the digest loses exactly the reaped event's contribution, so it equals a fold of what is left");
+    await Assert.That(await _digestAsync(conn, stream, TYPE)).IsEqualTo(digestBefore)
+      .Because("#2364: the digest counts the key once, and the key is still held, so the reap changes nothing it counts");
     await Assert.That(await _digestCountAsync(conn, stream, TYPE)).IsEqualTo(1L);
-    // #2106: the reaped event's id halves leave the id lanes too.
+    // #2106: every lane, the id lanes included, still equals a fold of the key's slot.
     await StoredDigestInvariant.AssertAgreeAsync(conn, stream);
   }
 
@@ -317,6 +323,11 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
     await Assert.That(await _queuedAsync(conn)).IsEmpty().Because("a truncate, an archive or a purge removed it; the queue lets it go");
   }
 
+  /// <summary>
+  /// Named before #2364, when a reap that removed folded history refolded the sealed epochs and bumped the origin
+  /// generation once; the name stays because shipped migrations link to it. Since #2364 no reap touches a digest, a seal
+  /// or the generation, whether it removes folded history or an at-most-once event.
+  /// </summary>
   [Test]
   public async Task Reap_RemovingFoldedHistory_RefoldsAndBumpsTheGenerationOnce_AnAtMostOnceEventDoesNotAsync() {
     await using var conn = await _openAsync();
@@ -336,8 +347,8 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
     await _stampAsync(conn);
 
     await Assert.That(await _reapAsync(conn)).IsEqualTo(2L);
-    await Assert.That(await _generationAsync(conn)).IsEqualTo(before + 1)
-      .Because("removing folded history bumps the origin generation once per pass, however many events it removed");
+    await Assert.That(await _generationAsync(conn)).IsEqualTo(before)
+      .Because("#2364: the digest counts each key once, so removing older copies rewrites nothing a consumer verified");
   }
 
   [Test]
@@ -528,16 +539,6 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
 
   private static Task<long> _digestCountAsync(NpgsqlConnection conn, Guid stream, string type) =>
     _scalarAsync(conn, "SELECT event_count FROM wh_stream_digests WHERE stream_id = @s AND event_type = @t", ("s", stream), ("t", type));
-
-  // What a fold over the stream's surviving events of the type computes, the way the emit chain folds.
-  private static async Task<string> _freshFoldAsync(NpgsqlConnection conn, Guid stream, string type) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT bit_xor(hashtextextended(event_id::text, 0)) || '|' || bit_xor(hashtextextended(event_id::text, 1)) " +
-      "FROM wh_event_store WHERE stream_id = @s AND event_type = @t";
-    cmd.Parameters.AddWithValue("s", stream);
-    cmd.Parameters.AddWithValue("t", type);
-    return (string)(await cmd.ExecuteScalarAsync())!;
-  }
 
   private static Task<long> _generationAsync(NpgsqlConnection conn) =>
     _scalarAsync(conn, "SELECT setting_value::bigint FROM wh_settings WHERE setting_key = 'integrity_origin_generation'");

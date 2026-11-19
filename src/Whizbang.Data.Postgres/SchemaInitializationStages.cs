@@ -18,7 +18,7 @@ namespace Whizbang.Data.Postgres;
 /// the election's own log line.
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs</tests>
 public static class SchemaInitializationStages {
   private const string UNSTAGED = "this instance migrates under the schema lock";
 
@@ -26,7 +26,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
   public static Task WaitingForTheBootstrapLockAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "waiting for the schema lock to apply the bootstrap closure", cancellationToken);
 
@@ -34,7 +34,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
   public static Task BootstrapRetryingAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure met a transient database failure; retrying", cancellationToken);
 
@@ -42,7 +42,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs:TheBootstrapsWaitsAndFailure_AreProgressWithinPreflightAsync</tests>
   public static Task BootstrapFailedAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure failed with an error that is not transient", cancellationToken);
 
@@ -50,7 +50,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:Registering_IsTheLastStepOfPreflightAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs:Registering_IsTheLastStepOfPreflightAsync</tests>
   public static Task RegisteringAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the bootstrap closure is in place; registering this instance", cancellationToken);
 
@@ -61,7 +61,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the progress is reported.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs:OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync</tests>
   public static Task RegisteringOnACurrentSchemaAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
     _preflightAsync(services, "the schema is current; registering this instance", cancellationToken);
 
@@ -72,7 +72,7 @@ public static class SchemaInitializationStages {
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once both skips are reported.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs:OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/SchemaInitializationStagesTests.cs:OnACurrentSchema_ElectAndMigrateAreSkipped_AfterRegisteringAsync</tests>
   public static async Task SchemaCurrentAsync(IServiceProvider? services, CancellationToken cancellationToken) {
     if (_reporter(services) is { } stages) {
       await stages.SkipAsync(StartupStage.Elect, "the schema is current; no migrator is needed", cancellationToken)

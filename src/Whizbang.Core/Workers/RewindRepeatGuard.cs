@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind#a-repeated-rewind-is-settled</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RewindRepeatGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RewindRepeatGuardTests.cs</tests>
 internal sealed class RewindRepeatGuard(int capacity = RewindRepeatGuard.DEFAULT_CAPACITY) {
   /// <summary>How many streams are remembered at most, unless told otherwise.</summary>
   internal const int DEFAULT_CAPACITY = 10_000;

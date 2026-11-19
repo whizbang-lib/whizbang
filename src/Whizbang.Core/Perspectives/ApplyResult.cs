@@ -71,7 +71,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="model">The model to update, or null.</param>
 /// <param name="action">The action to perform. Defaults to <see cref="ModelAction.None"/>.</param>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyResultTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRunnerModelActionTests.cs</tests>
 public readonly struct ApplyResult<TModel>(TModel? model, ModelAction action = ModelAction.None) where TModel : class {
   /// <summary>
@@ -110,8 +110,8 @@ public readonly struct ApplyResult<TModel>(TModel? model, ModelAction action = M
   /// <param name="model">The model the row is recreated with.</param>
   /// <returns>An <see cref="ApplyResult{TModel}"/> with the specified model and <see cref="ModelAction.Resurrect"/>.</returns>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs:ApplyResult_Resurrect_ReturnsModelWithResurrectActionAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs:Resurrect_OnPurgedStream_RecreatesRow_AndClearsMarkerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ApplyResultTests.cs:ApplyResult_Resurrect_ReturnsModelWithResurrectActionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PurgeStaysPurgedTests.cs:Resurrect_OnPurgedStream_RecreatesRow_AndClearsMarkerAsync</tests>
   public static ApplyResult<TModel> Resurrect(TModel model) => new(model, ModelAction.Resurrect);
 
   /// <summary>

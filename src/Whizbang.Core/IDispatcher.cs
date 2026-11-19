@@ -290,7 +290,7 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected business result type</typeparam>
   /// <param name="message">The message to process</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_Generic_ReturnsBusinessResultAndReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_Generic_ReturnsBusinessResultAndReceiptAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
       TMessage message) where TMessage : notnull;
@@ -304,7 +304,7 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected business result type</typeparam>
   /// <param name="message">The message to process</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message);
@@ -322,7 +322,7 @@ public interface IDispatcher {
   /// <param name="callerFilePath">Caller file path (auto-captured)</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_PreservesCorrelationIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_PreservesCorrelationIdAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
       TMessage message,
@@ -344,7 +344,7 @@ public interface IDispatcher {
   /// <param name="callerFilePath">Caller file path (auto-captured)</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_NonGeneric_PreservesCorrelationIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_NonGeneric_PreservesCorrelationIdAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message,
@@ -361,7 +361,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithDispatchOptions_ReturnsReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithDispatchOptions_ReturnsReceiptAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message, DispatchOptions options);
@@ -378,7 +378,7 @@ public interface IDispatcher {
   /// <param name="eventData">The event to publish</param>
   /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
   Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData);
 
   /// <summary>
@@ -432,7 +432,7 @@ public interface IDispatcher {
   /// none is registered.
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPublishOnceTests.cs</tests>
   /// <docs>fundamentals/dispatcher/publish-once</docs>
   Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default);
 
@@ -625,10 +625,10 @@ public interface IDispatcher {
   /// <param name="cancellationToken">A cancellation token. When triggered, propagates as <see cref="System.OperationCanceledException"/>.</param>
   /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
   /// <docs>fundamentals/dispatcher/sync-mode</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTests.cs:LocalInvokeAndSyncAsync_Void_InvokesHandlerAndReturnsSyncResultAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTests.cs:LocalInvokeAndSyncAsync_WithMultipleEvents_WaitsForAllEventsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:LocalInvokeAndSyncAsync_NewOverload_SyncModeIsRequiredNotDefaultedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSyncModeContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTests.cs:LocalInvokeAndSyncAsync_Void_InvokesHandlerAndReturnsSyncResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTests.cs:LocalInvokeAndSyncAsync_WithMultipleEvents_WaitsForAllEventsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:LocalInvokeAndSyncAsync_NewOverload_SyncModeIsRequiredNotDefaultedAsync</tests>
   System.Threading.Tasks.ValueTask LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       Perspectives.Sync.SyncMode mode,
@@ -726,8 +726,8 @@ public interface IDispatcher {
   /// <typeparam name="TMessage">The message type</typeparam>
   /// <param name="messages">The messages to send locally</param>
   /// <returns>All delivery receipts (Delivered status)</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
   ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull;
 
@@ -738,8 +738,8 @@ public interface IDispatcher {
   /// </summary>
   /// <param name="messages">The messages to send locally</param>
   /// <returns>All delivery receipts (Delivered status)</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
   ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages);
 
@@ -764,7 +764,7 @@ public interface IDispatcher {
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="events">The events to publish</param>
   /// <returns>All delivery receipts</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
   Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull;
 
@@ -773,7 +773,7 @@ public interface IDispatcher {
   /// </summary>
   /// <param name="events">The events to publish</param>
   /// <returns>All delivery receipts</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
   Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events);
 

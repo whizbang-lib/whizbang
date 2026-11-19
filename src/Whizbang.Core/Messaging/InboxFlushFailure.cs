@@ -54,7 +54,7 @@ public sealed record InboxFlushFailure(
 /// <param name="cancellationToken">Cancellation.</param>
 /// <returns>True when the messages were written to the dead-letter table.</returns>
 /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
 public delegate Task<bool> InboxFlushFailureCallback(InboxFlushFailure failure, CancellationToken cancellationToken);
 
 /// <summary>
@@ -63,7 +63,7 @@ public delegate Task<bool> InboxFlushFailureCallback(InboxFlushFailure failure, 
 /// in turn and one that throws is logged and does not stop the others (#1885).
 /// </summary>
 /// <docs>extending/internals/inbox-batch-strategy#when-a-flush-fails</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxFlushFailureRecorderTests.cs</tests>
 public interface IInboxFlushFailureObserver {
   /// <summary>Called once for each batch that could not be stored.</summary>
   /// <param name="failure">What was not stored, why, and whether it was dead-lettered.</param>

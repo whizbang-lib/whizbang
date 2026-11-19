@@ -38,6 +38,7 @@ internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
   private readonly TimeProvider _timeProvider;
   private readonly ILogger _logger;
   private readonly ConcurrentDictionary<(string Topic, string Subscription), DateTimeOffset> _lastReceiveActivity = new();
+  private readonly ConcurrentDictionary<(string Topic, string Subscription), byte> _paused = new();
   private readonly CancellationTokenSource _stopTokenSource = new();
   private readonly Lock _startLock = new();
   private Task? _loopTask;
@@ -75,8 +76,28 @@ internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
   /// Registers a subscription for liveness monitoring with a fresh silence window.
   /// Called on every (re-)subscribe — a re-established subscription gets a new baseline.
   /// </summary>
-  public void Track(string topicName, string subscriptionName) =>
+  public void Track(string topicName, string subscriptionName) {
+    // A subscription established again starts active, so an earlier pause of the entity no longer applies (#2406).
+    _paused.TryRemove((topicName, subscriptionName), out _);
     _lastReceiveActivity[(topicName, subscriptionName)] = _timeProvider.GetUtcNow();
+  }
+
+  /// <summary>
+  /// Takes a paused subscription off the watch (#2406): its silence is the pause, not a stall, so a sweep neither counts
+  /// it nor recovers it while it stays paused.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs:SessionSubscription_PausedPastTheSilenceThreshold_IsNotRecoveredAndTakesNoSessionsAsync</tests>
+  public void Pause(string topicName, string subscriptionName) =>
+    _paused[(topicName, subscriptionName)] = 0;
+
+  /// <summary>
+  /// Puts a resumed subscription back on the watch with a fresh silence window, so the time it spent paused is not
+  /// counted against it (#2406).
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs:Subscription_ResumedAfterALongPause_IsWatchedAgainFromAFreshWindowAsync</tests>
+  public void Resume(string topicName, string subscriptionName) => Track(topicName, subscriptionName);
 
   /// <summary>
   /// Every (topic, subscription) currently monitored — the SAME registry of live entities the
@@ -105,6 +126,9 @@ internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
       .ThenBy(e => e.Key.Subscription, StringComparer.Ordinal);
 
     foreach (var ((topicName, subscriptionName), lastActivity) in entries) {
+      if (_paused.ContainsKey((topicName, subscriptionName))) {
+        continue;   // paused on purpose: not a stall (#2406)
+      }
       var silence = now - lastActivity;
       if (silence < _options.ReceiveLivenessSilenceThreshold) {
         continue;

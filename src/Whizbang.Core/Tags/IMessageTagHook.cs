@@ -42,10 +42,10 @@ namespace Whizbang.Core.Tags;
 /// </code>
 /// </example>
 /// <docs>fundamentals/messages/message-tags#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagHookTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagHookTests.cs:Hook_ReturnsNull_PassesOriginalPayloadToNextHookAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagHookTests.cs:Hook_CanAccessAttributePropertiesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagHookTests.cs:Hook_CanAccessScopeDataAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagHookTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagHookTests.cs:Hook_ReturnsNull_PassesOriginalPayloadToNextHookAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagHookTests.cs:Hook_CanAccessAttributePropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageTagHookTests.cs:Hook_CanAccessScopeDataAsync</tests>
 public interface IMessageTagHook<TAttribute> where TAttribute : MessageTagAttribute {
   /// <summary>
   /// Called after a message with matching tag is successfully processed.

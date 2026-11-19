@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#locks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveApplyLockSetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveApplyLockSetTests.cs</tests>
 public static class PerspectiveApplyLockSet {
   /// <summary>The order pairs are locked in: stream id (<see cref="Guid.CompareTo(Guid)"/>), then perspective name (ordinal).</summary>
   public static IComparer<(Guid StreamId, string PerspectiveName)> Order { get; } = new PairOrder();

@@ -42,7 +42,7 @@ public interface IStreamPrefixTruncator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The truncate's outcome.</returns>
   /// <docs>fundamentals/events/stream-end-of-life#dispositions</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
   Task<StreamTruncateResult> TruncateAsync(
     Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default);
 
@@ -58,7 +58,7 @@ public interface IStreamPrefixTruncator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The truncate's outcome.</returns>
   /// <docs>fundamentals/events/stream-end-of-life#policies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorDispositionTests.cs</tests>
   Task<StreamTruncateResult> TruncateAsync(
     Guid streamId, long throughVersion, Disposition disposition, DestructionReason reason, CancellationToken cancellationToken = default);
 }
@@ -83,7 +83,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   private readonly IArchiveStore? _archiveStore = archiveStore;
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
   public Task<StreamTruncateResult> TruncateAsync(
       Guid streamId, long throughVersion, Disposition disposition = Disposition.Delete, CancellationToken cancellationToken = default) =>
@@ -160,7 +160,15 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual truncate (not a gate-blocked / no-carry-forward / debug-skipped outcome).
+    // #2365: a cut the seal gate holds is recorded as awaiting it, by task, for eligible_not_yet_deleted; any other
+    // answer forgets the stream.
+    var heldTask = archive ? "archive" : "truncate";
+    await _coordinator.RecordCutAwaitingSealAsync(streamId,
+      string.Equals(result.Status, "awaiting_seal", StringComparison.Ordinal) ? heldTask : null,
+      TimeProvider.System.GetUtcNow(), cancellationToken).ConfigureAwait(false);
     if (string.Equals(result.Status, "truncated", StringComparison.Ordinal)) {
+      // #2365: the cut carried its digest (#2363), whichever way it removed the events.
+      services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.RecordCarriedCompaction(archive);
       await _announceTruncatedAsync(context, services, envelopes, streamId, cancellationToken).ConfigureAwait(false);
     }
     return result;

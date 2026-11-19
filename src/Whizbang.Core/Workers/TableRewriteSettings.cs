@@ -26,7 +26,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
 public static class TableRewriteSettings {
   /// <summary>The <c>wh_settings</c> key holding the bloat threshold.</summary>
   public const string THRESHOLD_KEY = "table_rewrite_bloat_threshold";
@@ -57,7 +57,7 @@ public static class TableRewriteSettings {
   /// <summary>Whether <paramref name="plan"/> rewrites with an online tool: pg_squeeze, pg_repack or the Online choice.</summary>
   /// <param name="plan">The start's resolved plan.</param>
   /// <returns>True for an online tool.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:TheThreshold_DefaultsByHowTheStartRewritesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:TheThreshold_DefaultsByHowTheStartRewritesAsync</tests>
   public static bool IsOnline(TableRewritePlan plan) =>
     plan.Strategy is TableRewriteStrategies.PG_SQUEEZE or TableRewriteStrategies.PG_REPACK or TableRewriteStrategies.ONLINE;
 
@@ -65,8 +65,8 @@ public static class TableRewriteSettings {
   /// <param name="options">The maintenance options.</param>
   /// <param name="plan">The start's resolved plan.</param>
   /// <returns>The effective threshold.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:TheThreshold_DefaultsByHowTheStartRewritesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:AConfiguredValue_WinsOverEveryDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:TheThreshold_DefaultsByHowTheStartRewritesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:AConfiguredValue_WinsOverEveryDefaultAsync</tests>
   public static double EffectiveThreshold(MaintenanceWorkerOptions options, TableRewritePlan plan) {
     ArgumentNullException.ThrowIfNull(options);
     return options.TableRewriteBloatThreshold ?? (IsOnline(plan) ? DEFAULT_ONLINE_BLOAT_THRESHOLD : DEFAULT_BLOAT_THRESHOLD);
@@ -76,8 +76,8 @@ public static class TableRewriteSettings {
   /// <param name="options">The maintenance options.</param>
   /// <param name="plan">The start's resolved plan, which decides the threshold's default.</param>
   /// <returns>One entry per key, in the literal form the SQL casts.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:EveryStart_PublishesAllThreeKeysAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:AConfiguredValue_WinsOverEveryDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:EveryStart_PublishesAllThreeKeysAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:AConfiguredValue_WinsOverEveryDefaultAsync</tests>
   public static IReadOnlyList<RetentionSetting> SettingsFor(MaintenanceWorkerOptions options, TableRewritePlan plan) {
     ArgumentNullException.ThrowIfNull(options);
     return [
@@ -90,8 +90,8 @@ public static class TableRewriteSettings {
   /// <summary>Configuration errors in the three options, by key.</summary>
   /// <param name="options">The bound options.</param>
   /// <returns>One message per invalid value; empty when they are valid.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:Validate_RejectsEachValueOutsideItsRangeByNameAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:Validate_AcceptsUnsetAndInRangeValuesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:Validate_RejectsEachValueOutsideItsRangeByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:Validate_AcceptsUnsetAndInRangeValuesAsync</tests>
   internal static List<string> Validate(MaintenanceWorkerOptions options) {
     var failures = new List<string>();
     if (options.TableRewriteBloatThreshold is double threshold && !_aboveOne(threshold)) {

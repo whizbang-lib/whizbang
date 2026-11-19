@@ -37,7 +37,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs</tests>
 [Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:RoleAssignment:Enabled")]
 [Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:RoleAssignment:HoldLegacySessionLock")]
 public sealed class RoleAssignmentOptions {
@@ -63,7 +63,7 @@ public sealed class RoleAssignmentOptions {
   /// the window. The window a holder declares is never shorter than its role's lease.
   /// </remarks>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindow_DefaultsToTwoMinutesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindow_DefaultsToTwoMinutesAsync</tests>
   public TimeSpan ProgressWindow { get; set; } = TimeSpan.FromMinutes(2);
 
   /// <summary>
@@ -72,7 +72,7 @@ public sealed class RoleAssignmentOptions {
   /// </summary>
   /// <param name="role">The role.</param>
   /// <returns>The window; zero declares none.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindowFor_IsNeverShorterThanTheRolesLease_AndZeroTurnsItOffAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindowFor_IsNeverShorterThanTheRolesLease_AndZeroTurnsItOffAsync</tests>
   public TimeSpan ProgressWindowFor(string role) {
     if (ProgressWindow <= TimeSpan.Zero) {
       return TimeSpan.Zero;

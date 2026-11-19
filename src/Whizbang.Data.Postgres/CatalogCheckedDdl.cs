@@ -33,7 +33,7 @@ namespace Whizbang.Data.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#idempotent-ddl-takes-no-lock</docs>
-/// <tests>tests/Whizbang.Core.Tests/Schema/CatalogCheckedDdlTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/CatalogCheckedDdlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/CatalogCheckedDdlPostgresTests.cs</tests>
 public static class CatalogCheckedDdl {
   private const string TAG = "$whizbang_catalog_checked$";

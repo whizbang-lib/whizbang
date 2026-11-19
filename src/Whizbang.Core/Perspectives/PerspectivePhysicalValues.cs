@@ -13,7 +13,7 @@ namespace Whizbang.Core.Perspectives;
 /// generator applies the same widening when it declares the column, so the three agree on the value.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalValuesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectivePhysicalValuesTests.cs</tests>
 public static class PerspectivePhysicalValues {
   /// <summary>
   /// The column value for <paramref name="value"/>: an enumeration becomes its underlying number (as

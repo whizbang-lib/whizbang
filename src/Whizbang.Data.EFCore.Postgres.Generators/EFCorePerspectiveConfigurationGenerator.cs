@@ -814,16 +814,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _getCSharpType(PhysicalFieldInfo field) {
     if (field.IsVector) {
-      return "Pgvector.Vector?";
+      return "global::Pgvector.Vector?";
     }
 
     // Use the model's declared type directly — preserves nullability from the model.
     // If the model says Guid (non-nullable), the shadow property should also be Guid.
     // If the model says Guid? (nullable), the shadow property should also be Guid?.
-    var typeName = field.TypeName
-        .Replace(GLOBAL_PREFIX, "");
-
-    return typeName;
+    // Kept fully qualified (#2400): written without global::, System.X binds to a System namespace beside the
+    // consumer's.
+    return field.TypeName;
   }
 
   /// <summary>

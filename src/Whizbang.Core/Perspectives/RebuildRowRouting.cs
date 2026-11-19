@@ -25,8 +25,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:Rebuild_FoldsEachStoredEventOntoTheRowLiveApplyKeysItByAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:Rebuild_FoldsEachStoredEventOntoTheRowLiveApplyKeysItByAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RekeyThroughRebuildTests.cs</tests>
 public static class RebuildRowRouting {
   /// <summary>
@@ -36,8 +36,8 @@ public static class RebuildRowRouting {
   /// <param name="envelope">The event as the upcasting read returned it.</param>
   /// <param name="storedOn">The stream it is stored on.</param>
   /// <returns>The row's stream.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:RowOf_OnlyAGenuineRekeyLeavesTheStoredStreamAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:Rebuild_FoldsEachStoredEventOntoTheRowLiveApplyKeysItByAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:RowOf_OnlyAGenuineRekeyLeavesTheStoredStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:Rebuild_FoldsEachStoredEventOntoTheRowLiveApplyKeysItByAsync</tests>
   public static Guid RowOf(MessageEnvelope<IEvent> envelope, Guid storedOn) {
     ArgumentNullException.ThrowIfNull(envelope);
     return EventRekeys.RekeyedTo(envelope.Payload) is { } to && to != Guid.Empty ? to : storedOn;
@@ -50,7 +50,7 @@ public static class RebuildRowRouting {
   /// <param name="storedOn">The stream the events were read from.</param>
   /// <param name="events">The events, as the upcasting read returned them.</param>
   /// <returns>One partition per row.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:Partition_KeepsReadOrderPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:Partition_KeepsReadOrderPerRowAsync</tests>
   public static IReadOnlyList<RebuildPartition> Partition(Guid storedOn, IReadOnlyList<MessageEnvelope<IEvent>> events) {
     ArgumentNullException.ThrowIfNull(events);
     var partitions = new List<RebuildPartition>();
@@ -73,7 +73,7 @@ public static class RebuildRowRouting {
   /// <param name="row">The row's stream.</param>
   /// <param name="storedOnRow">The events read from that stream.</param>
   /// <returns>The events that stay on the row, in read order.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:StaysOn_DropsTheEventsRekeyedAwayAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:StaysOn_DropsTheEventsRekeyedAwayAsync</tests>
   public static IReadOnlyList<MessageEnvelope<IEvent>> StaysOn(Guid row, IReadOnlyList<MessageEnvelope<IEvent>> storedOnRow) {
     ArgumentNullException.ThrowIfNull(storedOnRow);
     return [.. storedOnRow.Where(e => RowOf(e, row) == row)];
@@ -98,9 +98,9 @@ public static class RebuildRowRouting {
   /// </remarks>
   /// <param name="streams">Each contributing stream's events; empty ones are ignored.</param>
   /// <returns>The merged batch.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:Merge_InterleavesStreamsByCommitSequenceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:Merge_SingleOriginKeepsTheOriginsOrderAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:Merge_UnstampedHeadsWaitBehindStampedOnesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:Merge_InterleavesStreamsByCommitSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:Merge_SingleOriginKeepsTheOriginsOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildRowRoutingTests.cs:Merge_UnstampedHeadsWaitBehindStampedOnesAsync</tests>
   public static MergedReplayBatch Merge(IReadOnlyList<IReadOnlyList<MessageEnvelope<IEvent>>> streams) {
     ArgumentNullException.ThrowIfNull(streams);
     var ordered = streams.Where(s => s.Count > 0).Select(ReplayEventOrder.Order).ToList();

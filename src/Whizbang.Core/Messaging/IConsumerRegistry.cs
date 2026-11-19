@@ -34,7 +34,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
 public interface IConsumerRegistry {
   /// <summary>True when ANY consumer (handler / lifecycle receptor / perspective /
   /// tag-attribute) is registered for the message type.</summary>
@@ -46,7 +46,7 @@ public interface IConsumerRegistry {
   /// Default: empty, for implementations that predate the enumeration.
   /// </summary>
   /// <returns>The consumed message types, deduplicated and in ordinal type-name order.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:CustomPredicatesOnlyImplementation_GetConsumedMessages_DefaultsToEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:CustomPredicatesOnlyImplementation_GetConsumedMessages_DefaultsToEmptyAsync</tests>
   IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() => [];
 
   /// <summary>
@@ -56,7 +56,7 @@ public interface IConsumerRegistry {
   /// </summary>
   /// <param name="messageType">The message type name (assembly-qualified).</param>
   /// <returns>The consumed message, or <see langword="null"/>.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ConsumedMessageTypesTests.cs</tests>
   ConsumedMessageInfo? FindConsumedMessage(string messageType) {
     var name = EventTypeMatchingHelper.NormalizeTypeName(messageType);
     return GetConsumedMessages().FirstOrDefault(c => string.Equals(c.TypeName, name, System.StringComparison.Ordinal));
@@ -67,7 +67,7 @@ public interface IConsumerRegistry {
   /// <c>event_type</c> holds), deduplicated and in ordinal order: the list a peer or an audit can be given.
   /// </summary>
   /// <returns>The consumed event type names.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ConsumedMessageTypesTests.cs:EventTypeNames_AreTheConsumedEvents_DeduplicatedInOrdinalOrder_WithoutCommandsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ConsumedMessageTypesTests.cs:EventTypeNames_AreTheConsumedEvents_DeduplicatedInOrdinalOrder_WithoutCommandsAsync</tests>
   IReadOnlyList<string> GetConsumedEventTypes() =>
     [.. GetConsumedMessages().Where(c => c.IsEvent).Select(c => c.TypeName).Distinct(System.StringComparer.Ordinal)
       .Order(System.StringComparer.Ordinal)];

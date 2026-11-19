@@ -42,7 +42,7 @@ public static class EventFlagsDeriver {
   /// <param name="payload">The payload, possibly null.</param>
   /// <param name="ephemeralModeResolver">Resolves the ephemeral mode, when one is registered.</param>
   /// <returns>The payload's flags.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsDeriverTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsDeriverTests.cs</tests>
   internal static EventFlags FromPayload(object? payload, IEphemeralModeResolver? ephemeralModeResolver) =>
     (payload is ICompositeEvent ? EventFlags.Composite : EventFlags.None)
     | (payload is ICollectiveEvent ? EventFlags.Collective : EventFlags.None)

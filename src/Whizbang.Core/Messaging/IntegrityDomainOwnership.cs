@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// by every consumer that received it (#2008).
 /// </summary>
 /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDomainOwnershipTests.cs</tests>
 public sealed record IntegrityDomainClaim {
   /// <summary>The claimed domain (a namespace and its children), compared without case.</summary>
   public required string Domain { get; init; }
@@ -40,7 +40,7 @@ public sealed record IntegrityDomainClaim {
 /// the persisted claims whenever it is needed.
 /// </remarks>
 /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDomainOwnershipTests.cs</tests>
 public sealed class IntegrityDomainOwnership {
   private readonly Dictionary<string, IntegrityDomainClaim> _owners;
   private readonly HashSet<string> _conflicted;
@@ -109,7 +109,7 @@ public sealed class IntegrityDomainOwnership {
   /// <param name="localOwnedDomains">This service's own owned domains.</param>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="localOwnedDomains"/> is null.</exception>
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs:IsNotAuthoritative_ATypeThisServiceOwns_IsNoOtherOriginsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDomainOwnershipTests.cs:IsNotAuthoritative_ATypeThisServiceOwns_IsNoOtherOriginsAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntegrityOwnershipRuleSourceGuardTests.cs:ComparisonPaths_JudgeOwnershipOnlyThroughTheSharedRuleAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs:Checkpoint_ABucketOfATypeThisServiceOwns_IsNotVerifiedAgainstAnotherOriginAsync</tests>
   public bool IsNotAuthoritative(string storedEventType, Guid originServiceId, IReadOnlyCollection<string> localOwnedDomains) {
@@ -130,7 +130,7 @@ public sealed class IntegrityDomainOwnership {
   /// <param name="localOwnedDomains">This service's own owned domains.</param>
   /// <exception cref="ArgumentNullException">Thrown when <paramref name="localOwnedDomains"/> is null.</exception>
   /// <docs>resilience/stream-integrity#a-type-no-service-owns</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs:HasNoOwner_ATypeNoClaimAndNoOwnDomainContains_HasNoOwnerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDomainOwnershipTests.cs:HasNoOwner_ATypeNoClaimAndNoOwnDomainContains_HasNoOwnerAsync</tests>
   public bool HasNoOwner(string storedEventType, IReadOnlyCollection<string> localOwnedDomains) {
     ArgumentNullException.ThrowIfNull(localOwnedDomains);
     return FindOwner(storedEventType) is null && !_ownedLocally(storedEventType, localOwnedDomains);
@@ -168,7 +168,7 @@ public sealed class IntegrityDomainOwnership {
 /// is warned and counted once per process however many checkpoints repeat it (#2008). Registered as a singleton.
 /// </summary>
 /// <docs>resilience/stream-integrity#ownership-is-exchanged-on-the-checkpoint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDomainOwnershipTests.cs:Conflicts_WarnOncePerPair_InEitherOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDomainOwnershipTests.cs:Conflicts_WarnOncePerPair_InEitherOrderAsync</tests>
 public sealed class IntegrityOwnershipConflicts {
   private readonly ConcurrentDictionary<string, byte> _seen = new(StringComparer.Ordinal);
 

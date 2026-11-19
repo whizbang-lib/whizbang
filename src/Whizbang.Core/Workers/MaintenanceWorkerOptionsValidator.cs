@@ -18,10 +18,10 @@ namespace Whizbang.Core.Workers;
 /// host start.
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs:TheThreshold_IsValidatedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteSettingsTests.cs:TheValidator_RejectsTheTableRewriteSettingsByNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitioningOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs:TheThreshold_IsValidatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs:TheValidator_RejectsTheTableRewriteSettingsByNameAsync</tests>
 public sealed class MaintenanceWorkerOptionsValidator : IValidateOptions<MaintenanceWorkerOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, MaintenanceWorkerOptions options) {

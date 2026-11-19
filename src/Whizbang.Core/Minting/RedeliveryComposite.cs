@@ -25,7 +25,7 @@ namespace Whizbang.Core.Minting;
 /// machine-built, so a mismatch is a producer bug, never data.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_RawComposite_ChildrenBuiltFromRawPayloadsAsync</tests>
 public interface IRawInnerComposite : ICompositeEvent {
   /// <summary>Each child's raw stored payload JSON, verbatim from the origin's store.</summary>
   IReadOnlyList<JsonElement> InnerPayloads { get; }
@@ -58,7 +58,7 @@ public interface IRawInnerComposite : ICompositeEvent {
 /// the pairing — these bundles are machine-built, so a mismatch is a producer bug, never data.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 public interface IIdentityPreservingComposite : ICompositeEvent {
   /// <summary>Original message ids, parallel to the inner events (same order and count).</summary>
   IReadOnlyList<Guid> InnerEventIds { get; }
@@ -84,6 +84,13 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
   /// </summary>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
   RedeliveryAnswerWindow? AnsweredWindow => null;
+
+  /// <summary>
+  /// #2365: the request the bundle answers and the origin's answer span, which the receiver's repair starts under; the
+  /// default (neither) when the origin did not say.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  Whizbang.Core.Observability.IntegrityTraceLink TraceLink => default;
 }
 
 /// <summary>
@@ -99,7 +106,7 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
 /// integrity cycle re-detects any remainder.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 [PinnedId("b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a")]
 public sealed class RedeliveryComposite
   : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite, IControlPlaneMessage {
@@ -163,6 +170,42 @@ public sealed class RedeliveryComposite
   /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
   public bool AnswerContinues { get; init; }
 
+  /// <summary>#2365: the id of the request this answers, echoed from it; null when the request named none.</summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the origin's answer span, itself in the request's trace. The receiver's work on
+  /// this answer starts under it. Null from an origin with no span, or one that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
+
+  /// <summary>
+  /// The answer this bundle belongs to (#2340), the same on every bundle of one answer. Null from an origin that
+  /// predates the field, and on a bundle that answers no request.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  public Guid? AnswerId { get; init; }
+
+  /// <summary>The bundle's place in its answer, counting from 0 in the order the origin published (#2340).</summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  public int AnswerBundleIndex { get; init; }
+
+  /// <summary>
+  /// How many bundles the answer has (#2340): set only on its last bundle, so the receiver knows when every bundle of
+  /// the answer has committed, whatever order they commit in.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  public int? AnswerBundleCount { get; init; }
+
+  /// <summary>
+  /// The answer is to a request for a whole type (#2341): it named no streams and no events. Only such an answer can mark
+  /// a type lane; an answer to a request for named streams leaves the type lane as it was.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#only-a-whole-type-answer-marks-the-type-lane</docs>
+  public bool AnswersWholeType { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
 
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;
@@ -174,8 +217,15 @@ public sealed class RedeliveryComposite
       ? new RedeliveryAnswerWindow(AnsweredFromCommitSequence, AnsweredToCommitSequence) {
         PartialStreamIds = AnsweredPartialStreamIds,
         Continues = AnswerContinues,
+        // #2340, #2341: the bundle's place in its answer; none from an origin that predates it.
+        Part = _answerPart(),
       }
       : null;
+
+  Whizbang.Core.Observability.IntegrityTraceLink IIdentityPreservingComposite.TraceLink => new(RequestId, TraceParent);
+
+  private RedeliveryAnswerPart? _answerPart() =>
+    AnswerId is { } answerId ? new RedeliveryAnswerPart(answerId, AnswerBundleIndex, AnswerBundleCount, AnswersWholeType) : null;
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 

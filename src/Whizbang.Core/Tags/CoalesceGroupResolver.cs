@@ -30,9 +30,9 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_AlreadyScheduledMessage_IsNotCoalescedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_ResolutionIsCachedPerTypeNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_AlreadyScheduledMessage_IsNotCoalescedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_ResolutionIsCachedPerTypeNameAsync</tests>
 public sealed class CoalesceGroupResolver {
   private readonly TagOptions _tagOptions;
   private readonly TimeProvider _timeProvider;

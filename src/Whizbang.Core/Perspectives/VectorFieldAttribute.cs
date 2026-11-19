@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/vector-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/VectorFieldAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/VectorFieldAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// [PerspectiveStorage(FieldStorageMode.Split)]

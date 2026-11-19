@@ -23,8 +23,8 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-upcasting</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:ReadPolymorphicAsync_UpcasterMovesTheStreamId_RecordsTheRekeyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:RekeyedTo_ForAnEventNeverRead_IsNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:ReadPolymorphicAsync_UpcasterMovesTheStreamId_RecordsTheRekeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs:RekeyedTo_ForAnEventNeverRead_IsNullAsync</tests>
 public static class EventRekeys {
   private static readonly ConditionalWeakTable<IEvent, StrongBox<Guid>> _rekeys = [];
 

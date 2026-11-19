@@ -26,7 +26,7 @@ namespace Whizbang.Core.Workers;
 /// one worker: the run is then the worker's, not each loop's.</para>
 /// </remarks>
 /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs</tests>
 public sealed partial class DatabaseFailureEscalation {
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>The EventId of the one Error a run logs once it passes the threshold.</summary>
@@ -55,7 +55,7 @@ public sealed partial class DatabaseFailureEscalation {
   /// <param name="options">The threshold.</param>
   /// <param name="timeProvider">The clock the run's length is measured on.</param>
   /// <param name="logger">The worker's logger; both lines are logged under its category.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:NullArguments_AreRefusedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:NullArguments_AreRefusedAsync</tests>
   public DatabaseFailureEscalation(
       string worker, DatabaseFailureEscalationOptions options, TimeProvider timeProvider, ILogger logger) {
     ArgumentNullException.ThrowIfNull(worker);
@@ -69,7 +69,7 @@ public sealed partial class DatabaseFailureEscalation {
   }
 
   /// <summary>The threshold this tracker escalates at.</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:Options_AreTheOnesItWasGivenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:Options_AreTheOnesItWasGivenAsync</tests>
   public DatabaseFailureEscalationOptions Options { get; }
 
   /// <summary>
@@ -77,10 +77,10 @@ public sealed partial class DatabaseFailureEscalation {
   /// past the threshold for the first time.
   /// </summary>
   /// <param name="failure">The failure, as the shared classifier named it.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:ARunPastBothThresholds_LogsOneErrorNamingHowLongTheDatabaseHasBeenFailingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:FailuresAfterTheEscalation_DoNotLogItAgainAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:ManyFailuresInsideTheTime_DoNotEscalateAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:AFewFailuresOverALongTime_DoNotEscalateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:ARunPastBothThresholds_LogsOneErrorNamingHowLongTheDatabaseHasBeenFailingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:FailuresAfterTheEscalation_DoNotLogItAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:ManyFailuresInsideTheTime_DoNotEscalateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:AFewFailuresOverALongTime_DoNotEscalateAsync</tests>
   public void Failed(TransientDatabaseFailure failure) {
     ArgumentNullException.ThrowIfNull(failure);
     var now = _timeProvider.GetTimestamp();
@@ -105,9 +105,9 @@ public sealed partial class DatabaseFailureEscalation {
   /// Records that an iteration of the worker reached the database and succeeded, ending the run; logs the recovery
   /// when the run had escalated.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:ARecoveryAfterAnEscalation_LogsOneInformationLineAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:ARecoveryWithoutAnEscalation_LogsNothingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DatabaseFailureEscalationTests.cs:ASuccess_EndsTheRun_SoTheNextOneStartsFromNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:ARecoveryAfterAnEscalation_LogsOneInformationLineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:ARecoveryWithoutAnEscalation_LogsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationTests.cs:ASuccess_EndsTheRun_SoTheNextOneStartsFromNothingAsync</tests>
   public void Succeeded() {
     int failures;
     long startedAt;

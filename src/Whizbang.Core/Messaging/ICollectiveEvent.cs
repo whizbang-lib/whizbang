@@ -40,8 +40,8 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_ExtendsIMessage_SoExistingPipelinesCanCarryItAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_Scope_CarriedThroughEvent_Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_ExtendsIMessage_SoExistingPipelinesCanCarryItAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_Scope_CarriedThroughEvent_Async</tests>
 public interface ICollectiveEvent : IEvent {
   /// <summary>
   /// The scope envelope this event operates in. Drives runtime routing
@@ -80,7 +80,7 @@ public interface ICollectiveEvent : IEvent {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs:AHandWrittenCollective_HasNoOrderingKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveOrderingKeyTests.cs:AHandWrittenCollective_HasNoOrderingKeyAsync</tests>
   string? OrderingKey => null;
 
   /// <summary>
@@ -102,7 +102,7 @@ public interface ICollectiveEvent : IEvent {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
   Guid? PredecessorId => null;
 
   /// <summary>

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Messaging;
 /// (it re-detects on a later cycle if still real).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityGapTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityGapTrackerTests.cs</tests>
 public sealed class IntegrityGapTracker {
   /// <summary>One deficit awaiting confirmation on the next checkpoint.</summary>
   public sealed record PendingGap {
@@ -141,7 +141,7 @@ public sealed class IntegrityGapTracker {
   /// <param name="coordinator">The store.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#the-gap-tracker-survives-a-restart</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityGapTrackerDurabilityTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityGapTrackerDurabilityTests.cs</tests>
   public async System.Threading.Tasks.Task EnsureHydratedAsync(
       IWorkCoordinator coordinator, System.Threading.CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(coordinator);

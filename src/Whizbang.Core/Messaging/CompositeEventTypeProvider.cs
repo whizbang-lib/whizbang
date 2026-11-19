@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// is, so a host whose contributions are all unavailable keeps the "no event types known" path its consumers take.
 /// </remarks>
 /// <docs>fundamentals/events/events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventTypeProviderContributionTests.cs</tests>
 public sealed class CompositeEventTypeProvider : IEventTypeProvider {
   private readonly IReadOnlyList<Type> _eventTypes;
 

@@ -5,7 +5,7 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>Who runs the pg_repack client when <see cref="TableRewriteStrategy.PgRepack"/> is selected.</summary>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public enum PgRepackMode {
   /// <summary>
   /// The default. The instance holding the maintainer duty runs the client for each queued table in the post-ready
@@ -22,7 +22,7 @@ public enum PgRepackMode {
 
 /// <summary>The table rewrite settings below <c>Whizbang:Workers:Maintenance:TableRewrite</c>.</summary>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public sealed class TableRewriteOptions {
   /// <summary>The pg_repack settings (<c>Whizbang:Workers:Maintenance:TableRewrite:PgRepack</c>).</summary>
   public PgRepackOptions PgRepack { get; } = new();
@@ -32,7 +32,7 @@ public sealed class TableRewriteOptions {
 /// How <see cref="TableRewriteStrategy.PgRepack"/> runs (<c>Whizbang:Workers:Maintenance:TableRewrite:PgRepack</c>).
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public sealed class PgRepackOptions {
   /// <summary>
   /// Who runs the client (<c>Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode</c>). Default

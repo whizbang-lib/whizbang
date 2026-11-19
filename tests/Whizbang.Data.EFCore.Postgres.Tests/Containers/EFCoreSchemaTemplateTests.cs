@@ -318,7 +318,8 @@ public class EFCoreSchemaTemplateTests {
   }
 
   /// <summary>
-  /// Every test's copy has a service identity of its own, as a database migrated for that test alone did.
+  /// Every test's copy has a service identity and an archive identity of its own, as a database migrated for that test
+  /// alone did.
   /// </summary>
   /// <remarks>
   /// A migration seeds <c>wh_service_config</c> with a random <c>service_id</c>, and a copy inherits the template's.
@@ -338,6 +339,13 @@ public class EFCoreSchemaTemplateTests {
       await Assert.That(firstId).IsNotEqualTo(Guid.Empty);
       await Assert.That(firstId).IsNotEqualTo(secondId)
         .Because("each test database is its own service, as one migrated for the test was");
+
+      const string ARCHIVE_ID = "SELECT setting_value FROM public.wh_settings WHERE setting_key = 'archive_database_id'";
+      var firstArchive = await _scalarAsync<string>(ARCHIVE_ID, null, cancellationToken, database: first.Name);
+      var secondArchive = await _scalarAsync<string>(ARCHIVE_ID, null, cancellationToken, database: second.Name);
+      await Assert.That(firstArchive).IsNotNull().And.IsNotEmpty();
+      await Assert.That(firstArchive).IsNotEqualTo(secondArchive)
+        .Because("each test database has its own archive identity (465, #2367), or one would sweep the other's archive");
     } finally {
       await PerTestDatabaseFactory.DropAsync(first.Name, cancellationToken: CancellationToken.None);
       await PerTestDatabaseFactory.DropAsync(second.Name, cancellationToken: CancellationToken.None);

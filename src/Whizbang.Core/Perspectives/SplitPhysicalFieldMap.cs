@@ -19,7 +19,7 @@ public readonly record struct SplitPhysicalColumn(string Name, bool IsVector);
 /// expression for a record) and needs no reflection.
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/SplitPhysicalFieldRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/SplitPhysicalFieldRegistryTests.cs</tests>
 public sealed class SplitPhysicalFieldMap<TModel> where TModel : class {
   private readonly Func<TModel, IPhysicalColumnReader, TModel> _hydrate;
 

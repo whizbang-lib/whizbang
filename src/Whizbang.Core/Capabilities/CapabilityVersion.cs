@@ -7,7 +7,7 @@ namespace Whizbang.Core.Capabilities;
 
 /// <summary>Compares the versions a provider reports, to decide whether an upgrade is due.</summary>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityVersionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityVersionTests.cs</tests>
 public static class CapabilityVersion {
   /// <summary>
   /// Whether <paramref name="candidate"/> is newer than <paramref name="current"/>: dot-separated segments compared in

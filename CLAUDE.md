@@ -167,6 +167,7 @@ src/
 
 tests/
 ├── Whizbang.Core.Tests/        # Unit tests
+├── Whizbang.Core.Unit.*.Tests/ # Unit tests of Core, split by area (#2392)
 ├── Whizbang.Policies.Tests/    # Policy system tests
 └── Whizbang.Observability.Tests/
 

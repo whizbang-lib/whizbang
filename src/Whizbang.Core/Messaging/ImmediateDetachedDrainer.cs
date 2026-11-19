@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateDetachedDrainerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateDetachedDrainerTests.cs</tests>
 /// <remarks>
 /// Creates a new ImmediateDetachedDrainer.
 /// </remarks>

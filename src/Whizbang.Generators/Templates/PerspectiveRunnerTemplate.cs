@@ -1009,7 +1009,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // rare enough in a healthy system to afford the level — the partial case below stays at Debug.
           if (_logger.IsEnabled(LogLevel.Warning)) {
             var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
-            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(global::System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
             _logger.LogWarning(
                 "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
                 events.Count - filtered.Count,
@@ -1037,7 +1037,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // they were already in ProcessedLineNumbers / equivalent idempotency state.
           if (_logger.IsEnabled(LogLevel.Debug)) {
             var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
-            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(global::System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
             _logger.LogDebug(
                 "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
                 events.Count - filtered.Count,
@@ -1161,7 +1161,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Check if per-event tracing is enabled
       var enableEventSpans = _tracingOptions?.CurrentValue.EnablePerspectiveEventSpans ?? false;
-      var appliedEventTypes = new System.Collections.Generic.List<string>();
+      var appliedEventTypes = new global::System.Collections.Generic.List<string>();
 
       // Replay/rebuild only: interleave this tenant's collective events for the model into the stream's replay,
       // ordered by message id among the per-stream events — so a set-based collective mutation is reproduced
@@ -1406,7 +1406,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // production run measured a much lower than expected events/sec drain despite high
         // concurrency configured — need to know whether DB write or in-memory apply or
         // lifecycle dominates per drain.
-        state.SaveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        state.SaveStartTicks = global::System.Diagnostics.Stopwatch.GetTimestamp();
         // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
         JsonDocument? snapshotBeforeWrite = null;
         // Issue #1002: whether this run ends in a snapshot, decided before the write, so a model the write strips in
@@ -1581,8 +1581,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - state.SaveStartTicks)
-            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          var saveMs = (global::System.Diagnostics.Stopwatch.GetTimestamp() - state.SaveStartTicks)
+            * 1000.0 / global::System.Diagnostics.Stopwatch.Frequency;
           if (saveMs > 50 || eventsProcessed >= 10) {
             _logger.LogDebug(
               "PERF SaveModelAndCheckpoint {PerspectiveName} stream {StreamId}: {EventCount} events in {SaveMs:F1}ms ({MsPerEvent:F2}ms/evt)",
@@ -1617,10 +1617,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               // rewinds can locate the snapshot by commit_sequence (deterministic) rather
               // than event_id (subject to UUIDv7 generation-time race). Null is OK: the
               // commit-sequence-anchored lookup falls back to event_id-anchored on miss.
+              // #2379: taken at the event with the highest version the row holds, so the snapshot's version names the
+              // events it holds (every one up to it); the last event applied can sit lower when ids and versions disagree.
+              var snapshotAt = new LastInStream();
+              foreach (var applied in processedEvents) {
+                snapshotAt.Offer(applied);
+              }
+              var snapshotEventId = snapshotAt.Position ?? lastSuccessfulEventId.Value;
               var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
-                  lastSuccessfulEventId.Value, cancellationToken);
+                  snapshotEventId, cancellationToken);
               await _snapshotStore.CreateSnapshotAsync(
-                  streamId, perspectiveName, lastSuccessfulEventId.Value,
+                  streamId, perspectiveName, snapshotEventId,
                   snapshotCommitSequence,
                   snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), collectiveMark.ThroughSequence, cancellationToken);
               snapshotBeforeWrite = null; // handed to the store
@@ -2231,17 +2238,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     Action? announceReplay = null;
 
     if (_snapshotStore is not null) {
-      // The snapshot has to sit before the triggering event IN THE STREAM, because the rewind restores
-      // it and replays forward from there. Version is the only anchor that gives that order within one
-      // stream. Commit sequence is assignment order and event id is UUIDv7 generation order, and both
-      // run backward against the stream for retroactively stamped rows, so either can name a snapshot
-      // LATER in the stream than the trigger (#1355; #1352 is the replay side of the same assumption).
-      // Resuming there skips every event in between and leaves the row permanently short of them.
+      // The snapshot has to sit before the triggering event IN THE ORDER THE REPLAY FOLDS, because the rewind
+      // restores it and replays forward from there. A snapshot is taken at the event with the highest version it
+      // holds and holds every event up to that version, so the store selects the newest one below the trigger's
+      // version (commit sequence and event id run backward against the stream for retroactively stamped rows and
+      // can name a snapshot later than the trigger, #1355). Version order is the replay's order only for a stream
+      // with no origin to deal, though: a single-origin stream replays in origin order, which can put an event
+      // above the snapshot's version before one it holds. Restoring such a snapshot folds the earlier event after
+      // the later one, so the floor is judged by the replay's own order (ReplayFloor, #2379): everything the
+      // snapshot holds must come first in that order, and the trigger after it.
       //
-      // There is deliberately no fallback to the two older anchors. A fallback is not a safety net here,
-      // it is the same wrong answer arriving one branch later: it fires exactly when the version anchor
-      // declined, which is exactly when the snapshot cannot be placed in the stream. A full replay costs
-      // more and reproduces the row; a wrong restore point leaves a read model nothing is pending to repair.
+      // There is deliberately no fallback to any other floor or order. A fallback is not a safety net here, it is
+      // the same wrong answer arriving one branch later: it fires exactly when the floor cannot be placed. A full
+      // replay costs more and reproduces the row; a wrong restore point leaves a read model nothing is pending to
+      // repair.
       var snapshot = await _snapshotStore.GetSnapshotFloorAsync(
           streamId, perspectiveName, triggeringEventId, cancellationToken);
 
@@ -2257,6 +2267,24 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       if (snapshot is not null) {
         snapshotModel = FromSnapshotJson(snapshot.SnapshotData);
+        // #2379: a readable snapshot is a floor only when the events it holds come first in the replay's order. A snapshot
+        // an archive covers, of a stream whose archive was deleted, is refused below without reading anything (#1964).
+        if (snapshotModel is not null
+            && (snapshot.ArchivedThroughVersion is null || await _deletedArchiveExtentAsync(streamId, cancellationToken) is null)
+            && !global::Whizbang.Core.Perspectives.ReplayFloor.Qualifies(
+              await _streamAsReplayedAsync(streamId, cancellationToken), snapshot.SnapshotVersion, triggeringEventId)) {
+          var refusedSnapshotEventId = snapshot.SnapshotEventId;
+          var refusedSnapshotVersion = snapshot.SnapshotVersion;
+          announceReplay = () => _logger.LogWarning(
+              "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} (stream version {SnapshotVersion}) does not hold only events that come before late event {TriggeringEventId} in replay order; performing full replay",
+              perspectiveName, streamId, refusedSnapshotEventId, refusedSnapshotVersion, triggeringEventId);
+          snapshotModel = null;
+          snapshot = null;
+          replaysWithoutAFloor = false;  // the refusal above is the one line this replay logs
+        }
+      }
+
+      if (snapshot is not null) {
         if (snapshotModel is not null) {
           replayFromEventId = snapshot.SnapshotEventId;
           snapshotData = snapshot.SnapshotData;
@@ -2362,6 +2390,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
+  /// Every event of the stream this perspective folds, as a full replay reads it, so
+  /// <see cref="global::Whizbang.Core.Perspectives.ReplayFloor"/> can place the snapshot in the replay's order (#2379). A
+  /// body reaped from an ephemeral stream is not read (consumed, snapshot-covered history), and an archived prefix is
+  /// read only where the store reads through the archive; events missing from the read are below the snapshot and held
+  /// by it, so the check places the snapshot among the events it can see.
+  /// </summary>
+  private async Task<IReadOnlyList<MessageEnvelope<IEvent>>> _streamAsReplayedAsync(
+      Guid streamId, CancellationToken cancellationToken) {
+    var stream = new List<MessageEnvelope<IEvent>>();
+    await foreach (var envelope in _eventStore.ReadPolymorphicAsync(streamId, null, _handledEventTypes, cancellationToken)) {
+      stream.Add(envelope);
+    }
+    return stream;
+  }
+
+  /// <summary>
   /// The completion of a rewind that replayed nothing and dropped its late event: the cursor is not moved (an empty last
   /// event skips the checkpoint write), nothing was written, and the late event is named so the worker retires its work.
   /// </summary>
@@ -2405,7 +2449,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// which the worker counts and retries.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:ARowThatMovesWhileARewindReplays_EndsWithTheCorrectionAndTheNewerEventAsync</tests>
   private async Task<PerspectiveCursorCompletion> _replayCheckedAsync(
       Guid streamId,
@@ -2507,6 +2551,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // points and the end — find a qualifying snapshot rather than replaying from event zero.
     var rewindSnapshotInterval = _snapshotOptions?.Value.RewindSnapshotIntervalEvents ?? 0;
     var eventsSinceIntermediateSnapshot = 0;
+    // #2379: an intermediate snapshot is taken only where the fold so far is every event up to some version, at that
+    // version's event: a fold in origin order can hold a later version before an earlier one.
+    var foldedPrefix = new global::Whizbang.Core.Perspectives.FoldedVersionPrefix();
     global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>? firstStreamEvent = null;
 
     // Build list of event types this perspective handles
@@ -2579,7 +2626,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Read events from the current anchor. First pass uses replayFromEventId
       // (snapshot or null=from-beginning). Subsequent passes use the last event
       // we applied, so we only pick up the delta of events appended since.
-      var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+      var events = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
       // #1738: the first pass from a snapshot an archive covers reads the archived events after it, then the hot ones; every
       // later pass resumes after the last event applied, which is hot.
       var read = rewindCatchUpIterations == 1 && readThroughArchiveAfterVersion is long afterVersion
@@ -2613,6 +2660,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         events = [.. merged.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent || foldedCollectives.Add(e.MessageId.Value))];
       }
 
+      foldedPrefix.Read(events.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent));
       if (events.Count == 0) {
         // Event store quiescent: the rewind has caught up to HEAD AT THIS COMMIT.
         // This is the contract PerspectiveRewindCompleted now honors.
@@ -2628,6 +2676,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           if (skipped.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
             (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, skipped);
             lastInStream.Offer(skipped);
+            _ = foldedPrefix.Folded(skipped);
           }
           eventsProcessed++;
         }
@@ -2674,6 +2723,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         eventsProcessed++;
         (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
         lastInStream.Offer(envelope);
+        _ = foldedPrefix.Folded(envelope);
         if (resurrection is null) {
           purgedEventsSkipped++;
           continue;
@@ -2702,6 +2752,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         lastSuccessfulEventId = envelope.MessageId.Value;
         lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
+        _ = foldedPrefix.Folded(envelope);
         continue;
       }
 
@@ -2730,6 +2781,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       eventsProcessed++;
       (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
       lastInStream.Offer(envelope);
+      var prefixAt = foldedPrefix.Folded(envelope);
 
       // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
       // at THIS point in the stream's history so future rewinds for late events with
@@ -2739,15 +2791,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
           && !pendingPurge && updatedModel is not null && producedByApply && heldThrough.Settled) {
         eventsSinceIntermediateSnapshot++;
-        if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval) {
+        // A due snapshot waits for the next point where the fold is a version prefix (#2379).
+        if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval && prefixAt is not null) {
           try {
             // Slice 26.11: resolve commit_sequence for the intermediate snapshot too,
             // so a rewind triggered by a "very late" event with commit_sequence between
             // intermediate snapshots finds the right restore point.
             var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
-                lastSuccessfulEventId.Value, cancellationToken);
+                prefixAt.MessageId.Value, cancellationToken);
             await _snapshotStore.CreateSnapshotAsync(
-                streamId, perspectiveName, lastSuccessfulEventId.Value,
+                streamId, perspectiveName, prefixAt.MessageId.Value,
                 intermediateCommitSequence,
                 ToSnapshotJson(updatedModel), heldThrough.Mark, cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
@@ -2765,20 +2818,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       } // closes foreach (var envelope in foldEvents)
 
       // v0.688 — advance the catch-up anchor past everything this pass READ so the next
-      // iteration's ReadPolymorphicAsync only returns events appended since. The anchor is
-      // the MAX MessageId of the read window, not the last-APPLIED id: the apply order is
-      // commit order, whose final event need not carry the window's largest id — an
-      // id-anchored refetch from a smaller last-applied id would re-serve (and re-apply)
-      // the window's tail every pass.
+      // iteration's ReadPolymorphicAsync only returns events appended since. The store reads after the anchor's
+      // position in the stream, its version (#2379), so the anchor is the event read last in stream order, never the
+      // largest id, which sits anywhere in a stream whose ids and versions disagree.
       // Collectives are other streams' events, so they never anchor this stream's read; a pass that folded only
       // collectives leaves the anchor where it was.
-      var readIds = events
-        .Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent)
-        .Select(e => e.MessageId.Value)
-        .ToList();
-      if (readIds.Count > 0) {
-        anchorEventId = readIds.OrderBy(id => id.ToString("D"), StringComparer.Ordinal).Last();
-      }
+      anchorEventId = global::Whizbang.Core.Perspectives.StreamReadAnchor.After(
+        events.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent), anchorEventId);
     } // closes while (true)
 
     return await _finishReplayAsync(new ReplayOutcome {
@@ -2913,10 +2959,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
           && !pendingPurge && updatedModel is not null && producedByApply && lastSuccessfulEventId.HasValue
           && outcome.CollectivesSettled) {
+        // #2379: taken at the event with the highest version the replay read, so the snapshot's version names the events
+        // it holds (the floor's and every one read above it). The last event folded can sit lower in a stream the replay
+        // folds in origin order.
+        var snapshotEventId = outcome.LastInStream.Position ?? lastSuccessfulEventId.Value;
         var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
-            lastSuccessfulEventId.Value, cancellationToken);
+            snapshotEventId, cancellationToken);
         await _snapshotStore.CreateSnapshotAsync(
-            streamId, perspectiveName, lastSuccessfulEventId.Value,
+            streamId, perspectiveName, snapshotEventId,
             afterReplayCommitSequence,
             snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), outcome.CollectivesHeldThrough, cancellationToken);
         snapshotBeforeWrite = null; // handed to the store
@@ -2964,7 +3014,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// anything is written, and the caller folds the stream in full.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/OverwriteOnlyRewindTests.cs</tests>
   private async Task<PerspectiveCursorCompletion?> _replayLastEventOnlyAsync(
       Guid streamId,
       string perspectiveName,
@@ -2989,7 +3039,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
       var read = new global::Whizbang.Core.Perspectives.LastInReplayOrder(static e => e.GetCurrentScope()?.Scope is not null);
-      Guid? readUpTo = null;
+      var readAnchor = new global::Whizbang.Core.Perspectives.StreamReadAnchor();
       await foreach (var envelope in _eventStore.ReadPolymorphicAsync(streamId, anchorEventId, eventTypes, cancellationToken)) {
         if (!DecidesTheRowAlone(envelope.Payload)) {
           return null;
@@ -2998,7 +3048,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         outcome.FirstStreamEvent ??= envelope;
         (outcome.FrontierEventId, outcome.FrontierCommitSequence) = _advanceFrontier(outcome.FrontierEventId, outcome.FrontierCommitSequence, envelope);
         outcome.LastInStream.Offer(envelope);
-        readUpTo = _laterId(readUpTo, envelope.MessageId.Value);
+        readAnchor.Offer(envelope);
       }
       if (read.Count == 0) {
         break;
@@ -3014,7 +3064,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       outcome.LastSuccessfulEventType = last.Payload.GetType().FullName ?? last.Payload.GetType().Name;
       outcome.LastSuccessfulEventAt = last.Hops is { Count: > 0 } ? last.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
       outcome.LastScope = read.LastMatching?.GetCurrentScope()?.Scope ?? outcome.LastScope;
-      anchorEventId = readUpTo;
+      // #2379: the next pass reads after the event last in stream order, as the store places the anchor.
+      anchorEventId = readAnchor.Next(anchorEventId);
       _logger.LogDebug(
           "Overwrite-only rewind of {PerspectiveName} stream {StreamId}: applied the last of {EventCount} event(s) read",
           perspectiveName, streamId, read.Count);
@@ -3038,10 +3089,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       return null;
     }
   }
-
-  /// <summary>The later of two event ids by their canonical text, the catch-up anchor's order.</summary>
-  private static Guid _laterId(Guid? current, Guid candidate) =>
-      current is { } held && string.CompareOrdinal(held.ToString("D"), candidate.ToString("D")) >= 0 ? held : candidate;
 
   /// <summary>
   /// The replayed event last in stream order (#2366): the highest version read. A replay of a stream whose ids disagree
@@ -3162,7 +3209,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private bool _modelHasCollectives() => _collectiveEventTypeNames().Count > 0;
 
   /// <summary>The stored event-type names of the model's collectives; none without a collective replay applier.</summary>
-  private System.Collections.Generic.IReadOnlyList<string> _collectiveEventTypeNames() =>
+  private global::System.Collections.Generic.IReadOnlyList<string> _collectiveEventTypeNames() =>
       _collectiveReplayApplier?.CollectiveEventTypeNamesFor(
           global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(__MODEL_TYPE_NAME__)).Replace('+', '.')) ?? [];
 
@@ -3179,7 +3226,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>One read of the collective fence, with what the read after the write needs to ask it again.</summary>
   private sealed record CollectiveFenceRead(
       string? TenantId,
-      System.Collections.Generic.IReadOnlyList<string> CollectiveEventTypes,
+      global::System.Collections.Generic.IReadOnlyList<string> CollectiveEventTypes,
       global::Whizbang.Core.Perspectives.CollectiveSnapshotFenceReading Reading);
 
   /// <summary>The mark a snapshot records, or that it is deferred (#1963).</summary>
@@ -3247,7 +3294,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// known otherwise, and the pass then folds no collective.
   /// </summary>
   private static (bool Known, string? TenantId) _collectiveTenant(
-      System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
       global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead,
       bool firstPassFromASnapshot) {
     if (events.Count > 0) {

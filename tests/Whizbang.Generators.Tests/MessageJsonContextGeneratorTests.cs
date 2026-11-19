@@ -4262,7 +4262,8 @@ public record TemplateCreatedEvent : IEvent {
 
     // Deferred property initialization pattern should be present
     await Assert.That(code).Contains("CreatePropertiesFor_TestApp_TemplateCreatedEvent");
-    await Assert.That(code).Contains("CreateCtorParamsFor_TestApp_TemplateCreatedEvent");
+    // No member has to be set at construction, so the type is built by its parameterless constructor (#2374)
+    await Assert.That(code).Contains("ObjectCreator = static () => new global::TestApp.TemplateCreatedEvent(),");
 
     // Type info should be cached BEFORE deferred initialization runs
     await Assert.That(code).Contains("TypeInfoCacheFor(options)[typeof(global::TestApp.TemplateCreatedEvent)]");

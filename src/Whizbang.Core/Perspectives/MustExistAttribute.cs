@@ -34,7 +34,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/must-exist</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/MustExistAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/MustExistAttributeTests.cs</tests>
 /// <example>
 /// <para><strong>Typical usage with creation and update events:</strong></para>
 /// <code>

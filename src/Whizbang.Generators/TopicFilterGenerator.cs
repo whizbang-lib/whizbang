@@ -223,14 +223,15 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     sb.AppendLine("#nullable enable");
     sb.AppendLine();
 
-    // Namespace
-    sb.AppendLine($"namespace {namespaceName};");
-    sb.AppendLine();
-
-    // Using statements
+    // Using statements, ahead of the namespace so they bind from the global namespace (#2400): inside it,
+    // System.Collections.Generic would bind to a System namespace beside the consumer's.
     sb.AppendLine("using System;");
     sb.AppendLine("using System.Collections.Generic;");
     sb.AppendLine("using Whizbang.Core;");
+    sb.AppendLine();
+
+    // Namespace
+    sb.AppendLine($"namespace {namespaceName};");
     sb.AppendLine();
 
     // Class declaration

@@ -143,10 +143,13 @@ public class StreamIntegrityMetricsTests {
   public async Task SealedThroughGauge_ReportsOneMeasurementPerOrigin_TaggedAsync() {
     var originA = Guid.NewGuid();
     var originB = Guid.NewGuid();
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    // This instance's meter only: another test's metrics instance publishes a gauge of the same name, and its seals
+    // would be read as this test's.
     var readings = new List<(long Value, string? Origin)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == StreamIntegrityMetrics.METER_NAME
+      if (instrument.Meter == metrics.RepairsUnhealable.Meter
           && instrument.Name == "whizbang.stream_integrity.sealed_through") {
         l.EnableMeasurementEvents(instrument);
       }
@@ -164,7 +167,6 @@ public class StreamIntegrityMetricsTests {
     });
     listener.Start();
 
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.UpdateLedgerGauges(new LedgerGaugeSnapshot {
       UnhealedBuckets = 5,
       Seals = [new OriginSeal(originA, 300), new OriginSeal(originB, 0)],

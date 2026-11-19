@@ -21,7 +21,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#transport-filtering</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventServiceCollectionExtensionsTests.cs:AddSystemEvents_RegistersTransportPublishFilterAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventServiceCollectionExtensionsTests.cs:AddSystemEvents_RegistersTransportPublishFilterAsync</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/LocalOnlyTransportIntegrationTests.cs:LocalOnly_ShouldReceiveFromTransport_ReturnsFalse_WhenLocalOnly_Async</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/LocalOnlyTransportIntegrationTests.cs:LocalOnly_DomainEventsAlwaysReceived_Async</tests>
 public interface ITransportPublishFilter {

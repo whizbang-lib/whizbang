@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-upcasting</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventUpcasterPipelineTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventUpcasterPipelineTests.cs</tests>
 public sealed class EventUpcasterPipeline {
   private readonly IEventUpcaster[] _upcasters;
 

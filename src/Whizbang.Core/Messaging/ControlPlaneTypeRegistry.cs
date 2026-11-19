@@ -28,7 +28,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ControlPlaneTypeRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ControlPlaneTypeRegistryTests.cs</tests>
 public static class ControlPlaneTypeRegistry {
   private static readonly ConcurrentDictionary<string, bool> _names = new(StringComparer.Ordinal);
 

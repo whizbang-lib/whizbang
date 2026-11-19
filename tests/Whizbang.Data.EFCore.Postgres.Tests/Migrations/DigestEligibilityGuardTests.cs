@@ -68,7 +68,9 @@ public partial class DigestEligibilityGuardTests {
     var offenders = new SortedSet<string>(StringComparer.Ordinal);
     foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)) {
       if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-          || file.EndsWith($"{Path.DirectorySeparatorChar}DigestExemptTypes.cs", StringComparison.Ordinal)) {
+          || file.EndsWith($"{Path.DirectorySeparatorChar}DigestExemptTypes.cs", StringComparison.Ordinal)
+          // The rule's one source (#2343): the migrations' constants are held to it by EligibilitySqlVersionTests.
+          || file.EndsWith($"{Path.DirectorySeparatorChar}Whizbang.Rules{Path.DirectorySeparatorChar}EligibilitySql.cs", StringComparison.Ordinal)) {
         continue;
       }
       var lines = await File.ReadAllLinesAsync(file);

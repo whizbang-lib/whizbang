@@ -37,7 +37,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalFormatTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalFormatTests.cs</tests>
 public static class CanonicalTemporalFormat {
 #pragma warning disable CA1707
   /// <summary>Microseconds in a day, which is what a date advances by.</summary>

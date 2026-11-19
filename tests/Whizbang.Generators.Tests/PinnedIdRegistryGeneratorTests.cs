@@ -251,7 +251,7 @@ public class PinnedIdRegistryGeneratorTests {
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
 
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(registryCode).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(registryCode).Contains("ServiceRegistrationCallbacks.RegisterPinnedIdRegistry(\"TestAssembly\", ");
     await Assert.That(registryCode).Contains("PinnedIdRegistryExtensions.AddPinnedIdRegistry(services)")
       .Because("the module initializer's callback contributes through the same registration a host calls directly");

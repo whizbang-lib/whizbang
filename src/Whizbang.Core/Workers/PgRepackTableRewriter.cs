@@ -32,7 +32,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PgRepackTests.cs</tests>
 public sealed partial class PgRepackTableRewriter : ITableRewriter {
   private const string EXTERNAL = "pg_repack runs as an external job (" + PgRepackClient.MODE_KEY + " = External): "
     + "Whizbang does not start it, and requested tables stay queued for that job (wh_tables_needing_rewrite() lists them)";

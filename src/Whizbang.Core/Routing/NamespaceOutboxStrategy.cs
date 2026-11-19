@@ -42,7 +42,7 @@ namespace Whizbang.Core.Routing;
 /// <see cref="OutboxRoutingOptionsBuilder.UseNamespaceRouting"/>.</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/NamespaceOutboxStrategyTests.cs</tests>
 public sealed class NamespaceOutboxStrategy : IOutboxRoutingStrategy, ICommandInboxAddressResolver {
   private readonly RoutingOptions _routingOptions;
   private readonly SharedTopicOutboxStrategy _legacyShared;
@@ -61,7 +61,7 @@ public sealed class NamespaceOutboxStrategy : IOutboxRoutingStrategy, ICommandIn
   /// strategy-agnostic interface the transports' DI factories consume.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxAddressResolverTests.cs:NamespaceOutboxStrategy_ImplementsTheSeam_DefaultIsSharedInboxTopicAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxAddressResolverTests.cs:NamespaceOutboxStrategy_ImplementsTheSeam_DefaultIsSharedInboxTopicAsync</tests>
   public string DefaultCommandInboxAddress => SharedInboxTopic;
 
   /// <summary>

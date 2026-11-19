@@ -40,9 +40,12 @@ public readonly record struct IntegrityReportObservation(
 /// <docs>proposals/paced-repair-drain</docs>
 /// <param name="MissingEventId">#2103: the one event the bucket is missing, when its comparison could name it (the
 /// origin held exactly one event more and both sides carried id lanes); null asks for the stream over the window.</param>
+/// <param name="TraceParent">#2365: the W3C <c>traceparent</c> of the comparison that recorded the row, so the drain's
+/// request starts in the audit's trace; null when the comparison ran with no span.</param>
+/// <param name="TraceRequestId">#2365: the id of the manifest ask whose answer recorded the row; null when it named none.</param>
 public readonly record struct IntegrityRepairDrainItem(
   Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId,
-  long? WindowFrom, long? WindowUntil, Guid? MissingEventId = null);
+  long? WindowFrom, long? WindowUntil, Guid? MissingEventId = null, string? TraceParent = null, Guid? TraceRequestId = null);
 
 /// <summary>
 /// What a manifest comparison needs to know before it adds deficit buckets to the paced repair
@@ -174,7 +177,7 @@ public interface IIntegrityRepairLedger {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The ages of the buckets forgotten; empty when not measured.</returns>
   /// <docs>resilience/stream-integrity#a-matching-type-heals-its-type-lane</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerTypeHealTests.cs</tests>
   ValueTask<IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys, CancellationToken cancellationToken = default) =>
     MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k.ToTypeLane())], cancellationToken);
@@ -194,7 +197,7 @@ public interface IIntegrityRepairLedger {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The tracked buckets marked.</returns>
   /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerContractTests.cs:Repair_WhileTheAnswerIsPending_IsRefused_UntilTheAnswerTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerContractTests.cs:Repair_WhileTheAnswerIsPending_IsRefused_UntilTheAnswerTimeoutAsync</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The keys, the type-lane window's two bounds, the clock and the timeout are one record of a request that left; the window bounds only mean something together.")]
   ValueTask<int> MarkAnswerPendingAsync(
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil, DateTimeOffset now,
@@ -212,7 +215,7 @@ public interface IIntegrityRepairLedger {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>A task that completes when the answer is recorded.</returns>
   /// <docs>resilience/stream-integrity#repair-waits-for-its-answer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerTests.cs:MarkAnswered_ClearsThePendingAnswer_SoOnlyTheBackoffGovernsTheNextAskAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerTests.cs:MarkAnswered_ClearsThePendingAnswer_SoOnlyTheBackoffGovernsTheNextAskAsync</tests>
   ValueTask MarkAnsweredAsync(
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, CancellationToken cancellationToken = default) =>
     ValueTask.CompletedTask;
@@ -230,7 +233,7 @@ public interface IIntegrityRepairLedger {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The keys newly marked by this call.</returns>
   /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerUnhealableTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerUnhealableTests.cs</tests>
   ValueTask<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
     CancellationToken cancellationToken = default) =>
@@ -250,7 +253,7 @@ public interface IIntegrityRepairLedger {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The keys newly marked by this call.</returns>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerUnhealableTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerUnhealableTests.cs</tests>
   ValueTask<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
     IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
     IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>

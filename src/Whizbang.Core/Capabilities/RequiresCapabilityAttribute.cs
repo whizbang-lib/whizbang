@@ -15,7 +15,7 @@ namespace Whizbang.Core.Capabilities;
 /// <param name="provider">The provider's name, for example <c>postgres</c>.</param>
 /// <param name="name">The capability's name within the provider.</param>
 /// <docs>operations/infrastructure/capabilities#declaring-a-requirement</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/RequiresCapabilityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/RequiresCapabilityAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ConfigurationManifestGeneratorTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = true, Inherited = true)]
 public sealed class RequiresCapabilityAttribute(string provider, string name) : Attribute {
@@ -35,7 +35,7 @@ public sealed class RequiresCapabilityAttribute(string provider, string name) : 
 /// </summary>
 /// <param name="extension">The extension's name, as <c>CREATE EXTENSION</c> takes it, for example <c>pg_squeeze</c>.</param>
 /// <docs>operations/infrastructure/capabilities#declaring-a-requirement</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/RequiresCapabilityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/RequiresCapabilityAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ConfigurationManifestGeneratorTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = true, Inherited = true)]
 public sealed class RequiresPostgresExtensionAttribute(string extension) : Attribute {

@@ -43,7 +43,7 @@ public static class EFCorePerspectiveAssociationExtensions {
     string serviceName,
     ILogger? logger = null,
     CancellationToken cancellationToken = default,
-    System.Collections.Generic.IReadOnlyList<string>? collectiveEventTypes = null)
+    global::System.Collections.Generic.IReadOnlyList<string>? collectiveEventTypes = null)
     where TDbContext : DbContext {
 
     // Build JSON array of message associations

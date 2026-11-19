@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// Tracks the last processed event for each perspective on each stream.
 /// Enables time-travel scenarios where new perspectives can catch up by replaying events.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/PerspectiveCursorRecordTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/PerspectiveCursorRecordTests.cs</tests>
 public sealed class PerspectiveCursorRecord {
   /// <summary>
   /// The stream being processed.

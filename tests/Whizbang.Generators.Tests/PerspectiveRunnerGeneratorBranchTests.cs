@@ -221,7 +221,7 @@ public class PerspectiveRunnerGeneratorBranchTests {
       """, "DocPerspective");
 
     await Assert.That(runner).Contains("model = new global::TestNamespace.DocModel {");
-    await Assert.That(runner).Contains("Embedding = System.Array.Empty<float>()");
+    await Assert.That(runner).Contains("Embedding = global::System.Array.Empty<float>()");
     await Assert.That(runner).Contains("Status = default!");
   }
 }

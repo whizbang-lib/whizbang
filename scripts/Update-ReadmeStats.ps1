@@ -118,6 +118,7 @@ $tiers = [ordered]@{
       'ORM base'          = 'The base to build a store for another database with the same ORM.'
       'API surface base'  = 'What GraphQL and REST surfaces share: command endpoints and their mapping.'
       'Pattern contracts' = 'Contracts a pattern exposes to code that does not reference its runtime.'
+      'Integrity rules'   = 'The eligibility rules storage cleanup and stream integrity share, versioned only when they change.'
     }
   }
 }

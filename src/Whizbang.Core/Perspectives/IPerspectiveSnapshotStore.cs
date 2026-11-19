@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives;
 /// instead of replaying from event zero.
 /// </summary>
 /// <docs>fundamentals/perspectives/snapshots</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesOverload_ResolvesRealImplementationTypesAsync</tests>
 public interface IPerspectiveSnapshotStore {
   /// <summary>True when a real implementation is registered. The framework's null default returns false so
@@ -60,7 +60,7 @@ public interface IPerspectiveSnapshotStore {
   /// null for none recorded.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:CreateSnapshotAsync_WithACollectivesMark_DefaultImpl_WritesTheSnapshotWithoutTheMarkAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:CreateSnapshotAsync_WithACollectivesMark_DefaultImpl_WritesTheSnapshotWithoutTheMarkAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SnapshotSelectionFollowsStreamOrderTests.cs:SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync</tests>
   Task CreateSnapshotAsync(
       Guid streamId,
@@ -149,6 +149,12 @@ public interface IPerspectiveSnapshotStore {
   /// as sound there as it ever was. Refusing to answer at that point would turn every rewind into a replay
   /// from event zero for a store that never had the defect.
   /// </para>
+  /// <para>
+  /// The store's answer is a candidate, not the floor (#2379). The rewind restores it only when the events it holds come
+  /// first in the order the replay folds the stream (<see cref="ReplayFloor"/>); a single-origin stream replays in origin
+  /// order, which version alone does not give. A snapshot with no version cannot be placed in that order and is never
+  /// restored: the rewind replays in full.
+  /// </para>
   /// <para>Default implementation returns null so stores that do not record a version keep compiling.</para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/snapshots</docs>
@@ -170,7 +176,7 @@ public interface IPerspectiveSnapshotStore {
   /// <see cref="GetLatestSnapshotBeforeEventInStreamOrderAsync"/> and records no mark: a store that keeps none has no
   /// archive to read through.</returns>
   /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs:ARewindFromASnapshotTheArchiveCovers_ReadsThroughTheArchive_AboveTheSnapshotsVersionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs:ARewindFromASnapshotTheArchiveCovers_ReadsThroughTheArchive_AboveTheSnapshotsVersionAsync</tests>
   async Task<PerspectiveSnapshotFloor?> GetSnapshotFloorAsync(
       Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
     var snapshot = await GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, perspectiveName, beforeEventId, ct).ConfigureAwait(false);
@@ -188,7 +194,7 @@ public interface IPerspectiveSnapshotStore {
   /// <returns>The newest snapshot, or null when the stream has none. The default wraps <see cref="GetLatestSnapshotAsync"/>
   /// and records no version and no marks: a store that keeps none has none to return.</returns>
   /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotFloorAsync_DefaultImpl_WrapsTheNewestSnapshot_WithNoMarkAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotFloorAsync_DefaultImpl_WrapsTheNewestSnapshot_WithNoMarkAsync</tests>
   async Task<PerspectiveSnapshotFloor?> GetLatestSnapshotFloorAsync(
       Guid streamId, string perspectiveName, CancellationToken ct = default) {
     var latest = await GetLatestSnapshotAsync(streamId, perspectiveName, ct).ConfigureAwait(false);
@@ -290,7 +296,7 @@ public sealed record PerspectiveSnapshotFloor(Guid SnapshotEventId, int? Snapsho
   /// version, would leave archived events unfolded.
   /// </summary>
   /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotFloorTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotFloorTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs:Rebuild_ByDefault_AfterANewGeneration_StartsFromTheSnapshotAtTheArchiveBoundary_AndReplaysOnlyTheLiveTailAsync</tests>
   public bool IsLive => ArchivedThroughVersion is not { } through || (SnapshotVersion is { } version && version >= through);
 }

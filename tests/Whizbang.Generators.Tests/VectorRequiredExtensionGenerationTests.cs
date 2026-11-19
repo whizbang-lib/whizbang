@@ -89,7 +89,7 @@ public class VectorRequiredExtensionGenerationTests {
     await Assert.That(code).DoesNotContain(ENSURE);
     await Assert.That(code).DoesNotContain("CREATE EXTENSION vector");
     await Assert.That(code).Contains(SOURCE).Because("the context still declares its schema's other requirements");
-    await Assert.That(code).Contains("PostgresSchemaRequirements.From(System.Array.Empty<string>(), GetPerspectiveEntries())")
+    await Assert.That(code).Contains("PostgresSchemaRequirements.From(global::System.Array.Empty<string>(), GetPerspectiveEntries())")
       .Because("the perspectives' optional-extension blocks are read from the very SQL the schema pass runs (pg_trgm, implicitly)");
   }
 }

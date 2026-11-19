@@ -34,6 +34,13 @@ public enum OperationalCategory {
 
   /// <summary>Per-run maintenance records and logs.</summary>
   MaintenanceRuns = 7,
+
+  /// <summary>
+  /// The per-stream detail of what cuts carried (#2363): the carried part of a stream's digest bucket, kept so a recent
+  /// cut can be investigated and the bucket re-checked, then cleared. The bucket's digest and the epochs' removed rows
+  /// stay.
+  /// </summary>
+  CarriedDetail = 8,
 }
 
 /// <summary>
@@ -54,7 +61,7 @@ public enum OperationalCategory {
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/operational-retention</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
 public sealed class OperationalRetentionOptions {
   /// <summary>
   /// Remove operational records past their resting period (<c>Whizbang:OperationalRetention:Enabled</c>, default true).
@@ -101,6 +108,10 @@ public sealed class OperationalRetentionOptions {
   /// <docs>operations/infrastructure/operational-retention#categories</docs>
   public TimeSpan? MaintenanceRuns { get; set; }
 
+  /// <summary>The <see cref="OperationalCategory.CarriedDetail"/> resting period (<c>Whizbang:OperationalRetention:CarriedDetail</c>); null for <see cref="Default"/>.</summary>
+  /// <docs>operations/infrastructure/operational-retention#categories</docs>
+  public TimeSpan? CarriedDetail { get; set; }
+
   /// <summary>
   /// Rows removed per table per batch (<c>Whizbang:OperationalRetention:BatchSize</c>, default 1,000), so one statement
   /// never holds locks or writes WAL in proportion to a backlog. Must be at least 1.
@@ -118,7 +129,8 @@ public sealed class OperationalRetentionOptions {
   /// <summary>The resting period of a category: its own override, else <see cref="Default"/>.</summary>
   /// <param name="category">The category.</param>
   /// <returns>The resting period.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs:TheDefaultAndACategoryOverride_BindFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs:TheDefaultAndACategoryOverride_BindFromConfigurationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs:ACategoryThisReleaseDoesNotDefine_RestsForTheDefault_NotAnotherCategorysOverrideAsync</tests>
   public TimeSpan RetentionFor(OperationalCategory category) => _override(category) ?? Default;
 
   /// <summary>Every category with its resting period.</summary>
@@ -139,7 +151,10 @@ public sealed class OperationalRetentionOptions {
     OperationalCategory.PairHistory => PairHistory,
     OperationalCategory.RecheckRuns => RecheckRuns,
     OperationalCategory.Queues => Queues,
-    _ => MaintenanceRuns,
+    OperationalCategory.CarriedDetail => CarriedDetail,
+    OperationalCategory.MaintenanceRuns => MaintenanceRuns,
+    // A value this release does not define has no override of its own, so it rests for the default.
+    _ => null,
   };
 }
 
@@ -148,7 +163,7 @@ public sealed class OperationalRetentionOptions {
 /// naming the configuration key (#2354).
 /// </summary>
 /// <docs>operations/infrastructure/operational-retention#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OperationalRetentionOptionsTests.cs</tests>
 public sealed class OperationalRetentionOptionsValidator : IValidateOptions<OperationalRetentionOptions> {
   private const string SECTION = "Whizbang:OperationalRetention";
 

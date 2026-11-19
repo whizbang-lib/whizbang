@@ -1372,16 +1372,10 @@ public partial class DapperWorkCoordinator(
     } finally {
       __scope.Connection.Notice -= OnClaimNotice;
     }
-    var perspectiveStreamIds = new List<Guid>();
-    var sawOutboxOrInbox = false;
-    foreach (var r in rows) {
-      if (r.Source == "perspective_stream" && r.StreamId.HasValue) {
-        perspectiveStreamIds.Add(r.StreamId.Value);
-      } else if (r.Source is "outbox" or "inbox") {
-        sawOutboxOrInbox = true;
-      }
-    }
-    if (sawOutboxOrInbox) {
+    // 463: the claim returns outbox, inbox and perspective_stream rows only (it no longer returns receptor work).
+    var claimed = rows.ToList();
+    var perspectiveStreamIds = claimed.Where(r => r.Source == "perspective_stream").Select(r => r.StreamId).OfType<Guid>().ToList();
+    if (claimed.Exists(r => r.Source is "outbox" or "inbox")) {
       throw new NotImplementedException(
         "DapperWorkCoordinator.ClaimWorkAsync: full envelope deserialization for outbox/inbox lands in Phase C polish. " +
         "Until then this coordinator claims perspective streams only; the EF Core work coordinator claims outbox and inbox work.");

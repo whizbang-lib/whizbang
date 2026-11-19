@@ -105,7 +105,7 @@ public sealed record CollectiveApplyOptions {
   /// <param name="entry">The handler's apply entry, carrying its overrides.</param>
   /// <returns>The effective policy for that handler's apply.</returns>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyOptionsTests.cs</tests>
   public CollectiveApplyOptions For(CollectiveApplyEntry entry) {
     ArgumentNullException.ThrowIfNull(entry);
     return this with {

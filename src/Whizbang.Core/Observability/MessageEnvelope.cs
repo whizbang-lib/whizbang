@@ -156,7 +156,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// event's position. NOT serialized, derived from the local rows at read time.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/FirstEventInStreamTests.cs:TheInMemoryStore_MarksOnlyTheStreamsFirstEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FirstEventInStreamTests.cs:TheInMemoryStore_MarksOnlyTheStreamsFirstEventAsync</tests>
   [System.Text.Json.Serialization.JsonIgnore]
   public bool IsFirstInLocalStream { get; set; }
 
@@ -190,7 +190,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// bundle on the child rows it stores, so it rides the stored envelope, never a producer's wire. Omitted when false.
   /// </summary>
   /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RepairedEnvelopeRoundTripTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairedEnvelopeRoundTripTests.cs</tests>
   [JsonPropertyName("rep")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
   public bool Repaired { get; set; }

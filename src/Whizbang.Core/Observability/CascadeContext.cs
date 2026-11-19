@@ -209,8 +209,8 @@ public sealed record CascadeContext {
   /// <param name="sourceEnvelope">The envelope of the message being handled, or <see langword="null"/> for a local
   /// cascade that carries no envelope.</param>
   /// <returns>The correlation id (never default) and the causation id (never default).</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasNoCorrelation_RescuesFromAmbientParentAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasCorrelation_UsesHopNotAmbientParentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasNoCorrelation_RescuesFromAmbientParentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_HopHasCorrelation_UsesHopNotAmbientParentAsync</tests>
   public static (CorrelationId Correlation, MessageId Causation) ResolveInheritedIdentity(IMessageEnvelope? sourceEnvelope) {
     var parent = MessageContextAccessor.CurrentContext ?? ScopeContextAccessor.CurrentInitiatingContext;
 

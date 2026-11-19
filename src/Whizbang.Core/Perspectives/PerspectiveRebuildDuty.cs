@@ -9,7 +9,7 @@ namespace Whizbang.Core.Perspectives;
 /// else.
 /// </summary>
 /// <docs>fundamentals/perspectives/rebuild#one-blue-green-rebuild-per-table</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.cs</tests>
 public static class PerspectiveRebuildDuty {
 #pragma warning disable CA1707 // SCREAMING_CASE constants are the established convention here
   /// <summary>What every table's rebuild duty is named with, before the table's name.</summary>

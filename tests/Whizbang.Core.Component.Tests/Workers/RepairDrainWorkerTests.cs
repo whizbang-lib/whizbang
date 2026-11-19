@@ -89,6 +89,64 @@ public class RepairDrainWorkerTests {
       .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
   }
 
+  /// <summary>
+  /// #2365: a deficit row keeps the trace of the comparison that recorded it, and the drain's request starts in that
+  /// trace, so the origin's answer and the repair join the audit that found the gap. A group whose first row names no
+  /// trace starts a trace of its own.
+  /// </summary>
+  [Test]
+  public async Task DrainTick_ARequestStartsInTheTraceOfTheAuditThatRecordedItsRowAsync() {
+    var spans = new System.Collections.Concurrent.ConcurrentBag<System.Diagnostics.Activity>();
+    using var listener = new System.Diagnostics.ActivityListener {
+      ShouldListenTo = s => s.Name == IntegrityTracing.SOURCE_NAME,
+      Sample = (ref _) => System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStopped = spans.Add,
+    };
+    System.Diagnostics.ActivitySource.AddActivityListener(listener);
+    System.Diagnostics.Activity.Current = null;
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var auditTrace = System.Diagnostics.ActivityTraceId.CreateRandom();
+    var auditSpan = System.Diagnostics.ActivitySpanId.CreateRandom();
+    var askId = TrackedGuid.New().Value;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500,
+        TraceParent: $"00-{auditTrace}-{auditSpan}-01", TraceRequestId: askId),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 100, 500),
+    ]);
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    var traced = requests.Single(r => r.EventTypes!.Contains("Contracts.TypeA"));
+    await Assert.That(System.Diagnostics.ActivityContext.Parse(traced.TraceParent!, null).TraceId).IsEqualTo(auditTrace)
+      .Because("the request carries a span in the audit's trace, so the origin's answer and the repair join it");
+    var span = spans.Single(s => (string?)s.GetTagItem(IntegrityTracing.ATTR_REQUEST_ID) == traced.RequestId.ToString());
+    await Assert.That(span.ParentSpanId).IsEqualTo(auditSpan).Because("the drain's request is the audit's child");
+    await Assert.That(span.GetTagItem(IntegrityTracing.ATTR_KIND)).IsEqualTo(IntegrityTracing.KIND_DRAIN);
+    var untraced = requests.Single(r => r.EventTypes!.Contains("Contracts.TypeB"));
+    await Assert.That(System.Diagnostics.ActivityContext.Parse(untraced.TraceParent!, null).TraceId).IsNotEqualTo(auditTrace)
+      .Because("a row recorded with no trace starts a trace of its own");
+  }
+
+  [Test]
+  public async Task DrainOnce_RunsOneTickWithAFullBucket_NowAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    var foundWork = await worker.DrainOnceAsync(CancellationToken.None);
+
+    await Assert.That(foundWork).IsTrue();
+    await Assert.That(transport.Published.Count).IsEqualTo(1).Because("no elapsed time is needed: the bucket starts full");
+  }
+
   [Test]
   public async Task DrainTick_ARowThatNamesItsMissingEvent_AsksForThatEventOnly_ApartFromWholeStreamRowsAsync() {
     // #2103: a bucket missing exactly one event records that event's id; its request names it, so the owner ships

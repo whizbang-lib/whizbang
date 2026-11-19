@@ -140,7 +140,7 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
 
   /// <inheritdoc />
   /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
   public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
 
   /// <summary>Optional tenant filter (scope <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>
@@ -217,6 +217,28 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
   /// earlier window is recognized and ignored (#2092).</summary>
   /// <docs>resilience/stream-integrity#paced-backfill</docs>
   public long BackfillWindow { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
+
+  /// <summary>
+  /// #2365: this request's id, echoed on every answer to it, so a trace or a log line ties an answer to its request.
+  /// Null from a sender on a release that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the span that sent this request. The origin's answer starts under it, so the
+  /// answer joins the requester's trace across services. Null when the sender had no span, or predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
 }
 
 /// <summary>

@@ -496,15 +496,13 @@ public sealed class EFCoreEventStore<TDbContext>(
     // backward against their versions, and a replay in that order folded the stream's last event first.
     // ReplayEventOrder makes the final call from the envelope (LocalStreamVersion); reading in the same order keeps
     // the two agreeing for any caller that takes the read as it comes.
-    var query = _bodyAwareRows(fromEventId == null
+    // "After" an event is after its position in the stream, its version (#2379): reading after its id selected nothing
+    // when the event carries the stream's highest id, and a rewind from a snapshot there replayed nothing, forever.
+    var query = _bodyAwareRows((fromEventId == null
       ? _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId)
-          .OrderBy(e => e.Version)
-          .ThenBy(e => e.Id)
-      : _context.Set<EventStoreRecord>()
-          .AsNoTracking()
-          .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
+      : _afterInStream(streamId, fromEventId.Value))
           .OrderBy(e => e.Version)
           .ThenBy(e => e.Id))
       .AsAsyncEnumerable();
@@ -518,10 +516,13 @@ public sealed class EFCoreEventStore<TDbContext>(
 
   /// <summary>
   /// <see cref="ReadPolymorphicAsync"/> for many streams with at most two statements (#2246): one for the streams read
-  /// from their start, one for the rest, read after the earliest of their positions and cut to each stream's own here.
-  /// Each stream's events come in its own order, as the per-stream read returns them.
+  /// from their start, one for the rest, each read after the earliest of its anchors by version (#2379). Each stream's
+  /// events come in its own order, as the per-stream read returns them. Null, so each pair reads its own events, when an
+  /// anchor is not held by its stream.
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:ReadPolymorphicManyAsync_CutsEachStreamAtItsAnchorsVersion_FromTheEarliestByVersionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:ReadPolymorphicManyAsync_AnAnchorItsStreamDoesNotHold_LeavesEachPairToItsOwnReadAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync</tests>
   public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
       IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
@@ -529,45 +530,100 @@ public sealed class EFCoreEventStore<TDbContext>(
     ArgumentNullException.ThrowIfNull(streams);
     ArgumentNullException.ThrowIfNull(eventTypes);
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    // Each stream from the earliest position it is asked from (null, its start, is the earliest of all).
-    var from = new Dictionary<Guid, Guid?>();
-    foreach (var (streamId, fromEventId) in streams) {
-      if (!from.TryGetValue(streamId, out var known)) {
-        from[streamId] = fromEventId;
-      } else if (known is null || fromEventId is null) {
-        from[streamId] = null;
-      } else if (fromEventId.Value.CompareTo(known.Value) < 0) {
-        from[streamId] = fromEventId;
-      }
-    }
+    // A stream asked from its start (null) is read whole; every other stream from the earliest of its anchors in stream
+    // order, its version (#2379).
+    var whole = streams.Where(s => s.FromEventId is null).Select(s => s.StreamId).ToHashSet();
+    var anchorsByStream = streams
+      .Where(s => s.FromEventId is not null && !whole.Contains(s.StreamId))
+      .GroupBy(s => s.StreamId)
+      .ToDictionary(g => g.Key, g => g.Select(s => s.FromEventId!.Value).Distinct().ToArray());
     var read = new Dictionary<Guid, List<MessageEnvelope<IEvent>>>();
-    foreach (var stream in from.Keys) {
+    foreach (var (stream, _) in streams) {
       read[stream] = [];
     }
-    var whole = from.Where(f => f.Value is null).Select(f => f.Key).ToArray();
-    var after = from.Where(f => f.Value is not null).ToDictionary(f => f.Key, f => f.Value!.Value);
-    if (whole.Length > 0) {
-      await _readManyIntoAsync(_context.Set<EventStoreRecord>().AsNoTracking().Where(e => whole.Contains(e.StreamId)),
-        typeMap, read, null, cancellationToken);
+    if (whole.Count > 0) {
+      var wholeIds = whole.ToArray();
+      await _readManyIntoAsync(_context.Set<EventStoreRecord>().AsNoTracking().Where(e => wholeIds.Contains(e.StreamId)),
+        typeMap, read, cancellationToken);
     }
-    if (after.Count > 0) {
-      var ids = after.Keys.ToArray();
-      var floor = after.Values.Min();
-      await _readManyIntoAsync(
-        _context.Set<EventStoreRecord>().AsNoTracking().Where(e => ids.Contains(e.StreamId) && e.Id.CompareTo(floor) > 0),
-        typeMap, read, after, cancellationToken);
+    if (anchorsByStream.Count > 0 && !await _readManyAfterAnchorsAsync(anchorsByStream, typeMap, read, cancellationToken)) {
+      return null;
     }
     return read.ToDictionary(r => r.Key, r => (IReadOnlyList<MessageEnvelope<IEvent>>)r.Value);
   }
 
+  /// <summary>
+  /// The anchored streams of a batched read, in one statement (#2379): each stream's events above the earliest of its
+  /// anchors by version, read together with the anchors themselves, whose rows give their positions. False, with nothing
+  /// added, when an anchor is not held by its stream: it has no position the batch can cut at, so each pair reads its own.
+  /// </summary>
+  private async Task<bool> _readManyAfterAnchorsAsync(
+      Dictionary<Guid, Guid[]> anchorsByStream, Dictionary<string, Type> typeMap,
+      Dictionary<Guid, List<MessageEnvelope<IEvent>>> read, CancellationToken cancellationToken) {
+    var ids = anchorsByStream.Keys.ToArray();
+    var anchorIds = anchorsByStream.Values.SelectMany(a => a).Distinct().ToArray();
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var pointers = events.Where(e => ids.Contains(e.StreamId)
+      && (anchorIds.Contains(e.Id)
+        || e.Version > events.Where(a => a.StreamId == e.StreamId && anchorIds.Contains(a.Id)).Min(a => (int?)a.Version)));
+    var rows = await _bodyAwareRows(pointers.OrderBy(e => e.StreamId).ThenBy(e => e.Version).ThenBy(e => e.Id))
+      .ToListAsync(cancellationToken);
+    var held = rows.Where(r => anchorIds.Contains(r.Id)).ToDictionary(r => r.Id, r => (r.StreamId, r.Version));
+    var floors = new Dictionary<Guid, int>();
+    foreach (var (stream, anchors) in anchorsByStream) {
+      if (anchors.Any(a => !held.TryGetValue(a, out var position) || position.StreamId != stream)) {
+        return false;
+      }
+      floors[stream] = anchors.Min(a => held[a].Version);
+    }
+    foreach (var record in rows.Where(r => r.Version > floors[r.StreamId])) {
+      if (_envelopeOf(record, typeMap) is { } envelope) {
+        read[record.StreamId].Add(envelope);
+      }
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// The stream's events after <paramref name="fromEventId"/>'s position in it, its version (#2379). An anchor the stream
+  /// does not hold has no position in it, so the read keeps the order it always had for one: after its id.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs</tests>
+  private IQueryable<EventStoreRecord> _afterInStream(Guid streamId, Guid fromEventId) {
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var anchor = events.Where(a => a.StreamId == streamId && a.Id == fromEventId);
+    return events.Where(e => e.StreamId == streamId
+      && (e.Version > anchor.Select(a => (int?)a.Version).FirstOrDefault()
+        || (!anchor.Any() && e.Id.CompareTo(fromEventId) > 0)));
+  }
+
+  /// <summary>
+  /// The stream's events after <paramref name="afterEventId"/>'s position in it, through <paramref name="upToEventId"/>'s,
+  /// in stream order (#2381): the batch a perspective just processed, as its cursor and its replay count it. A checkpoint
+  /// the stream does not hold has no position in it and is compared by id, as <see cref="_afterInStream"/> does;
+  /// <see cref="Guid.Empty"/> as the upper checkpoint is no bound, and a null lower one reads from the stream's start.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs</tests>
+  private IQueryable<EventStoreRecord> _betweenInStream(Guid streamId, Guid? afterEventId, Guid upToEventId) {
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var query = afterEventId is { } after
+      ? _afterInStream(streamId, after)
+      : events.Where(e => e.StreamId == streamId);
+    if (upToEventId != Guid.Empty) {
+      var upTo = events.Where(a => a.StreamId == streamId && a.Id == upToEventId);
+      query = query.Where(e => e.Version <= upTo.Select(a => (int?)a.Version).FirstOrDefault()
+        || (!upTo.Any() && e.Id.CompareTo(upToEventId) <= 0));
+    }
+    return query.OrderBy(e => e.Version).ThenBy(e => e.Id);
+  }
+
   private async Task _readManyIntoAsync(
       IQueryable<EventStoreRecord> pointers, Dictionary<string, Type> typeMap, Dictionary<Guid, List<MessageEnvelope<IEvent>>> read,
-      Dictionary<Guid, Guid>? after, CancellationToken cancellationToken) {
+      CancellationToken cancellationToken) {
     var rows = _bodyAwareRows(pointers.OrderBy(e => e.StreamId).ThenBy(e => e.Version).ThenBy(e => e.Id));
     await foreach (var record in rows.AsAsyncEnumerable().WithCancellation(cancellationToken)) {
-      if (after is not null && record.Id.CompareTo(after[record.StreamId]) <= 0) {
-        continue;
-      }
       if (_envelopeOf(record, typeMap) is { } envelope) {
         read[record.StreamId].Add(envelope);
       }
@@ -620,8 +676,8 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
-  /// Gets events between two checkpoint positions (exclusive start, inclusive end).
-  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// Gets events between two checkpoint positions (exclusive start, inclusive end), by their positions in the stream and
+  /// in stream order (#2381). Used by lifecycle receptors to load events that were just processed by a perspective.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_WithEventsInRange_ReturnsEventsBetweenCheckpointsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
@@ -633,23 +689,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid upToEventId,
       CancellationToken cancellationToken = default) {
 
-    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
-    // Guid.Empty means "no upper bound" - read all events for the stream
-    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId);
-
-    // Apply upper bound only if upToEventId is not Guid.Empty
-    if (upToEventId != Guid.Empty) {
-      query = query.Where(e => e.Id <= upToEventId);
-    }
-
-    if (afterEventId != null) {
-      query = query.Where(e => e.Id > afterEventId.Value);
-    }
-
-    // Order by UUID v7 (time-ordered); body-aware projection
-    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
+    var records = await _bodyAwareRows(_betweenInStream(streamId, afterEventId, upToEventId))
       .ToListAsync(cancellationToken);
 
     // Deserialize to message envelopes
@@ -679,8 +719,10 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Gets events between two checkpoint positions, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// This is the polymorphic version of GetEventsBetweenAsync for perspectives that handle multiple event types.
-  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// Used by lifecycle receptors to load events that were just processed by a perspective, selected and ordered by their
+  /// positions in the stream (#2381).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:GetEventsBetweenPolymorphicAsync_AfterTheFirstEvent_WhoseIdIsTheHighest_ReadsThroughTheUpperVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
@@ -702,23 +744,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid upToEventId,
       IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken) {
-    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
-    // Guid.Empty means "no upper bound" - read all events for the stream
-    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId);
-
-    // Apply upper bound only if upToEventId is not Guid.Empty
-    if (upToEventId != Guid.Empty) {
-      query = query.Where(e => e.Id <= upToEventId);
-    }
-
-    if (afterEventId != null) {
-      query = query.Where(e => e.Id > afterEventId.Value);
-    }
-
-    // Order by UUID v7 (time-ordered); body-aware projection
-    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
+    var records = await _bodyAwareRows(_betweenInStream(streamId, afterEventId, upToEventId))
       .ToListAsync(cancellationToken);
 
     // Canonical normalized stored-EventType -> Type lookup, shared by every read path.

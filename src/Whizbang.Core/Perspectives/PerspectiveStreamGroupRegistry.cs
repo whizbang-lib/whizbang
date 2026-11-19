@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="Follow">Group announcements evict this perspective's row for the stream.</param>
 /// <param name="Bridge">Evictions received via another group re-announce into this one.</param>
 /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
 public sealed record StreamGroupMembership(string Key, bool Announce, bool Follow, bool Bridge);
 
 /// <summary>
@@ -21,7 +21,7 @@ public sealed record StreamGroupMembership(string Key, bool Announce, bool Follo
 /// <c>typeof(...)</c> from generated code, never reflection.
 /// </summary>
 /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 public static class PerspectiveStreamGroupRegistry {
   private static readonly ConcurrentDictionary<Type, List<StreamGroupMembership>> _memberships = new();

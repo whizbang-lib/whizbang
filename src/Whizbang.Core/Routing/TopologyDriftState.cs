@@ -15,7 +15,7 @@ namespace Whizbang.Core.Routing;
 /// <param name="ObservedSubscription">The foreign subscription/queue observed on it.</param>
 /// <param name="Detail">Human-readable diagnosis for logs and health detail.</param>
 /// <docs>fundamentals/dispatcher/routing#ownership-drift</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyDriftStateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyDriftStateTests.cs</tests>
 public sealed record TopologyDriftFinding(
   string Entity,
   string ObservedSubscription,
@@ -29,7 +29,7 @@ public sealed record TopologyDriftFinding(
 /// the violation is visible on the health endpoint, not just in a log line.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#ownership-drift</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyDriftStateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyDriftStateTests.cs</tests>
 public sealed class TopologyDriftState {
   private readonly ConcurrentQueue<TopologyDriftFinding> _findings = new();
 

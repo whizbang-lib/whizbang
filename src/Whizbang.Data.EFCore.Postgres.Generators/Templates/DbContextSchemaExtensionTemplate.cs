@@ -35,7 +35,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // #2145: the collective event types a handler on this service applies, read from the consumer registry for the pass
   // (or currency check) that is running; null when they cannot be known. The associations step writes them with the
   // gate marker, and its hash covers them, so a start whose handler set changed runs the step again.
-  private static readonly System.Threading.AsyncLocal<System.Collections.Generic.IReadOnlyList<string>?> _collectiveEventTypes = new();
+  private static readonly global::System.Threading.AsyncLocal<global::System.Collections.Generic.IReadOnlyList<string>?> _collectiveEventTypes = new();
   private static string _associationsHash =>
     global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(_perspectiveAssociationsHash, _collectiveEventTypes.Value);
   private const string _associationsHashKey = "associations:__DBCONTEXT_CLASS__";
@@ -111,10 +111,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     using var storedFormApplier = Whizbang.Data.Postgres.StoredFormApplier.ScopeTo(new Whizbang.Data.Postgres.StoredFormApplier(
       "__LIBRARY_VERSION__", _ledgerApplicationVersion.Value ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN));
     _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
-    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var sw = global::System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
-    var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
-    var phaseSw = new System.Diagnostics.Stopwatch();
+    var phases = new global::System.Collections.Generic.List<(string Name, long Ms, string Status)>();
+    var phaseSw = new global::System.Diagnostics.Stopwatch();
     // Process-stable, so every instance initializing this schema computes the SAME key and the
     // lock actually excludes. Deriving it from string.GetHashCode would not: .NET randomizes the
     // string hash seed per process, so each instance would take its own private lock and all of
@@ -330,7 +330,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         var storedFormMigrations = GetStoredFormMigrations();
         await global::Whizbang.Data.Postgres.StoredFormMigrationSql.DeclareAsync(
           rewriteConnectionFactory, "__SCHEMA__", storedFormMigrations, cancellationToken);
-        var rewrites = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(
+        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
           global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", storedFormMigrations),
           Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
             dbContext.Model,
@@ -410,7 +410,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             var isWaiter = stage == Whizbang.Data.Postgres.SchemaStage.Waiter;
             // A waiter watches the migrator: its assignment row, or, while an older release may be the migrator, the
             // holding that release records (judged by the one liveness rule, #2044). Anyone else watches the schema lock.
-            System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
+            global::System.Func<global::System.Threading.CancellationToken, global::System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
               ? c => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", c)
               : c => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, c);
             if (!isWaiter && !await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct)) {
@@ -741,7 +741,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
     // already in line is not altered. Never fatal.
     await Whizbang.Data.EFCore.Postgres.PerspectiveStorageReconcile.RunAsync(
-      dbContext, "__SCHEMA__", System.Linq.Enumerable.Select(GetPerspectiveEntries(), e => e.Sql), segmentConnectionFactory,
+      dbContext, "__SCHEMA__", global::System.Linq.Enumerable.Select(GetPerspectiveEntries(), e => e.Sql), segmentConnectionFactory,
       logger, cancellationToken);
 
     // No maintenance here (#1351). Schema initialization runs on every instance at every start, and a
@@ -762,7 +762,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
     if (ex is TimeoutException) return true;
-    if (ex is System.IO.IOException) return true;
+    if (ex is global::System.IO.IOException) return true;
     return false;
   }
 
@@ -776,9 +776,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// and the file recreates the single canonical one. The intersection with extracted migration
   /// object names keeps a consumer's own intentional overloads from ever triggering this.
   /// </summary>
-  private static async Task<System.Collections.Generic.HashSet<string>> _getDuplicateFrameworkOverloadNamesAsync(
+  private static async Task<global::System.Collections.Generic.HashSet<string>> _getDuplicateFrameworkOverloadNamesAsync(
       Npgsql.NpgsqlConnection connection, CancellationToken ct) {
-    var duplicates = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    var duplicates = new global::System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
     await using (var cmd = connection.CreateCommand()) {
       cmd.CommandText = @"
         SELECT p.proname FROM pg_proc p
@@ -796,7 +796,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     if (duplicates.Count == 0) {
       return duplicates;
     }
-    var frameworkNames = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    var frameworkNames = new global::System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
     foreach (var (name, sql) in GetMigrationScripts()) {
       foreach (var obj in Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(_transformMigrationSql(sql, "__SCHEMA__")).Objects) {
         frameworkNames.Add(obj);
@@ -835,7 +835,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       string sql,
       string migrationName,
       Microsoft.Extensions.Logging.ILogger? logger,
-      System.Threading.CancellationToken cancellationToken) {
+      global::System.Threading.CancellationToken cancellationToken) {
     var segments = Whizbang.Data.Postgres.MigrationBatchRegions.Segment(sql);
 
     // The migration runs with current_schema() resolving to the schema it migrates, and only the
@@ -900,7 +900,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       Microsoft.EntityFrameworkCore.DbContext dbContext,
       string sql,
       string migrationName,
-      System.Threading.CancellationToken cancellationToken) {
+      global::System.Threading.CancellationToken cancellationToken) {
     var connection = dbContext.Database.GetDbConnection();
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = sql;
@@ -917,7 +917,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         + "again; it is normally 'SELECT <schema>.some_backfill(@whizbang_batch_size);'.");
     }
 
-    return System.Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+    return global::System.Convert.ToInt64(result, global::System.Globalization.CultureInfo.InvariantCulture);
   }
 
   /// <summary>
@@ -933,11 +933,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// The timeout of the initialization in progress, set once at its start. Flows into every helper
   /// it awaits and reverts when it returns, so concurrent initializations keep their own.
   /// </summary>
-  private static readonly System.Threading.AsyncLocal<int?> _schemaCommandTimeout = new();
+  private static readonly global::System.Threading.AsyncLocal<int?> _schemaCommandTimeout = new();
 
   // #2027: the application version this pass records in the migration ledger beside the library version, resolved from
   // the host's services for the pass that is running (the same ambient shape as the command timeout above).
-  private static readonly System.Threading.AsyncLocal<string?> _ledgerApplicationVersion = new();
+  private static readonly global::System.Threading.AsyncLocal<string?> _ledgerApplicationVersion = new();
 
   /// <summary>
   /// How long any one schema statement may take: the initialization connection string's
@@ -987,15 +987,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     return await global::Whizbang.Data.Postgres.StoredFormSettlement.IsSettledAsync(
       connection,
       "__SCHEMA__",
-      System.Linq.Enumerable.Select(
+      global::System.Linq.Enumerable.Select(
         Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
         r => r.Name),
-      System.Linq.Enumerable.Concat(
-        System.Linq.Enumerable.Select(GetStoredFormMigrations(), m => (m.Name, m.Table)),
-        System.Linq.Enumerable.Select(
+      global::System.Linq.Enumerable.Concat(
+        global::System.Linq.Enumerable.Select(GetStoredFormMigrations(), m => (m.Name, m.Table)),
+        global::System.Linq.Enumerable.Select(
           Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions),
           t => (t.JournalName, t.Table))),
-      System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
+      global::System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
       cancellationToken);
   }
 
@@ -1120,10 +1120,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <docs>operations/infrastructure/migrations#stale-sweep-names-only-what-it-adds</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupMigrationStepsTests.cs:AFreshDatabase_LogsNoReRunOfAFileThePassRunsAnywayAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupMigrationStepsTests.cs:AFunctionMissingFromACurrentDatabase_IsTheOneReRunLoggedAsync</tests>
-  private static async Task<System.Collections.Generic.IReadOnlyList<string>> _getStaleFunctionDefinitionFilesAsync(
+  private static async Task<global::System.Collections.Generic.IReadOnlyList<string>> _getStaleFunctionDefinitionFilesAsync(
       Npgsql.NpgsqlConnection connection,
       (string Name, string Sql)[] migrations,
-      System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>? functionsByFile,
+      global::System.Collections.Generic.Dictionary<string, global::System.Collections.Generic.List<string>>? functionsByFile,
       CancellationToken ct) {
     // Compare what the database HOLDS with what the migration EXECUTES. The embedded text carries
     // doubled braces because ExecuteSqlRawAsync treats it as a format string and un-doubles them on
@@ -1132,10 +1132,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var lastWords = Whizbang.Data.Postgres.MigrationFunctionBodies.LastWord(
       migrations.Select(m => (m.Name, _renderFormatBraces(_transformMigrationSql(m.Sql, "__SCHEMA__")))));
     if (lastWords.Count == 0) {
-      return System.Array.Empty<string>();
+      return global::System.Array.Empty<string>();
     }
 
-    var deployed = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IReadOnlyList<string>>(StringComparer.Ordinal);
+    var deployed = new global::System.Collections.Generic.Dictionary<string, global::System.Collections.Generic.IReadOnlyList<string>>(StringComparer.Ordinal);
     await using (var cmd = connection.CreateCommand()) {
       cmd.CommandText = @"
         SELECT p.proname, p.prosrc FROM pg_proc p
@@ -1150,24 +1150,24 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         var proname = reader.GetString(0);
         var prosrc = reader.IsDBNull(1) ? "" : reader.GetString(1);
         if (!deployed.TryGetValue(proname, out var bodies)) {
-          bodies = new System.Collections.Generic.List<string>();
+          bodies = new global::System.Collections.Generic.List<string>();
           deployed[proname] = bodies;
         }
-        ((System.Collections.Generic.List<string>)bodies).Add(prosrc);
+        ((global::System.Collections.Generic.List<string>)bodies).Add(prosrc);
       }
     }
 
     return Whizbang.Data.Postgres.MigrationFunctionBodies.FilesToRerun(
       lastWords,
       deployed,
-      functionsByFile ?? new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal));
+      functionsByFile ?? new global::System.Collections.Generic.Dictionary<string, global::System.Collections.Generic.List<string>>(StringComparer.Ordinal));
   }
 
   /// <summary>
   /// Bulk-queries all per-object hashes from wh_schema_migrations.
   /// Used by the fast path to detect changes without acquiring a lock.
   /// </summary>
-  private static async Task<System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy, short Status)>> _bulkGetHashesAsync(
+  private static async Task<global::System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy, short Status)>> _bulkGetHashesAsync(
       Npgsql.NpgsqlConnection connection, CancellationToken ct) {
     await using var cmd = connection.CreateCommand();
     // The joined library_version is what lets the applier tell an upgrade from a downgrade —
@@ -1177,7 +1177,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       FROM __QUOTED_SCHEMA__.wh_schema_migrations m
       LEFT JOIN __QUOTED_SCHEMA__.wh_schema_versions v ON v.id = m.version_id";
     cmd.CommandTimeout = 30;
-    var results = new System.Collections.Generic.List<(string, string, string, string?, short)>();
+    var results = new global::System.Collections.Generic.List<(string, string, string, string?, short)>();
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
       var owner = reader.IsDBNull(2) ? "whizbang" : reader.GetString(2);
@@ -1192,10 +1192,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Partitions by owner column to determine infrastructure vs perspective vs association changes independently.
   /// </summary>
   private static (bool InfraChanged, bool PerspChanged, bool AssociationsChanged) _compareHashes(
-      System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy, short Status)> existingRows) {
-    var infraHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
-    var perspHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
-    var associationHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
+      global::System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy, short Status)> existingRows) {
+    var infraHashes = new global::System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
+    var perspHashes = new global::System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
+    var associationHashes = new global::System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
     // A step this context's pass still owes (a pass part way through, here or on another instance) is a change like
     // any other: the slow path resumes it.
     var stepsOutstanding = false;
@@ -1237,7 +1237,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     foreach (var (name, sql) in perspectives) {
       var key = $"perspective:{name}";
       var hash = Convert.ToHexStringLower(
-          System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql)));
+          global::System.Security.Cryptography.SHA256.HashData(global::System.Text.Encoding.UTF8.GetBytes(sql)));
       if (!perspHashes.TryGetValue(key, out var existing)) {
         perspChanged = true;
         break;
@@ -1267,8 +1267,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
   /// <summary>
   /// Executes core infrastructure table DDL at runtime.
-  /// Creates all Whizbang core tables: Inbox, Outbox, EventStore, ReceptorProcessing,
-  /// PerspectiveCursors, RequestResponse, ServiceInstances, PartitionAssignments,
+  /// Creates all Whizbang core tables: Inbox, Outbox, EventStore,
+  /// PerspectiveCursors, RequestResponse, ServiceInstances,
   /// MessageDeduplication, Sequences, and EventSequence.
   /// SQL is generated at runtime using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
   /// AOT-compatible - no reflection or dynamic code generation, just string building.
@@ -1320,6 +1320,14 @@ END $$;
       // take its table's lock to find it already there.
       await dbContext.Database.ExecuteSqlRawAsync(
         Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(coreInfrastructureSchema), cancellationToken);
+      // 464: wh_receptor_processing is created only until its drop has recorded the hash it has now, so migration 031,
+      // which indexes it, finds it whenever it runs, and no pass after the drop creates it again.
+      if (Whizbang.Data.Postgres.RetiredReceptorTable.FindDropMigration(GetMigrationScripts().Select(m => m.Name)) is { } drop) {
+        await dbContext.Database.ExecuteSqlRawAsync(Whizbang.Data.Postgres.RetiredReceptorTable.BootstrapSql(
+          _quotedSchema, drop,
+          _migrationHash(_transformMigrationSql(GetMigrationScripts().Single(m => m.Name == drop).Sql, "__SCHEMA__"))),
+          cancellationToken);
+      }
       logger?.LogDebug("Core infrastructure tables created successfully");
     } catch (Exception ex) {
       logger?.LogError(ex, "Failed to create core infrastructure tables");
@@ -1357,7 +1365,7 @@ END $$;
               if (ex is Npgsql.PostgresException { SqlState: "42P07" } existing) {
                 logger?.LogDebug("Perspective tables already exist (expected): {Table}", existing.TableName ?? "unknown");
               } else {
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
+                global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
               }
             }, ct);
         }
@@ -1379,7 +1387,7 @@ END $$;
 
       var order = executionOrder;
       var hash = Convert.ToHexStringLower(
-          System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql)));
+          global::System.Security.Cryptography.SHA256.HashData(global::System.Text.Encoding.UTF8.GetBytes(sql)));
       string? existingHash = null;
       await steps.RunAsync(perspectiveKey,
         async ct => {
@@ -1407,7 +1415,7 @@ END $$;
                 tableExisted = true;
                 logger?.LogDebug("Perspective table already exists (expected): {Table}", existing.TableName ?? "unknown");
               } else {
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
+                global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
               }
             }, ct);
           if (!pass.Tracked) {
@@ -1478,7 +1486,7 @@ END $$;
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>fundamentals/perspectives/stored-form-migrations#status</docs>
-  public static async Task<System.Collections.Generic.IReadOnlyList<global::Whizbang.Data.Postgres.StoredFormMigrationStatus>> GetStoredFormMigrationStatusAsync(
+  public static async Task<global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Data.Postgres.StoredFormMigrationStatus>> GetStoredFormMigrationStatusAsync(
       this __DBCONTEXT_FQN__ dbContext,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(dbContext);
@@ -1499,7 +1507,7 @@ END $$;
   /// them to the extension helper so a refusal names the columns.
   /// </summary>
   /// <docs>fundamentals/perspectives/vector-fields#pgvector-extension</docs>
-  public static System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Capabilities.ActiveCapabilityRequirement> GetCapabilityRequirements() =>
+  public static global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Capabilities.ActiveCapabilityRequirement> GetCapabilityRequirements() =>
     global::Whizbang.Data.Postgres.PostgresSchemaRequirements.From(__VECTOR_COLUMNS__, GetPerspectiveEntries());
 
   /// <summary>
@@ -1543,15 +1551,6 @@ END $$;
 -- Foreign keys (note: PostgreSQL doesn't support IF NOT EXISTS for FK constraints)
 DO $$
 BEGIN
-  -- FK: receptor_processing.event_id -> event_store.event_id
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'fk_receptor_processing_event'
-  ) THEN
-    ALTER TABLE __QUOTED_SCHEMA__.wh_receptor_processing
-      ADD CONSTRAINT fk_receptor_processing_event
-      FOREIGN KEY (event_id) REFERENCES __QUOTED_SCHEMA__.wh_event_store(event_id) ON DELETE CASCADE;
-  END IF;
-
   -- FK: perspective_cursors.last_event_id -> event_store.event_id
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_cursors_event'
@@ -1562,13 +1561,7 @@ BEGIN
   END IF;
 END $$;
 
--- Unique constraint for receptor_processing (event_id, receptor_name)
-CREATE UNIQUE INDEX IF NOT EXISTS uq_receptor_processing_event_receptor
-  ON __QUOTED_SCHEMA__.wh_receptor_processing(event_id, receptor_name);
-
 -- Partial indexes for status-based queries
-CREATE INDEX IF NOT EXISTS idx_receptor_processing_status_failed
-  ON __QUOTED_SCHEMA__.wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
 
 CREATE INDEX IF NOT EXISTS idx_perspective_cursors_catching_up
   ON __QUOTED_SCHEMA__.wh_perspective_cursors(status) WHERE (status & 8) = 8; -- CatchingUp flag
@@ -1688,7 +1681,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           functionExisted = true;
           logger?.LogDebug("Function already exists (expected): {Message}", existing.MessageText);
         } else {
-          System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
+          global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
         }
       }, ct);
     if (!pass.Tracked) {
@@ -1716,6 +1709,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <summary>The ledger, as the reversal recorder names it (#2122).</summary>
   private const string _ledgerName = @"__QUOTED_SCHEMA__.wh_schema_migrations";
 
+  /// <summary>The context's schema, quoted, as the retired-table bootstrap writes it (464).</summary>
+  private const string _quotedSchema = @"__QUOTED_SCHEMA__";
+
   /// <summary>The placeholder the library's reverse scripts carry, spelled so the generator leaves it alone.</summary>
   private const string _reverseSchemaToken = "__" + "SCHEMA__";
 
@@ -1726,7 +1722,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   private static string _hashPrefix(string hash) => hash.Length > 8 ? hash[..8] : hash;
 
   private static string _contentHash(string text) =>
-    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+    Convert.ToHexStringLower(global::System.Security.Cryptography.SHA256.HashData(global::System.Text.Encoding.UTF8.GetBytes(text)));
 
   /// <summary>
   /// A migration's ledger hash: its normalized SQL, so an edit that changes nothing executable (a comment, a header,
@@ -1797,17 +1793,17 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     public bool Persp { get; init; }
     public int VersionId { get; set; }
     /// <summary>This context's step rows when the pass began, by step: the fingerprint each carries and its status.</summary>
-    public System.Collections.Generic.Dictionary<string, (string Fingerprint, short Status)> StepRows { get; } = new(StringComparer.Ordinal);
+    public global::System.Collections.Generic.Dictionary<string, (string Fingerprint, short Status)> StepRows { get; } = new(StringComparer.Ordinal);
     /// <summary>The steps the ledger's hashes say this pass needs.</summary>
-    public System.Collections.Generic.List<string> NeededSteps { get; } = new();
+    public global::System.Collections.Generic.List<string> NeededSteps { get; } = new();
     /// <summary>The steps with no ledger row of their own that this pass runs.</summary>
-    public System.Collections.Generic.IReadOnlySet<string> StepsToRun { get; set; } = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    public global::System.Collections.Generic.IReadOnlySet<string> StepsToRun { get; set; } = new global::System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
     /// <summary>The migration files this pass runs, with why a file whose hash was current runs again.</summary>
-    public System.Collections.Generic.Dictionary<string, string?> MigrationsToRun { get; } = new(StringComparer.Ordinal);
+    public global::System.Collections.Generic.Dictionary<string, string?> MigrationsToRun { get; } = new(StringComparer.Ordinal);
     /// <summary>The hash each file's ledger row carried when the pass began.</summary>
-    public System.Collections.Generic.Dictionary<string, string> RecordedHashes { get; } = new(StringComparer.Ordinal);
+    public global::System.Collections.Generic.Dictionary<string, string> RecordedHashes { get; } = new(StringComparer.Ordinal);
     /// <summary>The perspective entries this pass applies, by ledger key.</summary>
-    public System.Collections.Generic.HashSet<string> PerspectivesToRun { get; } = new(StringComparer.Ordinal);
+    public global::System.Collections.Generic.HashSet<string> PerspectivesToRun { get; } = new(StringComparer.Ordinal);
     public bool RunPerspectives { get; init; }
     /// <summary>Every step of the pass, so each can be logged as one of them.</summary>
     public int TotalSteps => GetMigrationScripts().Length + Math.Max(GetPerspectiveEntries().Length, 1) + 5;
@@ -1841,7 +1837,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     if (!await _ensureTrackingTablesAsync(connection, logger, ct)) {
       // No ledger: every step runs, as every step always did without one.
       var untracked = new SchemaPass { Tracked = false, Infra = true, Persp = true, RunPerspectives = true };
-      untracked.StepsToRun = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) {
+      untracked.StepsToRun = new global::System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) {
         _coreStep, _perspectiveRenamesStep, _perspectiveTablesStep, _constraintsStep, _associationsStep, _registriesStep,
       };
       foreach (var (name, _) in GetMigrationScripts()) {
@@ -1864,7 +1860,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     }
 
     var pass = new SchemaPass { Tracked = true, Infra = infra, Persp = persp, RunPerspectives = infra || persp };
-    var appliedBy = new System.Collections.Generic.Dictionary<string, string?>(StringComparer.Ordinal);
+    var appliedBy = new global::System.Collections.Generic.Dictionary<string, string?>(StringComparer.Ordinal);
     foreach (var (fileName, hash, owner, version, status) in rows) {
       if (owner == Whizbang.Data.Postgres.SchemaPassLedger.STEP_OWNER) {
         if (fileName.StartsWith(_stepKeyPrefix, StringComparison.Ordinal)) {
@@ -1910,13 +1906,13 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   private static async Task _planMigrationsAsync(
       Npgsql.NpgsqlConnection connection,
       SchemaPass pass,
-      System.Collections.Generic.Dictionary<string, string?> appliedBy,
+      global::System.Collections.Generic.Dictionary<string, string?> appliedBy,
       ILogger? logger,
       CancellationToken ct) {
     var migrations = GetMigrationScripts();
-    var toRun = new System.Collections.Generic.List<string>();
-    var reasons = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
-    var orderedObjects = new System.Collections.Generic.List<(string Name, System.Collections.Generic.IReadOnlyCollection<string> Objects)>();
+    var toRun = new global::System.Collections.Generic.List<string>();
+    var reasons = new global::System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+    var orderedObjects = new global::System.Collections.Generic.List<(string Name, global::System.Collections.Generic.IReadOnlyCollection<string> Objects)>();
     // A file a newer build recorded is that build's to apply, and does not pull anything in after it either.
     bool mayApply(string name) {
       if (!appliedBy.TryGetValue(name, out var version)
@@ -1956,7 +1952,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     // last-word file back into the run. Self-limiting: a database that matches its files re-runs nothing.
     // Only a file the sweep adds is named: a file already in the run (new, changed, or not yet reached by a pass that
     // stopped part way) has its functions missing because it has not run, not because a replay reverted them (#1636).
-    var staleFunctionsByFile = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal);
+    var staleFunctionsByFile = new global::System.Collections.Generic.Dictionary<string, global::System.Collections.Generic.List<string>>(StringComparer.Ordinal);
     foreach (var staleFile in await _getStaleFunctionDefinitionFilesAsync(connection, migrations, staleFunctionsByFile, ct)) {
       if (!toRun.Contains(staleFile) && mayApply(staleFile)) {
         toRun.Add(staleFile);
@@ -2212,7 +2208,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     return fingerprint;
   }
 
-  private static System.Collections.Generic.IEnumerable<string> _fingerprintParts() {
+  private static global::System.Collections.Generic.IEnumerable<string> _fingerprintParts() {
     yield return "__LIBRARY_VERSION__";
     yield return "__APPLICATION_VERSION__";
     yield return _contentHash(PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(
@@ -2314,26 +2310,15 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
-  private static (string Name, string Sql)[]? _migrationScripts;
-  private static (string Name, string Sql)[]? _bootstrapMigrationScripts;
-
   /// <summary>
   /// Returns migration scripts as (name, sql) tuples.
-  /// Scripts are embedded by the source generator.
   /// </summary>
   /// <remarks>
-  /// Each text is embedded as a UTF-8 literal, which the compiler keeps out of the capped
-  /// user-string heap, and decoded here. The list is decoded on first use and kept, as the string
-  /// literals it replaces were loaded once; a race on first use decodes the same list twice and
-  /// keeps either.
+  /// The scripts are embedded once per assembly, in WhizbangMigrationScripts, and shared by every context: the text is
+  /// the same for all of them, and a copy per context made an assembly with many contexts compile many copies (#2388).
   /// </remarks>
-  private static (string Name, string Sql)[] GetMigrationScripts() {
-    return _migrationScripts ??= new[] {
-      #region MIGRATIONS
-      // Migration scripts will be embedded here by the source generator
-      #endregion
-    };
-  }
+  private static (string Name, string Sql)[] GetMigrationScripts() =>
+    global::__MIGRATION_SCRIPTS_NAMESPACE__.WhizbangMigrationScripts.GetMigrationScripts();
 
   /// <summary>
   /// Each migration with the text its ledger hash is computed over: the embedded text with the schema substituted.
@@ -2359,15 +2344,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <remarks>
   /// A subset of <see cref="GetMigrationScripts"/>, not a replacement for any of it. The bootstrap
   /// only makes objects exist and records nothing; the ordinary pass still applies and records these
-  /// same files afterward. Decoded once and kept, as <see cref="GetMigrationScripts"/> is.
+  /// same files afterward. Embedded once per assembly with the full list.
   /// </remarks>
-  private static (string Name, string Sql)[] GetBootstrapMigrationScripts() {
-    return _bootstrapMigrationScripts ??= new[] {
-      #region BOOTSTRAP_MIGRATIONS
-      // Bootstrap regions will be embedded here by the source generator
-      #endregion
-    };
-  }
+  private static (string Name, string Sql)[] GetBootstrapMigrationScripts() =>
+    global::__MIGRATION_SCRIPTS_NAMESPACE__.WhizbangMigrationScripts.GetBootstrapMigrationScripts();
 
   /// <summary>
   /// Everything the bootstrap applies, in order: the core tables, then the marked migration regions.
@@ -2391,8 +2371,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// to elect against the result. A test that rebuilt this list would prove its own copy complete
   /// and say nothing about the one that ships.
   /// </remarks>
-  internal static System.Collections.Generic.List<(string Name, string Sql)> GetBootstrapScripts() {
-    var scripts = new System.Collections.Generic.List<(string Name, string Sql)> {
+  internal static global::System.Collections.Generic.List<(string Name, string Sql)> GetBootstrapScripts() {
+    var scripts = new global::System.Collections.Generic.List<(string Name, string Sql)> {
       ("core-infrastructure-tables", PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(
         new SchemaConfiguration(
           InfrastructurePrefix: "wh_",
@@ -2519,7 +2499,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       // strategy which rejects user-initiated transactions under NpgsqlRetryingExecutionStrategy.
       // Use the raw connection directly and assign the current transaction to the command.
       var connection = dbContext.Database.GetDbConnection();
-      if (connection.State != System.Data.ConnectionState.Open) {
+      if (connection.State != global::System.Data.ConnectionState.Open) {
         await connection.OpenAsync(cancellationToken);
       }
       var currentTransaction = dbContext.Database.CurrentTransaction;
@@ -2612,7 +2592,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       var sql = @"SELECT * FROM __QUOTED_SCHEMA__.reconcile_message_type_registry(@p_entries::JSONB)";
 
       var connection = dbContext.Database.GetDbConnection();
-      if (connection.State != System.Data.ConnectionState.Open) {
+      if (connection.State != global::System.Data.ConnectionState.Open) {
         await connection.OpenAsync(cancellationToken);
       }
 

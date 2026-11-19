@@ -15,7 +15,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <param name="Selected">Stored events selected.</param>
 /// <param name="Rederived">Audit records queued.</param>
 /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:RunAsync_SelectsEveryStoredEvent_AndQueuesOnlyTheEligibleAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs:RunAsync_SelectsEveryStoredEvent_AndQueuesOnlyTheEligibleAsync</tests>
 public readonly record struct AuditRebuildResult(int Selected, int Rederived);
 
 /// <summary>
@@ -45,7 +45,7 @@ public readonly record struct AuditRebuildResult(int Selected, int Rederived);
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/audit-logging#rebuilding-the-audit-ledger</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs</tests>
 public sealed partial class AuditLedgerRebuild {
   private readonly SystemEventOptions _options;
   private readonly TimeProvider _time;
@@ -68,7 +68,7 @@ public sealed partial class AuditLedgerRebuild {
   /// <param name="options">The audit options the live writers use.</param>
   /// <param name="timeProvider">The clock for a record whose stored metadata has no hop time; null is the system clock.</param>
   /// <param name="logger">Where a skipped unresolvable type is reported; null reports nowhere.</param>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditLedgerRebuildTests.cs:Rederive_AnUnknownTypeUnderOptIn_WarnsNamingTheTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerRebuildTests.cs:Rederive_AnUnknownTypeUnderOptIn_WarnsNamingTheTypeAsync</tests>
   public AuditLedgerRebuild(
       IMessageTypeCatalog catalog, SystemEventOptions options, TimeProvider? timeProvider, ILogger<AuditLedgerRebuild>? logger) {
     ArgumentNullException.ThrowIfNull(catalog);

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/QueuedWritesLandedSignalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueuedWritesLandedSignalTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/QueuedWritesLandedRegistrationTests.cs</tests>
 public interface IQueuedWritesLandedSignal {
   /// <summary>The flushers watched: every worker hosted with its start point that reports queued writes.</summary>
@@ -54,7 +54,7 @@ public interface IQueuedWritesLandedSignal {
 /// flusher's own idle signal and then reads; when the reading does not settle, it waits again. It never polls.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/QueuedWritesLandedSignalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueuedWritesLandedSignalTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/QueuedWritesLandedRegistrationTests.cs:TheWorkerPipeline_RegistersTheSignal_OverEveryHostedFlushWorkerAsync</tests>
 public sealed class QueuedWritesLandedSignal : IQueuedWritesLandedSignal {
   private readonly Lazy<IReadOnlyList<IQueuedWriteFlusher>> _flushers;

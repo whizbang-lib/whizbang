@@ -16,7 +16,7 @@ namespace Whizbang.Core.Routing;
 /// <param name="CompositeGroupKey">The strategy's composite group key for the pair —
 /// invariant: same key ⇔ same destination.</param>
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
 public sealed record TopologyPublishDestination(
   string MessageTypeName,
   MessageKind Kind,
@@ -46,9 +46,9 @@ public sealed record TopologyPublishDestination(
 /// <param name="Subscriptions">The subscription set exactly as the inbox strategy
 /// returned it.</param>
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_RecomputedFromSameInputs_IsIdenticalAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_NamesNoEntityTheStrategiesDidntNameAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_StampsServiceNameFromContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_RecomputedFromSameInputs_IsIdenticalAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_NamesNoEntityTheStrategiesDidntNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_StampsServiceNameFromContextAsync</tests>
 public sealed record TopologyManifest(
   string ServiceName,
   IReadOnlyList<TopologyPublishDestination> PublishDestinations,
@@ -63,7 +63,7 @@ public sealed record TopologyManifest(
 /// what the running service actually routes.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs</tests>
 public static class TopologyManifestBuilder {
   /// <summary>
   /// Builds the manifest: publish destinations are the union over
@@ -81,9 +81,9 @@ public static class TopologyManifestBuilder {
   /// <returns>The deterministic topology manifest.</returns>
   /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_CatalogOrder_DoesNotLeakIntoManifestOrderAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestBranchCoverageTests.cs:Build_APlainMessage_PublishesAsItDidBeforeItHadItsOwnKindAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_CatalogOrder_DoesNotLeakIntoManifestOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestBranchCoverageTests.cs:Build_APlainMessage_PublishesAsItDidBeforeItHadItsOwnKindAsync</tests>
   public static TopologyManifest Build(
       IOutboxRoutingStrategy outboxStrategy,
       IInboxRoutingStrategy inboxStrategy,

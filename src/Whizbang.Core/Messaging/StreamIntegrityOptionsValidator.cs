@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// re-asking storm the timeout exists to stop (#2029). Registered by <c>AddWhizbangWorkers</c> and checked at host start.
 /// </remarks>
 /// <docs>resilience/stream-integrity#repair-caps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
 public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamIntegrityOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, StreamIntegrityOptions options) {
@@ -78,6 +78,9 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
       "it is how often one epoch may be re-checked, and an empty interval re-checks the same epochs on every run (#2353)");
     _positive(failures, "FullHistoryCompare:Lookback", options.FullHistoryCompare.Lookback,
       "it is how far back the full-history compare reaches, and an empty lookback compares nothing (#2361)");
+    _positive(failures, "PairGuard:HaltedAlertAfter", options.PairGuard.HaltedAlertAfter,
+      "it is how long a service pair may stay halted before the guard alerts, and an empty threshold alerts on every halt, "
+      + "including the brief ones every rollout makes (#2362)");
     _atLeastOne(failures, "FullHistoryCompare:MaxPerRun", options.FullHistoryCompare.MaxPerRun,
       "it bounds the streams one compare run heals, and a bound below one heals nothing, so the pass never ends (#2361)");
     if (options.MaxOutstandingRepairAnswers < 0) {

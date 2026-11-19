@@ -30,11 +30,11 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:Resolver_ScopeKind_MatchesScopeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:Resolver_AcceptsPerspective_AllowsAnyModelAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:ScopeFilter_CompiledExpression_MatchesRowsByTenantIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:EnterContext_SetsAmbientScopeContextWithTenantIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:EnterContext_DisposeRestoresPriorContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:Resolver_ScopeKind_MatchesScopeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:Resolver_AcceptsPerspective_AllowsAnyModelAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:ScopeFilter_CompiledExpression_MatchesRowsByTenantIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:EnterContext_SetsAmbientScopeContextWithTenantIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TenantCollectiveScopeResolverTests.cs:EnterContext_DisposeRestoresPriorContextAsync</tests>
 public sealed class TenantCollectiveScopeResolver : ICollectiveScopeResolver {
   /// <inheritdoc />
   public string ScopeKind => "tenant";

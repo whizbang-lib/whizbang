@@ -29,9 +29,9 @@ public enum FanoutMode {
 /// <see cref="Independent"/>); overridable via <c>CompositeEventBase.Atomicity</c>.
 /// </summary>
 /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Atomic_ReturnsFailedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_DropsBadChildAndKeepsRestAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Atomic_ReturnsFailedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_DropsBadChildAndKeepsRestAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
 public enum FanoutAtomicity {
   /// <summary>
   /// One bad child doesn't sink the batch — a child that fails to serialize is dropped (logged) and the
@@ -52,8 +52,8 @@ public enum FanoutAtomicity {
 /// <see cref="FanoutMode"/>.
 /// </summary>
 /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:ReplaceWith_CarriesReplacementChildrenAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_CapturesDirectiveSetDuringWindowAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatchFanoutControlTests.cs:ReplaceWith_CarriesReplacementChildrenAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_CapturesDirectiveSetDuringWindowAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerTests.cs:CompositeDirective_ReplaceWith_FansOutReplacementSetAsync</tests>
 public sealed class FanoutDirective {
   private FanoutDirective(FanoutDirectiveKind kind, IReadOnlyList<IMessage>? replacement) {
@@ -102,9 +102,9 @@ public enum FanoutDirectiveKind {
 /// the pre-fanout window can't corrupt unrelated dispatch.
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:Set_OutsideControlWindow_IsNoOp_DoesNotLeakIntoNextWindowAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_NestsAndRestoresOuterControlAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_CapturesDirectiveSetDuringWindowAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatchFanoutControlTests.cs:Set_OutsideControlWindow_IsNoOp_DoesNotLeakIntoNextWindowAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_NestsAndRestoresOuterControlAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_CapturesDirectiveSetDuringWindowAsync</tests>
 public sealed class DispatchFanoutControl {
   private static readonly AsyncLocal<DispatchFanoutControl?> _current = new();
 

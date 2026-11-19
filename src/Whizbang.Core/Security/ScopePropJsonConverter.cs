@@ -11,7 +11,7 @@ namespace Whizbang.Core.Security;
 /// Reduces wire size in message hops while maintaining readability.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs:ScopePropJsonConverter</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ScopeDeltaTests.cs:ScopePropJsonConverter</tests>
 /// <remarks>
 /// <para>Abbreviation mapping:</para>
 /// <list type="table">

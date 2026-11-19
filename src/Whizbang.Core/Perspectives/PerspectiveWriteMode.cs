@@ -48,7 +48,7 @@ public sealed class PerspectiveWriteModeAttribute(PerspectiveWriteMode mode) : A
 /// always written per stream, whatever the service's mode.
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#selection</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveWriteModesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs</tests>
 public static class PerspectiveWriteModes {
   private static readonly ConcurrentDictionary<string, PerspectiveWriteMode?> _declared = new(StringComparer.Ordinal);
 

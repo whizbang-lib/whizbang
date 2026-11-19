@@ -21,7 +21,7 @@ namespace Whizbang.Core.Messaging;
 /// its perspectives apply what was missing.
 /// </remarks>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 public sealed record StreamRedeliveryRequest {
   /// <summary>The origin service's logical name: the service that stored the events.</summary>
   public required string OriginService { get; init; }
@@ -67,7 +67,7 @@ public sealed record StreamRedeliveryReceipt(string OriginService, string Reques
 /// operator's repair path for events lost in transport.
 /// </summary>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 public interface IStreamRedeliveryRequester {
   /// <summary>
   /// Sends the origin a redelivery request for <paramref name="request"/>'s streams. The request is the operator's
@@ -102,7 +102,7 @@ public interface IStreamRedeliveryRequester {
 /// <param name="logger">Logger.</param>
 /// <param name="timeProvider">The clock the request's hop is stamped with.</param>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 public sealed partial class StreamRedeliveryRequester(
     IServiceScopeFactory scopeFactory,
     ILogger<StreamRedeliveryRequester> logger,
@@ -152,6 +152,12 @@ public sealed partial class StreamRedeliveryRequester(
     var metrics = services.GetService<StreamIntegrityMetrics>();
     var requests = 0;
     foreach (var chunk in streams.Chunk(MAX_STREAMS_PER_REQUEST)) {
+      // #2365: an operator's request is a span of its own, under whatever the operator's call runs in.
+      var requestId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+      using var span = Observability.IntegrityTracing.StartRepairRequest(
+        Observability.IntegrityTracing.KIND_OPERATOR, request.OriginService, requestId);
+      Observability.IntegrityTracing.SetCount(span, Observability.IntegrityTracing.ATTR_STREAMS, chunk.Length);
+      var link = Observability.IntegrityTracing.LinkFrom(span, requestId);
       var command = new RequestRedeliveryCommand {
         TenantScope = request.TenantScope,
         EventTypes = request.EventTypes,
@@ -161,6 +167,9 @@ public sealed partial class StreamRedeliveryRequester(
         StateOnly = request.StateOnly,
         OperatorRequested = true,
         AcceptsStreamSpanningBundles = true,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp(request.EventTypes),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       };
       await RedeliveryRequestDispatch.PublishAsync(
         transport, serializer, instanceProvider, command, request.OriginService,

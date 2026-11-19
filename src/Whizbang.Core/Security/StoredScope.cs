@@ -24,7 +24,7 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#hop-scope</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/StoredScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/StoredScopeTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredScopeReadBackTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreStoredScopeReadBackTests.cs</tests>
 public static class StoredScope {

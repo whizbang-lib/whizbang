@@ -7,7 +7,7 @@ namespace Whizbang.Core.Security;
 /// Configuration options for RBAC/ABAC security.
 /// </summary>
 /// <docs>fundamentals/security/security#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/SecurityOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/SecurityOptionsTests.cs</tests>
 /// <example>
 /// services.AddWhizbang(options => {
 ///   options.Security

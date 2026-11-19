@@ -25,7 +25,7 @@ namespace Whizbang.Core;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/scoping#update-stream-scope</docs>
-/// <tests>tests/Whizbang.Core.Tests/Scoping/UpdateStreamScopeCommandTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Scoping/UpdateStreamScopeCommandTests.cs</tests>
 [PinnedId("493b898f-08ce-4dfd-b04e-339831565bdd")]
 public sealed class UpdateStreamScopeCommand : ICommand {
   /// <summary>The stream id whose perspective rows should be re-scoped.</summary>

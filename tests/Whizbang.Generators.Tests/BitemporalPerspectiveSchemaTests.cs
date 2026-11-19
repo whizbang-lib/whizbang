@@ -8,7 +8,7 @@ namespace Whizbang.Generators.Tests;
 /// <summary>
 /// Content tests binding the emitted perspective DDL to the bitemporal column contract: the
 /// generator must declare <c>sys_created_at</c> / <c>sys_updated_at</c>, reach EXISTING tables
-/// with additive ALTERs, backfill them from their siblings, and index <c>updated_at</c>.
+/// with additive ALTERs and backfill them from their siblings, and leave <c>updated_at</c> unindexed unless asked.
 /// </summary>
 /// <remarks>
 /// The behavioural half lives in <c>BitemporalColumnMigrationTests</c>, which proves the SQL does
@@ -86,12 +86,23 @@ public class BitemporalPerspectiveSchemaTests {
         + "operational stamp has since advanced");
   }
 
+  /// <summary>A table that neither declares retention nor asks for the index gets no index over updated_at.</summary>
+  /// <remarks>
+  /// Since #2087 the sliding reap's index is built by the managed-object reconcile for a table that declares row
+  /// retention (<c>PerspectiveRetentionIndexes</c>), or by a <c>[PerspectiveIndex]</c> declaration, and not by the
+  /// emitted DDL: a btree over a column every update rewrites keeps PostgreSQL from making the update HOT. This test
+  /// used to assert the opposite and passed only because two library migrations index their own tables'
+  /// <c>(updated_at)</c>, text that was embedded in this file until the migration set moved to a file of its own
+  /// (#2388).
+  /// </remarks>
   [Test]
-  public async Task Generator_IndexesUpdatedAt_ForTheSlidingReapPredicateAsync() {
+  public async Task Generator_LeavesUpdatedAtUnindexed_ForATableThatDoesNotAskForItAsync() {
     var sql = await _generateSchemaAsync();
 
-    await Assert.That(sql).Contains("(updated_at)")
-      .Because("the sliding reap predicate is updated_at < NOW() - interval; unindexed it degrades "
-        + "to a sequential scan of every enrolled table on every maintenance cycle");
+    await Assert.That(sql).Contains("sys_updated_at TIMESTAMPTZ")
+      .Because("the perspective DDL has to be in the file, or the absence below proves nothing");
+    await Assert.That(sql).DoesNotContain("(updated_at)")
+      .Because("an index over updated_at keeps every update from being HOT; it is built only where retention or a "
+        + "declaration asks for it (#2087)");
   }
 }

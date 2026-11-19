@@ -13,7 +13,7 @@ namespace Whizbang.Core.Routing;
 /// DI factories consume this interface instead of type-testing concrete strategies.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxAddressResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxAddressResolverTests.cs</tests>
 public interface ICommandInboxAddressResolver {
   /// <summary>
   /// Gets the default command inbox address — the shared inbox topic commands publish to when

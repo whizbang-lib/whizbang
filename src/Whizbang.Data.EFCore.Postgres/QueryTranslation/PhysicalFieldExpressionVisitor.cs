@@ -55,7 +55,7 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
     // each grew their own unreachable `return base.VisitMember(node)`.
     if (node.Member is PropertyInfo propertyInfo &&
         node.Expression is MemberExpression { Member.Name: "Data", Expression: { } entityExpression } &&
-        _isPerspectiveRowType(entityExpression.Type) &&
+        IsPerspectiveRowType(entityExpression.Type) &&
         // The model type is TModel from PerspectiveRow<TModel>, as the property declares it.
         propertyInfo.DeclaringType is { } modelType &&
         // Only properties registered as physical fields are rewritten.
@@ -93,7 +93,7 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
   /// <summary>
   /// Checks if a type is PerspectiveRow&lt;T&gt; or derives from it.
   /// </summary>
-  private static bool _isPerspectiveRowType(Type? type) {
+  internal static bool IsPerspectiveRowType(Type? type) {
     // A null type answers false through the method's own exit rather than an early return of its
     // own: the only caller passes Expression.Type, which a Roslyn expression never leaves null, so
     // a separate exit for it is a line nothing can reach. The guard itself is unchanged.

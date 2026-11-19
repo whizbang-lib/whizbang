@@ -162,12 +162,17 @@ public sealed partial class IntegrityAuditWorker(
     var metrics = services.GetService<Observability.StreamIntegrityMetrics>();
     var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
     var started = clock.GetTimestamp();
+    using var span = Observability.IntegrityTracing.StartRecheck(Observability.StreamIntegrityMetrics.CHECK_SEAL_RECHECK);
     var result = await coordinator.RecheckDigestEpochsAsync(
       SealRecheckRequest.From(_options.SealRecheck, settle), cancellationToken).ConfigureAwait(false);
     var check = new KeyValuePair<string, object?>(Observability.StreamIntegrityMetrics.CHECK_TAG, Observability.StreamIntegrityMetrics.CHECK_SEAL_RECHECK);
     metrics?.CheckDuration.Record(clock.GetElapsedTime(started).TotalSeconds, check);
     metrics?.EpochsRechecked.Add(result.EpochsChecked, check);
+    metrics?.RecordCheckRan(Observability.StreamIntegrityMetrics.CHECK_SEAL_RECHECK, clock.GetUtcNow());
     metrics?.CheckDriftFound.Add(result.EpochsDrifted, check);
+    Observability.IntegrityTracing.SetCount(span, Observability.IntegrityTracing.ATTR_EPOCHS, result.EpochsChecked);
+    Observability.IntegrityTracing.SetOutcome(span, result.EpochsDrifted > 0
+      ? Observability.IntegrityTracing.OUTCOME_DRIFT : Observability.IntegrityTracing.OUTCOME_CLEAN);
     if (result.EpochsDrifted > 0 && _options.SealRecheck.OnDrift == SealDriftAction.Refold) {
       metrics?.DigestDriftHealed.Add(result.EpochsDrifted, new KeyValuePair<string, object?>("kind", "epoch-refolded"));
       LogEpochDrift(_logger, result.EpochsDrifted, result.EpochsChecked);
@@ -219,6 +224,9 @@ public sealed partial class IntegrityAuditWorker(
       LogAuditCycleAlreadyClaimed(_logger, claimWindow.TotalMinutes);
       return false;
     }
+    // #2365: the cycle's span; every manifest ask below carries its trace link, so the answers and any repair they lead
+    // to join this trace.
+    using var cycleSpan = Observability.IntegrityTracing.StartAuditCycle();
 
     // ── the opt-in checks (#2353) ────────────────────────────────────────
     // Steady-state cycles run on the incrementally maintained digest table and ask windowed from each seal; neither
@@ -246,6 +254,7 @@ public sealed partial class IntegrityAuditWorker(
       metrics?.DigestBucketsVerified.Add(verification.BucketsChecked);
       metrics?.CompareStreamsCovered.Add(verification.StreamsChecked);
       metrics?.CompareSlices.Add(1);
+      metrics?.RecordCheckRan(Observability.StreamIntegrityMetrics.CHECK_FULL_HISTORY_COMPARE, clock.GetUtcNow());
       if (verification.PassCompleted) {
         metrics?.ComparePassesCompleted.Add(1);
         metrics?.ComparePassRuns.Record(verification.PassRuns);
@@ -358,6 +367,7 @@ public sealed partial class IntegrityAuditWorker(
     var eventNamespaces = absorbed.Count > 0 ? absorbed : null;
     var requested = 0;
     var skipped = 0;
+    var pairGuard = IntegrityPairGuard.Resolve(services);
     var auditClock = services.GetService<TimeProvider>() ?? TimeProvider.System;
     var maxSkip = TimeSpan.FromMinutes(Math.Max(0, _options.MaxAskSkipMinutes));
     // #2104: a restarted process asks the origins the store kept, not only those whose checkpoint arrived since.
@@ -402,6 +412,7 @@ public sealed partial class IntegrityAuditWorker(
       // #2262: the generation recorded beside the seal, so the origin answers how far its history was rewritten since and
       // a new generation lowers the seal only that far. A sweep's answer passes the same guard, so it names it too.
       var knownGeneration = await coordinator.GetIntegritySealGenerationAsync(originId, cancellationToken).ConfigureAwait(false);
+      var askLink = Observability.IntegrityTracing.LinkFrom(cycleSpan, TrackedGuid.New());
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.New()),
@@ -415,6 +426,11 @@ public sealed partial class IntegrityAuditWorker(
           Windowed = true,
           SinceSequence = since,
           KnownOriginGeneration = knownGeneration,
+          // #2362: this service's rules for the types it asks about; the origin halts the pair when its own differ.
+          RuleFingerprint = pairGuard.Stamp(consumed),
+          // #2365: the ask's id and the cycle's trace link, echoed by the origin's answer.
+          RequestId = askLink.RequestId,
+          TraceParent = askLink.TraceParent,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)

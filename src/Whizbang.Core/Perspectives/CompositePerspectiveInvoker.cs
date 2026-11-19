@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
 public sealed class CompositePerspectiveInvoker : IPerspectiveInvoker {
   private readonly IPerspectiveInvoker[] _invokers;
 
@@ -68,7 +68,7 @@ public sealed class CompositePerspectiveInvoker : IPerspectiveInvoker {
 /// contributions is left alone.
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveInvokerContributionTests.cs</tests>
 public static class PerspectiveInvokerServiceCollectionExtensions {
   /// <summary>The service key each assembly's invoker is registered under as a contribution.</summary>
   public const string CONTRIBUTION_KEY = "whizbang:perspective-invoker-contribution";
@@ -77,7 +77,7 @@ public static class PerspectiveInvokerServiceCollectionExtensions {
   /// <typeparam name="TInvoker">The contributing invoker, itself registered in the container as a scoped service.</typeparam>
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveInvokerContributionTests.cs:TwoAssemblies_AnEventReachesEveryAssemblysInvokerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveInvokerContributionTests.cs:TwoAssemblies_AnEventReachesEveryAssemblysInvokerAsync</tests>
   public static IServiceCollection AddPerspectiveInvokerContribution<TInvoker>(this IServiceCollection services)
       where TInvoker : class, IPerspectiveInvoker {
     ArgumentNullException.ThrowIfNull(services);

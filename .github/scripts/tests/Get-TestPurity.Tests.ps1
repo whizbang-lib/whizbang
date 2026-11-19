@@ -443,7 +443,7 @@ Describe 'Format-TestPurityReport and Assert-TestPurity' {
 Describe 'Export-TestPurityInventory' {
   BeforeAll {
     $script:CoreRepo = New-FakeRepo -Projects @(@{
-        Dir = 'tests/Whizbang.Core.Tests'; Type = 'Unit'; Files = @{
+        Dir = 'tests/Whizbang.Core.Unit.Workers.Tests'; Type = 'Unit'; Files = @{
           'Workers/WorkerTests.cs' = 'namespace W; public class WorkerTests { [Test] public async Task T() { await w.StartAsync(ct); Thread.Sleep(1); Thread.Sleep(2); } }'
           'Workers/PureTests.cs'   = 'namespace W; public class PureTests { [Test] public void T() { } }'
           'Workers/SlowHelper.cs'  = 'namespace W; public class SlowHelper { void M() { Thread.Sleep(1); } }'
@@ -463,8 +463,8 @@ Describe 'Export-TestPurityInventory' {
     $rows[2].Tests | Should -Be '0'
     $rows[2].Note | Should -Be 'phase 2 waits for #1259'
     $worker = $rows[3]
-    $worker.Project | Should -Be 'Whizbang.Core.Tests'
-    $worker.File | Should -Be 'tests/Whizbang.Core.Tests/Workers/WorkerTests.cs'
+    $worker.Project | Should -Be 'Whizbang.Core.Unit.Workers.Tests'
+    $worker.File | Should -Be 'tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkerTests.cs'
     $worker.Kind | Should -Be 'Test'
     $worker.Tests | Should -Be '1'
     $worker.Category | Should -Be 'Component'
@@ -482,10 +482,10 @@ Describe 'Export-TestPurityInventory' {
     Export-TestPurityInventory -Inventory $script:CoreInv -CsvPath (Join-Path -Path $TestDrive -ChildPath 'new/inv.csv') -MarkdownPath $md
     $text = Get-Content -Path $md -Raw
     $text | Should -Match ([regex]::Escape($script:GeneratedMarker))
-    $text | Should -Match '\| Whizbang\.Core\.Tests \| 1 \| 1 \| 0 \| 1 \| 3 \| 1 \|'
+    $text | Should -Match '\| Whizbang\.Core\.Unit\.Workers\.Tests \| 1 \| 1 \| 0 \| 1 \| 3 \| 1 \|'
     $text | Should -Match '\| \*\*Total\*\* \| 1 \| 1 \| 0 \| 1 \| 3 \| 1 \|'
     $text | Should -Match '3 of 4 types are not unit-pure\.'
-    $text | Should -Match '\| WorkerTests \| `tests/Whizbang\.Core\.Tests/Workers/WorkerTests\.cs` \| 1 \| Component \| StartAsync, ThreadSleep \|  \| phase 2 waits for #1259 \|'
+    $text | Should -Match '\| WorkerTests \| `tests/Whizbang\.Core\.Unit\.Workers\.Tests/Workers/WorkerTests\.cs` \| 1 \| Component \| StartAsync, ThreadSleep \|  \| phase 2 waits for #1259 \|'
     $text | Should -Not -Match '\| PureTests \|'
   }
 
@@ -548,6 +548,7 @@ Describe 'the Unit-type projects in this repository' {
     $directories = @($inventory.Projects.Directory)
     $directories.Count | Should -BeGreaterThan 30 -Because 'the scan must find the Unit projects for this check to mean anything'
     $directories | Should -Contain 'tests/Whizbang.Core.Tests'
+    $directories | Should -Contain 'tests/Whizbang.Core.Unit.Workers.Tests' -Because 'the Core unit tests are split across projects (#2392)'
     $directories | Should -Contain 'tests/Whizbang.LanguageServer.Tests' -Because 'every test project declares its type (#1264)'
     @($inventory.Types | Where-Object { $_.Tests -gt 0 }).Count | Should -BeGreaterThan 1000
     $report = Assert-TestPurity -Inventory $inventory -Enforced:$script:PurityEnforced

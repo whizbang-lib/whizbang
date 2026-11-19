@@ -732,7 +732,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
           DO $$
           BEGIN
             -- Truncate core infrastructure tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
             -- Truncate all perspective tables (INVENTORY schema)
             TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
@@ -740,7 +740,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
             TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
             -- Truncate core infrastructure tables (BFF schema)
-            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
             -- Truncate all perspective tables (BFF schema)
             TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;

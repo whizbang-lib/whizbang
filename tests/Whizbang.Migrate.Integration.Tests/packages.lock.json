@@ -26,6 +26,16 @@
           "Mono.Cecil": "0.11.6"
         }
       },
+      "Microsoft.Testing.Extensions.HangDump": {
+        "type": "Direct",
+        "requested": "[2.5.3, )",
+        "resolved": "2.5.3",
+        "contentHash": "GoEUNX+/qTKD394NvLTHo+Vp/CNYc8Fi3VdM8UwTzkRXMWGL2dPzh5ha4Fc42aBsIeVjw4Z+IoSJ5/n82bGSOg==",
+        "dependencies": {
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.607501",
+          "Microsoft.Testing.Platform": "[2.5.3, 3.0.0)"
+        }
+      },
       "Rocks": {
         "type": "Direct",
         "requested": "[10.0.0, )",
@@ -117,6 +127,14 @@
           "Microsoft.CodeAnalysis.Analyzers": "3.11.0",
           "Microsoft.CodeAnalysis.Common": "[5.0.0]",
           "System.Composition": "9.0.0"
+        }
+      },
+      "Microsoft.Diagnostics.NETCore.Client": {
+        "type": "Transitive",
+        "resolved": "0.2.607501",
+        "contentHash": "17Yxzao41A1oZZ5lCCAnnXOy9up5i/GVEGazBjJAUZ4UISsNAotUt6h7zvCDgfKIC46CD7jszgLzLZoscSIJQA==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "6.0.4"
         }
       },
       "Microsoft.DiaSymReader": {
@@ -491,7 +509,8 @@
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
           "Microsoft.Extensions.Hosting": "[10.0.14, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )"
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Migrate": {
@@ -502,6 +521,9 @@
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
           "System.CommandLine": "[2.0.0-beta4.22272.1, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "SoftwareExtravaganza.Whizbang.Testing": {
         "type": "Project",
@@ -699,6 +721,16 @@
           "Mono.Cecil": "0.11.6"
         }
       },
+      "Microsoft.Testing.Extensions.HangDump": {
+        "type": "Direct",
+        "requested": "[2.5.3, )",
+        "resolved": "2.5.3",
+        "contentHash": "GoEUNX+/qTKD394NvLTHo+Vp/CNYc8Fi3VdM8UwTzkRXMWGL2dPzh5ha4Fc42aBsIeVjw4Z+IoSJ5/n82bGSOg==",
+        "dependencies": {
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.607501",
+          "Microsoft.Testing.Platform": "[2.5.3, 3.0.0)"
+        }
+      },
       "Rocks": {
         "type": "Direct",
         "requested": "[10.0.0, )",
@@ -788,6 +820,11 @@
           "Microsoft.CodeAnalysis.Common": "[5.0.0]",
           "System.Composition": "9.0.0"
         }
+      },
+      "Microsoft.Diagnostics.NETCore.Client": {
+        "type": "Transitive",
+        "resolved": "0.2.607501",
+        "contentHash": "17Yxzao41A1oZZ5lCCAnnXOy9up5i/GVEGazBjJAUZ4UISsNAotUt6h7zvCDgfKIC46CD7jszgLzLZoscSIJQA=="
       },
       "Microsoft.DiaSymReader": {
         "type": "Transitive",
@@ -1068,7 +1105,8 @@
           "Microsoft.Extensions.DependencyInjection": "[10.0.14, )",
           "Microsoft.Extensions.Diagnostics.HealthChecks": "[10.0.14, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.14, )",
-          "Microsoft.Extensions.Hosting": "[10.0.14, )"
+          "Microsoft.Extensions.Hosting": "[10.0.14, )",
+          "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Migrate": {
@@ -1079,6 +1117,9 @@
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
           "System.CommandLine": "[2.0.0-beta4.22272.1, )"
         }
+      },
+      "SoftwareExtravaganza.Whizbang.Rules": {
+        "type": "Project"
       },
       "SoftwareExtravaganza.Whizbang.Testing": {
         "type": "Project",

@@ -41,7 +41,7 @@ public enum ArchiveCompression {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#locator-format</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveLocatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveLocatorTests.cs</tests>
 public sealed record ArchiveLocator {
   /// <summary>The layout of the archived events this release writes and reads.</summary>
   public const int CURRENT_FORMAT = 1;

@@ -136,6 +136,9 @@ public sealed partial class IntegrityManifestRequestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestIntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    // #2365: the answer joins the asker's trace; every chunk carries this span back, with the ask's id.
+    using var span = IntegrityTracing.StartAnswer(IntegrityTracing.KIND_MANIFEST, message.RequesterService,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
     await _answerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
@@ -160,6 +163,17 @@ public sealed partial class IntegrityManifestRequestReceptor(
 
     var settle = TimeSpan.FromMinutes(options.AuditSettleWindowMinutes);
     var eventTypes = await _requestedTypesAsync(coordinator, message, cancellationToken).ConfigureAwait(false);
+    // #2362: answer only while the pair applies the same rules to the types it shares. A requester that sent its rules is
+    // answered with this side's, so it reports the same halt; one that sent none predates them and is not answered.
+    var pairGuard = IntegrityPairGuard.Resolve(services);
+    var rules = pairGuard.Stamp(eventTypes);
+    if (!pairGuard.Admit(message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint).IsAgreed) {
+      if (message.RuleFingerprint is not null) {
+        await _publishHaltedAnswerAsync(services, coordinator, transport, serializer, options, message, rules, cancellationToken)
+          .ConfigureAwait(false);
+      }
+      return;
+    }
     IReadOnlyList<StreamDigest> digests;
     var recomputed = message.UseRecompute;
     long? computedThrough = null;
@@ -167,6 +181,13 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var answeredWindowed = false;
     var windowCapped = false;
     var nothingSettledAbove = false;
+
+    if (message.Windowed && message.Level == ManifestLevel.Types && !message.Recheck) {
+      // #2363: a type-level audit asks from the consumer's seal, so the ask reports how far that consumer has verified
+      // this service's history; a cut of local history may wait for it (Sealing:CutWaitsForConsumers).
+      await coordinator.RecordConsumerSealAsync(message.RequesterService, message.SinceSequence, cancellationToken)
+        .ConfigureAwait(false);
+    }
 
     if (message.Windowed) {
       // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
@@ -244,6 +265,10 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var rewrite = message.KnownOriginGeneration is long knownGeneration
       ? await coordinator.GetIntegrityHistoryRewriteAsync(knownGeneration, cancellationToken).ConfigureAwait(false)
       : null;
+    // #2365: this origin's rules noted beside its generation, so the answer says why history moved since the asker's.
+    var rulesChangedAt = await coordinator.IntegrityNoteRulesAsync(pairGuard.ServiceFingerprint, originGeneration, cancellationToken)
+      .ConfigureAwait(false);
+    var historyMovedReason = IntegrityHistoryMoved.Reason(message.KnownOriginGeneration, originGeneration, rulesChangedAt);
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -276,12 +301,16 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
           RewrittenSinceGeneration = rewrite?.SinceGeneration,
           RewrittenFrom = rewrite?.RewrittenFrom,
+          HistoryMovedReason = historyMovedReason,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
           // #2225: the walk's types, so each follow-up page asks for all of them, not only those this page held.
           RequestedEventTypes = message.Level == ManifestLevel.Streams ? eventTypes : null,
           NothingSettledAbove = nothingSettledAbove,
+          RuleFingerprint = rules,
+          RequestId = message.RequestId,
+          TraceParent = IntegrityTracing.CurrentTraceParent,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -303,6 +332,45 @@ public sealed partial class IntegrityManifestRequestReceptor(
       new KeyValuePair<string, object?>("windowed", answeredWindowed),
       new KeyValuePair<string, object?>("recompute", recomputed));
     LogManifestSent(logger, digests.Count, chunks, message.RequesterService);
+  }
+
+  /// <summary>
+  /// #2362: the answer to a requester whose rules differ: no digests, only this origin's rules, so the requester names the
+  /// same differing types and halts the pair too.
+  /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "One directed answer: the scope's services and the three collaborators the caller already resolved, the options, the request, the rules and cancellation.")]
+  private static async Task _publishHaltedAnswerAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, ITransport transport, IEnvelopeSerializer serializer,
+      StreamIntegrityOptions options, RequestIntegrityManifest message, RuleFingerprint rules, CancellationToken cancellationToken) {
+    var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
+    var instanceProvider = services.GetService<IServiceInstanceProvider>();
+    var envelope = new MessageEnvelope<IntegrityManifest> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
+      MessageId = new MessageId(TrackedGuid.New()),
+      Payload = new IntegrityManifest {
+        ManifestStreamId = originServiceId,
+        OriginServiceId = originServiceId,
+        OriginServiceName = instanceProvider?.ServiceName ?? string.Empty,
+        Level = message.Level,
+        ChunkCount = 1,
+        WindowNumber = message.WindowNumber,
+        Recheck = message.Recheck,
+        PairHalted = true,
+        RuleFingerprint = rules,
+        RequestId = message.RequestId,
+        TraceParent = IntegrityTracing.CurrentTraceParent,
+      },
+      Hops = [
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      Target = message.RequesterService,
+    };
+    var serialized = serializer.SerializeEnvelope(envelope);
+    await transport.PublishAsync(serialized.JsonEnvelope,
+      Whizbang.Core.Transports.IntegrityControlDestination.For(message.Topic, originServiceId, typeof(IntegrityManifest), options),
+      serialized.EnvelopeType, cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
   private static IReadOnlyList<StreamDigest> _ownedOnly(IServiceProvider services, IReadOnlyList<StreamDigest> digests) {
@@ -371,7 +439,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(IntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
-    if (message.Digests.Count == 0 && !_isQuietWindow(message) && !_continuesAWalk(message)) {
+    if (message.Digests.Count == 0 && !_isQuietWindow(message) && !_continuesAWalk(message) && !message.PairHalted) {
       return;
     }
     // NON-QUEUEING by design. Waiting here looked free but was not: every queued manifest held
@@ -386,6 +454,10 @@ public sealed partial class IntegrityManifestReceptor(
         new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;
     }
+    // #2365: the comparison joins the trace the origin's answer carried; a repair it requests runs under it.
+    using var span = IntegrityTracing.StartAudit(IntegrityTracing.KIND_MANIFEST, message.OriginServiceName,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
+    IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_STREAMS, message.Digests.Count);
     var compareTimer = System.Diagnostics.Stopwatch.StartNew();
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
@@ -444,6 +516,14 @@ public sealed partial class IntegrityManifestReceptor(
       return;   // own manifest looping back — nothing to compare against ourselves.
     }
 
+    // #2362: compare only while the pair applies the same rules to the types it shares. An answer without the origin's
+    // rules comes from a release that predates them and may fold another way; an origin that halted the pair answers
+    // only to carry its rules, so this side reports the same halt.
+    var verdict = IntegrityPairGuard.Resolve(services).Admit(message.OriginServiceName, IntegrityPairSide.Consumer, message.RuleFingerprint);
+    if (!verdict.IsAgreed || message.PairHalted) {
+      return;
+    }
+
     // #2058: compare only what the receive boundary keeps (what this service consumes, or a namespace it absorbs). An
     // origin answering an older, wider request still names other types; a divergence in one of them can never heal,
     // because its redelivery is discarded on receive.
@@ -470,6 +550,8 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
+        // #2365: the guard lowered the seal because the origin's history moved, for the reason its answer gives.
+        services.GetService<StreamIntegrityMetrics>()?.RecordSealLowered(IntegrityHistoryMoved.Counted(message.HistoryMovedReason));
         return;
       }
     }
@@ -672,6 +754,19 @@ public sealed partial class IntegrityManifestReceptor(
     var reportFlags = divergent.Count > 0
       ? await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false)
       : [];
+    // #2365: the deficits a redelivery answer had filled, short again: one turn of the resync loop each, counted once per
+    // answer by the ledger.
+    var shortAgainKeys = new List<IntegrityRepairLedger.DivergenceKey>();
+    for (var i = 0; i < divergent.Count; i++) {
+      if (divergent[i].IsDeficit) {
+        shortAgainKeys.Add(observations[i].Key);
+      }
+    }
+    if (shortAgainKeys.Count > 0) {
+      metrics?.RedeliveredThenReaped.Add(
+        await coordinator.IntegrityCountShortAfterAnswerAsync(message.OriginServiceId, shortAgainKeys, now, cancellationToken)
+          .ConfigureAwait(false));
+    }
     // Repair eligibility batches only the DEFICITS, in manifest order, with the budget enforced
     // INSIDE the batch — past the cap keys are not consulted, so no attempt budget is burned on
     // grants that would be discarded.
@@ -697,6 +792,12 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, stampKeys,
         deficitIndexes.ConvertAll(i => IntegrityDigestMath.SingleMissingEventId(divergent[i].Origin, divergent[i].Mine)),
         cancellationToken).ConfigureAwait(false);
+      // #2365: and the trace of this comparison, so the drain's request starts in it. Nothing to record with no span.
+      if (IntegrityTracing.CurrentTraceParent is { } traceParent) {
+        await coordinator.IntegrityRecordTraceAsync(
+          message.OriginServiceId, stampKeys, new IntegrityTraceLink(message.RequestId, traceParent), cancellationToken)
+          .ConfigureAwait(false);
+      }
     }
     // #2115: a re-check's answer is a compare, never a repair request.
     var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
@@ -1029,6 +1130,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         EventTypes = types,
@@ -1045,6 +1149,7 @@ public sealed partial class IntegrityManifestReceptor(
         Recheck = message.Recheck,
         // #2262: the answer passed the generation guard, so its generation is the one recorded.
         KnownOriginGeneration = message.OriginGeneration,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp(types),
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)
@@ -1287,6 +1392,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         EventTypes = drillDown,
@@ -1301,6 +1409,7 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = resumeAfter,
         // #2262: the answer passed the generation guard, so its generation is the one recorded.
         KnownOriginGeneration = message.OriginGeneration,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp(drillDown),
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1380,14 +1489,18 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
     var absorbed = ConsumedMessageTypes.AbsorbedNamespaces(services);
+    var consumed = ConsumedMessageTypes.EventTypeNames(services);
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         // The same ask the scheduled audit makes, from the new seal: the whole consumed surface, type level.
-        EventTypes = ConsumedMessageTypes.EventTypeNames(services),
+        EventTypes = consumed,
         EventNamespaces = absorbed.Count > 0 ? absorbed : null,
         Level = ManifestLevel.Types,
         Windowed = true,
@@ -1395,6 +1508,7 @@ public sealed partial class IntegrityManifestReceptor(
         WindowNumber = window,
         // #2262: the answer passed the generation guard, so its generation is the one recorded.
         KnownOriginGeneration = message.OriginGeneration,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp(consumed),
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -1455,6 +1569,10 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    // #2365: the request's span, a child of this comparison; the origin's answer and the repair join it.
+    var requestId = (Guid)TrackedGuid.New();
+    using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_INLINE, manifest.OriginServiceName, requestId);
+    var link = IntegrityTracing.LinkFrom(span, requestId);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1472,6 +1590,9 @@ public sealed partial class IntegrityManifestReceptor(
         ToCommitSequence = toSequence,
         StateOnly = true,
         AcceptsStreamSpanningBundles = true,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([eventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1511,6 +1632,10 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    // #2365: the request's span, a child of this comparison; the origin's answer and the repair join it.
+    var requestId = (Guid)TrackedGuid.New();
+    using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_INLINE, manifest.OriginServiceName, requestId);
+    var link = IntegrityTracing.LinkFrom(span, requestId);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1528,6 +1653,9 @@ public sealed partial class IntegrityManifestReceptor(
         FromCommitSequence = fromSequence,
         ToCommitSequence = toSequence,
         AcceptsStreamSpanningBundles = true,
+        RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([eventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)

@@ -455,6 +455,44 @@ public class StartupReadyCompositeTests {
     await Assert.That(signal.IsReady).IsFalse();
   }
 
+  /// <summary>
+  /// A stop while waiting ends the wait; it is not a probe (#2387). The probe delay shares the
+  /// stopping token, so on a stop it completes at once, canceled. Counting that as a probe spun
+  /// the loop through three "probes" in no time and logged "Startup is not ready after 0s" after the
+  /// host had already been told to stop. The contributor here ignores cancellation, as a slow one
+  /// can, so only the probe can notice the stop; it answers once anything says "not ready", which
+  /// is what turns the old spin into a visible failure instead of a hang.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ReadyService_StoppedWhileWaiting_DoesNotNarrateTheStopAsAProbeAsync(CancellationToken cancellationToken) {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var logger = new ReadyServiceLog();
+    var deaf = new CancellationDeafContributor("deaf-transport");
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [deaf], logger: logger, timeProvider: new ProbeClock());
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
+    _ = logger.Logged("not ready").ContinueWith(_ => deaf.Answer(), cancellationToken, TaskContinuationOptions.None, TaskScheduler.Default);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var started = service.StartedAsync(cts.Token);
+    await cts.CancelAsync();
+    await started;
+
+    await Assert.That(logger.Entries.Where(e => e.Contains("not ready", StringComparison.Ordinal))).IsEmpty()
+      .Because("the clock never moved, so no probe interval passed: the only thing that happened was the stop");
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("a stopped startup never became ready, even if a contributor answers afterwards");
+  }
+
+  /// <summary>A contributor whose wait does not observe cancellation; it answers only when told to.</summary>
+  private sealed class CancellationDeafContributor(string name) : IStartupReadinessContributor {
+    private readonly TaskCompletionSource _answered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public string ContributorName => name;
+    public void Answer() => _answered.TrySetResult();
+    public Task WaitForContributorReadyAsync(CancellationToken cancellationToken) => _answered.Task;
+  }
+
   /// <summary>Genuine faults must still surface — the graceful path is cancellation ONLY.</summary>
   [Test]
   public async Task ReadyService_ContributorFaults_StillPropagatesAsync() {

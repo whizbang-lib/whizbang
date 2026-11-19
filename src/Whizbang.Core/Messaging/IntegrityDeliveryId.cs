@@ -17,7 +17,7 @@ namespace Whizbang.Core.Messaging;
 /// bytes across the boundary.
 /// </remarks>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheDeliveryId_IsAFunctionOfTypeAndPayloadAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityDeliveryDeferralTests.cs:TheDeliveryId_IsAFunctionOfTypeAndPayloadAsync</tests>
 public static class IntegrityDeliveryId {
   /// <summary>The identity of the delivery of <paramref name="payload"/> as <paramref name="deliveryType"/>.</summary>
   /// <param name="deliveryType">The delivery type.</param>

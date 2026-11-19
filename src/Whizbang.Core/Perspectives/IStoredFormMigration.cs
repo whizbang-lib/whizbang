@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives;
 /// Implement <see cref="IStoredFormMigration{TModel}"/>; this face is how the framework reads one.
 /// </remarks>
 /// <docs>fundamentals/perspectives/stored-form-migrations#custom</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
 public interface IStoredFormMigration {
   /// <summary>
   /// The migration's stable name. The journal records the migration under it, so it runs once; a different name is
@@ -50,7 +50,7 @@ public interface IStoredFormMigration {
 /// </summary>
 /// <typeparam name="TModel">The perspective model whose stored documents the migration changes.</typeparam>
 /// <docs>fundamentals/perspectives/stored-form-migrations#custom</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// public sealed class SplitFullName : IStoredFormMigration&lt;CustomerModel&gt; {
@@ -69,7 +69,7 @@ public interface IStoredFormMigration<TModel> : IStoredFormMigration where TMode
 /// <param name="Schema">The schema, unquoted.</param>
 /// <param name="Table">The perspective table, unquoted.</param>
 /// <docs>fundamentals/perspectives/stored-form-migrations#custom</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
 public readonly record struct StoredFormMigrationTarget(string Schema, string Table) {
   /// <summary>
   /// The SQLSTATE that stops startup: raised by a conversion that finds values it cannot convert, and by a custom

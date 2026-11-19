@@ -9,7 +9,7 @@ namespace Whizbang.Core.Startup;
 /// required dependency everywhere rather than an optional one that a hand-built registration can silently omit.
 /// </summary>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/NullStartupStageReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/NullStartupStageReporterTests.cs</tests>
 public sealed class NullStartupStageReporter : IStartupStageReporter {
   /// <summary>The one instance.</summary>
   public static NullStartupStageReporter Instance { get; } = new();

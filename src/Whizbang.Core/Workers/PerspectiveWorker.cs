@@ -182,7 +182,7 @@ public partial class PerspectiveWorker(
   /// the same rows. A gate at or below zero is disabled and imposes nothing.
   /// </summary>
   /// <docs>operations/workers/perspective-worker</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerParallelismTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWorkerParallelismTests.cs</tests>
   internal static int ClampWidthToGate(int consumers, int width, int gateMaxConcurrent) {
     var requested = Math.Max(1, width);
     if (gateMaxConcurrent <= 0) {
@@ -364,9 +364,6 @@ public partial class PerspectiveWorker(
   // same pending task back on every iteration, and its signal stays raised until the loop consumes
   // it, so a signal landing while every loop is busy still wakes the next iteration.
   private readonly Whizbang.Core.Async.WakeSignal _perspectiveWake = new();
-  // 1 while _onPerspectiveSignal is attached to the NOTIFY listener. Written by ExecuteAsync (thread pool) and
-  // StopAsync (the host), so it is read and cleared with Interlocked.
-  private int _perspectiveSignalSubscribed;
 
   /// <summary>Number of parked wake waiters the consumer loop currently holds: 0 or 1, never more.</summary>
   internal int PendingWakeWaiters => _perspectiveWake.PendingWaiters;
@@ -382,23 +379,12 @@ public partial class PerspectiveWorker(
   /// <inheritdoc />
   /// <remarks>Once the worker has stopped it waits for the detached lifecycle stages it started (#1721).</remarks>
   public override async Task StopAsync(CancellationToken cancellationToken) {
-    _unsubscribePerspectiveSignal();
     foreach (var wake in _collectiveHoldWakes.Values) {
       wake.Timer.Dispose();
     }
     _collectiveHoldWakes.Clear();
     await base.StopAsync(cancellationToken).ConfigureAwait(false);
-    // Again once ExecuteAsync has finished: the host runs it on the thread pool, so StopAsync can arrive while it is
-    // still attaching the handler, after the check above and before the flag is set. Without this the handler leaks
-    // and keeps waking a stopped worker.
-    _unsubscribePerspectiveSignal();
     await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
-  }
-
-  private void _unsubscribePerspectiveSignal() {
-    if (Interlocked.Exchange(ref _perspectiveSignalSubscribed, 0) == 1) {
-      _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
-    }
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
@@ -601,20 +587,35 @@ public partial class PerspectiveWorker(
     IServiceProvider ScopedProvider);
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// The perspective NOTIFY handler is added and removed here, by the run that owns it. The host runs this method on a
+  /// thread of its own, so a StopAsync that removed the handler could run while this was still adding it and leave it
+  /// attached to a listener that outlives the worker; removing it in this method's own <c>finally</c> leaves none.
+  /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    // Slice 7a: hook the perspective NOTIFY signal so we wake on every new
+    // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
+    var listensForSignals = _perspectiveNotificationListener.IsConfigured;
+    if (listensForSignals) {
+      _perspectiveNotificationListener.OnSignal += _onPerspectiveSignal;
+    }
+    try {
+      await _runAsync(stoppingToken).ConfigureAwait(false);
+    } finally {
+      if (listensForSignals) {
+        _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
+      }
+    }
+  }
+
+  /// <summary>The worker's run: startup repair, then the consumer loops until stopped.</summary>
+  private async Task _runAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
     // EVERYTHING below touches the database — registry initialization, orphan-lifecycle
     // reconcile, rewind repair, the drain loop. The host starts this worker at Accept commands
     // (#1636), so none of it begins before migrations have completed and the instance's row
     // says it is eligible for work.
-
-    // Slice 7a — hook the perspective NOTIFY signal so we wake on every new
-    // wh_perspective_events insert instead of polling at PollingIntervalMilliseconds.
-    if (_perspectiveNotificationListener.IsConfigured && Volatile.Read(ref _perspectiveSignalSubscribed) == 0) {
-      _perspectiveNotificationListener.OnSignal += _onPerspectiveSignal;
-      Volatile.Write(ref _perspectiveSignalSubscribed, 1);
-    }
 
     var isPerspectiveHost = await _initializePerspectiveRegistryAsync();
     StartupRewindSet? startupRewinds = null;
@@ -643,9 +644,20 @@ public partial class PerspectiveWorker(
       return;
     }
 
-    // Subscribe to new perspective work signals so we poll immediately when events arrive
+    // Subscribe to new perspective work signals so we poll immediately when events arrive. The channel writer is a
+    // singleton that outlives this worker, so the run that adds the handler removes it (#2409).
     workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
+    try {
+      await _runConsumersAsync(startupRewinds, stoppingToken).ConfigureAwait(false);
+    } finally {
+      workChannelWriter.OnNewPerspectiveWorkAvailable -= RequestImmediatePoll;
+    }
+  }
 
+  /// <summary>
+  /// The consumer loops, with the wait for the startup rewinds they perform, until stopped; then the shutdown drain.
+  /// </summary>
+  private async Task _runConsumersAsync(StartupRewindSet? startupRewinds, CancellationToken stoppingToken) {
     // The work-pump decomposition migrated perspective traffic to the channel architecture
     // (ClaimWorker → IPerspectiveChannelWriter / IPerspectiveDrainChannel → here). Channel deps
     // are optional in the constructor only so existing test fixtures compile unchanged; runtime
@@ -2180,7 +2192,7 @@ public partial class PerspectiveWorker(
   /// <param name="lifecycleCoordinator">The batch's lifecycle coordinator, when one is registered.</param>
   /// <returns>The rows to parse, in fetch order.</returns>
   /// <docs>operations/workers/perspective-worker#cooled-rows-are-not-parsed</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs:LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync</tests>
   internal static List<StreamEventData> _rowsOutsideCooldown(
       List<StreamEventData> rawEvents, RecentlyProcessedEventCache? cache, ILifecycleCoordinator? lifecycleCoordinator) {
@@ -2493,7 +2505,7 @@ public partial class PerspectiveWorker(
   /// The perspectives registered for an event type, or none when no registered perspective takes it: a
   /// stream can hold events this service registers no perspective for, and those feed nothing here.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerPerspectivesForTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWorkerPerspectivesForTests.cs</tests>
   internal static IReadOnlyList<string> PerspectivesFor(
       IReadOnlyDictionary<string, IReadOnlyList<string>> perspectivesPerEventType, string eventTypeKey) =>
     perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives) ? perspectives : [];
@@ -3308,7 +3320,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Logs diagnostic information about the batch composition.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerBatchCompositionLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWorkerBatchCompositionLoggingTests.cs</tests>
   internal static void LogBatchComposition(
       ILogger logger,
       WorkBatch workBatch,
@@ -4714,6 +4726,11 @@ public partial class PerspectiveWorker(
     // S3267: Multi-statement loop body — LINQ would reduce readability
 #pragma warning disable S3267
     foreach (var workItem in group) {
+      // Guid.Empty is the "no work id" sentinel: it names no row to complete, and recording it in the
+      // dedup cache would make the filter drop every later empty-id item as already processed.
+      if (workItem.WorkId == Guid.Empty) {
+        continue;
+      }
       _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
         EventWorkId = workItem.WorkId,
         StatusFlags = (int)PerspectiveProcessingStatus.Completed
@@ -6008,7 +6025,7 @@ public class PerspectiveWorkerOptions {
   /// is always written per stream.
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#selection</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
   public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
 
   /// <summary>

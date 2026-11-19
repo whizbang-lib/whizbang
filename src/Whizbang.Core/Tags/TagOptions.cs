@@ -32,7 +32,7 @@ namespace Whizbang.Core.Tags;
 /// </code>
 /// </example>
 /// <docs>fundamentals/messages/message-tags#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagOptionsTests.cs</tests>
 public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];
   private readonly Dictionary<string, CoalescePolicyOptions> _coalesceBindings = new(StringComparer.Ordinal);
@@ -304,8 +304,8 @@ public sealed class TagOptions {
   /// </code>
   /// </example>
   /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsCoalesceTests.cs:Coalesce_RegistersBindingForTagAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsCoalesceTests.cs:Coalesce_LastWinsPerTag_ReplacesNotMergesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagOptionsCoalesceTests.cs:Coalesce_RegistersBindingForTagAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagOptionsCoalesceTests.cs:Coalesce_LastWinsPerTag_ReplacesNotMergesAsync</tests>
   public TagOptions Coalesce(string tag, Action<CoalescePolicyOptions> configure) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tag);
     ArgumentNullException.ThrowIfNull(configure);
@@ -414,9 +414,9 @@ public sealed class TagOptions {
   /// </code>
   /// </example>
   /// <docs>fundamentals/messages/message-tags#transport-namespace-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsRouteNamespaceTests.cs:RouteNamespace_RegistersBindingForTagAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsRouteNamespaceTests.cs:RouteNamespace_LastWinsPerTagAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsRouteNamespaceTests.cs:RouteNamespace_AndCoalesce_AreAdditiveOnOneTagAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagOptionsRouteNamespaceTests.cs:RouteNamespace_RegistersBindingForTagAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagOptionsRouteNamespaceTests.cs:RouteNamespace_LastWinsPerTagAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagOptionsRouteNamespaceTests.cs:RouteNamespace_AndCoalesce_AreAdditiveOnOneTagAsync</tests>
   public TagOptions RouteNamespace(string tag, string transportNamespaceKey) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tag);
     ArgumentException.ThrowIfNullOrWhiteSpace(transportNamespaceKey);

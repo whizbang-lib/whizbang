@@ -189,7 +189,7 @@ public class MessageTypeCatalogGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(code).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(code).Contains("ServiceRegistrationCallbacks.RegisterMessageTypeCatalog(\"TestAssembly\", ");
     await Assert.That(code).Contains("AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>");
   }

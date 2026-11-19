@@ -12,7 +12,7 @@ namespace Whizbang.Core.Workers;
 /// <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/> by <see cref="TableRewriteStrategyResolver"/>.
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteStrategyTests.cs</tests>
 public enum TableRewriteStrategy {
   // Each value is explicit: the numbers are public API (a compiled caller embeds them, a numeric setting binds by
   // them), so a new member takes the next free number and is declared last (#1761).
@@ -75,7 +75,7 @@ public enum TableRewriteStrategy {
 /// </param>
 /// <param name="Reason">Why, in a phrase the step reports.</param>
 /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteStrategyTests.cs</tests>
 public readonly record struct TableRewritePlan(string? Strategy, string Reason);
 
 /// <summary>
@@ -94,7 +94,7 @@ public readonly record struct TableRewritePlan(string? Strategy, string Reason);
 /// </list>
 /// </remarks>
 /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteStrategyTests.cs</tests>
 public static class TableRewriteStrategyResolver {
   private const string ALLOW_KEY = "Whizbang:Workers:Maintenance:AllowTableRewrite";
   private const string STRATEGY_KEY = "Whizbang:Workers:Maintenance:TableRewriteStrategy";
@@ -120,7 +120,7 @@ public static class TableRewriteStrategyResolver {
   /// </param>
   /// <returns>The rewriter strategy to run, or none, and why.</returns>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="strategy"/> is not a declared value.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TableRewriteStrategyTests.cs:Auto_WithAnOnlineToolThatCanRun_ResolvesToItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteStrategyTests.cs:Auto_WithAnOnlineToolThatCanRun_ResolvesToItAsync</tests>
   public static TableRewritePlan Resolve(
       TableRewriteStrategy strategy, bool allowTableRewrite, bool pgSqueezeUsable, string? autoOnlineTool) =>
     strategy switch {

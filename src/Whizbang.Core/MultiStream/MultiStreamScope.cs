@@ -10,7 +10,7 @@ namespace Whizbang.Core.MultiStream;
 /// scope is kept as the same delta a message hop carries, so it round-trips everything a hop does.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#security-scope</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_UnderAnAmbientScope_RecordsThatScopeForTheHandlersAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_UnderAnAmbientScope_RecordsThatScopeForTheHandlersAsync</tests>
 public static class MultiStreamScope {
   /// <summary>Serializes <paramref name="context"/>, or returns null when there is no ambient scope.</summary>
   /// <param name="context">The ambient scope at intake, or null.</param>

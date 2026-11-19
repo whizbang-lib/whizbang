@@ -37,7 +37,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/dead-letter-queue/recovery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryLoopSignalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterRecoveryLoopSignalTests.cs</tests>
 public static class DeadLetterRecoveryLoopSignal {
 
   /// <summary>One cycle's evidence about where this batch came from.</summary>

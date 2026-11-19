@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// and grows with sealed history. Each therefore has its own switch, and turning a re-check off never stops sealing.
 /// </remarks>
 /// <docs>resilience/stream-integrity#sealing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs</tests>
 public sealed class SealingOptions {
   /// <summary>
   /// Close and seal settled digest epochs on the maintenance cadence (<c>Whizbang:StreamIntegrity:Sealing:Enabled</c>,
@@ -41,6 +41,18 @@ public sealed class SealingOptions {
   /// </summary>
   /// <docs>resilience/stream-integrity#sealing</docs>
   public int MaxClosuresPerCycle { get; set; } = 64;
+
+  /// <summary>
+  /// A cut of this service's own history (a truncate, close the books, an archive, an end-of-life cut) also waits until
+  /// every consumer has reported verifying it (<c>Whizbang:StreamIntegrity:Sealing:CutWaitsForConsumers</c>, default
+  /// false, #2363). Every cut already waits for this service's own seal while sealing is on, so it removes only history
+  /// it has verified; with this on, it also removes only history every consumer verified while this service could still
+  /// resend it. The cost is that the slowest consumer holds back this service's cuts. A consumer reports its seal with
+  /// each windowed manifest request, and only reports from the last 7 days count, so a consumer that stopped asking
+  /// holds nothing back for long.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-cut-waits-for-the-seal</docs>
+  public bool CutWaitsForConsumers { get; set; }
 }
 
 /// <summary>What the sealed-history re-check does with an epoch whose recompute disagrees with its seal.</summary>
@@ -71,7 +83,7 @@ public enum SealDriftAction {
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity#seal-re-check</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs</tests>
 public sealed class SealRecheckOptions {
   /// <summary>
   /// Run the sealed-history re-check (<c>Whizbang:StreamIntegrity:SealRecheck:Enabled</c>, default false).
@@ -131,7 +143,7 @@ public sealed class SealRecheckOptions {
 /// is an opt-in.
 /// </remarks>
 /// <docs>resilience/stream-integrity#full-history-compare</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs</tests>
 public sealed class FullHistoryCompareOptions {
   /// <summary>
   /// Run the full-history compare (<c>Whizbang:StreamIntegrity:FullHistoryCompare:Enabled</c>, default false).
@@ -177,7 +189,7 @@ public sealed record FullHistoryCompareRequest(TimeSpan SettleWindow, TimeSpan L
   /// <param name="options">The compare's options.</param>
   /// <param name="settleWindow">The audit's settle window.</param>
   /// <returns>The request.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompareRequest_From_CarriesTheConfiguredLimitsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs:FullHistoryCompareRequest_From_CarriesTheConfiguredLimitsAsync</tests>
   public static FullHistoryCompareRequest From(FullHistoryCompareOptions options, TimeSpan settleWindow) {
     ArgumentNullException.ThrowIfNull(options);
     return new(settleWindow, options.Lookback, options.MaxPerRun);
@@ -201,7 +213,7 @@ public sealed record SealRecheckRequest(
   /// <param name="options">The re-check options.</param>
   /// <param name="settleWindow">The audit's settle window, which sealing and the re-check share.</param>
   /// <returns>The request.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityCheckOptionsTests.cs:SealRecheckRequest_From_CarriesTheConfiguredLimitsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityCheckOptionsTests.cs:SealRecheckRequest_From_CarriesTheConfiguredLimitsAsync</tests>
   public static SealRecheckRequest From(SealRecheckOptions options, TimeSpan settleWindow) {
     ArgumentNullException.ThrowIfNull(options);
     return new(settleWindow, options.MaxEpochsPerRun, options.Lookback, options.RecheckEvery,

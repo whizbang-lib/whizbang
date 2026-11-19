@@ -29,10 +29,10 @@ namespace Whizbang.Core.Lenses;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_WithSync_Generic_ReturnsWrappedQueryAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_GetByIdAsync_Generic_WaitsAndQueriesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_WithSync_TypeParam_ReturnsWrappedQueryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_WithSync_Generic_ReturnsWrappedQueryAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_GetByIdAsync_Generic_WaitsAndQueriesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_WithSync_TypeParam_ReturnsWrappedQueryAsync</tests>
 public static class LensQueryExtensions {
   /// <summary>
   /// Creates a sync-aware wrapper around the lens query.

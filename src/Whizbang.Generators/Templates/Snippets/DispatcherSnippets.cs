@@ -18,7 +18,7 @@ public class DispatcherSnippets {
   protected IServiceProvider ServiceProvider => null!;
   protected IServiceScopeFactory _scopeFactory => null!;
   protected ValueTask<bool> AdmitReceptorAsync<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider,
-      object? envelope, System.Threading.CancellationToken cancellationToken) => new(true);
+      object? envelope, global::System.Threading.CancellationToken cancellationToken) => new(true);
   protected bool AdmitReceptor<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider) => true;
 
   /// <summary>
@@ -38,7 +38,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask<TResult> InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -95,7 +95,7 @@ public class DispatcherSnippets {
   protected ReceptorPublisher<TEvent> PublishRoutingExample<TEvent>(TEvent @event, Type eventType) {
     #region PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptors(TEvent evt) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -132,7 +132,7 @@ public class DispatcherSnippets {
   protected Func<object, IMessageEnvelope?, CancellationToken, Task>? UntypedPublishRoutingExample(Type eventType) {
     #region UNTYPED_PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptorsUntyped(object evt, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope, global::System.Threading.CancellationToken cancellationToken) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -178,7 +178,7 @@ public class DispatcherSnippets {
   protected Func<object, IMessageEnvelope?, CancellationToken, Task<TAnswer?>>? LocalRunnerRoutingExample<TAnswer>(Type messageType, bool wantsAnswer) {
     #region LOCAL_RUNNER_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async Task<TAnswer?> RunLocalReceptors(object msg, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope, global::System.Threading.CancellationToken cancellationToken) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -260,7 +260,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -313,7 +313,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       TResult InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         using var scope = _scopeFactory.CreateScope();
@@ -369,7 +369,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       void InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         using var scope = _scopeFactory.CreateScope();
@@ -427,7 +427,7 @@ public class DispatcherSnippets {
   /// <summary>
   /// Example method showing snippet structure for diagnostic messages.
   /// </summary>
-  public void DiagnosticMessageExample(System.Text.StringBuilder message) {
+  public void DiagnosticMessageExample(global::System.Text.StringBuilder message) {
     #region DIAGNOSTIC_MESSAGE_SNIPPET
     message.AppendLine("  [__INDEX__] __RECEPTOR_NAME__");
     message.AppendLine("      Message:  __MESSAGE_NAME__");
@@ -570,7 +570,7 @@ public class DispatcherSnippets {
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
-            var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
+            var startTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
 
             // Get tracer for explicit trace output
             var tracer = sp.GetService<global::Whizbang.Core.Tracing.ITracer>();
@@ -583,21 +583,21 @@ public class DispatcherSnippets {
                 __IS_EXPLICIT__);
 
             object? result = null;
-            System.Exception? handlerException = null;
+            global::System.Exception? handlerException = null;
             var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
 
             try {
               __RESOLVE_RECEPTOR__
               // Kept as it is: the worker's cascade reads a Routed<T> result's route
               result = await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-            } catch (System.Exception ex) {
+            } catch (global::System.Exception ex) {
               handlerException = ex;
               status = global::Whizbang.Core.Tracing.HandlerStatus.Failed;
               throw;
             } finally {
               // Capture end time
-              var endTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
-              var durationMs = (endTime - startTime) / (double)System.Diagnostics.Stopwatch.Frequency * 1000;
+              var endTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
+              var durationMs = (endTime - startTime) / (double)global::System.Diagnostics.Stopwatch.Frequency * 1000;
 
               // End trace span
               tracer?.EndHandlerTrace(
@@ -646,7 +646,7 @@ public class DispatcherSnippets {
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
-            var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
+            var startTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
 
             // Get tracer for explicit trace output
             var tracer = sp.GetService<global::Whizbang.Core.Tracing.ITracer>();
@@ -658,20 +658,20 @@ public class DispatcherSnippets {
                 __HANDLER_COUNT__,
                 __IS_EXPLICIT__);
 
-            System.Exception? handlerException = null;
+            global::System.Exception? handlerException = null;
             var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
 
             try {
               __RESOLVE_RECEPTOR__
               await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-            } catch (System.Exception ex) {
+            } catch (global::System.Exception ex) {
               handlerException = ex;
               status = global::Whizbang.Core.Tracing.HandlerStatus.Failed;
               throw;
             } finally {
               // Capture end time
-              var endTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
-              var durationMs = (endTime - startTime) / (double)System.Diagnostics.Stopwatch.Frequency * 1000;
+              var endTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
+              var durationMs = (endTime - startTime) / (double)global::System.Diagnostics.Stopwatch.Frequency * 1000;
 
               // End trace span
               tracer?.EndHandlerTrace(
@@ -720,7 +720,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask<object?> InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -775,7 +775,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask<object?> InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();

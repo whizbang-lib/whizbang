@@ -21,7 +21,7 @@ namespace Whizbang.Data.Postgres.Schema;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
-/// <tests>tests/Whizbang.Core.Tests/Schema/ManagedSchemaPlannerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Schema/ManagedSchemaPlannerTests.cs</tests>
 public static class ManagedSchemaPlanner {
   private const string PIN_COMMENT_MARKER = "whizbang:pin";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";

@@ -70,7 +70,7 @@ public delegate TResult SyncReceptorInvoker<out TResult>(object message);
 /// <docs>fundamentals/receptors/receptors#synchronous-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_InvokesSynchronouslyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_GenericVoid_SyncAttributeWithSyncInvoker_AwaitsPerspectiveAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_GenericVoid_SyncAttributeWithSyncInvoker_AwaitsPerspectiveAsync</tests>
 public delegate void VoidSyncReceptorInvoker(object message);
 
 /// <summary>
@@ -154,8 +154,8 @@ public abstract partial class Dispatcher(
   /// dispatch fails on disposal anyway).
   /// </summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithNoGateRegistered_StaysUngatedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithNoGateRegistered_StaysUngatedAsync</tests>
   private SchemaReadyDispatchDeferral? _pendingSchemaDeferral() {
     if (!_schemaDeferralResolved) {
       try {
@@ -174,8 +174,8 @@ public abstract partial class Dispatcher(
   /// <see cref="SchemaInitializationOptions.DispatchMaxWait"/> and the caller's token.
   /// </summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WhenTheCallerCancels_StopsWaitingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:Send_WithTheGateClosed_DefersUntilTheMigrationCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WhenTheCallerCancels_StopsWaitingAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorParityComponentTests.cs:EveryEntry_DeferredPastTheMaxWait_ThrowsNotReadyBeforeRunningAnythingAsync</tests>
   private ValueTask _awaitSchemaReadyAsync(CancellationToken cancellationToken)
     => _pendingSchemaDeferral() is { } deferral ? deferral.WaitAsync(cancellationToken) : default;
@@ -328,10 +328,10 @@ public abstract partial class Dispatcher(
   /// treat a void-receptor command as unhandled: dropped when owned, sent through the outbox when not.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_SyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidSyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendManyAsync_VoidReceptor_InvokesLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_SyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidSyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendManyAsync_VoidReceptor_InvokesLocallyAsync</tests>
   private ReceptorInvoker<object>? _lookupSendInvoker(object message, Type messageType) {
     // Two or more local receptors: every one runs, in priority order (#1412)
     if (_runnerAsResult<object>(messageType) is { } everyReceptor) {
@@ -1194,8 +1194,8 @@ public abstract partial class Dispatcher(
   /// <param name="ns">The namespace to check (typically from a message type).</param>
   /// <returns>True if the namespace is owned by this service.</returns>
   /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_OwnedChildNamespaceCommand_NoReceptor_ThrowsReceptorNotFoundAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_OwnedChildNamespaceCommand_NoReceptor_ThrowsReceptorNotFoundAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync</tests>
   private bool _isOwnedNamespace(string? ns) =>
     // The one hierarchical ownership rule, shared with event-subscription discovery and the integrity local lane.
     Whizbang.Core.Routing.OwnedNamespaceMatcher.IsOwned(ns, _ownedDomains);
@@ -1225,9 +1225,9 @@ public abstract partial class Dispatcher(
   /// waits for the perspective to process them before firing.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspective-sync#dispatcher-integration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeSynced_AwaitsPerspectiveThenInvokesReceptorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeTimedOut_FireOnSuccess_ThrowsAndSkipsReceptorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttribute_NoStreamId_SkipsAwaiterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeSynced_AwaitsPerspectiveThenInvokesReceptorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeTimedOut_FireOnSuccess_ThrowsAndSkipsReceptorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttribute_NoStreamId_SkipsAwaiterAsync</tests>
   private async ValueTask<SyncContext?> _awaitPerspectiveSyncIfNeededAsync(
       object message,
       Type messageType,
@@ -1355,8 +1355,8 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/event-completion#dispatcher-integration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoEventCompletionAwaiter_ReturnsNormallyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoScopedTracker_ReturnsNormallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoEventCompletionAwaiter_ReturnsNormallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPerspectiveSyncCoverageTests.cs:LocalInvokeAsync_WithWaitForPerspectives_NoScopedTracker_ReturnsNormallyAsync</tests>
   private async ValueTask _waitForPerspectivesIfNeededAsync(DispatchOptions options) {
     // Short-circuit if not waiting for perspectives
     if (!options.WaitForPerspectives) {
@@ -2076,7 +2076,7 @@ public abstract partial class Dispatcher(
   /// complex type (tuple, array, etc.) but the caller requests a specific type.
   /// </summary>
   /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async ValueTask<TResult> _localInvokeWithCastFallbackAsync<TResult>(
     ReceptorInvoker<TResult> asyncInvoker,
     object message,
@@ -3301,7 +3301,7 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
@@ -3407,7 +3407,7 @@ public abstract partial class Dispatcher(
   /// instead of a republish. A root emission with no source keeps a fresh time-ordered id.
   /// </summary>
   /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
   private Guid _mintEmissionId(IMessageEnvelope? sourceEnvelope, Type emittedType) {
     if (sourceEnvelope is null) {
       return ValueObjects.TrackedGuid.New();
@@ -3519,8 +3519,8 @@ public abstract partial class Dispatcher(
   /// message does not name. The message then goes on as a cascade whose source names no stream: a message with
   /// <c>[GenerateStreamId]</c> mints its own id, and one without it has none. Each refused pair of types is logged once.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs</tests>
   private Guid? _inheritSourceStreamId(object message, Type messageType, IMessageEnvelope? sourceEnvelope) {
     if (sourceEnvelope is null || _streamIdExtractor is null) {
       return null;
@@ -3554,7 +3554,7 @@ public abstract partial class Dispatcher(
   /// Logs, the first time only, that a message of <paramref name="messageType"/> did not inherit the stream of a
   /// <paramref name="sourceType"/> source because its strong-id stream id refused it (#2072).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs:EachRefusedPairOfTypes_IsLoggedOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStrongIdStreamInheritanceTests.cs:EachRefusedPairOfTypes_IsLoggedOnceAsync</tests>
   private void _logRefusedInheritanceOnce(Type sourceType, Type messageType) {
     if (_refusedStreamInheritances.TryAdd((sourceType, messageType), 0)) {
 #pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
@@ -3781,10 +3781,10 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messages/message-tags#processing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorCompletingLater_IsAwaitedBeforeTheStepCompletesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorFaulted_ReachesTheCallerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/DispatcherTagProcessingLoggingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorCompletingLater_IsAwaitedBeforeTheStepCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/DispatcherTagProcessingLoggingTests.cs:ProcessorFaulted_ReachesTheCallerAsync</tests>
   internal ValueTask ProcessTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
     // Runs after every dispatch, so it allocates nothing while debug is off (#1756): the log calls are
     // source-generated and check the level before building anything, and the step completes synchronously unless
@@ -3836,9 +3836,9 @@ public abstract partial class Dispatcher(
   /// own scope, nobody waits for it, and its exception is logged, never returned to the caller.
   /// </summary>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithImmediateDetachedReceptors_InvokesScopedInvokerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithReceptorRegistry_NoImmediateDetachedReceptors_SkipsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithTraceStore_NoReceptorRegistry_SkipsImmediateDetachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithImmediateDetachedReceptors_InvokesScopedInvokerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithReceptorRegistry_NoImmediateDetachedReceptors_SkipsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithTraceStore_NoReceptorRegistry_SkipsImmediateDetachedAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/ImmediateDetachedOncePerDispatchComponentTests.cs:ALocalDispatch_ReturnsWithoutWaitingForImmediateDetachedAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/ImmediateDetachedOncePerDispatchComponentTests.cs:AnImmediateDetachedFailure_NeverReachesTheCallerAsync</tests>
   private ValueTask _invokeImmediateDetachedReceptorsAsync(IMessageEnvelope envelope, Type messageType) {
@@ -3912,9 +3912,9 @@ public abstract partial class Dispatcher(
   /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
   /// </summary>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#post-lifecycle</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPostLifecycleCoverageTests.cs:LocalInvokeAsync_Void_FiresPostLifecycleDetached_WhenReceptorsRegisteredAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPostLifecycleCoverageTests.cs:LocalInvokeAsync_Void_FiresBothAsyncAndInline_WhenBothRegisteredAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/PostLifecyclePipelineTests.cs:Dispatcher_NoWhenAll_FiresPostLifecycleDetachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPostLifecycleCoverageTests.cs:LocalInvokeAsync_Void_FiresPostLifecycleDetached_WhenReceptorsRegisteredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPostLifecycleCoverageTests.cs:LocalInvokeAsync_Void_FiresBothAsyncAndInline_WhenBothRegisteredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/PostLifecyclePipelineTests.cs:Dispatcher_NoWhenAll_FiresPostLifecycleDetachedAsync</tests>
   private async ValueTask _invokePostLifecycleReceptorsAsync(
       IMessageEnvelope envelope,
       object message,
@@ -4171,9 +4171,9 @@ public abstract partial class Dispatcher(
   /// <docs>fundamentals/sagas/completion-orchestration</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInFuture_DoesNotInvokeLocalReceptorInlineAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInPast_InvokesLocalReceptorInlineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInFuture_DoesNotInvokeLocalReceptorInlineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInPast_InvokesLocalReceptorInlineAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
@@ -4282,8 +4282,8 @@ public abstract partial class Dispatcher(
   /// same key no-op and return <c>false</c>. A publish that fails gives its claim
   /// back, so a retry can publish (#1414); the publish runs under the caller's token.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_PublishThrowsOutsideATransaction_ReleasesTheClaimSoARetryPublishesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_PassesTheCallersTokenToThePublishAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_PublishThrowsOutsideATransaction_ReleasesTheClaimSoARetryPublishesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_PassesTheCallersTokenToThePublishAsync</tests>
   /// <docs>fundamentals/dispatcher/publish-once</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -4345,9 +4345,9 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageAsync_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_NoHandler_ThrowsAndNeverReachesTheOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_NonOwnedCommandOutboxMode_StaysOnOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageAsync_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_NoHandler_ThrowsAndNeverReachesTheOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_NonOwnedCommandOutboxMode_StaysOnOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
@@ -4607,7 +4607,7 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/receptors/exactly-once-firing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalDispatchRecordTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherLocalDispatchRecordTests.cs</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryCountTests.cs:ImmediateTick_ReceivedByAnotherHostOfTheSameSaga_IsNotHandledAgainAsync</tests>
   private async ValueTask _recordLocalDispatchAsync(IMessageEnvelope envelope, Type eventType, IServiceProvider scopedProvider) {
     if (_receptorRegistry is null
@@ -4682,13 +4682,13 @@ public abstract partial class Dispatcher(
   /// (DispatchModes.Local never reaches the outbox). Sequential await preserves producer-yielded order.
   /// </summary>
   /// <docs>fundamentals/messaging/composite-events#publish-time-local-fan-out</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:NonOwnedComposite_DoesNotFanOutAtPublishAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_StoredConstituentIds_AreTheIdsEveryReceiverStoresAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_NullInner_KeepsTheProducersOrdinalsAlignedWithTheReceiversAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedIdentityPreservingComposite_StoresEachConstituentUnderItsCarriedIdAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedIdentityPreservingComposite_IdCountMismatch_ThrowsAtPublishAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:NonOwnedComposite_DoesNotFanOutAtPublishAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_StoredConstituentIds_AreTheIdsEveryReceiverStoresAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_NullInner_KeepsTheProducersOrdinalsAlignedWithTheReceiversAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedIdentityPreservingComposite_StoresEachConstituentUnderItsCarriedIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedIdentityPreservingComposite_IdCountMismatch_ThrowsAtPublishAsync</tests>
   /// <remarks>
   /// Internal rather than private so the not-a-composite answer can be asserted. Both call sites
   /// test the message first, so the guard cannot fire through a publish — it is what keeps a
@@ -4915,9 +4915,9 @@ public abstract partial class Dispatcher(
   /// <param name="sourceEnvelope">Optional source envelope for context propagation</param>
   /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:PublishToOutboxDynamic_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:PublishToOutboxDynamic_EventAlreadyHasStreamId_SkipsPropagationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherNoRebroadcastGuardTests.cs:NoRebroadcastSource_IsSuppressedBeforeSerializationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:PublishToOutboxDynamic_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:PublishToOutboxDynamic_EventAlreadyHasStreamId_SkipsPropagationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherNoRebroadcastGuardTests.cs:NoRebroadcastSource_IsSuppressedBeforeSerializationAsync</tests>
   protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED) {
     // No-rebroadcast guard (Phase D) — see PublishToOutboxAsync.
     if (NoRebroadcastGuard.ShouldSuppress(sourceEnvelope)) {
@@ -6128,7 +6128,7 @@ public abstract partial class Dispatcher(
   /// Each event is processed locally (if handlers exist) and queued to the outbox.
   /// Optimized for batch operations - creates a single scope and flushes once.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
@@ -6161,7 +6161,7 @@ public abstract partial class Dispatcher(
   /// Publishes multiple events with event routing.
   /// For AOT compatibility, use the generic overload PublishManyAsync&lt;TEvent&gt;.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -6192,8 +6192,8 @@ public abstract partial class Dispatcher(
   /// Messages are processed in-process via strongly-typed delegates (AOT-compatible).
   /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -6216,8 +6216,8 @@ public abstract partial class Dispatcher(
   /// For AOT compatibility, use the generic overload LocalSendManyAsync&lt;TMessage&gt;.
   /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -6263,7 +6263,7 @@ public abstract partial class Dispatcher(
   /// The work coordinator will drain and write to outbox in that transaction.
   /// </summary>
   /// <docs>fundamentals/dispatcher/dispatcher#deferred-publishing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredDispatchTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DeferredDispatchTests.cs</tests>
   private async Task _deferEventToChannelAsync<TEvent>(
     TEvent eventData,
     Type eventType,
@@ -6333,7 +6333,7 @@ public abstract partial class Dispatcher(
   /// Extracts stream_id from aggregate ID or falls back to message ID.
   /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
     MessageEnvelope<TMessage> envelope,
     TMessage payload,
@@ -6474,7 +6474,7 @@ public abstract partial class Dispatcher(
   /// <exception cref="Security.Exceptions.ReceptorInvocationDeniedException">An interceptor denied the receptor with an
   /// action other than <see cref="Security.Attributes.DeniedAction.DropQuiet"/>.</exception>
   /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorDispatchTests.cs</tests>
   protected ValueTask<bool> AdmitReceptorAsync<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider,
       IMessageEnvelope? envelope, CancellationToken cancellationToken) where TMessage : notnull =>
     _receptorInterceptors is null
@@ -6492,7 +6492,7 @@ public abstract partial class Dispatcher(
   /// <param name="scopedProvider">The invocation's scoped provider.</param>
   /// <returns>True to invoke the receptor; false when an interceptor dropped it quietly.</returns>
   /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorDispatchTests.cs:LocalInvoke_DeniedSyncReceptor_DoesNotRunAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorDispatchTests.cs:LocalInvoke_DeniedSyncReceptor_DoesNotRunAsync</tests>
   protected bool AdmitReceptor<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider) where TMessage : notnull =>
     _receptorInterceptors is null
       || Security.ReceptorInterceptorGate.Admit(_receptorInterceptors, receptorType, _envelopeForAdmission(message, null),
@@ -6701,7 +6701,7 @@ public abstract partial class Dispatcher(
   /// 4. Void sync receptor (ISyncReceptor&lt;TMessage&gt;)
   /// </remarks>
   /// <docs>fundamentals/dispatcher/dispatcher#void-cascade</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherVoidCascadeTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherVoidCascadeTests.cs</tests>
   protected abstract Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType);
 
   /// <summary>
