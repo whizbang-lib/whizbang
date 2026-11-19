@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Sql_Where_GuidField_UsesPhysicalColumnAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:GroupBy_PhysicalField_SqlNotClientEvalAsync</tests>
 public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
+  private readonly StreamIdPrimaryKeyRewriter _streamIds = new();
   private readonly PhysicalFieldExpressionVisitor _visitor = new();
   private readonly OrdinalEqualsRewriter _ordinalEquals = new();
   private readonly SearchContainsRewriter _search = new();
@@ -44,9 +45,13 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData) {
     ArgumentNullException.ThrowIfNull(eventData);
 
-    // First, turn Contains on a Search field into the folded search its index is built over, while the
+    // First, move filters written against the projected model (after Select(r => r.Data)) onto the row,
+    // where every pass below can see them, and add the primary key beside a filter on the stream id.
+    var rewritten = _streamIds.Visit(queryExpression);
+
+    // Then turn Contains on a Search field into the folded search its index is built over, while the
     // property is still a plain member access that says which model and field it is.
-    var rewritten = _search.Visit(queryExpression);
+    rewritten = _search.Visit(rewritten);
 
     // Then redirect promoted properties to their real columns.
     rewritten = _visitor.Visit(rewritten);
