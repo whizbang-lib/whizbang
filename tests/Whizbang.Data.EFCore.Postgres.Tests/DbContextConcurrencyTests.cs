@@ -3,8 +3,8 @@
 
 #pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
