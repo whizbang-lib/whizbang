@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests;
 /// adds to their order list; the class runs alone, not beside any other test.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/ServiceRegistrationCallbacks.cs</code-under-test>
-[NotInParallel]
+[NotInParallel] // sets the process-wide registration callback slots, which any test calling AddWhizbang runs
 public class ServiceRegistrationCallbacksAccumulateTests {
   private static async Task _everyCallbackRunsAsync<TCallback>(
       Func<TCallback?> get, Action<TCallback?> set, Func<List<string>, string, TCallback> callback)
