@@ -130,7 +130,7 @@ public static partial class PerspectiveRetentionIndexes {
         WHERE n.nspname = @schema AND c.relname = '{REGISTRY}' AND a.attname = 'row_retention_enrolled' AND NOT a.attisdropped)
       """, connection);
     command.Parameters.AddWithValue(nameof(schema), schema);
-    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "retention enrollment column");
   }
 
   // The enrolled tables that exist in the schema and have the column; a row whose table is gone, or that was never

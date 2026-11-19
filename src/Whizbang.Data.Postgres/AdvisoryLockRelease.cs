@@ -26,7 +26,7 @@ internal static partial class AdvisoryLockRelease {
       NpgsqlConnection connection, long key, string lockName, ILogger logger, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", connection);
     command.Parameters.AddWithValue(nameof(key), key);
-    var released = await command.ExecuteScalarAsync(cancellationToken) is true;
+    var released = BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken), "advisory lock release");
     if (!released) {
       LogNotHeld(logger, lockName, key);
     }

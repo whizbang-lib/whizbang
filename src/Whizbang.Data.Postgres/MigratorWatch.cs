@@ -63,6 +63,6 @@ public static class MigratorWatch {
       + $"WHERE r.role = $1 AND r.holder_instance_id IS NOT NULL AND {quoted}._role_lapse_reason(r) IS NULL) "
       + $"OR {quoted}._role_held_outside_assignment($1, NULL)", connection);
     held.Parameters.AddWithValue(StartupDuties.MIGRATOR);
-    return await held.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await held.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "migrator role");
   }
 }
