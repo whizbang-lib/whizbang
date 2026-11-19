@@ -110,6 +110,8 @@ public class TracingCorrelationTests {
 
   [Test]
   public async Task AssertNoOrphanedSpans_ThrowsForOrphanedSpansAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange - Create spans manually with broken parent chain
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
 
@@ -122,6 +124,8 @@ public class TracingCorrelationTests {
 
   [Test]
   public async Task HasOrphanedSpans_DetectsOrphansCorrectlyAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange - Create properly linked spans
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
@@ -246,6 +250,8 @@ public class TracingCorrelationTests {
 
   [Test]
   public async Task TraceAssertionExtensions_GetSingleRoot_WorksAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (WhizbangActivitySource.Tracing.StartActivity("RootSpan")) { /* the scope's start and end are the behavior under test */ }
@@ -259,6 +265,8 @@ public class TracingCorrelationTests {
 
   [Test]
   public async Task CapturedSpan_FromActivity_CapturesAllDataAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
 

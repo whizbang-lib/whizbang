@@ -51,7 +51,7 @@ public class ListenConnectionLifetimeTests {
     lifetime.Deliver("wh_channel", "outbox");
     var closedAfterwards = lifetime.TryClose();
 
-    await Assert.That(closedDuringDelivery).IsEqualTo(false)
+    await Assert.That(closedDuringDelivery).IsFalse()
       .Because("a stop must not finish in the middle of a delivery; it waits for the wait instead");
     await Assert.That(closedAfterwards).IsTrue()
       .Because("a delivery that threw or returned no longer holds the lifetime open");

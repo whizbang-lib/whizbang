@@ -51,8 +51,8 @@ public class StreamIdExtractorRegistryTests {
     var (shouldGenerate, onlyIfEmpty) = StreamIdExtractorRegistry.GetGenerationPolicy(new object());
 
     // Assert
-    await Assert.That(shouldGenerate).IsEqualTo(false);
-    await Assert.That(onlyIfEmpty).IsEqualTo(false);
+    await Assert.That(shouldGenerate).IsFalse();
+    await Assert.That(onlyIfEmpty).IsFalse();
   }
 
   [Test]
@@ -65,8 +65,8 @@ public class StreamIdExtractorRegistryTests {
     var (shouldGenerate, onlyIfEmpty) = StreamIdExtractorRegistry.GetGenerationPolicy(new object());
 
     // Assert
-    await Assert.That(shouldGenerate).IsEqualTo(true);
-    await Assert.That(onlyIfEmpty).IsEqualTo(false);
+    await Assert.That(shouldGenerate).IsTrue();
+    await Assert.That(onlyIfEmpty).IsFalse();
   }
 
   [Test]
@@ -79,8 +79,8 @@ public class StreamIdExtractorRegistryTests {
     var (shouldGenerate, onlyIfEmpty) = StreamIdExtractorRegistry.GetGenerationPolicy(new object());
 
     // Assert
-    await Assert.That(shouldGenerate).IsEqualTo(true);
-    await Assert.That(onlyIfEmpty).IsEqualTo(true);
+    await Assert.That(shouldGenerate).IsTrue();
+    await Assert.That(onlyIfEmpty).IsTrue();
   }
 
   [Test]
@@ -94,8 +94,8 @@ public class StreamIdExtractorRegistryTests {
     var (shouldGenerate, onlyIfEmpty) = StreamIdExtractorRegistry.GetGenerationPolicy(new object());
 
     // Assert: Second extractor's result because first returned ShouldGenerate=false
-    await Assert.That(shouldGenerate).IsEqualTo(true);
-    await Assert.That(onlyIfEmpty).IsEqualTo(true);
+    await Assert.That(shouldGenerate).IsTrue();
+    await Assert.That(onlyIfEmpty).IsTrue();
   }
 
   [Test]
@@ -107,7 +107,7 @@ public class StreamIdExtractorRegistryTests {
     var result = StreamIdExtractorRegistry.SetStreamId(new object(), Guid.NewGuid());
 
     // Assert
-    await Assert.That(result).IsEqualTo(false);
+    await Assert.That(result).IsFalse();
   }
 
   [Test]
@@ -120,7 +120,7 @@ public class StreamIdExtractorRegistryTests {
     var result = StreamIdExtractorRegistry.SetStreamId(new object(), Guid.NewGuid());
 
     // Assert
-    await Assert.That(result).IsEqualTo(true);
+    await Assert.That(result).IsTrue();
   }
 
   [Test]
@@ -134,7 +134,7 @@ public class StreamIdExtractorRegistryTests {
     var result = StreamIdExtractorRegistry.SetStreamId(new object(), Guid.NewGuid());
 
     // Assert
-    await Assert.That(result).IsEqualTo(true);
+    await Assert.That(result).IsTrue();
   }
 
   [Test]
@@ -148,7 +148,7 @@ public class StreamIdExtractorRegistryTests {
     var result = StreamIdExtractorRegistry.SetStreamId(new object(), Guid.NewGuid());
 
     // Assert
-    await Assert.That(result).IsEqualTo(false);
+    await Assert.That(result).IsFalse();
   }
 
   [Test]
@@ -162,8 +162,8 @@ public class StreamIdExtractorRegistryTests {
     var (shouldGenerate, onlyIfEmpty) = composite.GetGenerationPolicy(new object());
 
     // Assert
-    await Assert.That(shouldGenerate).IsEqualTo(true);
-    await Assert.That(onlyIfEmpty).IsEqualTo(true);
+    await Assert.That(shouldGenerate).IsTrue();
+    await Assert.That(onlyIfEmpty).IsTrue();
   }
 
   [Test]
@@ -177,7 +177,7 @@ public class StreamIdExtractorRegistryTests {
     var result = composite.SetStreamId(new object(), Guid.NewGuid());
 
     // Assert
-    await Assert.That(result).IsEqualTo(true);
+    await Assert.That(result).IsTrue();
   }
 
   // The source's strong-id type travels with the inherited value so an extractor can refuse a stream of another id

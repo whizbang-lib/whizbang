@@ -773,7 +773,7 @@ public class MessageTracingTests {
     await Assert.That(result).Count().IsEqualTo(3);
     await Assert.That(result["priority"].GetInt32()).IsEqualTo(10); // Later hop wins
     await Assert.That(result["tenant"].GetString()).IsEqualTo("acme"); // From first hop
-    await Assert.That(result["enriched"].GetBoolean()).IsEqualTo(true); // From second hop
+    await Assert.That(result["enriched"].GetBoolean()).IsTrue(); // From second hop
   }
 
   [Test]

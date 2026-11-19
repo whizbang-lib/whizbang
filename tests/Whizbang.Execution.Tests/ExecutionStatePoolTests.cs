@@ -32,17 +32,22 @@ public class ExecutionStatePoolTests {
     await Assert.That(state).IsNotNull();
   }
 
+  // The pool is process-global per type argument, so each reuse test rents a type nothing else in the process uses:
+  // another test renting the same type in parallel could take the returned instance first.
+  private sealed record ReturnProbe;
+  private sealed record ReuseProbe;
+
   [Test]
   public async Task Return_ShouldAddToPoolAsync() {
     // Arrange
-    var state = ExecutionStatePool<int>.Rent();
+    var state = ExecutionStatePool<ReturnProbe>.Rent();
     state.Reset();
 
     // Act
-    ExecutionStatePool<int>.Return(state);
+    ExecutionStatePool<ReturnProbe>.Return(state);
 
     // Rent again to verify pooling
-    var reused = ExecutionStatePool<int>.Rent();
+    var reused = ExecutionStatePool<ReturnProbe>.Rent();
 
     // Assert - Should get the same instance back
     await Assert.That(object.ReferenceEquals(state, reused)).IsTrue();
@@ -51,12 +56,12 @@ public class ExecutionStatePoolTests {
   [Test]
   public async Task RentReturn_ShouldReuseInstanceAsync() {
     // Arrange
-    var original = ExecutionStatePool<string>.Rent();
+    var original = ExecutionStatePool<ReuseProbe>.Rent();
     original.Reset();
 
     // Act
-    ExecutionStatePool<string>.Return(original);
-    var reused = ExecutionStatePool<string>.Rent();
+    ExecutionStatePool<ReuseProbe>.Return(original);
+    var reused = ExecutionStatePool<ReuseProbe>.Rent();
 
     // Assert
     await Assert.That(object.ReferenceEquals(original, reused)).IsTrue();

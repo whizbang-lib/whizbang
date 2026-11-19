@@ -204,7 +204,7 @@ public class CascadeContextFactoryTests {
 
     // Assert - Enricher received the envelope
     await Assert.That(context.Metadata).IsNotNull();
-    await Assert.That(context.Metadata!["hasEnvelope"]).IsEqualTo(true);
+    await Assert.That(context.Metadata!["hasEnvelope"] as bool?).IsTrue();
   }
 
   // ========================================

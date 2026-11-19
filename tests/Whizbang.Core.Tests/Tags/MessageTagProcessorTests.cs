@@ -17,6 +17,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
+using Whizbang.Core.Tests.Helpers;
+
 namespace Whizbang.Core.Tests.Tags;
 
 /// <summary>
@@ -27,6 +29,10 @@ namespace Whizbang.Core.Tests.Tags;
 [Category("Core")]
 [Category("Tags")]
 public class MessageTagProcessorTests {
+
+  // Clearing the process-global tag registries removes the generated ones too; put them back for the tests after this.
+  [After(Test)]
+  public void RestoreGeneratedTagRegistries() => GeneratedRegistrations.RestoreTags();
 
   [Test]
   [NotInParallel("TagRegistry")]

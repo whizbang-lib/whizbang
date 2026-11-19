@@ -53,9 +53,9 @@ public class AsbTransportBranchCoverageTests {
     await Assert.That(transport.IsInitialized).IsFalse()
       .Because("construction only describes the transport; connecting is InitializeAsync's job");
     await Assert.That(activity.GetTagItem("transport.type")).IsEqualTo("AzureServiceBus");
-    await Assert.That(activity.GetTagItem("transport.emulator")).IsEqualTo(false);
-    await Assert.That(activity.GetTagItem("transport.admin_client_available")).IsEqualTo(true);
-    await Assert.That(activity.GetTagItem("transport.auto_provision")).IsEqualTo(true);
+    await Assert.That(activity.GetTagItem("transport.emulator") as bool?).IsFalse();
+    await Assert.That(activity.GetTagItem("transport.admin_client_available") as bool?).IsTrue();
+    await Assert.That(activity.GetTagItem("transport.auto_provision") as bool?).IsTrue();
   }
 
   /// <summary>An emulator endpoint skips the management-plane check and says so on the trace.</summary>
@@ -72,7 +72,7 @@ public class AsbTransportBranchCoverageTests {
 
     var activity = capture.Single("AzureServiceBusTransport.Initialize");
     await Assert.That(transport.IsInitialized).IsTrue();
-    await Assert.That(activity.GetTagItem("transport.initialized")).IsEqualTo(true);
+    await Assert.That(activity.GetTagItem("transport.initialized") as bool?).IsTrue();
     await Assert.That(activity.GetTagItem("transport.verification_method")).IsEqualTo("emulator_skip");
   }
 
@@ -148,7 +148,7 @@ public class AsbTransportBranchCoverageTests {
     await Assert.That(activity.GetTagItem("servicebus.subscription")).IsEqualTo(SUBSCRIPTION);
     await Assert.That(activity.GetTagItem("servicebus.filter_type")).IsEqualTo("CorrelationRuleFilter");
     await Assert.That(activity.GetTagItem("servicebus.destination")).IsEqualTo("svc-a");
-    await Assert.That(activity.GetTagItem("servicebus.subscription_exists")).IsEqualTo(false);
+    await Assert.That(activity.GetTagItem("servicebus.subscription_exists") as bool?).IsFalse();
     await Assert.That(adminClient.CreatedRules).IsEmpty();
   }
 
@@ -170,8 +170,8 @@ public class AsbTransportBranchCoverageTests {
     await transport.ApplyCorrelationFilterAsync(TOPIC, SUBSCRIPTION, "svc-a", CancellationToken.None);
 
     var activity = capture.Single("ApplyCorrelationFilter");
-    await Assert.That(activity.GetTagItem("servicebus.subscription_exists")).IsEqualTo(true);
-    await Assert.That(activity.GetTagItem("servicebus.rule_unchanged")).IsEqualTo(true);
+    await Assert.That(activity.GetTagItem("servicebus.subscription_exists") as bool?).IsTrue();
+    await Assert.That(activity.GetTagItem("servicebus.rule_unchanged") as bool?).IsTrue();
     await Assert.That(adminClient.DeletedRules).IsEmpty();
     await Assert.That(adminClient.CreatedRules).IsEmpty();
   }
@@ -190,7 +190,7 @@ public class AsbTransportBranchCoverageTests {
 
     var activity = capture.Single("ApplyCorrelationFilter");
     await Assert.That(activity.GetTagItem("servicebus.rules_deleted")).IsEqualTo(1);
-    await Assert.That(activity.GetTagItem("servicebus.rule_created")).IsEqualTo(true);
+    await Assert.That(activity.GetTagItem("servicebus.rule_created") as bool?).IsTrue();
     await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
   }
 

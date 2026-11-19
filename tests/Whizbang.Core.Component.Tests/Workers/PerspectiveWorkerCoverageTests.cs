@@ -216,7 +216,7 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(startedSignal.Task.IsCompleted).IsTrue()
       .Because("OnWorkProcessingStarted should fire when work appears");
-    await Assert.That(idleWhenStartedFired).IsEqualTo(false)
+    await Assert.That(idleWhenStartedFired).IsFalse()
       .Because("the worker transitions to Active BEFORE firing OnWorkProcessingStarted — a fire without the state flip is the regression this locks");
   }
 

@@ -32,6 +32,8 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </para>
 /// </summary>
 /// <docs>extending/internals/receptor-registry-query</docs>
+// Reads what this assembly's generated registries hold, which the tests under this key clear and put back.
+[NotInParallel("ReceptorRegistryQueryAggregation")]
 public class WhizbangReceptorRegistryQueryAdapterTests {
 
   // A type name no source generator will ever produce — unique per this file.

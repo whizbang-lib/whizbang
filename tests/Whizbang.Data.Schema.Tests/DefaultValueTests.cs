@@ -176,7 +176,7 @@ public class DefaultValueTests {
     // Assert
     await Assert.That(defaultValue).IsTypeOf<BooleanDefault>();
     var booleanDefault = (BooleanDefault)defaultValue;
-    await Assert.That(booleanDefault.Value).IsEqualTo(value);
+    await Assert.That(booleanDefault.Value).IsFalse();
   }
 
   // ===== DefaultValue Null Singleton Tests =====

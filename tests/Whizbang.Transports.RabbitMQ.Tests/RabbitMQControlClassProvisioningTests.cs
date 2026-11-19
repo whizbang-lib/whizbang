@@ -41,7 +41,7 @@ public class RabbitMQControlClassProvisioningTests {
     await provisioner.ProvisionManifestAsync(_manifest(_durableBroadcastSubscription()));
 
     var args = _argsFor(channel, CommandInboxNaming.SystemBroadcastTopic);
-    await Assert.That(args!["x-single-active-consumer"]).IsEqualTo(true);
+    await Assert.That(args!["x-single-active-consumer"] as bool?).IsTrue();
   }
 
   [Test]

@@ -54,7 +54,7 @@ public class TracerTests {
     await Assert.That(span.Tags["whizbang.handler.name"]).IsEqualTo("MyApp.Handlers.OrderReceptor");
     await Assert.That(span.Tags["whizbang.message.type"]).IsEqualTo("CreateOrderCommand");
     await Assert.That(span.Tags["whizbang.handler.count"]).IsEqualTo(1);
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(false);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsFalse();
   }
 
   [Test]
@@ -81,7 +81,7 @@ public class TracerTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -214,7 +214,7 @@ public class TracerTests {
     var explicitSpan = collector.FirstOrDefault(s =>
       s.Tags["whizbang.handler.name"]?.ToString() == "Handler3");
     await Assert.That(explicitSpan).IsNotNull();
-    await Assert.That(explicitSpan!.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(explicitSpan!.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   // ==========================================================================

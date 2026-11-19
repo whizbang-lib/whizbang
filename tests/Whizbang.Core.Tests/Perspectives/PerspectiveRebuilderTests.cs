@@ -10,6 +10,7 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
@@ -630,7 +631,7 @@ public class PerspectiveRebuilderTests {
 
       await Assert.That(coord.Reconciled).IsEmpty();
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 
@@ -648,7 +649,7 @@ public class PerspectiveRebuilderTests {
 
       await Assert.That(coord.Reconciled).IsEmpty();
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 
@@ -681,7 +682,7 @@ public class PerspectiveRebuilderTests {
         .Because("a rebuild of named streams scopes its reconcile to them");
       await Assert.That(coord.ReconciledScopes[0]).IsEquivalentTo([stream]);
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 
@@ -709,7 +710,7 @@ public class PerspectiveRebuilderTests {
       await Assert.That(coord.Reconciled[0].Follower).IsEqualTo("wh_per_follower");
       await Assert.That(coord.Reconciled[0].Announcers).Contains("wh_per_announcer");
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 
@@ -728,7 +729,7 @@ public class PerspectiveRebuilderTests {
 
       await Assert.That(result.Success).IsTrue();
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 
@@ -749,7 +750,7 @@ public class PerspectiveRebuilderTests {
 
       await Assert.That(coord.Reconciled).IsEmpty();
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 }

@@ -289,10 +289,11 @@ await Assert.That(value).IsBetween(10, 100);
 
 ### IsNotNull on a nullable value type (WHIZ603)
 
-In the TUnit this repository pins (1.12.125), `IsNotNull()` on a `Nullable<T>` subject (`int?`,
-`TimeSpan?`, `DateTimeOffset?`, `Guid?`) **passes when the value is null**. The overload maps the
-subject through `.Value`; on null that throws, the mapping records the exception with a default `T`,
-and the null check reads only the default, which is never null. Every such assertion verified nothing.
+Before TUnit 1.13.8, `IsNotNull()` on a `Nullable<T>` subject (`int?`, `TimeSpan?`, `DateTimeOffset?`,
+`Guid?`) **passed when the value was null**. The overload mapped the subject through `.Value`; on null that
+threw, the mapping recorded the exception with a default `T`, and the null check read only the default,
+which is never null. Every such assertion verified nothing. The repository now runs a TUnit past the fix,
+and the rule stays as a style rule: `HasValue`, or the expected value itself, says what the test means.
 
 The build rejects it: `Whizbang.TestAnalyzers` (loaded by every test project through
 `tests/Directory.Build.props` and `samples/Directory.Build.props`) reports **WHIZ603** as an error on
@@ -313,8 +314,8 @@ When the test goes on to use the value, assert `HasValue` and then read `.Value`
 nullable directly.
 
 TUnit 1.13.8 fixed the check upstream. `PinnedTUnitNullableLimitationTests` in
-`Whizbang.TestAnalyzers.Tests` pins the limitation (see "Pinning a limitation that justified a
-decision" above) and fails the day TUnit is moved past it, at which point the rule can be retired or kept.
+`Whizbang.TestAnalyzers.Tests` pins the fixed behavior (see "Pinning a limitation that justified a
+decision" above) and fails if TUnit ever lets the call pass again.
 
 ### ❌ WRONG - Other framework assertions
 
