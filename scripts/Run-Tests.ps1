@@ -16,7 +16,9 @@
     to run concurrently, similar to what you see in VS Code Test Explorer.
 
 .PARAMETER MaxParallel
-    Maximum number of test projects to run in parallel (default: CPU core count)
+    Maximum number of test projects to run in parallel (default: CPU core count; 1 in an integration run that
+    tests more than one framework, as a release build does, since each framework's copy of a project shares the
+    same broker and database server)
 
 .PARAMETER ProjectFilter
     Filter to specific test projects using native .NET 10 --test-modules globbing (e.g., "Core", "EFCore.Postgres")
@@ -354,6 +356,8 @@ Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 # The run's pass/fail verdict, including a crashed test process (#2231)
 $testRunVerdictModule = Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1"
 Import-Module $testRunVerdictModule -Force
+# How many test modules run at once: one at a time for an integration run on several frameworks
+Import-Module (Join-Path $PSScriptRoot "lib" "TestModuleParallelism.psm1") -Force
 
 # Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
 $fastBuildArgs = @()
@@ -980,9 +984,7 @@ function Invoke-CoverageReport {
 $failFastTriggered = $false
 try {
     # Determine parallel level
-    if ($MaxParallel -eq 0) {
-        $MaxParallel = [Environment]::ProcessorCount
-    }
+    $MaxParallel = Get-TestModuleParallelism -Mode $Mode -Frameworks $script:TestFrameworks -Requested $MaxParallel -ProcessorCount ([Environment]::ProcessorCount)
 
     # Branded header (suppressed when called from Run-PR.ps1)
     if (-not $NoHeader) {
