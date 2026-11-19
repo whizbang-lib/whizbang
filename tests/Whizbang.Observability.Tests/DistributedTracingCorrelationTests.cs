@@ -120,6 +120,8 @@ public class DistributedTracingCorrelationTests {
 
   [Test]
   public async Task TraceParentExtraction_WhenNoTraceParentInHops_CreatesOrphanedSpanAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange - Message without trace context (e.g., from a background job without active trace)
     using var collector = new InMemorySpanCollector("Whizbang.Transport");
 
@@ -150,7 +152,7 @@ public class DistributedTracingCorrelationTests {
 
     // Assert - Activity should be created but as a root span (orphaned)
     await Assert.That(inboxActivity).IsNotNull();
-    await Assert.That(inboxActivity!.ParentSpanId).IsEqualTo(default(ActivitySpanId));
+    await Assert.That(inboxActivity!.ParentSpanId).IsEqualTo(default);
   }
 
   [Test]
@@ -215,6 +217,8 @@ public class DistributedTracingCorrelationTests {
 
   [Test]
   public async Task TraceTree_BuildsCorrectHierarchy_WithExtractedParentContextAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing", "Whizbang.Transport");
 

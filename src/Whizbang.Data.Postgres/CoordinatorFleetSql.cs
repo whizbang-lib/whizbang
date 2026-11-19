@@ -183,7 +183,9 @@ internal static class CoordinatorFleetSql {
         ARRAY(SELECT first_deferred_at FROM {deferrals} ORDER BY budget_key)";
     cmd.Parameters.Add(new NpgsqlParameter<string[]>("p_integrity_types", [.. SteadyIntegrityTraffic.StoredNames]));
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    return !await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? null : new ServiceBacklog {
+    // A SELECT with no FROM returns exactly one row.
+    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return new ServiceBacklog {
       UnprocessedInboxRows = reader.GetInt64(0),
       ActiveLeasedRows = reader.GetInt64(1),
       // Clamped at zero: clock skew between writer and reader must not report negative lag.

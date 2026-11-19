@@ -49,7 +49,7 @@ public class SignalBusProbeTests {
     var verified = await state.FirstProbe.WaitAsync(cancellationToken);
 
     await Assert.That(verified).IsTrue();
-    await Assert.That(state.WireRouteVerified).IsEqualTo(true);
+    await Assert.That(state.WireRouteVerified).IsTrue();
     await Assert.That(state.Report().State).IsEqualTo(ComponentState.Operational);
   }
 
@@ -69,7 +69,7 @@ public class SignalBusProbeTests {
     var verified = await state.FirstProbe.WaitAsync(cancellationToken);
 
     await Assert.That(verified).IsFalse();
-    await Assert.That(state.WireRouteVerified).IsEqualTo(false);
+    await Assert.That(state.WireRouteVerified).IsFalse();
     var report = state.Report();
     await Assert.That(report.State).IsEqualTo(ComponentState.Degraded);
     await Assert.That(report.Detail).Contains("DeadTransport");
@@ -148,7 +148,7 @@ public class SignalBusProbeTests {
       .Because("the transport delivers its first probe — the route starts healthy");
 
     await degraded.Task.WaitAsync(cancellationToken);
-    await Assert.That(state.WireRouteVerified).IsEqualTo(false)
+    await Assert.That(state.WireRouteVerified).IsFalse()
       .Because("the periodic re-probe must catch a listener that died after startup");
     await Assert.That(state.Report().State).IsEqualTo(ComponentState.Degraded);
   }

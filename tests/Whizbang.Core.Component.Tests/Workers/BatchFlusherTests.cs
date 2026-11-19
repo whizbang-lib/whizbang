@@ -365,4 +365,46 @@ public class BatchFlusherTests {
       .Because("shutdown finished despite a flush that never returned on its own");
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task DisposeAsync_WhenTheFlushFinishesItsBatchOnceTheDrainGivesUp_CountsItAndStopsWithoutAnotherReadAsync(
+      CancellationToken testToken) {
+    // A flush callback may answer the stop token by finishing its batch instead of throwing. That batch landed, so it
+    // counts as flushed, and the loop then stops at its own check of the token rather than reading again.
+    var inFlush = new TaskCompletionSource();
+    var clock = new ArmingClock();
+    var drainBound = TimeSpan.FromMilliseconds(200);
+
+    var flusher = new BatchFlusher<int>(
+      flush: async (_, ct) => {
+        inFlush.TrySetResult();
+        var stopped = new TaskCompletionSource();
+        await using var registration = ct.Register(() => stopped.TrySetResult());
+        await stopped.Task;
+      },
+      options: new BatchFlusherOptions {
+        ChannelCapacity = 100,
+        MaxBatchSize = 10,
+        CoalesceWindowMs = 1,
+        ImmediateFlushThreshold = 1,
+        DrainTimeoutMs = 200,
+      },
+      logger: NullLogger.Instance,
+      timeProvider: clock);
+
+    await flusher.Writer.WriteAsync(1, testToken);
+    await inFlush.Task.WaitAsync(testToken);
+
+    var dispose = flusher.DisposeAsync().AsTask();
+    await clock.WaitForArmedAsync(drainBound, testToken);
+    clock.Advance(drainBound);
+    await dispose.WaitAsync(testToken);
+
+    await Assert.That(flusher.StoppedSignal.IsCompleted).IsTrue();
+    await Assert.That(flusher.ItemsFlushed).IsEqualTo(1L)
+      .Because("the flush returned normally, so its batch landed");
+    await Assert.That(flusher.ItemsDropped).IsEqualTo(0L);
+    await Assert.That(flusher.Pending).IsEqualTo(0L);
+  }
+
 }

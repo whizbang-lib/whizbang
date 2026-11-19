@@ -270,7 +270,7 @@ public class TrackedGuidTests {
 
     // Assert
     await Assert.That(success).IsFalse();
-    await Assert.That(tracked).IsEqualTo(default(TrackedGuid));
+    await Assert.That(tracked).IsEqualTo(default);
   }
 
   // ========================================

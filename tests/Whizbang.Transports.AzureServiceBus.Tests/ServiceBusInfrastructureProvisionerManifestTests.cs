@@ -124,7 +124,7 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
     await Assert.That(Subscription).IsEqualTo(expectedName)
       .Because("the provisioner must derive names exactly as the transport does — "
              + "ServiceBusSubscriptionNameHelper, not a reimplementation");
-    await Assert.That(RequiresSession).IsEqualTo(true);
+    await Assert.That(RequiresSession).IsTrue();
     await Assert.That(MaxDeliveryCount).IsEqualTo(7);
   }
 

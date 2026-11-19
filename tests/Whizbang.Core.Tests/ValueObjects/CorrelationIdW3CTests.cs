@@ -55,6 +55,8 @@ public class CorrelationIdW3CTests {
 
   [Test]
   public async Task NewRootAligned_WithNoTrace_MintsFreshUuidV7Async() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     // No ActivityListener registered here, so Activity.Current is null → falls back to a fresh v7.
     var a = CorrelationId.NewRootAligned();
     var b = CorrelationId.NewRootAligned();

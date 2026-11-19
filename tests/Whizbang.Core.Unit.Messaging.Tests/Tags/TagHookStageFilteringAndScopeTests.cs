@@ -15,6 +15,8 @@ using Whizbang.Core.Tags;
 
 #pragma warning disable RCS1163 // Test fakes commonly have unused params to match interface signatures
 
+using Whizbang.Core.Tests.Helpers;
+
 namespace Whizbang.Core.Tests.Tags;
 
 /// <summary>
@@ -36,14 +38,6 @@ namespace Whizbang.Core.Tests.Tags;
 [Category("Tags")]
 public class TagHookStageFilteringAndScopeTests {
 
-  // The framework's OWN generated registries, captured before the first clear. ClearForTesting
-  // empties a PROCESS-GLOBAL registry that [ModuleInitializer] populates exactly once per process,
-  // so clearing without restoring silently disables tag discovery for every test that runs
-  // afterwards — a latent, ordering-dependent failure for any suite asserting that the generator
-  // discovered a framework tag. Capture once, restore after each test.
-  private static readonly IReadOnlyList<IMessageTagRegistry> _frameworkRegistries =
-    AssemblyRegistry<IMessageTagRegistry>.GetOrderedContributions();
-
   [Before(Test)]
   public void Setup() {
     // Clean up static registry between tests
@@ -52,10 +46,8 @@ public class TagHookStageFilteringAndScopeTests {
 
   [After(Test)]
   public void Cleanup() {
-    AssemblyRegistry<IMessageTagRegistry>.ClearForTesting();
-    foreach (var registry in _frameworkRegistries) {
-      MessageTagRegistry.Register(registry, priority: 100);
-    }
+    // Clearing a process-global registry removes the generated registries too; put them back for the tests after this.
+    GeneratedRegistrations.RestoreTags();
     // Reset AsyncLocal state
     ScopeContextAccessor.CurrentContext = null;
     ScopeContextAccessor.CurrentInitiatingContext = null;

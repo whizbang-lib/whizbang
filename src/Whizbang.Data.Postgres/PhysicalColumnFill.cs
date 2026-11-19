@@ -88,7 +88,7 @@ public static partial class PhysicalColumnFill {
     ArgumentException.ThrowIfNullOrWhiteSpace(quotedSchema);
     await using var command = new NpgsqlCommand(
       $"SELECT EXISTS (SELECT 1 FROM {quotedSchema}.wh_physical_column_fills WHERE settled_at IS NULL)", connection);
-    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "armed column fill");
   }
 
   /// <summary>

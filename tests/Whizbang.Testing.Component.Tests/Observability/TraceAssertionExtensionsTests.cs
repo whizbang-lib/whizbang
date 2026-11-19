@@ -64,6 +64,8 @@ public class TraceAssertionExtensionsTests {
 
   [Test]
   public async Task AssertNoOrphanedSpans_CleanTrace_DoesNotThrowAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
@@ -264,6 +266,8 @@ public class TraceAssertionExtensionsTests {
 
   [Test]
   public async Task GetSingleRoot_OneRoot_ReturnsItAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
@@ -287,6 +291,8 @@ public class TraceAssertionExtensionsTests {
 
   [Test]
   public async Task GetSingleRoot_MultipleRoots_ThrowsListingRootsAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);

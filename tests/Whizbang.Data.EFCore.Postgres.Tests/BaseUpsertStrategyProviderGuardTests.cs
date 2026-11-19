@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// database connection, which a non-relational provider refuses, and the write would throw instead of landing.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
+[NotInParallel(BaseUpsertStrategyCoverageIntegrationTests.WIDGET_TTL_KEY)] // upserts the widget model, whose process-wide TTL the integration tests set
 [Category("Shard1")]
 public class BaseUpsertStrategyProviderGuardTests {
 

@@ -277,7 +277,7 @@ public static class CanonicalTemporalRewritePhase {
     try {
       await using var command = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", connection);
       command.Parameters.AddWithValue(lockId);
-      held = await command.ExecuteScalarAsync(cancellationToken) is true;
+      held = BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken), "temporal rewrite lock");
     } catch {
       // The failure the caller sees is the connection's own, not a later "transaction already
       // open" on the next attempt over the same connection.

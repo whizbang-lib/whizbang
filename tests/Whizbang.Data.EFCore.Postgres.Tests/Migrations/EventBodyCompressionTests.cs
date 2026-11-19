@@ -94,8 +94,8 @@ public class EventBodyCompressionTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync($"SELECT pg_column_compression(event_data) FROM wh_event_body WHERE event_id = '{eventId}'"))
       .IsEqualTo("lz4");
     await Assert.That(await _scalarAsync(
-        $"SELECT pg_column_size(event_data) < octet_length(event_data::text) FROM wh_event_body WHERE event_id = '{eventId}'"))
-      .IsEqualTo(true).Because("a compressed body takes fewer bytes than its text");
+        $"SELECT pg_column_size(event_data) < octet_length(event_data::text) FROM wh_event_body WHERE event_id = '{eventId}'") as bool?)
+      .IsTrue().Because("a compressed body takes fewer bytes than its text");
   }
 
   [Test]
@@ -104,7 +104,7 @@ public class EventBodyCompressionTests : EFCoreTestBase {
     // toaster, so no column setting compresses it. Compressing these is the dictionary work, not a table setting.
     var eventId = await _storeBodyAsync(bodyBytes: 1000, metadataBytes: 200);
 
-    await Assert.That(await _scalarAsync($"SELECT pg_column_compression(event_data) IS NULL FROM wh_event_body WHERE event_id = '{eventId}'"))
-      .IsEqualTo(true).Because("pg_column_compression is null for a value stored as it came");
+    await Assert.That(await _scalarAsync($"SELECT pg_column_compression(event_data) IS NULL FROM wh_event_body WHERE event_id = '{eventId}'") as bool?)
+      .IsTrue().Because("pg_column_compression is null for a value stored as it came");
   }
 }

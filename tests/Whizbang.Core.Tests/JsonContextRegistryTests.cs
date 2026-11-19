@@ -1062,7 +1062,7 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.IntValue).IsEqualTo(42);
     await Assert.That(deserialized.LongValue).IsEqualTo(9876543210L);
-    await Assert.That(deserialized.BoolValue).IsEqualTo(true);
+    await Assert.That(deserialized.BoolValue).IsTrue();
     await Assert.That(deserialized.DateTimeValue).IsEqualTo(testDateTime);
     await Assert.That(deserialized.DecimalValue).IsEqualTo(123.45m);
     await Assert.That(deserialized.DoubleValue).IsEqualTo(3.14159);
@@ -1252,7 +1252,7 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.OptionalInt).IsEqualTo(42);
     await Assert.That(deserialized.OptionalLong).IsEqualTo(9876543210L);
-    await Assert.That(deserialized.OptionalBool).IsEqualTo(true);
+    await Assert.That(deserialized.OptionalBool).IsTrue();
     await Assert.That(deserialized.OptionalDateTime).IsEqualTo(testDateTime);
     await Assert.That(deserialized.OptionalDecimal).IsEqualTo(123.45m);
     await Assert.That(deserialized.OptionalDouble).IsEqualTo(3.14159);

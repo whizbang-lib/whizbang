@@ -38,6 +38,6 @@ public class WhizbangIdTypeDiscoveryHandlerTests {
     var inferred = new WhizbangIdTypeDiscoveryHandler().TryInferKind(typeRef, new TypeDiscoveryInfo(typeRef), out var kind);
 
     await Assert.That(inferred).IsFalse();
-    await Assert.That(kind).IsEqualTo(default(TypeKind));
+    await Assert.That(kind).IsEqualTo(default);
   }
 }

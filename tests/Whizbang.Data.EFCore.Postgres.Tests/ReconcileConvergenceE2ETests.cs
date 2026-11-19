@@ -50,6 +50,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
 [Category("Shard4")]
+[NotInParallel("IntegrityManifestGates")] // the manifest receptor declines a manifest while another test holds its per-process compare gate
 public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   private const string TYPE = "Contracts.ConvergenceProbe";
   private const string TENANT = "tenant-a";

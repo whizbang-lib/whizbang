@@ -220,7 +220,7 @@ public class PgSharedNotifyConnectionBranchTests : EFCoreTestBase {
     await holder.OpenAsync(cancellationToken);
     await using (var claim = new NpgsqlCommand("SELECT claim_instance_alive_lock(@id)", holder)) {
       claim.Parameters.AddWithValue("id", instance.InstanceId);
-      await Assert.That(await claim.ExecuteScalarAsync(cancellationToken)).IsEqualTo(true);
+      await Assert.That(await claim.ExecuteScalarAsync(cancellationToken) as bool?).IsTrue();
     }
 
     var logger = new CapturingLogger();

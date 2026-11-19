@@ -17,9 +17,11 @@ namespace Whizbang.Core.Tests;
 /// The slots are process-wide and filled by module initializers before any test runs, so each test saves the slot's
 /// value, clears it, and puts the saved value back after clearing again: assigning accumulates, so restoring without
 /// clearing first would leave the test's callbacks behind.
+/// Any test that calls AddWhizbang runs every callback in the slots, so one running while these callbacks are set
+/// adds to their order list; the class runs alone, not beside any other test.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/ServiceRegistrationCallbacks.cs</code-under-test>
-[NotInParallel("WhizbangBackgroundServiceTests")]
+[NotInParallel] // sets the process-wide registration callback slots, which any test calling AddWhizbang runs
 public class ServiceRegistrationCallbacksAccumulateTests {
   private static async Task _everyCallbackRunsAsync<TCallback>(
       Func<TCallback?> get, Action<TCallback?> set, Func<List<string>, string, TCallback> callback)

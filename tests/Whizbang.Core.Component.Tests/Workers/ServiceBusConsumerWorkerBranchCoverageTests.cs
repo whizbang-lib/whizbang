@@ -139,7 +139,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
 
     var span = capture.Single("ServiceBusConsumerWorker.Start");
     await Assert.That((int?)span.GetTagItem("worker.subscriptions_count")).IsEqualTo(2);
-    await Assert.That((bool?)span.GetTagItem("servicebus.has_filter")).IsEqualTo(true)
+    await Assert.That((bool?)span.GetTagItem("servicebus.has_filter")).IsTrue()
       .Because("one subscription carries a destination filter");
     await Assert.That(transport.SubscribeCount).IsEqualTo(2);
   }
@@ -159,7 +159,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
 
     var span = capture.Single("ServiceBusConsumerWorker.Start");
     await Assert.That((int?)span.GetTagItem("worker.subscriptions_count")).IsEqualTo(1);
-    await Assert.That((bool?)span.GetTagItem("servicebus.has_filter")).IsEqualTo(false)
+    await Assert.That((bool?)span.GetTagItem("servicebus.has_filter")).IsFalse()
       .Because("a whitespace-only filter is no filter");
   }
 

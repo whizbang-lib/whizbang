@@ -95,7 +95,7 @@ public static partial class RecursiveDocumentRebuildNotice {
 #pragma warning restore S2077
     marker.Parameters.AddWithValue(MARKER_MIGRATION);
     marker.Parameters.AddWithValue(Path.GetFileNameWithoutExtension(MARKER_MIGRATION));
-    return await marker.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await marker.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "rebuild marker");
   }
 
   /// <summary>Whether the table exists and holds at least one row.</summary>
@@ -113,7 +113,7 @@ public static partial class RecursiveDocumentRebuildNotice {
 #pragma warning disable S2077 // the table name is quoted by PgIdentifier
     rows.CommandText = $"SELECT EXISTS (SELECT 1 FROM {qualified})";
 #pragma warning restore S2077
-    return await rows.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await rows.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "document rows");
   }
 
   [LoggerMessage(EventId = EVENT_ID, EventName = EVENT_NAME, Level = LogLevel.Warning,

@@ -30,7 +30,7 @@ public class EnvelopeContextExtractorCoverageTests {
   public async Task ExtractTraceContext_NullHops_ReturnsDefaultAsync() {
     var result = EnvelopeContextExtractor.ExtractTraceContext(null);
 
-    await Assert.That(result).IsEqualTo(default(System.Diagnostics.ActivityContext));
+    await Assert.That(result).IsEqualTo(default);
   }
 
   /// <summary>Operator impact: same default-safety guarantee for an empty (non-null) hop list.</summary>
@@ -38,7 +38,7 @@ public class EnvelopeContextExtractorCoverageTests {
   public async Task ExtractTraceContext_EmptyHops_ReturnsDefaultAsync() {
     var result = EnvelopeContextExtractor.ExtractTraceContext([]);
 
-    await Assert.That(result).IsEqualTo(default(System.Diagnostics.ActivityContext));
+    await Assert.That(result).IsEqualTo(default);
   }
 
   /// <summary>

@@ -134,7 +134,7 @@ public class SecurityPrincipalIdJsonConverterTests {
   public async Task Deserialize_JsonNull_ReturnsTheDefaultPrincipalAsync() {
     var principal = JsonSerializer.Deserialize<SecurityPrincipalId>("null", _createOptions());
 
-    await Assert.That(principal).IsEqualTo(default(SecurityPrincipalId));
+    await Assert.That(principal).IsEqualTo(default);
     await Assert.That(principal.Value).IsNull();
   }
 }

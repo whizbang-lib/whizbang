@@ -120,6 +120,30 @@ Two consequences worth knowing:
   line, are not part of the statement. Reading stops at a multi-line string or block comment, whose text
   a per-line reader would take for code.
 
+### Runtime async
+
+Library code compiled for `net11.0` uses runtime async (`runtime-async=on` in `Directory.Build.targets`):
+an `await` is compiled into the method itself instead of an async state machine. The collector reported
+no condition at all on a line holding an `await` inside a state machine, so every decision on such a line
+(`await x is true`, `await r.IsDBNullAsync(i) ? null : ...`, `while (await timer.WaitForNextTickAsync())`)
+went unmeasured. Under runtime async the IL is the code as written, and those decisions are measured like
+any other: an outcome no test takes is a gap.
+
+Two pieces of the IL are still the compiler's, and the gate does not count them:
+
+- After an `await foreach`, or after a loop that ends an `await using`'s scope, the compiler writes the
+  dispose and rethrow code a `finally` would hold (test the resource for null, dispose it, test for a
+  pending exception, test that it is an `Exception`). It has hidden sequence points and the collector
+  reports its jumps on the loop's line. On a `while (await ...)` or `await foreach (...)` whose condition
+  or collection holds no decision of its own, the gate counts only the loop's first jump, its own
+  continue-or-exit. The loop's exit is still a hand-written outcome: a loop no test leaves through its
+  condition is a gap.
+- A try that ends in a `return` (or `throw`, `break`, `continue`) and whose catch awaits leaves an
+  unreachable jump on the `}` that closes it. The catch clause's own sequence point, which shared that
+  line, is gone, so `} catch (Exception ex) {` reads as never run. The gate removes a never-run line
+  whose block data shows nothing but such a `}`. The `}` of a block that can end normally, such as an
+  empty catch, is reachable and stays measured.
+
 The rule is tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change both together.
 Those tests never read a stored coverage report: they build the small libraries under
 `.github/scripts/tests/shapes/` and run each as two test processes under the real collector, with the

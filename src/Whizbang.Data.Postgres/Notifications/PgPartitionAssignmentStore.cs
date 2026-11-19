@@ -105,8 +105,10 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
         return null;
       }
     }
-    // Read back what was recorded: the revision and the times are the database's.
-    return (await ReadAsync(cancellationToken).ConfigureAwait(false))?.Assignment;
+    // Read back what was recorded: the revision and the times are the database's. The publish just upserted the one
+    // singleton row, and nothing deletes it, so the read finds it.
+    var recorded = await ReadAsync(cancellationToken).ConfigureAwait(false);
+    return recorded!.Assignment;
   }
 
   /// <inheritdoc />

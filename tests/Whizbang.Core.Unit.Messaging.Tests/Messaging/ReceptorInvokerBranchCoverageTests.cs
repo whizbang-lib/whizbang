@@ -39,7 +39,9 @@ public class ReceptorInvokerBranchCoverageTests {
 
   private static ActivityListener _listen(List<Activity> stopped) {
     var listener = new ActivityListener {
-      ShouldListenTo = source => source.Name == WhizbangActivitySource.Tracing.Name,
+      // By name, not WhizbangActivitySource.Tracing.Name: a listener registered before that class initializes is asked
+      // about each of its sources from inside its static constructor, while Tracing is still null.
+      ShouldListenTo = source => source.Name == "Whizbang.Tracing",
       Sample = (ref options) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         lock (stopped) {
@@ -79,7 +81,7 @@ public class ReceptorInvokerBranchCoverageTests {
       .IsEqualTo(TypeNameFormatter.DisplayName(typeof(ProbeMessage)));
     await Assert.That(activity.GetTagItem("whizbang.lifecycle.stage")).IsEqualTo(nameof(LifecycleStage.LocalImmediateInline));
     await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Ok);
-    await Assert.That(activity.GetTagItem("whizbang.receptor.has_result")).IsEqualTo(true)
+    await Assert.That(activity.GetTagItem("whizbang.receptor.has_result") as bool?).IsTrue()
       .Because("the receptor returned a value, and the span records that it did");
   }
 

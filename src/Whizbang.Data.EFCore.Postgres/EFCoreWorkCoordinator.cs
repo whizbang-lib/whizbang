@@ -3771,16 +3771,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
           WorkId = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
           StreamId = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetGuid(2),
           PartitionNumber = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt32(3),
-          Destination = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
-          MessageType = await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
-          EnvelopeType = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
-          MessageData = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
-          Metadata = await reader.IsDBNullAsync(8, cancellationToken) ? null : reader.GetValue(8)?.ToString(),
-          Status = await reader.IsDBNullAsync(9, cancellationToken) ? null : reader.GetInt32(9),
-          Attempts = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
-          IsNewlyStored = await reader.IsDBNullAsync(11, cancellationToken) ? null : reader.GetBoolean(11),
-          IsOrphaned = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetBoolean(12),
-          PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
+          // claim_work (migration 390) returns a NULL literal for destination, message type, envelope type, message
+          // data, metadata and perspective name in every branch: it returns identity only, and the fetch functions return
+          // the rows. Status and attempts are NOT NULL (or 0) in every branch, and the two flags are a false literal.
+          Destination = null,
+          MessageType = null,
+          EnvelopeType = null,
+          MessageData = null,
+          Metadata = null,
+          Status = reader.GetInt32(9),
+          Attempts = reader.GetInt32(10),
+          IsNewlyStored = reader.GetBoolean(11),
+          IsOrphaned = reader.GetBoolean(12),
+          PerspectiveName = null,
           // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
           Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
           ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
@@ -4192,7 +4195,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         CommitSequence = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt64(3),
         EventType = reader.GetString(4),
         EventData = reader.GetString(5),
-        Metadata = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
+        // Both queries inner-join wh_event_body, whose metadata is NOT NULL.
+        Metadata = reader.GetString(6),
         Scope = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
         Flags = reader.GetInt32(8)
       });
@@ -5346,7 +5350,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) { /* discard */ }
         if (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false)
             && await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-          projection = await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetString(0);
+          // An aggregate with no GROUP BY returns one row, and its COALESCE makes that row's value never NULL.
+          projection = reader.GetString(0);
         }
       }
       // #720: ring the doorbells the store queued, after its commit.
@@ -6517,7 +6522,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new PendingPerspectiveEvent(
         EventWorkId: reader.GetGuid(0),
         EventId: reader.GetGuid(1),
-        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetInt64(2)));
+        // Both functions return only rows whose commit_sequence IS NOT NULL (migration 042).
+        CommitSequence: reader.GetInt64(2)));
     }
     return results;
   }
@@ -6554,7 +6560,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new PendingPerspectiveEvent(
         EventWorkId: reader.GetGuid(0),
         EventId: reader.GetGuid(1),
-        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetInt64(2)));
+        // Both functions return only rows whose commit_sequence IS NOT NULL (migration 042).
+        CommitSequence: reader.GetInt64(2)));
     }
     return results;
   }
@@ -6668,7 +6675,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventId = reader.GetGuid(1),
         EventType = reader.GetString(2),
         EventData = reader.GetString(3),
-        Metadata = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(4),
+        // The body's event_data and metadata are both NOT NULL: metadata is null only with no body row, and then
+        // reading event_data above has already failed.
+        Metadata = reader.GetString(4),
         Scope = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(5),
         EventWorkId = Guid.Empty
       });

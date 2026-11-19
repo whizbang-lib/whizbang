@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -33,6 +34,8 @@ public class InboundCorrelationAccessorTests {
 
   [Test]
   public async Task NewRootWithAmbientSecurity_WithoutInboundCorrelation_GeneratesFreshAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     InboundCorrelationAccessor.Current = null;
 
     var a = CascadeContext.NewRootWithAmbientSecurity();

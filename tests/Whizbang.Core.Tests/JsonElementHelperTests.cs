@@ -110,7 +110,7 @@ public class JsonElementHelperTests {
 
     // Assert
     await Assert.That(result.ValueKind).IsEqualTo(JsonValueKind.True);
-    await Assert.That(result.GetBoolean()).IsEqualTo(value);
+    await Assert.That(result.GetBoolean()).IsTrue();
   }
 
   [Test]
@@ -123,6 +123,6 @@ public class JsonElementHelperTests {
 
     // Assert
     await Assert.That(result.ValueKind).IsEqualTo(JsonValueKind.False);
-    await Assert.That(result.GetBoolean()).IsEqualTo(value);
+    await Assert.That(result.GetBoolean()).IsFalse();
   }
 }

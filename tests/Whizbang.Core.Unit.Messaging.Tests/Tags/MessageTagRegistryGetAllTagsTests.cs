@@ -18,6 +18,8 @@ namespace Whizbang.Core.Tests.Tags;
 /// </summary>
 [Category("Core")]
 [Category("Tags")]
+// Reads what this assembly's generated registries hold, which the tests under this key clear and put back.
+[NotInParallel("TagRegistry")]
 public class MessageTagRegistryGetAllTagsTests {
   [Test]
   public async Task GetAllTags_DefaultInterfaceMember_ReturnsEmptyAsync() {

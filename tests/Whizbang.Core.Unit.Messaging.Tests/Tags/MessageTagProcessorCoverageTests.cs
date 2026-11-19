@@ -34,6 +34,10 @@ namespace Whizbang.Core.Tests.Tags;
 /// <docs>fundamentals/messages/message-tags#processing</docs>
 public class MessageTagProcessorCoverageTests {
 
+  // Clearing the process-global tag registries removes the generated ones too; put them back for the tests after this.
+  [After(Test)]
+  public void RestoreGeneratedTagRegistries() => GeneratedRegistrations.RestoreTags();
+
   // Tag processing decides how a message is routed and grouped. If the base-context fallback in
   // _createHookContextForAttribute regressed — e.g. by returning null or throwing instead of a
   // usable TagContext<MessageTagAttribute> — a message carrying a custom tag attribute with no

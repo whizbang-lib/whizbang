@@ -120,8 +120,8 @@ public class BatchedPerspectiveStateSourceTests {
       await batch.ReadRowAsync(store, stream, PERSPECTIVE);
     }
 
-    await Assert.That(await batch.IsPurgedAsync(markers, purged, PERSPECTIVE)).IsEqualTo(true);
-    await Assert.That(await batch.IsPurgedAsync(markers, live, PERSPECTIVE)).IsEqualTo(false);
+    await Assert.That(await batch.IsPurgedAsync(markers, purged, PERSPECTIVE)).IsTrue();
+    await Assert.That(await batch.IsPurgedAsync(markers, live, PERSPECTIVE)).IsFalse();
     await Assert.That(await batch.IsPurgedAsync(markers, present, PERSPECTIVE)).IsNull()
       .Because("a row the read found is never probed");
 
@@ -157,8 +157,8 @@ public class BatchedPerspectiveStateSourceTests {
     await batch.ReadRowAsync(store, fresh, PERSPECTIVE);
     Type[] types = [typeof(string)];
 
-    await Assert.That(await batch.HasHistoryBeforeAsync(events, woken, PERSPECTIVE, wokenFirst, types)).IsEqualTo(true);
-    await Assert.That(await batch.HasHistoryBeforeAsync(events, fresh, PERSPECTIVE, freshFirst, types)).IsEqualTo(false);
+    await Assert.That(await batch.HasHistoryBeforeAsync(events, woken, PERSPECTIVE, wokenFirst, types)).IsTrue();
+    await Assert.That(await batch.HasHistoryBeforeAsync(events, fresh, PERSPECTIVE, freshFirst, types)).IsFalse();
     await Assert.That(await batch.HasHistoryBeforeAsync(events, fresh, PERSPECTIVE, Guid.NewGuid(), types)).IsNull()
       .Because("the batch asked before the event it planned; any other question is the stream's own");
 

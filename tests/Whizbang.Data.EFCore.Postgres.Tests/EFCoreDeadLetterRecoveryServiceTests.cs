@@ -67,6 +67,43 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
   // ===== RecoverAsync =====
 
   [Test]
+  public async Task FetchDueAsync_ARowFromAMessageWithNoStream_HasNoStreamAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var (dlqId, _) = await _seedDlqAsync(conn, withStream: false);
+    var svc = _newService(ctx);
+
+    var due = await svc.FetchDueAsync(10);
+
+    await Assert.That(due.Single(e => e.DeadLetterId == dlqId).StreamId.HasValue).IsFalse();
+  }
+
+  [Test]
+  public async Task FetchDueAsync_ARowDeadLetteredBeforeFingerprinting_HasNoFingerprintAsync() {
+    // Rows dead-lettered before the fingerprint column was filled keep it NULL.
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var dlqId = (Guid)TrackedGuid.New();
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = """
+        INSERT INTO wh_dead_letters
+          (dead_letter_id, source_table, source_id, stream_id, message_type, envelope, failure_reason,
+           attempts_when_dlq, generation, error_fingerprint)
+        VALUES (@dlq, 'wh_outbox', @src, @stream, 'TestEvent', '{}'::jsonb, 5, 11, 'v0.501', NULL)
+        """;
+      ins.Parameters.AddWithValue("dlq", dlqId);
+      ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
+      ins.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
+      await ins.ExecuteNonQueryAsync();
+    }
+    var svc = _newService(ctx);
+
+    var due = await svc.FetchDueAsync(10);
+
+    await Assert.That(due.Single(e => e.DeadLetterId == dlqId).ErrorFingerprint).IsNull();
+  }
+
+  [Test]
   public async Task RecoverAsync_ExistingRow_ReturnsTrueAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
@@ -190,10 +227,10 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
   }
 
   private static async Task<(Guid DlqId, Guid OriginalMessageId)> _seedDlqAsync(
-      NpgsqlConnection conn, string generation = "v0.502") {
+      NpgsqlConnection conn, string generation = "v0.502", bool withStream = true) {
     var dlqId = (Guid)TrackedGuid.New();
     var messageId = (Guid)TrackedGuid.New();
-    var streamId = (Guid)TrackedGuid.New();
+    object streamId = withStream ? (Guid)TrackedGuid.New() : DBNull.Value;
 
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
@@ -202,7 +239,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
          created_at, stream_id, partition_number)
       VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)";
     ins.Parameters.AddWithValue("msg", messageId);
-    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.Add(new NpgsqlParameter("stream", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
     await ins.ExecuteNonQueryAsync();
 
     await using var move = conn.CreateCommand();

@@ -798,6 +798,27 @@ public partial class IntegrityManifestReceptorTests {
   }
 
   [Test]
+  public async Task ManifestReceptor_StreamLevel_UnpopulatedTable_OnAnEngineThatCannotFoldTheChunk_ComparesAgainstTheWholeStoreAsync() {
+    var coordinator = new AuditCoordinator { ForChunkReturnsNull = true };
+    var stream = TrackedGuid.New().Value;
+    // The table is empty and the engine has no chunk fold, so the comparison falls back to the whole-store recompute,
+    // which disagrees with the origin.
+    coordinator.ReceivedTableDigests = [];
+    coordinator.ReceivedDigests = [_digest(stream, 99, 21, 1)];
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(coordinator.StreamComputeCalls).IsEqualTo(1)
+      .Because("with no table rows and no chunk fold, the whole-store recompute is the only local answer");
+    await Assert.That(dispatcher.Published.Cast<IntegrityDivergenceDetected>().Count()).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task ManifestReceptor_StreamLevel_RecomputedManifest_ComparesAgainstRecomputeAsync() {
     var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.New().Value;

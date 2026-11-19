@@ -182,4 +182,45 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
 
     await Assert.That(batch.PerspectiveStreamIds).Contains((Guid)streamId);
   }
+
+  [Test]
+  public async Task ClaimWorkAsync_AHeldOutboxRowWithNoStream_IsItsOwnStreamAsync() {
+    // A message with no stream id and no partition is its own stream, keyed by its id; the claim reads both as missing.
+    await using var dbContext = CreateDbContext();
+    var coordinator = Coord(dbContext);
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
+    await using (var hb = conn.CreateCommand()) {
+      hb.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", (Guid)instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
+           created_at, stream_id, partition_number, instance_id, lease_expiry)
+        VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 0,
+                NOW(), NULL, NULL, @inst, NOW() + INTERVAL '5 minutes')";
+      ins.Parameters.AddWithValue("msg", messageId);
+      ins.Parameters.AddWithValue("inst", (Guid)instanceId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
+      InstanceId: instanceId,
+      ServiceName: "test",
+      HostName: "test-host",
+      ProcessId: 1));
+
+    await Assert.That(batch.OutboxStreamIds).Contains(messageId);
+  }
 }

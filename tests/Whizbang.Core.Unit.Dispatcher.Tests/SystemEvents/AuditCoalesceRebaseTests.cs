@@ -28,6 +28,8 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// left in the builder; slide = 0 keeps today's immediate individual shipping.
 /// </summary>
 [Category("SystemEvents")]
+// Reads what this assembly's generated registries hold, which the tests under this key clear and put back.
+[NotInParallel(["TagRegistry", "ReceptorRegistryQueryAggregation"])]
 public class AuditCoalesceRebaseTests {
   private static readonly DateTimeOffset _testNow = new(2026, 8, 18, 12, 0, 0, TimeSpan.Zero);
 

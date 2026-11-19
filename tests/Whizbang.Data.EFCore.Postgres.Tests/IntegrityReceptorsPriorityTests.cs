@@ -37,6 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityCheckpointReceptor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 [Category("Shard4")]
+[NotInParallel("IntegrityManifestGates")] // the manifest receptor declines a manifest while another test holds its per-process compare gate
 public class IntegrityReceptorsPriorityTests {
   private static readonly string _verifiedType = TypeNameFormatter.Format(typeof(IntegrityCheckpointReceptorTests.VerifiedEvent));
 

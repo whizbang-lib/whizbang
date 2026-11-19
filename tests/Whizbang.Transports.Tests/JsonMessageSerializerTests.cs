@@ -92,8 +92,8 @@ public class JsonMessageSerializerTests {
     await Assert.That(hopMetadata["intValue"].GetInt32()).IsEqualTo(42);
     await Assert.That(hopMetadata["longValue"].GetInt64()).IsEqualTo(9999999999L);
     await Assert.That(hopMetadata["doubleValue"].GetDouble()).IsEqualTo(3.14);
-    await Assert.That(hopMetadata["boolTrue"].GetBoolean()).IsEqualTo(true);
-    await Assert.That(hopMetadata["boolFalse"].GetBoolean()).IsEqualTo(false);
+    await Assert.That(hopMetadata["boolTrue"].GetBoolean()).IsTrue();
+    await Assert.That(hopMetadata["boolFalse"].GetBoolean()).IsFalse();
   }
 
   [Test]

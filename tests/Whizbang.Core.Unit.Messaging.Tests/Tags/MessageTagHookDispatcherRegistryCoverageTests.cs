@@ -11,6 +11,8 @@ using Whizbang.Core.Registry;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
+using Whizbang.Core.Tests.Helpers;
+
 namespace Whizbang.Core.Tests.Tags;
 
 /// <summary>
@@ -44,10 +46,9 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
       ValueTask.FromResult<JsonElement?>(JsonElement.Parse("""{"handled":true}"""));
   }
 
+  // Puts back the generated dispatchers, which the clears below remove along with the test's own.
   [After(Test)]
-  public void CleanupDispatcherRegistry() {
-    AssemblyRegistry<IMessageTagHookDispatcher>.ClearForTesting();
-  }
+  public void CleanupDispatcherRegistry() => GeneratedRegistrations.RestoreTags();
 
   /// <summary>What breaks: <see cref="MessageTagHookDispatcherRegistry.Count"/> is the one
   /// diagnostic surface for "is my custom tag dispatcher actually wired up" — if it under- or

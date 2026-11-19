@@ -31,7 +31,7 @@ public partial class ConcurrentIndexBuildTests {
 
     await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Built);
     await Assert.That(again).IsEqualTo(ConcurrentIndexOutcome.AlreadyValid).Because("with the old one gone there is nothing left to do");
-    await Assert.That(await _validityAsync(conn, "idx_replace_probe_new")).IsEqualTo(true);
+    await Assert.That(await _validityAsync(conn, "idx_replace_probe_new")).IsTrue();
     await Assert.That(await _validityAsync(conn, "idx_replace_probe_old")).IsNull()
       .Because("the superseded index costs every write and no longer serves a read the new one cannot");
   }
@@ -46,7 +46,7 @@ public partial class ConcurrentIndexBuildTests {
     var outcome = await ConcurrentIndexBuild.EnsureAsync(conn, "public", failing, 120);
 
     await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Failed);
-    await Assert.That(await _validityAsync(conn, "idx_replace_probe_kept")).IsEqualTo(true)
+    await Assert.That(await _validityAsync(conn, "idx_replace_probe_kept")).IsTrue()
       .Because("until the new index can serve, the reads that used the old one still need it");
   }
 
@@ -60,7 +60,7 @@ public partial class ConcurrentIndexBuildTests {
 
     await _runStepAsync();
 
-    await Assert.That(await _validityAsync(conn, HELD_LANES_COVERING)).IsEqualTo(true);
+    await Assert.That(await _validityAsync(conn, HELD_LANES_COVERING)).IsTrue();
     await Assert.That(await _validityAsync(conn, HELD_LANES)).IsNull();
     await Assert.That(await _scalarAsync(conn, $"SELECT pg_get_indexdef('public.{HELD_LANES_COVERING}'::regclass)") as string)
       .Contains("chain_emitted_at");

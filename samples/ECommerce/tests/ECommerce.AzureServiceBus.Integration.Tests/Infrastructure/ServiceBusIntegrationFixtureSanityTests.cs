@@ -411,7 +411,6 @@ public class ServiceBusIntegrationFixtureSanityTests {
       Console.WriteLine("[SANITY-PROPAGATION] Perspective associations in inventory schema:");
       while (await reader3.ReadAsync()) {
         var messageType = reader3.GetString(0);
-        var associationType = reader3.GetString(1);
         var targetName = reader3.GetString(2);
         var serviceName = reader3.GetString(3);
         Console.WriteLine($"  {messageType} -> {targetName} ({serviceName})");
