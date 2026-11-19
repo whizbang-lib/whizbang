@@ -2,7 +2,7 @@
 
 Part of [storage-reclamation.md](storage-reclamation.md). Builds on [storage-event-slimming.md](storage-event-slimming.md)
 (superseding types, WS-2) and [storage-stream-end-of-life.md](storage-stream-end-of-life.md) (archive store and
-read-through, WS-3). Absorbs #1975 (event-level archive). Release: 1.0. Tracking: #2431. Status: approved plan, owner questions decided (2026-11-19).
+read-through, WS-3). Absorbs #1975 (event-level archive). Release: 1.0. Tracking: #2431. Status: revised after owner review (tiers, 2026-11-19); two open questions.
 
 ## Context
 
@@ -55,10 +55,14 @@ Two conclusions shape this plan:
 
 ## Goal
 
-Every event keeps its place in its stream forever, whatever happens to its content. Space is saved by changing where a
-body lives or how it is stored, never by removing the event. One mechanism, the body locator, serves superseding,
-archiving, erasure and sharing, and one read path resolves it, so projections, replay, rebuild and integrity never need
-to know how a body is stored.
+The database stops growing with history. Its size is bounded by the hot and warm windows plus one small summary per
+stream for everything older, not by the number of events ever written.
+
+Every event keeps its place in its stream, whatever happens to its content: while it is hot or warm its own envelope row
+holds that place; once it is cold, a segment summary holds it for the whole cold range. Space is saved by changing where
+a body lives or how it is stored, and then by moving whole old ranges out of the database, never by leaving a hole. One
+mechanism, the body locator, serves superseding, archiving, erasure and sharing, and one read path resolves it, so
+projections, replay, rebuild and integrity never need to know where an event is stored.
 
 ## Decisions (owner, 2026-11-19)
 
@@ -68,7 +72,11 @@ to know how a body is stored.
 4. **The developer overrides per type.** The evidence deployment's embedding types will be set to envelope-only (D).
 5. **Breaking change accepted.** Superseding is used by one consumer today, so its stored layout and defaults may
    change now.
-6. **Order of work:** Inline and Superseded first, then Layered, then Archived and Shredded, then stream-level archive as locators (added with question 5), then Shared.
+6. **Order of work:** Inline and Superseded first, then Layered, then Archived and Shredded (the warm tier), then the
+   cold tier, then Shared.
+7. **Archiving is tiered so the database does not keep growing** (owner, 2026-11-19, on review of this plan). Warm: the
+   envelope row stays and points at the archived body. Cold: past a second threshold the rows themselves leave the
+   database and only the archive holds the events. See Tiers.
 
 ## The model
 
@@ -88,6 +96,30 @@ the content is and how to rebuild it.
 | **Shared** | a content hash; one stored copy | the shared body |
 
 Every existing row starts as Inline, so introducing the locator rewrites nothing.
+
+### Tiers
+
+| Tier | Envelope row | Body | What stays in the database |
+| --- | --- | --- | --- |
+| **Hot** | kept | any locator (Inline, Layered, Superseded, Shared) | everything |
+| **Warm** | kept | Archived | the envelope and a pointer, a small fraction of the event (bodies average about 24.6 KB in the evidence deployment) |
+| **Cold** | removed | in the archive | one segment summary per stream covering the whole cold range |
+
+- **Warm** is entered after `WarmAfter` (age of the event). It is the Archived locator, so every read, replay and "as
+  of" query still finds the event at its position; only the body is fetched.
+- **Cold** is entered after `ColdAfter` (a longer age), for a **prefix** of the stream only: the cold range always runs
+  from the stream's first event up to a cold floor and never has a gap inside it, so the mid-stream-hole rules are not
+  needed. Each cycle extends the floor and merges into the stream's one segment summary, so a stream's cold history
+  costs one row however long it is.
+- **The segment summary** keeps what the database must still answer without the archive: stream, first and last
+  version, event count, first and last commit and origin positions, first and last timestamps, the range's digest
+  contribution and seal, and the archive objects that hold it.
+- **Gates for cold** are stricter than for warm. A range goes cold only when every consumer's cursor and every rewind
+  floor is above it (a snapshot exists above the floor, so a rebuild never needs to read below it), no hold is active,
+  and nothing hot or warm points into it (a Layered base is re-based first; a Superseded marker and its target go cold
+  together or not at all). These are the reference rules of Deletion and references, applied to rows.
+- **Cold needs an archive store.** Without one there is no cold tier; removing rows with nowhere to keep them is
+  destruction, which stays under the existing retention and destruction rules.
 
 ### Superseding layouts
 
@@ -129,6 +161,9 @@ integrity answers and redelivery.
   gives the same model). The replay context says it is a marker and names the event it stands in for; a perspective
   that cares can read that, and every other perspective needs no change. Opt-out per type: skip markers.
 - **Shredded:** a marker; a perspective that needs the content gets an erasure error naming the event.
+- **Cold:** a read, replay or "as of" query below the cold floor fetches the segment's archive objects, one per stream
+  range, and serves the events in order with their original versions and positions. A rebuild starts from a snapshot
+  above the floor and never needs it. The latency is documented.
 
 Other services always receive a full event over the transport. The locator is storage only, so each service stays
 self-reliant.
@@ -138,7 +173,9 @@ self-reliant.
 The digest covers the logical event, not its storage. A locator change (Inline to Archived, to Layered, to Superseded,
 to Shared) never changes a digest, a seal or an origin generation: physical storage is timing, and the digest follows
 eligibility only (cleanup and integrity decision 2, 2026-11-15). Superseding keeps counting the key's slot (#2364).
-Shredding is the one origin-decided change and propagates as it is designed to.
+Shredding is the one origin-decided change and propagates as it is designed to. Moving a range to cold does not change
+a digest either: the segment summary carries the range's digest contribution and seal, so integrity answers for a cold
+range without fetching it.
 
 ## Deletion and references
 
@@ -207,14 +244,21 @@ Each slice is one red/green increment and one pull request unless noted.
 - **RED tests.** A read of an archived body equals the original; a shredded event keeps its position and returns the
   erasure marker; erasing a base erases its layers.
 
-### S4. Stream-level archive as locators (#2437)
+### S4. The cold tier (#2437)
 
-- The whole-stream and prefix archive (WS-3) writes Archived locators and keeps the envelope rows, instead of deleting
-  them and filling the gap through the read-through decorator. Judged necessary: it leaves one read path and one
-  reference rule for every archived body, removes the mid-stream-hole rules, and keeps every position, version and
-  digest answerable without the archive. The decorator retires once nothing reads through it.
-- **RED tests.** An archived prefix keeps its envelopes and versions; a read of an archived body equals the original;
-  integrity answers for an archived range without fetching it.
+- **Warm and cold thresholds.** `WarmAfter` moves bodies to the archive (S3's Archived locator); `ColdAfter` moves a
+  stream's prefix out of the database into one segment summary. Both settable globally and per stream type.
+- **Segment summary.** One row per stream, extended and merged each cycle; carries versions, counts, positions,
+  timestamps, digest contribution, seal and archive object references.
+- **Gates.** Every cursor and rewind floor above the range, no hold, nothing hot or warm pointing into it; pointers are
+  re-based or moved with the range first.
+- **Read path.** Below the cold floor, reads fetch the segment's objects and serve the events in order.
+- **WS-3 folds in.** The existing whole-stream and prefix archive becomes the cold tier (a whole stream that ends is a
+  cold range covering all of it), and the read-through decorator is replaced by the resolver.
+- **RED tests.** A cold range answers integrity without the archive; a read below the floor returns the original events
+  at their original versions; a range with a cursor, a rewind floor, a hold or an inbound pointer does not go cold; the
+  stream's cold history stays one row however many cycles run; the database size stops growing under a steady write
+  load once the warm and cold windows are reached.
 
 ### S5. Shared (#2438)
 
@@ -230,6 +274,8 @@ Each slice is one red/green increment and one pull request unless noted.
 | `Whizbang:EventStore:Superseding:LayeredMaxChain` | 8 | diffs on one base before a re-base |
 | `Whizbang:EventStore:Superseding:Types:<Type>:MarkerReplay` | `Deliver` | `Deliver` replays a marker as the event it points at, with the marker context; `Skip` passes over it |
 | `Whizbang:EventStore:Superseding:WholesaleWarning` | `true` | warn at startup when a type's diffs stay above `LayeredMaxDiffRatio`; also settable per type |
+| `Whizbang:EventStore:Tiers:WarmAfter` | to decide (open question 1) | age after which a body moves to the archive; needs an archive store |
+| `Whizbang:EventStore:Tiers:ColdAfter` | to decide (open question 1) | age after which a stream's prefix leaves the database; needs an archive store; must exceed `WarmAfter` |
 
 Every key is bound, has a default, and appears on the configuration reference and the error reference pages.
 
@@ -240,4 +286,11 @@ Every key is bound, has a default, and appears on the configuration reference an
 3. **Marker replay.** A marker replays as the event it points at, even though that value then appears twice in the
    stream, and carries context saying it is a marker (Read path).
 4. **Existing data.** Convert the copies already queued (S1).
-5. **Stream-level archive.** Yes where necessary; judged necessary and planned as S4, ahead of Shared.
+5. **Stream-level archive.** Superseded by decision 7: the stream-level archive becomes the cold tier (S4).
+
+## Open questions
+
+1. **Default thresholds.** With an archive store configured, should warm and cold be on by default (for example
+   `WarmAfter` 30 days, `ColdAfter` 365 days), or off until an operator sets them?
+2. **After the archive's own retention.** When an archived range reaches the archive's retention end and is destroyed,
+   does the segment summary stay (the stream still answers "versions 1 to N existed and were destroyed"), or go too?
