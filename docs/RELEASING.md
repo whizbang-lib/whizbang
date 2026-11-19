@@ -951,6 +951,13 @@ success. CI always starts clean.
   `release-publish`) therefore **name every result they depend on**. Never collapse those back into
   an implicit gate: adding a status-check function to a plain `if` silently deletes the whole test
   gate.
+- **A job below one that has a status function needs one too.** GitHub skips a job when any job
+  upstream of it, however far back, was skipped, unless its own `if` has a status function. A job
+  carries one because something above it can be skipped, so every job below it inherits that skip:
+  v0.4457.0 published from the tested packages (which skips `repack-tested-build`) and its attach and
+  merge-back jobs skipped with it, leaving a draft release and no sync PR (#2443). Give such a job
+  `!cancelled()` and the result it depends on. `.github/scripts/tests/WorkflowSkippedNeeds.Tests.ps1`
+  fails on any workflow job that misses it.
 - **Address workflow runs by path, never by `.name`.** `ci.yml` sets a `run-name` (a `release/v*`
   push is a "release cut", a develop push "post-merge"), so no run is named plain "CI". Look runs up
   with `repos/$REPO/actions/workflows/ci.yml/runs?...`; filtering on `.name` silently matches
