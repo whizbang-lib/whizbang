@@ -1005,6 +1005,9 @@ framework in one job and names them (its `test-frameworks` output), and each tes
 (#2427): on a release build every suite leg, shards included, runs twice in parallel, as `Run suite (net10.0)` and
 `Run suite (net11.0)`, each with `scripts/Run-Tests.ps1 -Framework` and its artifacts (TRX, coverage, hang dumps)
 suffixed `-net10.0` or `-net11.0`. A development build has one leg per suite, named `Run suite` as it always was.
+The samples target `net11.0` alone on every branch (`samples/ECommerce/Directory.Build.props`): a `-Framework` leg skips
+a test project that does not target its framework, and a leg that selects only sample tests (InMemory, the Service
+Bus `ecommerce` shard) gets the samples' frameworks (`sample-test-frameworks`), so it runs `net11.0` alone.
 Without `-Framework`, `scripts/Run-Tests.ps1` runs every test module built for a targeted framework, the integration
 modules one at a time when there are two (their two copies share one broker and database server). `setup-dotnet-retry` installs
 the .NET 10 runtime beside the SDK whenever the build targets `net10.0`. A pull request into develop
