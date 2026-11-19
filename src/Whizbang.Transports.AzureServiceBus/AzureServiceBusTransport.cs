@@ -2197,7 +2197,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, endedSubscription);
     } catch (Exception ex) {
       _logger.LogError(ex,
-        "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
+        "Throttle pause/resume failed for {TopicName}/{SubscriptionName}; the receive-liveness watchdog is the backstop",
         destination.Address,
         _subscriptionOf(destination));
     } finally {
