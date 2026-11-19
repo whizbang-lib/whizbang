@@ -24,20 +24,81 @@ BeforeAll {
 }
 
 Describe 'Each test suite runs one leg per target framework (#2427)' {
-  It 'has Build · Compile name the frameworks the tests target' {
+  It 'has Build · Compile name the frameworks the tests and the sample tests target' {
     $build = Get-Content -LiteralPath (Join-Path $Workflows 'reusable-build.yml') -Raw
-    $build | Should -Match 'value: \$\{\{ jobs\.build\.outputs\.test-frameworks \}\}'
-    $build | Should -Match 'test-frameworks: \$\{\{ steps\.frameworks\.outputs\.test-frameworks \}\}'
-    $build | Should -Match '-getProperty:TargetFrameworks'
+    foreach ($output in 'test-frameworks', 'sample-test-frameworks') {
+      $build | Should -Match "value: \`$\{\{ jobs\.build\.outputs\.$output \}\}"
+      $build | Should -Match "$output\: \`$\{\{ steps\.frameworks\.outputs\.$output \}\}"
+    }
+    $build | Should -Match "Name = 'test-frameworks'; Props = 'Directory\.Build\.props'"
+    $build | Should -Match "Name = 'sample-test-frameworks'; Props = 'samples/ECommerce/Directory\.Build\.props'"
+    $build | Should -Match '-getProperty:TargetFramework -getProperty:TargetFrameworks'
   }
 
-  It 'passes those frameworks to every suite CI runs' {
-    $ci = Get-Content -LiteralPath (Join-Path $Workflows 'ci.yml') -Raw
-    $calls = [regex]::Matches($ci, '(?m)^    uses: \./\.github/workflows/(reusable-test-[a-z]+\.yml)\r?\n    with:\r?\n((?:      .*\r?\n)+)')
-    $calls.Count | Should -BeGreaterThan 0
-    foreach ($call in $calls) {
-      $call.Groups[2].Value | Should -Match '(?m)^      frameworks: \$\{\{ needs\.build\.outputs\.test-frameworks \}\}' -Because "$($call.Groups[1].Value) must run one leg per framework"
+  # sample-test-frameworks reads the samples' props, so it holds only while no sample test project names its own.
+  It 'leaves every sample test project''s frameworks to samples/ECommerce/Directory.Build.props' {
+    $samples = @(Get-ChildItem -LiteralPath (Join-Path $Root 'samples') -Recurse -Filter '*.csproj' |
+        Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -match '<WhizbangTestType>' })
+    $samples.Count | Should -BeGreaterThan 0
+    foreach ($project in $samples) {
+      $project.FullName | Should -BeLike "*$([IO.Path]::DirectorySeparatorChar)ECommerce$([IO.Path]::DirectorySeparatorChar)*"
+      Get-Content -LiteralPath $project.FullName -Raw | Should -Not -Match '<TargetFrameworks?>' -Because "$($project.Name) must target the samples' frameworks"
     }
+  }
+
+  # A leg's frameworks follow what it selects: only sample tests (which target the samples' frameworks alone, also in a
+  # release build), the samples' list; anything else, the build's. A sample-only leg given the build's list ran a
+  # net10.0 leg with nothing to test; one given the samples' list for library tests would drop net10.0 silently. The
+  # selection is worked out as Run-Tests.ps1 makes it: the suite's -Mode and -Tag, then the leg's project filter.
+  It 'passes every suite leg the frameworks of the projects it selects' {
+    $projects = @(Get-ChildItem -LiteralPath (Join-Path $Root 'tests'), (Join-Path $Root 'samples') -Recurse -Filter '*.csproj' |
+        ForEach-Object {
+          $text = Get-Content -LiteralPath $_.FullName -Raw
+          if ($text -match '<WhizbangTestType>\s*(\w+)\s*</WhizbangTestType>') {
+            $type = $Matches[1]
+            $tags = if ($text -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') { @($Matches[1] -split ';' | ForEach-Object Trim) } else { @() }
+            [pscustomobject]@{ Name = $_.BaseName; Type = $type; Tags = $tags; Sample = $_.FullName.StartsWith((Join-Path $Root 'samples')) }
+          }
+        })
+    # An expression as one leg sees it: a matrix.shard choice, matrix.projectFilter, a quoted literal, or itself.
+    function Resolve-LegValue([string]$Value, [hashtable]$Leg) {
+      $Value = ($Value -replace '\s+#.*$', '').Trim()
+      if ($Value -match '^\$\{\{\s*(.+?)\s*\}\}$') { $Value = $Matches[1] }
+      if ($Value -match "^matrix\.shard == '([^']+)' && (.+?) \|\| (.+)$") {
+        return Resolve-LegValue $(if ($Leg.shard -eq $Matches[1]) { $Matches[2] } else { $Matches[3] }) $Leg
+      }
+      if ($Value -eq 'matrix.projectFilter') { return $Leg.projectFilter }
+      if ($Value -match "^'(.*)'$") { return $Matches[1] }
+      $Value
+    }
+    $ci = Get-Content -LiteralPath (Join-Path $Workflows 'ci.yml') -Raw
+    $jobs = [regex]::Matches($ci, '(?ms)^  ([\w-]+):\r?\n(.*?)(?=^  [\w-]+:\r?\n|\z)')
+    $checked = 0
+    foreach ($job in $jobs) {
+      $body = $job.Groups[2].Value
+      if ($body -notmatch '(?m)^    uses: \./\.github/workflows/(reusable-test-[a-z]+\.yml)') { continue }
+      $workflow = Get-Content -LiteralPath (Join-Path $Workflows $Matches[1]) -Raw
+      $run = [regex]::Match($workflow, '(?m)^\s+run: pwsh scripts/Run-Tests\.ps1 .*$').Value
+      $mode = [regex]::Match($run, '-Mode (\w+)').Groups[1].Value
+      $tag = [regex]::Match($run, '-Tag (\w+)').Groups[1].Value
+      $frameworks = [regex]::Match($body, '(?m)^      frameworks: (.+?)\s*$').Groups[1].Value
+      $filter = [regex]::Match($body, '(?m)^      project-filter: (.+?)\s*$').Groups[1].Value
+      $legs = @([regex]::Matches($body, "(?m)^          - shard: (\S+)\r?\n            projectFilter: '([^']*)'") |
+          ForEach-Object { @{ shard = $_.Groups[1].Value; projectFilter = $_.Groups[2].Value } })
+      if ($legs.Count -eq 0 -and $body -match '(?m)^        shard: \[(.+)\]') { $legs = @($Matches[1] -split ',' | ForEach-Object { @{ shard = $_.Trim() } }) }
+      if ($legs.Count -eq 0) { $legs = @(@{ shard = '' }) }
+      foreach ($leg in $legs) {
+        $projectFilter = if ($filter) { Resolve-LegValue $filter $leg } else { '' }
+        $selected = @($projects | Where-Object {
+            $_.Type -eq $mode -and (-not $tag -or $_.Tags -contains $tag) -and (-not $projectFilter -or $_.Name -match $projectFilter) })
+        $what = "$($job.Groups[1].Value)$(if ($leg.shard) { " ($($leg.shard))" })"
+        $selected.Count | Should -BeGreaterThan 0 -Because "$what must select a test project"
+        $expected = if (@($selected | Where-Object { -not $_.Sample }).Count -eq 0) { 'needs.build.outputs.sample-test-frameworks' } else { 'needs.build.outputs.test-frameworks' }
+        Resolve-LegValue $frameworks $leg | Should -Be $expected -Because "$what selects $(($selected.Name) -join ', ')"
+        $checked++
+      }
+    }
+    $checked | Should -BeGreaterOrEqual 8
   }
 
   It 'counts a leg named for its framework among the suites Quality waits for' {
