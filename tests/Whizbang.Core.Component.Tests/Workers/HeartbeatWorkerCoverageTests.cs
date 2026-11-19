@@ -113,10 +113,10 @@ public class HeartbeatWorkerCoverageTests {
       .Because("a host stop is not an eviction: only a refused beat asks the instance to exit");
   }
 
-  // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the
+  // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79: `return;` in the
   // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. Without
   // this, a pod stopped while still waiting for the schema would fault its BackgroundService
-  // instead of exiting quietly — turning a routine fast restart into a logged crash.
+  // instead of exiting quietly, turning a routine fast restart into a logged crash.
   // Target: line 87 — the break in the the OperationCanceledException handler around
   // `_heartbeatOnceAsync` inside the main loop. A cancellation surfacing from the tick itself
   // (not necessarily stoppingToken) must end the loop immediately rather than being retried —

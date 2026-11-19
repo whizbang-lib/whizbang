@@ -400,8 +400,9 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task SweepCycle_AsksFromTheLookback_AndHealsOneSliceAsync() {
     var coordinator = new AuditCoordinator { SealedThrough = 9_000, CompareStart = 400 };
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", clock.GetUtcNow(), "origin-a.requests");
     var transport = new CaptureTransport();
     var options = new StreamIntegrityOptions {
       FullSweepEveryNthAudit = 1,
@@ -409,7 +410,7 @@ public class IntegrityAuditWorkerTests {
       SealRecheck = { Enabled = true },
       Sealing = { EpochWidth = 250 },
     };
-    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, options, tracker);
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, options, tracker, clock: clock);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 

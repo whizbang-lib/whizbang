@@ -612,7 +612,7 @@ public partial class PerspectiveWorker(
   private async Task _runAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
-    // EVERYTHING below touches the database — registry initialization, orphan-lifecycle
+    // EVERYTHING below touches the database: registry initialization, orphan-lifecycle
     // reconcile, rewind repair, the drain loop. The host starts this worker at Accept commands
     // (#1636), so none of it begins before migrations have completed and the instance's row
     // says it is eligible for work.

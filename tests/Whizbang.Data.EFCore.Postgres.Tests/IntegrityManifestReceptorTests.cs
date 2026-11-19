@@ -2194,7 +2194,7 @@ public partial class IntegrityManifestReceptorTests {
     }
   }
 
-  // ── #80-B: negotiated scope — the origin honors windowed asks ───────────
+  // ── #80-B: negotiated scope: the origin honors windowed asks ───────────
 
   [Test]
   public async Task RequestReceptor_WindowedTypesAsk_AnswersFromTheWindowedRead_WithTheWatermarkAsync() {
@@ -2220,7 +2220,7 @@ public partial class IntegrityManifestReceptorTests {
     });
 
     await Assert.That(coordinator.WindowedSinceSeen).IsEqualTo(400L)
-      .Because("the asker's watermark IS the window start — anything else re-ships verified history");
+      .Because("the asker's watermark IS the window start; anything else re-ships verified history");
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var manifest = _deserializeManifest(transport.Published[0].Envelope);
     await Assert.That(manifest.ComputedThrough).IsEqualTo(900L)
