@@ -17,6 +17,14 @@ on:
         description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
         required: false
+      frameworks:
+        description: >-
+          The target frameworks the build tested, as a JSON array (Build · Compile's test-frameworks). Each runs as its
+          own leg with Run-Tests.ps1 -Framework: net10.0 and net11.0 on a release build, net11.0 alone otherwise.
+          Empty: one leg testing every framework the build targets.
+        type: string
+        required: false
+        default: ''
 
 # The repository default is read-only; stated here so no job can silently gain more.
 permissions:
@@ -24,7 +32,15 @@ permissions:
 
 jobs:
   unit-tests:
-    name: Run suite
+    # One leg per framework (#2427). With more than one (a release build) each leg is named for its framework and
+    # suffixes its artifacts with it, so the legs never collide; one leg keeps the plain name and artifact names.
+    name: ${{ strategy.job-total > 1 && format('Run suite ({0})', matrix.framework) || 'Run suite' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ${{ fromJSON(inputs.frameworks || '[""]') }}
+    env:
+      FRAMEWORK_SUFFIX: ${{ strategy.job-total > 1 && format('-{0}', matrix.framework) || '' }}
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     timeout-minutes: 30
 
@@ -78,12 +94,12 @@ jobs:
       - name: Run Unit Tests (pre-built)
         if: inputs.artifact-name != ''
         shell: pwsh
-        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -Framework '${{ matrix.framework }}'
 
       - name: Run Unit Tests (built here)
         if: inputs.artifact-name == ''
         shell: pwsh
-        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -ModuleCoverage -Configuration Release -ReportTrx -HangDumpTimeout 10m
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -ModuleCoverage -Configuration Release -ReportTrx -HangDumpTimeout 10m -Framework '${{ matrix.framework }}'
 
       # A module with no test activity for the hang dump timeout above prints the tests still running, writes
       # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log to its TestResults (the process is
@@ -93,7 +109,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hangdump-unit-${{ github.run_attempt }}
+          name: hangdump-unit${{ env.FRAMEWORK_SUFFIX }}-${{ github.run_attempt }}
           path: |
             tests/**/TestResults/*_hang.dmp
             tests/**/TestResults/*_hang.log
@@ -106,7 +122,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: trx-unit
+          name: trx-unit${{ env.FRAMEWORK_SUFFIX }}
           path: |
             tests/**/TestResults/*.trx
             samples/**/TestResults/*.trx
@@ -133,7 +149,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-unit
+          name: coverage-unit${{ env.FRAMEWORK_SUFFIX }}
           path: |
             tests/**/TestResults/*.cobertura.xml
             samples/**/TestResults/*.cobertura.xml
