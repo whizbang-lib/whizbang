@@ -807,7 +807,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate Entries[] array alongside Sql const
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries");
+    await Assert.That(generatedSource).Contains("public static readonly global::System.Collections.Generic.KeyValuePair<string, string>[] Entries");
     await Assert.That(generatedSource).Contains("\"OrderPerspective\"");
     await Assert.That(generatedSource).Contains("CREATE TABLE");
   }
@@ -859,7 +859,7 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(generatedSource).Contains("\"CustomerPerspective\"");
 
     // Count entries - should be exactly 2
-    var entryCount = generatedSource.Split("new System.Collections.Generic.KeyValuePair<string, string>(\"").Length - 1;
+    var entryCount = generatedSource.Split("new global::System.Collections.Generic.KeyValuePair<string, string>(\"").Length - 1;
     await Assert.That(entryCount).IsEqualTo(2);
   }
 

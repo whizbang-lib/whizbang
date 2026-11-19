@@ -24,7 +24,7 @@ public static class WhizbangIdProviderRegistration {
   /// <item>Registers DI callback for AddWhizbangIdProviders() integration</item>
   /// </list>
   /// </remarks>
-  [System.Runtime.CompilerServices.ModuleInitializer]
+  [global::System.Runtime.CompilerServices.ModuleInitializer]
   public static void Initialize() {
     #region FACTORY_REGISTRATIONS
     // This region gets replaced with RegisterFactory calls for each WhizbangId type

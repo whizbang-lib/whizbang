@@ -1240,6 +1240,6 @@ public class AutoPopulateDiscoveryGeneratorTests {
     await Assert.That(populator).IsNotNull();
     await Assert.That(populator).Contains("(m.AccountId ?? _parseGuid(_extractUserId(hop)))");
     await Assert.That(populator).Contains(
-      "(m.TenantId == System.Guid.Empty ? (_parseGuid(_extractTenantId(hop)) ?? System.Guid.Empty) : m.TenantId)");
+      "(m.TenantId == global::System.Guid.Empty ? (_parseGuid(_extractTenantId(hop)) ?? global::System.Guid.Empty) : m.TenantId)");
   }
 }

@@ -42,7 +42,7 @@ public class WhizbangIdRegistrationGenerationTests {
     // Assert
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
-    await Assert.That(registrationSource).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(registrationSource).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(registrationSource).Contains("public static void Initialize()");
   }
 

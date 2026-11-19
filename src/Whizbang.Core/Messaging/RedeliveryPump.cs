@@ -226,6 +226,8 @@ public sealed class RedeliveryPump(
   /// <param name="target">Directed-message target, or null to broadcast.</param>
   /// <param name="originServiceId">This origin's service id.</param>
   /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
+  /// <param name="answersWholeType">True when the answer is to a request for a whole type (#2341); see
+  /// <see cref="BeginAnswer"/>.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of composites published.</returns>
   /// <docs>resilience/stream-integrity#an-answer-marks-only-what-it-covered</docs>
@@ -239,9 +241,10 @@ public sealed class RedeliveryPump(
       string? target,
       Guid originServiceId = default,
       bool stateOnly = false,
+      bool answersWholeType = false,
       CancellationToken cancellationToken = default) {
     // #2311: the whole answer is this one publish, so its last bundle says the answer ends there.
-    var answer = BeginAnswer(topic, target, originServiceId, stateOnly);
+    var answer = BeginAnswer(topic, target, answersWholeType, originServiceId, stateOnly);
     var published = await answer.PublishAsync(events, answeredWindow, cancellationToken).ConfigureAwait(false);
     return published + await answer.CompleteAsync(cancellationToken).ConfigureAwait(false);
   }
@@ -254,14 +257,18 @@ public sealed class RedeliveryPump(
   /// </summary>
   /// <param name="topic">Wire topic.</param>
   /// <param name="target">Directed-message target, or null to broadcast.</param>
+  /// <param name="answersWholeType">True when the request named no streams and no events, so the answer covers the
+  /// whole of each type it carries (#2341). Only such an answer can mark a type lane as one repair cannot change; it is
+  /// required so that no caller can leave it to a default.</param>
   /// <param name="originServiceId">This origin's service id.</param>
   /// <param name="stateOnly">True for the backfill (state-only) semantics.</param>
   /// <returns>The answer to publish into.</returns>
   /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.WholeAnswer.cs</tests>
-  public RedeliveryAnswerPublication BeginAnswer(string topic, string? target, Guid originServiceId = default, bool stateOnly = false) {
+  public RedeliveryAnswerPublication BeginAnswer(
+      string topic, string? target, bool answersWholeType, Guid originServiceId = default, bool stateOnly = false) {
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
-    return new RedeliveryAnswerPublication(this, topic, target, originServiceId, stateOnly);
+    return new RedeliveryAnswerPublication(this, topic, target, originServiceId, stateOnly, answersWholeType);
   }
 
   /// <summary>
@@ -298,7 +305,7 @@ public sealed class RedeliveryPump(
 
   /// <summary>
   /// Plans one publish's bundles. With a window, each bundle answers it and says more of the answer follows (#2311);
-  /// <see cref="LastOfAnswer"/> rebuilds the one that turns out to be the answer's last.
+  /// <see cref="AnswerBundle"/> builds each again as it is published, with its place in the answer (#2340).
   /// </summary>
   internal IReadOnlyList<CompositeEnvelopePlan<RedeliveryEvent>> PlanBundles(
       IReadOnlyList<RedeliveryEvent> events, string topic, string? target, Guid originServiceId,
@@ -327,22 +334,24 @@ public sealed class RedeliveryPump(
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
       BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId,
         _bundleStreamFor(batch.Constituents[0].Scope, originServiceId, topic, target),
-        answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds),
-        answerContinues: answeredWindow is not null),
+        answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds), part: null),
     });
   }
 
   /// <summary>
-  /// The answer's last bundle (#2311): <paramref name="plan"/>'s bundle built again, saying the answer ends with it.
+  /// One bundle of an answer as it is published (#2311, #2340): <paramref name="plan"/>'s bundle built again with its
+  /// place in the answer, which says whether the answer continues past it, and whether the answer is to a whole-type
+  /// request. The payloads the plan already parsed are reused, not parsed again.
   /// </summary>
-  internal RedeliveryComposite LastOfAnswer(
-      CompositeEnvelopePlan<RedeliveryEvent> plan, Guid originServiceId, RedeliveryAnswerWindow answeredWindow) {
+  internal RedeliveryComposite AnswerBundle(
+      CompositeEnvelopePlan<RedeliveryEvent> plan, Guid originServiceId, RedeliveryAnswerWindow answeredWindow,
+      RedeliveryAnswerPart part) {
     var planned = (RedeliveryComposite)plan.Composite;
     return _buildComposite(plan.Constituents, originServiceId, planned.StreamId, answeredWindow,
-      planned.AnsweredPartialStreamIds, answerContinues: false);
+      planned.AnsweredPartialStreamIds, part, planned.InnerPayloads);
   }
 
-  /// <summary>Publishes one planned bundle, as <paramref name="composite"/> (the plan's own, or its last-of-answer form).</summary>
+  /// <summary>Publishes one planned bundle, as <paramref name="composite"/> (the plan's own, or its form as a bundle of an answer).</summary>
   internal Task PublishBundleAsync(
       CompositeEnvelopePlan<RedeliveryEvent> plan, RedeliveryComposite composite, string topic, string? target,
       bool stateOnly, CancellationToken cancellationToken) =>
@@ -382,16 +391,9 @@ public sealed class RedeliveryPump(
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private RedeliveryComposite _buildComposite(
       IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, Guid? bundleStreamId,
-      RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams, bool answerContinues) {
-    // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
-    // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
-    // payload bytes that were emitted are the payload bytes that repair.
-    var innerPayloads = new List<System.Text.Json.JsonElement>(chunk.Count);
-    foreach (var evt in chunk) {
-      using var doc = System.Text.Json.JsonDocument.Parse(evt.EventData);
-      MessageParseDiagnostics.Record(evt.EventId, MessageParseSource.Redelivery, MessageParseKind.Payload);
-      innerPayloads.Add(doc.RootElement.Clone());
-    }
+      RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams, RedeliveryAnswerPart? part,
+      List<System.Text.Json.JsonElement>? parsedPayloads = null) {
+    var innerPayloads = parsedPayloads ?? _parsePayloads(chunk);
     return new RedeliveryComposite {
       StreamId = bundleStreamId ?? chunk[0].StreamId,
       InnerPayloads = innerPayloads,
@@ -412,9 +414,31 @@ public sealed class RedeliveryPump(
       AnsweredToCommitSequence = answeredWindow?.ToCommitSequence,
       // #2149: the streams this bundle carries only in part, whose buckets it must not mark.
       AnsweredPartialStreamIds = partialStreams,
-      // #2311: whether more bundles of this answer follow, so the receiver judges a whole-type answer as a whole.
-      AnswerContinues = answerContinues,
+      // #2311: whether more bundles of this answer follow, so the receiver judges a whole-type answer as a whole. A
+      // planned bundle (no place yet) is published only through an answer, which builds it again with its place.
+      AnswerContinues = part is { } placed ? placed.BundleCount is null : answeredWindow is not null,
+      // #2340: the answer and the bundle's place in it, so the receiver judges the answer once all of it is in.
+      AnswerId = part?.AnswerId,
+      AnswerBundleIndex = part?.BundleIndex ?? 0,
+      AnswerBundleCount = part?.BundleCount,
+      // #2341: only an answer to a whole-type request may mark a type lane.
+      AnswersWholeType = part?.WholeType ?? false,
     };
+  }
+
+  /// <summary>
+  /// RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed rehydration, no
+  /// polymorphic serialization, no type knowledge required at the origin: the payload bytes that were emitted are the
+  /// payload bytes that repair.
+  /// </summary>
+  private static List<System.Text.Json.JsonElement> _parsePayloads(IReadOnlyList<RedeliveryEvent> chunk) {
+    var innerPayloads = new List<System.Text.Json.JsonElement>(chunk.Count);
+    foreach (var evt in chunk) {
+      using var doc = System.Text.Json.JsonDocument.Parse(evt.EventData);
+      MessageParseDiagnostics.Record(evt.EventId, MessageParseSource.Redelivery, MessageParseKind.Payload);
+      innerPayloads.Add(doc.RootElement.Clone());
+    }
+    return innerPayloads;
   }
 
   private async Task _publishPlanAsync(

@@ -42,4 +42,12 @@ public readonly record struct RedeliveryAnswerWindow(long? FromCommitSequence, l
   /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-as-a-whole</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityTypeLaneAnswerSqlTests.WholeAnswer.cs</tests>
   public bool Continues { get; init; }
+
+  /// <summary>
+  /// Which answer the bundle belongs to and where in it, and whether that answer is to a whole-type request (#2340,
+  /// #2341). Null from an origin that predates the field, whose bundles are judged one at a time as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityTypeLaneAnswerSqlTests.AnswerParts.cs</tests>
+  public RedeliveryAnswerPart? Part { get; init; }
 }

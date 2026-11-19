@@ -1004,7 +1004,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static void _appendPhysicalFieldValuesDictionary(StringBuilder sb, PerspectiveInfo perspective) {
     sb.AppendLine("    // Extract physical field values from model (including vector fields)");
     sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
-    sb.AppendLine("    var physicalFieldValues = new System.Collections.Generic.Dictionary<string, object?>");
+    sb.AppendLine("    var physicalFieldValues = new global::System.Collections.Generic.Dictionary<string, object?>");
     sb.AppendLine("    {");
 
     for (int i = 0; i < perspective.PhysicalFields!.Length; i++) {
@@ -1034,19 +1034,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
     if (perspective.IsModelRecord) {
       var withProps = string.Join(", ", perspective.PhysicalFields!.Select(f =>
-        f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
+        f.IsVectorField ? $"{f.PropertyName} = global::System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
       sb.AppendLine($"    model = model with {{ {withProps} }};");
     } else if (perspective.ModelCopy is { Problem: null } copy) {
       // An init-only field cannot be assigned once the instance exists, so the document is written from a copy, and
       // the instance the runner applied keeps its fields for the snapshot taken after the write (issue #1002).
       var stripped = perspective.PhysicalFields!.ToDictionary(
-          f => f.PropertyName, f => f.IsVectorField ? "System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
+          f => f.PropertyName, f => f.IsVectorField ? "global::System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
       sb.AppendLine($"    model = {ModelCopy.Render(perspective.InterfaceTypeArguments[0], copy, "model", stripped)};");
     } else {
       // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
       foreach (var field in perspective.PhysicalFields!.Where(f => !f.IsInitOnly)) {
         if (field.IsVectorField) {
-          sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
+          sb.AppendLine($"    model.{field.PropertyName} = global::System.Array.Empty<float>();");
         } else {
           sb.AppendLine($"    model.{field.PropertyName} = default!;");
         }

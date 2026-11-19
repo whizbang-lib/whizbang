@@ -324,19 +324,22 @@ public class InMemoryEventStore : IEventStore {
       }
     }
 
+    /// <summary>
+    /// The events after <paramref name="afterEventId"/>'s position in the stream through <paramref name="upToEventId"/>'s,
+    /// in stream order, as the SQL stores read them (#2381): the batch a perspective just processed, whose cursor moves by
+    /// version. A checkpoint the stream does not hold has no position, and is compared by id; <see cref="Guid.Empty"/> as
+    /// the upper checkpoint is no bound.
+    /// </summary>
     public IEnumerable<IMessageEnvelope> ReadBetween(Guid? afterEventId, Guid upToEventId) {
       lock (_lock) {
-        // Guid.Empty means "no upper bound" - read all events
-        var query = upToEventId == Guid.Empty
-          ? _events.AsEnumerable()
-          : _events.Where(e => e.EventId.CompareTo(upToEventId) <= 0);
-
-        if (afterEventId != null) {
-          query = query.Where(e => e.EventId.CompareTo(afterEventId.Value) > 0);
-        }
-
-        return [.. query
-          .OrderBy(e => e.EventId)
+        var after = afterEventId is { } a ? _events.FirstOrDefault(e => e.EventId == a) : null;
+        var upTo = _events.FirstOrDefault(e => e.EventId == upToEventId);
+        return [.. _events
+          .Where(e => (afterEventId is null
+              || (after is not null ? e.Version > after.Version : e.EventId.CompareTo(afterEventId.Value) > 0))
+            && (upToEventId == Guid.Empty
+              || (upTo is not null ? e.Version <= upTo.Version : e.EventId.CompareTo(upToEventId) <= 0)))
+          .OrderBy(e => e.Version)
           .Select(e => e.Envelope)];
       }
     }

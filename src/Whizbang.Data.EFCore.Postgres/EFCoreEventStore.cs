@@ -598,6 +598,27 @@ public sealed class EFCoreEventStore<TDbContext>(
         || (!anchor.Any() && e.Id.CompareTo(fromEventId) > 0)));
   }
 
+  /// <summary>
+  /// The stream's events after <paramref name="afterEventId"/>'s position in it, through <paramref name="upToEventId"/>'s,
+  /// in stream order (#2381): the batch a perspective just processed, as its cursor and its replay count it. A checkpoint
+  /// the stream does not hold has no position in it and is compared by id, as <see cref="_afterInStream"/> does;
+  /// <see cref="Guid.Empty"/> as the upper checkpoint is no bound, and a null lower one reads from the stream's start.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs</tests>
+  private IQueryable<EventStoreRecord> _betweenInStream(Guid streamId, Guid? afterEventId, Guid upToEventId) {
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var query = afterEventId is { } after
+      ? _afterInStream(streamId, after)
+      : events.Where(e => e.StreamId == streamId);
+    if (upToEventId != Guid.Empty) {
+      var upTo = events.Where(a => a.StreamId == streamId && a.Id == upToEventId);
+      query = query.Where(e => e.Version <= upTo.Select(a => (int?)a.Version).FirstOrDefault()
+        || (!upTo.Any() && e.Id.CompareTo(upToEventId) <= 0));
+    }
+    return query.OrderBy(e => e.Version).ThenBy(e => e.Id);
+  }
+
   private async Task _readManyIntoAsync(
       IQueryable<EventStoreRecord> pointers, Dictionary<string, Type> typeMap, Dictionary<Guid, List<MessageEnvelope<IEvent>>> read,
       CancellationToken cancellationToken) {
@@ -655,8 +676,8 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
-  /// Gets events between two checkpoint positions (exclusive start, inclusive end).
-  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// Gets events between two checkpoint positions (exclusive start, inclusive end), by their positions in the stream and
+  /// in stream order (#2381). Used by lifecycle receptors to load events that were just processed by a perspective.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_WithEventsInRange_ReturnsEventsBetweenCheckpointsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
@@ -668,23 +689,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid upToEventId,
       CancellationToken cancellationToken = default) {
 
-    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
-    // Guid.Empty means "no upper bound" - read all events for the stream
-    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId);
-
-    // Apply upper bound only if upToEventId is not Guid.Empty
-    if (upToEventId != Guid.Empty) {
-      query = query.Where(e => e.Id <= upToEventId);
-    }
-
-    if (afterEventId != null) {
-      query = query.Where(e => e.Id > afterEventId.Value);
-    }
-
-    // Order by UUID v7 (time-ordered); body-aware projection
-    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
+    var records = await _bodyAwareRows(_betweenInStream(streamId, afterEventId, upToEventId))
       .ToListAsync(cancellationToken);
 
     // Deserialize to message envelopes
@@ -714,8 +719,10 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Gets events between two checkpoint positions, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// This is the polymorphic version of GetEventsBetweenAsync for perspectives that handle multiple event types.
-  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// Used by lifecycle receptors to load events that were just processed by a perspective, selected and ordered by their
+  /// positions in the stream (#2381).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:GetEventsBetweenPolymorphicAsync_AfterTheFirstEvent_WhoseIdIsTheHighest_ReadsThroughTheUpperVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
@@ -737,23 +744,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid upToEventId,
       IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken) {
-    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
-    // Guid.Empty means "no upper bound" - read all events for the stream
-    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId);
-
-    // Apply upper bound only if upToEventId is not Guid.Empty
-    if (upToEventId != Guid.Empty) {
-      query = query.Where(e => e.Id <= upToEventId);
-    }
-
-    if (afterEventId != null) {
-      query = query.Where(e => e.Id > afterEventId.Value);
-    }
-
-    // Order by UUID v7 (time-ordered); body-aware projection
-    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
+    var records = await _bodyAwareRows(_betweenInStream(streamId, afterEventId, upToEventId))
       .ToListAsync(cancellationToken);
 
     // Canonical normalized stored-EventType -> Type lookup, shared by every read path.

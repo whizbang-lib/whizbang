@@ -157,7 +157,7 @@ public sealed partial class RedeliveryRequestReceptor(
       RequestRedeliveryCommand message, Serve serve, CancellationToken cancellationToken) {
     // #2311: every selection publishes into one answer, whose last bundle says the answer ends with it.
     var tally = new OrdinaryTally {
-      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly),
+      Answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, _answersWholeType(message), serve.OriginServiceId, message.StateOnly),
     };
     if (message.EventIds is { Count: > 0 } named) {
       // #2103: the requester named the one event each stream is missing. Ship exactly those; a named stream whose event
@@ -286,7 +286,7 @@ public sealed partial class RedeliveryRequestReceptor(
     var composites = 0;
     var exhausted = false;
     // #2311: the window's pages publish into one answer, whose last bundle says the answer ends with it.
-    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, serve.OriginServiceId, message.StateOnly);
+    var answer = serve.Pump.BeginAnswer(message.Topic, message.RequesterService, _answersWholeType(message), serve.OriginServiceId, message.StateOnly);
     while (selected < serve.MaxEvents) {
       var want = Math.Min(serve.PageSize, serve.MaxEvents - selected);
       var page = await serve.Coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
@@ -338,6 +338,13 @@ public sealed partial class RedeliveryRequestReceptor(
     serve.Metrics?.RedeliveryEventsShipped.Add(shipped);
     LogWindowAnswered(logger, message.BackfillWindow, selected, composites, message.RequesterService, !exhausted);
   }
+
+  /// <summary>
+  /// #2341: the request named no streams and no events, so its answer covers the whole of each type it carries, and only
+  /// such an answer may mark a type lane as one repair cannot change.
+  /// </summary>
+  private static bool _answersWholeType(RequestRedeliveryCommand message) =>
+    message.StreamIds is not { Count: > 0 } && message.EventIds is not { Count: > 0 };
 
   private static List<RedeliveryEvent> _owned(IReadOnlyList<RedeliveryEvent> page, Serve serve) =>
     [.. page.Where(e => Whizbang.Core.Routing.OwnedNamespaceMatcher.IsLocalEventType(e.EventType, serve.OwnedDomains))];

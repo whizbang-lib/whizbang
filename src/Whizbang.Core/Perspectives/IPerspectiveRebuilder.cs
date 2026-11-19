@@ -177,6 +177,17 @@ public record RebuildResult(
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AMixedRun_SeparatesRewrittenAlreadyCorrectRefusedNoModelAndNoEventsAsync</tests>
   public int StreamsWithoutEvents { get; init; }
 
+  /// <summary>
+  /// How many streams failed to replay (#2376): the runner threw for the stream, or for a row folded from re-keyed
+  /// events. The rebuild carries on with the rest and keeps the streams that did rebuild, but a rebuild with any failed
+  /// stream reports <see cref="Success"/> false, with an <see cref="Error"/> naming how many failed and the first few
+  /// ids. Each failure is also logged with its exception.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildStreamsAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildInPlaceAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
+  public int StreamsFailed { get; init; }
+
 }
 
 /// <summary>

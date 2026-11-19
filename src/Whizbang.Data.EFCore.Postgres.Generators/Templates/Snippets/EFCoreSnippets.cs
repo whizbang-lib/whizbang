@@ -342,7 +342,7 @@ __PHYSICAL_FIELD_CONFIGS__
       var dbContextFactory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<__DBCONTEXT_FQN__>>();
       var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();
       var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();
-      var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {
+      var tableNames = new global::System.Collections.Generic.Dictionary<global::System.Type, string> {
         [typeof(__MODEL_TYPE__)] = "__TABLE_NAME__"
       };
       var lensFactory = new global::Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames, scopeContextAccessor, whizbangOptions);

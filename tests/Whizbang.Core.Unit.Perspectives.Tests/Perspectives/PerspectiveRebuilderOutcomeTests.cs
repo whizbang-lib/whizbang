@@ -229,7 +229,7 @@ public class PerspectiveRebuilderOutcomeTests {
       .Single(r => r.Level == LogLevel.Information && r.Message.StartsWith("Completed ", StringComparison.Ordinal));
     await Assert.That(completed.Message).Contains($"rebuild of perspective {PERSPECTIVE}: 2 streams in ");
     await Assert.That(completed.Message).EndsWith(
-      "ms (2 rewritten, 0 already correct, 0 write refused, 0 without a model, 0 without events)");
+      "ms (2 rewritten, 0 already correct, 0 write refused, 0 without a model, 0 without events, 0 failed)");
   }
 
   [Test]

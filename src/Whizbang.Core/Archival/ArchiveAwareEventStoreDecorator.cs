@@ -111,7 +111,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
       return live;
     }
     var archived = await _archivedTypedAsync<TMessage>(streamId, 0, _firstVersion(live), cancellationToken).ConfigureAwait(false);
-    return [.. archived.Where(e => _atOrBefore(e.MessageId.Value, upToEventId)), .. live];
+    return _throughUpper(archived, live, upToEventId);
   }
 
   /// <inheritdoc />
@@ -123,7 +123,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
       return live;
     }
     var archived = await _archivedAsync(streamId, 0, _firstVersion(live), eventTypes, cancellationToken).ConfigureAwait(false);
-    return [.. archived.Where(e => _atOrBefore(e.MessageId.Value, upToEventId)), .. live];
+    return _throughUpper(archived, live, upToEventId);
   }
 
   /// <inheritdoc />
@@ -206,8 +206,26 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
 
   private static long? _firstVersion<T>(List<MessageEnvelope<T>> live) => live.Count == 0 ? null : live[0].LocalStreamVersion;
 
-  // Guid.Empty is "no upper bound", as the store reads it.
-  private static bool _atOrBefore(Guid eventId, Guid upToEventId) => upToEventId == Guid.Empty || eventId.CompareTo(upToEventId) <= 0;
+  /// <summary>
+  /// A between read from the stream's start through <paramref name="upToEventId"/>, joined across the archive and the hot
+  /// store by the upper checkpoint's position in the stream (#2381), as the stores bound their own reads. Every archived
+  /// event precedes every hot one. A checkpoint the archive holds keeps the archived events through its version and none
+  /// of the hot ones; one the hot read returned keeps every archived event; one neither holds has no position and is
+  /// compared by id, the bound the read always had for one. <see cref="Guid.Empty"/> is no bound.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnArchivedEvent_KeepsTheArchivedEventsThroughItsVersion_WhateverTheirIdsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAHotEvent_KeepsEveryArchivedEvent_WhateverTheirIdsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnEventNeitherStoreHolds_KeepsTheArchivedEventsAtOrBeforeItsIdAsync</tests>
+  private static List<MessageEnvelope<T>> _throughUpper<T>(
+      List<MessageEnvelope<T>> archived, List<MessageEnvelope<T>> live, Guid upToEventId) {
+    if (upToEventId == Guid.Empty || live.Exists(e => e.MessageId.Value == upToEventId)) {
+      return [.. archived, .. live];
+    }
+    if (archived.Find(e => e.MessageId.Value == upToEventId) is { } anchor) {
+      return archived.FindAll(e => e.LocalStreamVersion <= anchor.LocalStreamVersion);
+    }
+    return [.. archived.Where(e => e.MessageId.Value.CompareTo(upToEventId) <= 0), .. live];
+  }
 
   private async Task<List<MessageEnvelope<TMessage>>> _archivedTypedAsync<TMessage>(
       Guid streamId, long fromVersion, long? beforeVersion, CancellationToken cancellationToken) {

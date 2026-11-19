@@ -99,6 +99,53 @@ public class EventStoreReadAfterVersionTests : EFCoreTestBase {
       .Because("a batch with no anchor reads each stream from its start");
   }
 
+  // ── The between-checkpoint reads (#2381): the events lifecycle receptors are handed for a perspective's batch ──────
+
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_AfterTheFirstEvent_WhoseIdIsTheHighest_ReadsThroughTheUpperVersionAsync() {
+    await using var context = CreateDbContext();
+    IEventStore store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var stream = (Guid)TrackedGuid.New();
+    var ids = await _appendHighestIdFirstAsync(store, stream, offsetSeconds: 0);
+
+    var read = await store.GetEventsBetweenPolymorphicAsync(stream, ids[0], ids[2], _types);
+
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo([ids[1], ids[2]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the batch after version 1 through version 3 is versions 2 and 3, whatever their ids");
+  }
+
+  [Test]
+  public async Task GetEventsBetweenAsync_FromTheStartThroughVersionTwo_ReadsVersionsOneAndTwoInStreamOrderAsync() {
+    await using var context = CreateDbContext();
+    IEventStore store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var stream = (Guid)TrackedGuid.New();
+    var ids = await _appendHighestIdFirstAsync(store, stream, offsetSeconds: 0);
+
+    var read = await store.GetEventsBetweenAsync<OrderCreatedEvent>(stream, null, ids[1]);
+
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo([ids[0], ids[1]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the events through version 2 are versions 1 and 2, not the events whose ids sort at or below it");
+  }
+
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_BetweenEventsTheStreamDoesNotHold_SelectsByTheirIdsAsync() {
+    await using var context = CreateDbContext();
+    IEventStore store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var stream = (Guid)TrackedGuid.New();
+    var ids = await _appendHighestIdFirstAsync(store, stream, offsetSeconds: 0);
+    // Ids between version 2's and version 3's, and between version 3's and version 1's, held by no stream.
+    var unheldLow = Guid.CreateVersion7(_minted.AddMilliseconds(500));
+    var unheldHigh = Guid.CreateVersion7(_minted.AddSeconds(3));
+
+    var after = await store.GetEventsBetweenPolymorphicAsync(stream, unheldLow, Guid.Empty, _types);
+    var through = await store.GetEventsBetweenPolymorphicAsync(stream, null, unheldHigh, _types);
+
+    await Assert.That(after.Select(e => e.MessageId.Value)).IsEquivalentTo([ids[0], ids[2]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a lower checkpoint with no position in the stream keeps the id selection, read in stream order");
+    await Assert.That(through.Select(e => e.MessageId.Value)).IsEquivalentTo([ids[1], ids[2]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("an upper checkpoint with no position in the stream keeps the id selection, read in stream order");
+  }
+
   /// <summary>Appends three events: version 1 with the highest id, version 2 the lowest, version 3 between.</summary>
   private static async Task<Guid[]> _appendHighestIdFirstAsync(IEventStore store, Guid stream, int offsetSeconds) {
     var minted = _minted.AddSeconds(offsetSeconds);

@@ -96,12 +96,12 @@ public class __EVENT_TYPE__ { }
 /// <summary>
 /// Placeholder delegate for async receptor invocation.
 /// </summary>
-public delegate System.Threading.Tasks.ValueTask<TResult> ReceptorInvoker<TResult>(object message);
+public delegate global::System.Threading.Tasks.ValueTask<TResult> ReceptorInvoker<TResult>(object message);
 
 /// <summary>
 /// Placeholder delegate for void async receptor invocation.
 /// </summary>
-public delegate System.Threading.Tasks.ValueTask VoidReceptorInvoker(object message);
+public delegate global::System.Threading.Tasks.ValueTask VoidReceptorInvoker(object message);
 
 /// <summary>
 /// Placeholder delegate for sync receptor invocation.
@@ -116,7 +116,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// <summary>
 /// Placeholder delegate for event publishing.
 /// </summary>
-public delegate System.Threading.Tasks.Task ReceptorPublisher<TEvent>(TEvent @event);
+public delegate global::System.Threading.Tasks.Task ReceptorPublisher<TEvent>(TEvent @event);
 
 /// <summary>
 /// Placeholder for lifecycle stage enum.

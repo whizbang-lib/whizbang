@@ -52,7 +52,7 @@ public partial class RedeliveryPumpWindowTests {
     var pump = new RedeliveryPump(transport, serializer, _instance(), new CompositeFactory(),
       new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 1 });
     var (a, b, c) = (TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value);
-    var answer = pump.BeginAnswer("inbox.whizbang.service.billing", "billing", TrackedGuid.New().Value);
+    var answer = pump.BeginAnswer("inbox.whizbang.service.billing", "billing", answersWholeType: true, TrackedGuid.New().Value);
 
     var firstCall = await answer.PublishAsync([_evt(a, 1, 10), _evt(b, 1, 11)], new RedeliveryAnswerWindow(9, 20));
     var sentAfterTheFirst = serializer.Composites.Count;
@@ -83,7 +83,7 @@ public partial class RedeliveryPumpWindowTests {
   public async Task BeginAnswer_ThatPublishesNothing_EndsWithoutABundleAsync() {
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(new CaptureTransport(), serializer, _instance(), new CompositeFactory());
-    var answer = pump.BeginAnswer("t", target: null);
+    var answer = pump.BeginAnswer("t", target: null, answersWholeType: true);
 
     var published = await answer.PublishAsync([], new RedeliveryAnswerWindow(null, null));
     var completed = await answer.CompleteAsync();
@@ -96,8 +96,8 @@ public partial class RedeliveryPumpWindowTests {
   public async Task BeginAnswer_RefusesAMissingTopic_AndAPublishOfNoListAsync() {
     var pump = new RedeliveryPump(new CaptureTransport(), new CaptureSerializer(), _instance(), new CompositeFactory());
 
-    await Assert.That(() => pump.BeginAnswer(" ", "billing")).Throws<ArgumentException>();
-    await Assert.That(async () => await pump.BeginAnswer("t", "billing").PublishAsync(null!, new RedeliveryAnswerWindow(null, null)))
+    await Assert.That(() => pump.BeginAnswer(" ", "billing", answersWholeType: true)).Throws<ArgumentException>();
+    await Assert.That(async () => await pump.BeginAnswer("t", "billing", answersWholeType: true).PublishAsync(null!, new RedeliveryAnswerWindow(null, null)))
       .Throws<ArgumentNullException>();
   }
 }

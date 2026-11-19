@@ -750,20 +750,20 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).Contains(".HasColumnType(\"real\")");
     await Assert.That(generated).Contains("entity.Property<bool>(\"active\")");
     await Assert.That(generated).Contains(".HasColumnType(\"boolean\")");
-    await Assert.That(generated).Contains("entity.Property<System.Guid>(\"external_id\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.Guid>(\"external_id\")");
     await Assert.That(generated).Contains(".HasColumnType(\"uuid\")");
 
     // Nullability preserved on the shadow property; column type still uuid
-    await Assert.That(generated).Contains("entity.Property<System.Guid?>(\"optional_ref\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.Guid?>(\"optional_ref\")");
 
-    await Assert.That(generated).Contains("entity.Property<System.DateTime>(\"local_stamp\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.DateTime>(\"local_stamp\")");
     await Assert.That(generated).DoesNotContain(".HasColumnType(\"timestamp\")")
       .Because("a DateTime column is timestamptz in the table, and the model describes the same column.");
-    await Assert.That(generated).Contains("entity.Property<System.DateTimeOffset>(\"recorded_at\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.DateTimeOffset>(\"recorded_at\")");
     await Assert.That(generated).Contains(".HasColumnType(\"timestamptz\")");
-    await Assert.That(generated).Contains("entity.Property<System.DateOnly>(\"day\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.DateOnly>(\"day\")");
     await Assert.That(generated).Contains(".HasColumnType(\"date\")");
-    await Assert.That(generated).Contains("entity.Property<System.TimeOnly>(\"time_of_day\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.TimeOnly>(\"time_of_day\")");
     await Assert.That(generated).Contains(".HasColumnType(\"time\")");
 
     // char has no dedicated mapping - falls back to text
@@ -810,7 +810,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
     await Assert.That(generated).IsNotNull();
 
-    await Assert.That(generated).Contains("entity.Property<Pgvector.Vector?>(\"embedding_vec\")");
+    await Assert.That(generated).Contains("entity.Property<global::Pgvector.Vector?>(\"embedding_vec\")");
     await Assert.That(generated).Contains(".HasColumnType(\"vector(768)\")");
     await Assert.That(generated).Contains(".HasDatabaseName(\"ix_wh_per_document_embedding_vec_vec\")");
     await Assert.That(generated).Contains(".HasMethod(\"hnsw\")");
@@ -852,7 +852,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
     await Assert.That(generated).IsNotNull();
 
-    await Assert.That(generated).Contains("entity.Property<Pgvector.Vector?>(\"embedding\")");
+    await Assert.That(generated).Contains("entity.Property<global::Pgvector.Vector?>(\"embedding\")");
     await Assert.That(generated).Contains(".HasColumnType(\"vector(384)\")");
     await Assert.That(generated).Contains(".HasMethod(\"ivfflat\")");
     await Assert.That(generated).Contains(".HasOperators(\"vector_ip_ops\")");
@@ -1044,7 +1044,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).IsNotNull();
 
     await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER);
-    await Assert.That(generated).Contains("entity.Property<System.String>(\"payment_kind\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.String>(\"payment_kind\")");
     await Assert.That(generated).Contains(".HasColumnType(\"text\")");
     await Assert.That(generated).Contains(".HasDatabaseName(\"ix_wh_per_order_payment_kind\")");
 
@@ -1090,7 +1090,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     // Assert
     var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated).Contains("entity.Property<System.String>(\"ptype\")");
+    await Assert.That(generated).Contains("entity.Property<global::System.String>(\"ptype\")");
     await Assert.That(generated).Contains(".HasDatabaseName(\"ix_wh_per_invoice_ptype\")");
     await Assert.That(generated).DoesNotContain("payment_kind");
   }

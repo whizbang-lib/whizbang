@@ -381,7 +381,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       .SelectMany(p => p.PhysicalFields.Where(f => f.IsVector).Select(f => _csharpString($"{p.TableName}.{f.ColumnName}")))
       .Distinct(StringComparer.Ordinal)
       .ToList();
-    return columns.Count == 0 ? "System.Array.Empty<string>()" : $"new string[] {{ {string.Join(", ", columns)} }}";
+    return columns.Count == 0 ? "global::System.Array.Empty<string>()" : $"new string[] {{ {string.Join(", ", columns)} }}";
   }
 
   /// <summary>
@@ -1470,7 +1470,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          global::Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);");
       sb.AppendLine($"          var factory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
       sb.AppendLine("          var context = factory.CreateDbContext();");
-      sb.AppendLine("          var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {");
+      sb.AppendLine("          var tableNames = new global::System.Collections.Generic.Dictionary<global::System.Type, string> {");
 
       for (int i = 0; i < query.ModelTypeNames.Length; i++) {
         var modelType = query.ModelTypeNames[i];
@@ -2313,7 +2313,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // Mirrors the same emit in the DbContextRegistrationRegistry callback so both");
       sb.AppendLine("    // wiring paths land at the SAME key. Guarded so an explicit");
       sb.AppendLine("    // Whizbang:Database:ConnectionStringKey in appsettings still wins.");
-      sb.AppendLine("    services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<System.IServiceProvider>((opts, sp) => {");
+      sb.AppendLine("    services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<global::System.IServiceProvider>((opts, sp) => {");
       sb.AppendLine("      if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
       sb.AppendLine("        opts.ConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
       sb.AppendLine("          sp.GetService<IConfiguration>(), connectionStringKey, legacyConnectionStringKey);");
@@ -2465,7 +2465,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      // the class-name convention), and notifications silently fall back to the pooled");
     sb.AppendLine("      // (pgbouncer) connection. Guarded so an explicit Whizbang:Database:ConnectionStringKey");
     sb.AppendLine("      // in appsettings still wins.");
-    sb.AppendLine("      services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<System.IServiceProvider>((opts, sp) => {");
+    sb.AppendLine("      services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<global::System.IServiceProvider>((opts, sp) => {");
     sb.AppendLine("        if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
     sb.AppendLine("          opts.ConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
     sb.AppendLine("            sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), connectionStringKey, legacyConnectionStringKey);");

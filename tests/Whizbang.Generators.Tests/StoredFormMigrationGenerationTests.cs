@@ -215,7 +215,7 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(code.IndexOf("StoredFormMigrationSql.ForPhase(", StringComparison.Ordinal))
       .IsLessThan(code.IndexOf("CanonicalTemporalRewrite.ForModel(", StringComparison.Ordinal))
       .Because("A value a rename moves is then converted to the canonical temporal form in the same pass.");
-    await Assert.That(code).Contains("public static async Task<System.Collections.Generic.IReadOnlyList<global::Whizbang.Data.Postgres.StoredFormMigrationStatus>> GetStoredFormMigrationStatusAsync(");
+    await Assert.That(code).Contains("public static async Task<global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Data.Postgres.StoredFormMigrationStatus>> GetStoredFormMigrationStatusAsync(");
   }
 
   [Test]
