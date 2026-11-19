@@ -267,7 +267,7 @@ public class OrphanInboxJanitorTests {
   /// <summary>
   /// The old shape ran the purge inline  /// <summary>
   /// The old shape ran the purge inline in <c>StartAsync</c>, so every later hosted service
-  /// waited on it. StartAsync must now return without purging — the sweep is background work.
+  /// waited on it. StartAsync must now return without purging; the sweep is background work.
   /// </summary>
   [Test]
   public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {

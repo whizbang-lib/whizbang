@@ -148,6 +148,19 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
   private static string _uniqueService(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
 
+  /// <summary>
+  /// The message ids on <paramref name="dlqName"/>, read without taking them: every message is fetched unacked and the
+  /// channel is closed, which returns them all to the queue.
+  /// </summary>
+  private async Task<List<string?>> _deadLetteredMessageIdsAsync(string dlqName, CancellationToken ct) {
+    var ids = new List<string?>();
+    await using var channel = await _connection!.CreateChannelAsync(cancellationToken: ct);
+    while (await channel.BasicGetAsync(dlqName, autoAck: false, ct) is { } result) {
+      ids.Add(result.BasicProperties.MessageId);
+    }
+    return ids;
+  }
+
   // ---------- §routing & delivery ----------
 
   [Test]
@@ -334,11 +347,15 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       await Assert.That(stored.Single(r => r.MessageId == sentinelWork.MessageId).DiscardedOnReceive).IsNull()
         .Because("the sentinel is this service's only work");
 
-      // Stored, then acked at the broker: NOT dead-lettered.
-      await using var probeChannel = await _connection!.CreateChannelAsync(cancellationToken: ct);
-      var dlqDepth = await probeChannel.MessageCountAsync($"{handlerService}-{ORDERS_ENTITY}.dlq", ct);
-      await Assert.That(dlqDepth).IsEqualTo(0u)
+      // Stored, then acked at the broker: NOT dead-lettered. The DLQ is read for THIS message rather than counted: the
+      // dead-letter exchange ({exchange}.dlx) is a fanout every subscriber's DLQ on the orders exchange is bound to, so
+      // a message dead-lettered from ANOTHER queue on it (the DLQ test in the other target framework's process, on the
+      // same shared broker) is copied into this queue's DLQ too (#2417).
+      var deadLettered = await _deadLetteredMessageIdsAsync($"{handlerService}-{ORDERS_ENTITY}.dlq", ct);
+      await Assert.That(deadLettered).DoesNotContain(misdelivered.MessageId.ToString())
         .Because("a mis-delivery is stored and skipped, not poison");
+      await Assert.That(deadLettered).DoesNotContain(sentinelWork.MessageId.ToString())
+        .Because("the sentinel is this service's work, stored and acked");
     } finally {
       await worker.StopAsync(CancellationToken.None);
       worker.Dispose();

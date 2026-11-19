@@ -259,6 +259,30 @@ Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
   }
 }
 
+# A release build tests net10.0 and net11.0. An integration test module of each framework shares one broker and one
+# database server with the other's, so two run at once read each other's dead letters and contend for the server.
+Describe 'Get-TestModuleParallelism' {
+  BeforeAll {
+    Import-Module (Join-Path $Root 'scripts' 'lib' 'TestModuleParallelism.psm1') -Force
+  }
+
+  It 'runs one module at a time in a <Mode> run on net10.0 and net11.0' -ForEach @(
+    @{ Mode = 'Integration' }, @{ Mode = 'AiIntegrations' }) {
+    Get-TestModuleParallelism -Mode $Mode -Frameworks @('net10.0', 'net11.0') -Requested 0 -ProcessorCount 8 | Should -Be 1
+  }
+
+  It 'gives a <Mode> run on <Frameworks> the processor count' -ForEach @(
+    @{ Mode = 'Integration'; Frameworks = @('net11.0') }
+    @{ Mode = 'Unit'; Frameworks = @('net10.0', 'net11.0') }
+    @{ Mode = 'Component'; Frameworks = @('net10.0', 'net11.0') }) {
+    Get-TestModuleParallelism -Mode $Mode -Frameworks $Frameworks -Requested 0 -ProcessorCount 8 | Should -Be 8
+  }
+
+  It 'keeps a parallelism the caller asked for, on any frameworks' {
+    Get-TestModuleParallelism -Mode 'Integration' -Frameworks @('net10.0', 'net11.0') -Requested 4 -ProcessorCount 8 | Should -Be 4
+  }
+}
+
 Describe 'Run-Tests.ps1 builds the configuration it runs (#2244)' -Skip:$NoPosixShell {
   BeforeAll {
     $script:Passing = @'

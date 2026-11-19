@@ -12,7 +12,7 @@ namespace Whizbang.Data.Postgres;
 /// <summary>
 /// Handles <see cref="RebuildPerspectiveCommand"/> through <see cref="PerspectiveRebuildRequestHandler"/>, the rebuild
 /// handling the integrity audit's auto-repair also runs (#2344), which invokes <see cref="IPerspectiveRebuilder"/>
-/// for each requested perspective. Without this receptor the command is defined but has no effect —
+/// for each requested perspective. Without this receptor the command is defined but has no effect;
 /// the rebuilder is never called, projections are not rebuilt, and <c>wh_perspective_cursors</c>
 /// never updates. This is the missing turnkey piece between the system command and the rebuilder. Lives in the shared
 /// Postgres assembly, not <c>Whizbang.Core</c> (a receptor there would make the receptor-discovery generator emit
@@ -33,7 +33,7 @@ namespace Whizbang.Data.Postgres;
 /// (BlueGreen or InPlace) runs.
 /// </para>
 /// <para>
-/// <strong>Unsupported fields:</strong> <c>FromEventId</c> is logged as a warning and ignored —
+/// <strong>Unsupported fields:</strong> <c>FromEventId</c> is logged as a warning and ignored;
 /// <see cref="IPerspectiveRebuilder"/> has no partial-range replay API. Adding it is tracked as
 /// a follow-up.
 /// </para>

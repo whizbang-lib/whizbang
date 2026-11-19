@@ -118,8 +118,14 @@ public class DataOnlyRoleE2ETests {
     } catch (TimeoutException ex) {
       var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
         .Select(s => $"{s.Name}={s.Status}/{s.Outcome}: {s.Reason}") ?? [];
+      // #2419: the Migrate step spans the startup stages Preflight to Coordinate; the stage and its message say which
+      // of them a hang is in, which the step alone does not.
+      var stage = host?.Services.GetService<IStartupStageReporter>()?.Current is { } current
+        ? $"{current.Stage}: {current.Message}"
+        : "none reported";
       throw new TimeoutException(
-        $"Phase '{phase}' did not finish within {limit.TotalSeconds}s. Startup steps: [{string.Join("; ", steps)}]. "
+        $"Phase '{phase}' did not finish within {limit.TotalSeconds}s. Startup stage: [{stage}]. "
+        + $"Startup steps: [{string.Join("; ", steps)}]. "
         + $"Errors logged: [{string.Join(" | ", errors?.Entries ?? [])}]", ex);
     }
   }
