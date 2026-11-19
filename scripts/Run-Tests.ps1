@@ -72,10 +72,11 @@
 .PARAMETER HangDumpTimeout
     Gives every test module the testing platform's hang dump (--hangdump --hangdump-timeout): after this long
     with no test activity a module writes a dump (dotnet_<pid>_hang.dmp, with the test list in
-    dotnet_<pid>_hang.log, in its TestResults), names the tests still running, and is killed, so a hang fails
+    dotnet_<pid>_hang.log, in TestResults under the repository root, where `dotnet test` runs since Testing
+    Platform 2.5), names the tests still running, and is killed, so a hang fails
     the run instead of holding it until a job limit cancels it (#2402). A whole number with s, m or h, e.g. 10m.
     Empty (the default) takes no dump. Every test project references Microsoft.Testing.Extensions.HangDump
-    through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 does
+    through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 and later do
     (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
 
 .PARAMETER Cleanup

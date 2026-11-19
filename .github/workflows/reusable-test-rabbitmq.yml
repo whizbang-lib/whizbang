@@ -104,8 +104,10 @@ jobs:
         run: ./.github/scripts/Test-CiImagePulls.ps1
 
       # A module with no test activity for the hang dump timeout above prints the tests still running, writes
-      # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log to its TestResults (the process is
-      # `dotnet` under `dotnet test`) and is killed, so the run fails with time left to upload them (#2402).
+      # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log (the process is `dotnet` under
+      # `dotnet test`) and is killed, so the run fails with time left to upload them (#2402).
+      # Since Testing Platform 2.5 they land in TestResults under `dotnet test`'s working directory, which
+      # Run-Tests.ps1 sets to the repository root; the module globs cover a module run on its own.
       # Canceled too: a dump taken just before the job limit is still kept.
       - name: Upload hang dumps
         if: failure() || cancelled()
@@ -113,6 +115,8 @@ jobs:
         with:
           name: hangdump-rabbitmq${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}-${{ github.run_attempt }}
           path: |
+            TestResults/*_hang.dmp
+            TestResults/*_hang.log
             tests/**/TestResults/*_hang.dmp
             tests/**/TestResults/*_hang.log
             samples/**/TestResults/*_hang.dmp

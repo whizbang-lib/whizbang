@@ -123,7 +123,7 @@ public class IntegrityTracingTests {
     await Assert.That(span).IsNotNull();
     await Assert.That(span!.OperationName).IsEqualTo(IntegrityTracing.SPAN_REPAIR);
     await Assert.That(span.Kind).IsEqualTo(ActivityKind.Consumer);
-    await Assert.That(span.ParentSpanId).IsEqualTo(default(ActivitySpanId))
+    await Assert.That(span.ParentSpanId).IsEqualTo(default)
       .Because("a bad link from an older or foreign sender never fails the repair; the span is a root");
   }
 

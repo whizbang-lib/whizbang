@@ -110,11 +110,11 @@ public class CanonicalTemporalReaderToleranceTests {
   /// <summary>An empty rendering is the default value, as the transport reader has always read it.</summary>
   [Test]
   public async Task AnEmptyRenderingIsTheDefaultAsync() {
-    await Assert.That(_read(new CanonicalTemporalJsonConverters.InstantConverter(), "\"\"")).IsEqualTo(default(DateTime));
-    await Assert.That(_read(new CanonicalTemporalJsonConverters.OffsetInstantConverter(), "\"\"")).IsEqualTo(default(DateTimeOffset));
-    await Assert.That(_read(new CanonicalTemporalJsonConverters.DayConverter(), "\"\"")).IsEqualTo(default(DateOnly));
-    await Assert.That(_read(new CanonicalTemporalJsonConverters.TimeOfDayConverter(), "\"\"")).IsEqualTo(default(TimeOnly));
-    await Assert.That(_read(new CanonicalTemporalJsonConverters.DurationConverter(), "\"\"")).IsEqualTo(default(TimeSpan));
+    await Assert.That(_read(new CanonicalTemporalJsonConverters.InstantConverter(), "\"\"")).IsEqualTo(default);
+    await Assert.That(_read(new CanonicalTemporalJsonConverters.OffsetInstantConverter(), "\"\"")).IsEqualTo(default);
+    await Assert.That(_read(new CanonicalTemporalJsonConverters.DayConverter(), "\"\"")).IsEqualTo(default);
+    await Assert.That(_read(new CanonicalTemporalJsonConverters.TimeOfDayConverter(), "\"\"")).IsEqualTo(default);
+    await Assert.That(_read(new CanonicalTemporalJsonConverters.DurationConverter(), "\"\"")).IsEqualTo(default);
   }
 
   /// <summary>A rendering that is not one is refused, and the message says what was found.</summary>

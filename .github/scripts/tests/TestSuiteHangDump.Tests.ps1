@@ -85,7 +85,7 @@ Describe 'Every test suite takes a hang dump (#2402)' {
       $upload[0].If | Should -Match 'failure\(\)'
       $upload[0].If | Should -Match 'cancelled\(\)' # review-checks:allow (GitHub expression function name)
       $text = $upload[0].Text -join "`n"
-      foreach ($glob in 'tests/**/TestResults/*_hang.dmp', 'tests/**/TestResults/*_hang.log', 'samples/**/TestResults/*_hang.dmp', 'samples/**/TestResults/*_hang.log') {
+      foreach ($glob in 'TestResults/*_hang.dmp', 'TestResults/*_hang.log', 'tests/**/TestResults/*_hang.dmp', 'tests/**/TestResults/*_hang.log', 'samples/**/TestResults/*_hang.dmp', 'samples/**/TestResults/*_hang.log') {
         $text | Should -Match ([regex]::Escape($glob))
       }
       $upload[0].Index | Should -BeGreaterThan ($Runs | Measure-Object -Property Index -Maximum).Maximum
@@ -106,7 +106,10 @@ Describe 'The hang dump fires under dotnet test (#2402)' {
     $build = & dotnet build (Join-Path $shapes 'HangRunner' 'HangRunner.csproj') -c Release "-p:ShapesOut=$Out/" -nologo -v q 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Building shapes/HangRunner failed:`n$($build -join "`n")" }
     $module = Join-Path 'bin' 'HangRunner' 'Release' 'net11.0' 'HangRunner.dll'
-    $script:Results = Join-Path $Out 'bin' 'HangRunner' 'Release' 'net11.0' 'TestResults'
+    # Since Testing Platform 2.5 `dotnet test` writes the dump and its test list to TestResults under its own working
+    # directory, not the module's; Run-Tests.ps1 runs from the repository root, so the suites upload TestResults there.
+    $script:Results = Join-Path $shapes 'TestResults'
+    if (Test-Path -LiteralPath $Results) { Remove-Item -LiteralPath $Results -Recurse -Force }
 
     # From the shapes directory, so the repository's global.json puts `dotnet test` on the testing platform.
     $psi = [System.Diagnostics.ProcessStartInfo]::new('dotnet')
@@ -125,6 +128,7 @@ Describe 'The hang dump fires under dotnet test (#2402)' {
 
   AfterAll {
     if ($Out -and (Test-Path -LiteralPath $Out)) { Remove-Item -LiteralPath $Out -Recurse -Force }
+    if ($Results -and (Test-Path -LiteralPath $Results)) { Remove-Item -LiteralPath $Results -Recurse -Force }
   }
 
   It 'ends the hung module and fails the run' {
@@ -137,7 +141,7 @@ Describe 'The hang dump fires under dotnet test (#2402)' {
     $Output | Should -Match 'NeverCompletesAsync'
   }
 
-  It 'writes the dump and its test list to the module''s TestResults, where the suites upload them from' {
+  It 'writes the dump and its test list to TestResults in the working directory, where the suites upload them from' {
     @(Get-ChildItem -Path $Results -Filter '*_hang.dmp' -ErrorAction SilentlyContinue).Count | Should -Be 1
     @(Get-ChildItem -Path $Results -Filter '*_hang.log' -ErrorAction SilentlyContinue).Count | Should -Be 1
   }

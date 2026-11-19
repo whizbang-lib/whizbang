@@ -24,7 +24,7 @@ public class AccessDeniedExceptionTests {
 
     // Assert
     await Assert.That(exception.Message).IsEqualTo("Access denied");
-    await Assert.That(exception.RequiredPermission).IsEqualTo(default(Permission));
+    await Assert.That(exception.RequiredPermission).IsEqualTo(default);
     await Assert.That(exception.ResourceType).IsEqualTo(string.Empty);
     await Assert.That(exception.Reason).IsEqualTo(AccessDenialReason.InsufficientPermission);
   }
@@ -43,7 +43,7 @@ public class AccessDeniedExceptionTests {
 
     // Assert
     await Assert.That(exception.Message).IsEqualTo(message);
-    await Assert.That(exception.RequiredPermission).IsEqualTo(default(Permission));
+    await Assert.That(exception.RequiredPermission).IsEqualTo(default);
     await Assert.That(exception.ResourceType).IsEqualTo(string.Empty);
     await Assert.That(exception.Reason).IsEqualTo(AccessDenialReason.InsufficientPermission);
   }
@@ -64,7 +64,7 @@ public class AccessDeniedExceptionTests {
     // Assert
     await Assert.That(exception.Message).IsEqualTo(message);
     await Assert.That(exception.InnerException).IsEqualTo(innerException);
-    await Assert.That(exception.RequiredPermission).IsEqualTo(default(Permission));
+    await Assert.That(exception.RequiredPermission).IsEqualTo(default);
     await Assert.That(exception.ResourceType).IsEqualTo(string.Empty);
     await Assert.That(exception.Reason).IsEqualTo(AccessDenialReason.InsufficientPermission);
   }
