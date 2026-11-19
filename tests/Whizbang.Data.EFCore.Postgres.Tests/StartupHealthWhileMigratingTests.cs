@@ -21,6 +21,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Security;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
@@ -113,6 +114,14 @@ public sealed class StartupHealthWhileMigratingTests {
     // start at Coordinate and vote on their own cadence, so Running can come first. Under Strict a role not yet held
     // makes readiness 503 for that moment, which is correct and not what this test is about: it waits for the votes.
     await rolesHeld.WaitAsync(_deadline, cancellationToken);
+    // #2425: the stage reaching Running is not the lifecycle phase reaching Running. The phase worker advances the
+    // phase on its own, and the phase changes only once every run-control participant has acknowledged it; until then
+    // the transport, offload and signal-bus components report PausedByDesign, which Strict holds out of rotation. The
+    // worker's run ends only after the phase is set, so it is the signal for the exact transition asserted next.
+    var phaseWorker = app.Services.GetServices<IHostedService>().OfType<LifecyclePhaseWorker>().Single();
+    await phaseWorker.ExecuteTask!.WaitAsync(_deadline, cancellationToken);
+    await Assert.That(app.Services.GetRequiredService<IWhizbangLifecycleState>().Phase).IsEqualTo(LifecyclePhase.Running)
+      .Because("readiness is asked once the lifecycle phase, not only the startup stage, is Running");
     var readyAtRunning = await client.GetAsync("/health/ready", cancellationToken);
     var readyAtRunningBody = await readyAtRunning.Content.ReadAsStringAsync(cancellationToken);
     await Assert.That(readyAtRunning.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(readyAtRunningBody);

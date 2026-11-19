@@ -40,6 +40,18 @@ on:
         required: false
         type: boolean
         default: true
+    outputs:
+      test-frameworks:
+        description: >-
+          The target frameworks the tests were built for, as a JSON array: ["net10.0","net11.0"] on a release build,
+          ["net11.0"] otherwise. Each suite runs one leg per framework (#2427).
+        value: ${{ jobs.build.outputs.test-frameworks }}
+      sample-test-frameworks:
+        description: >-
+          The target frameworks the sample tests were built for, as a JSON array: samples/ECommerce/Directory.Build.props
+          pins its own, ["net11.0"] on every branch. A suite leg that selects only sample tests runs one leg per
+          framework in this list instead (#2427).
+        value: ${{ jobs.build.outputs.sample-test-frameworks }}
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -58,6 +70,9 @@ jobs:
     # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
     # runner (16 minutes observed); the artifact upload follows it.
     timeout-minutes: 50
+    outputs:
+      test-frameworks: ${{ steps.frameworks.outputs.test-frameworks }}
+      sample-test-frameworks: ${{ steps.frameworks.outputs.sample-test-frameworks }}
 
     steps:
       - name: Checkout
@@ -70,6 +85,24 @@ jobs:
 
       - name: Display .NET Info
         run: dotnet --info
+
+      # Directory.Build.props decides the frameworks from the branch (WhizbangReleaseBuild), as Run-Tests.ps1 reads
+      # them, so the suites split into the same frameworks this build compiles. The samples' own props pin theirs.
+      - name: Name the frameworks the tests target
+        id: frameworks
+        shell: pwsh
+        run: |
+          foreach ($output in @(
+              @{ Name = 'test-frameworks'; Props = 'Directory.Build.props' },
+              @{ Name = 'sample-test-frameworks'; Props = 'samples/ECommerce/Directory.Build.props' })) {
+            $evaluated = ((dotnet msbuild $output.Props -getProperty:TargetFramework -getProperty:TargetFrameworks) | Out-String | ConvertFrom-Json).Properties
+            $frameworks = @("$($evaluated.TargetFrameworks);$($evaluated.TargetFramework)" -split ';' |
+                ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+            if ($frameworks.Count -eq 0) { throw "Could not read the target frameworks from $($output.Props)." }
+            $json = ConvertTo-Json -Compress -InputObject $frameworks
+            Write-Host "$($output.Name): $json"
+            "$($output.Name)=$json" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Cache NuGet packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

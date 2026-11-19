@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -1043,18 +1044,22 @@ public class LifecycleCoordinatorTests {
 
   [Test]
   public async Task SignalPerspectiveComplete_ResetsLastActivityTimestamp_KeepsTrackingAliveAsync() {
-    // Arrange
-    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
+    // Arrange: a fake clock, so the gap between the signal and the cleanup is exactly what the test sets
+    var clock = new FakeTimeProvider();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance, timeProvider: clock);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "debounce"));
     coordinator.BeginTracking(LifecycleTrackingPath.Perspective, eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
     coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B", "C"]);
 
-    // Act — signal a perspective (resets the inactivity timer)
+    // The entry is now older than the threshold, so without the signal below it would be cleaned
+    clock.Advance(TimeSpan.FromMinutes(1));
+
+    // Act: signal a perspective (resets the inactivity timer)
     coordinator.SignalPerspectiveComplete(eventId, "A");
 
-    // Cleanup with zero threshold — entry should survive because signal just touched it
-    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromMilliseconds(100));
+    // Cleanup with a threshold the entry's age exceeds but its last activity does not
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromSeconds(30));
 
     // Assert — debounce kept it alive
     await Assert.That(cleaned).IsEqualTo(0);

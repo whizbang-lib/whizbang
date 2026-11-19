@@ -1014,6 +1014,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
       artifact-name: build-unit-${{ github.run_id }}
+      frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
 
   postgres-integration:
@@ -1059,6 +1060,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-postgres.yml
     with:
       artifact-name: build-postgres-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
       project-filter: ${{ matrix.projectFilter }}
       test-filter: ${{ matrix.testFilter }}
@@ -1075,6 +1077,8 @@ jobs:
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       artifact-name: build-inmemory-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      # Its only project is a sample's, which targets the samples' frameworks alone (TestSuiteFrameworkLegs.Tests.ps1).
+      frameworks: ${{ needs.build.outputs.sample-test-frameworks }}
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
 
   rabbitmq-integration:
@@ -1088,6 +1092,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-rabbitmq-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
 
   servicebus-integration:
@@ -1110,6 +1115,8 @@ jobs:
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       artifact-name: build-servicebus-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      # One leg per framework (#2427); the ecommerce shard runs a sample, which targets the samples' frameworks alone.
+      frameworks: ${{ matrix.shard == 'ecommerce' && needs.build.outputs.sample-test-frameworks || needs.build.outputs.test-frameworks }}
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
       project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
       shard-name: ${{ matrix.shard }}
@@ -1125,6 +1132,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
       artifact-name: build-azureblob-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
   general-integration:
     name: Test · Integration (general)
@@ -1137,6 +1145,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-integration.yml
     with:
       artifact-name: build-integration-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
 
   component-tests:
@@ -1152,6 +1161,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-component.yml
     with:
       artifact-name: build-component-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
 
   quality-build:

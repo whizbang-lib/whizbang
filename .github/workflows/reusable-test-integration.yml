@@ -17,6 +17,14 @@ on:
         description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
         required: false
+      frameworks:
+        description: >-
+          The target frameworks the build tested, as a JSON array (Build · Compile's test-frameworks). Each runs as its
+          own leg with Run-Tests.ps1 -Framework: net10.0 and net11.0 on a release build, net11.0 alone otherwise.
+          Empty: one leg testing every framework the build targets.
+        type: string
+        required: false
+        default: ''
 
 # Integration-type projects whose only suite tag is the plain "Integration": in-process hosts and
 # pipelines (Core, Migrate, FastEndpoints, HotChocolate) plus the ECommerce Aspire end-to-end test,
@@ -31,7 +39,15 @@ permissions:
 
 jobs:
   integration-tests:
-    name: Run suite
+    # One leg per framework (#2427). With more than one (a release build) each leg is named for its framework and
+    # suffixes its artifacts with it, so the legs never collide; one leg keeps the plain name and artifact names.
+    name: ${{ strategy.job-total > 1 && format('Run suite ({0})', matrix.framework) || 'Run suite' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ${{ fromJSON(inputs.frameworks || '[""]') }}
+    env:
+      FRAMEWORK_SUFFIX: ${{ strategy.job-total > 1 && format('-{0}', matrix.framework) || '' }}
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     timeout-minutes: 20
 
@@ -81,13 +97,13 @@ jobs:
 
       - name: Run General Integration Tests (pre-built)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Integration -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Integration -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -Framework '${{ matrix.framework }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run General Integration Tests (built here)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Integration -ReportTrx -HangDumpTimeout 10m
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Integration -ReportTrx -HangDumpTimeout 10m -Framework '${{ matrix.framework }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -105,7 +121,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hangdump-integration-${{ github.run_attempt }}
+          name: hangdump-integration${{ env.FRAMEWORK_SUFFIX }}-${{ github.run_attempt }}
           path: |
             tests/**/TestResults/*_hang.dmp
             tests/**/TestResults/*_hang.log
@@ -118,7 +134,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: trx-integration
+          name: trx-integration${{ env.FRAMEWORK_SUFFIX }}
           path: |
             tests/**/TestResults/*.trx
             samples/**/TestResults/*.trx
@@ -156,7 +172,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-integration
+          name: coverage-integration${{ env.FRAMEWORK_SUFFIX }}
           path: |
             tests/**/TestResults/*.cobertura.xml
             samples/**/TestResults/*.cobertura.xml

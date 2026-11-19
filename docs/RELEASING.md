@@ -1000,8 +1000,16 @@ runs on:
 
 `-p:WhizbangReleaseBuild=true` (or `false`) overrides the detection, e.g. to reproduce a release
 build locally. Restore always covers both frameworks, so the committed `packages.lock.json` files are
-the same on every branch and locked-mode restore passes everywhere. `scripts/Run-Tests.ps1` runs every
-test module built for a targeted framework, so a release run tests both; `setup-dotnet-retry` installs
+the same on every branch and locked-mode restore passes everywhere. `Build · Compile` builds every targeted
+framework in one job and names them (its `test-frameworks` output), and each test suite runs one job per framework
+(#2427): on a release build every suite leg, shards included, runs twice in parallel, as `Run suite (net10.0)` and
+`Run suite (net11.0)`, each with `scripts/Run-Tests.ps1 -Framework` and its artifacts (TRX, coverage, hang dumps)
+suffixed `-net10.0` or `-net11.0`. A development build has one leg per suite, named `Run suite` as it always was.
+The samples target `net11.0` alone on every branch (`samples/ECommerce/Directory.Build.props`): a `-Framework` leg skips
+a test project that does not target its framework, and a leg that selects only sample tests (InMemory, the Service
+Bus `ecommerce` shard) gets the samples' frameworks (`sample-test-frameworks`), so it runs `net11.0` alone.
+Without `-Framework`, `scripts/Run-Tests.ps1` runs every test module built for a targeted framework, the integration
+modules one at a time when there are two (their two copies share one broker and database server). `setup-dotnet-retry` installs
 the .NET 10 runtime beside the SDK whenever the build targets `net10.0`. A pull request into develop
 also compiles `net10.0` (`Build · Compile net10.0`, no tests), so a .NET 11-only API is caught there
 rather than on release day. Projects never name a framework; source generators and analyzers stay
