@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -20,8 +21,11 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Security;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Hosting.AspNet;
 using Whizbang.Testing.Containers;
 
@@ -75,6 +79,7 @@ public sealed class StartupHealthWhileMigratingTests {
     await holder.OpenAsync(cancellationToken);
     var hold = new MigrateHold(holder);
     await using var app = _buildApp(hold, strict);
+    var rolesHeld = _standingRolesHeld(app);
 
     // Not awaited: the host finishes starting only once startup is ready (the ready service waits in StartedAsync). The
     // server is already serving by then, because it started with the hosted services, before any StartedAsync ran.
@@ -104,14 +109,43 @@ public sealed class StartupHealthWhileMigratingTests {
     }
     await hold.Running.WaitAsync(_deadline, cancellationToken);
     await starting.WaitAsync(_deadline, cancellationToken);
+    // #2418: the roles component is Operational once every standing role is held, and the workers that vote for them
+    // start at Coordinate and vote on their own cadence, so Running can come first. Under Strict a role not yet held
+    // makes readiness 503 for that moment, which is correct and not what this test is about: it waits for the votes.
+    await rolesHeld.WaitAsync(_deadline, cancellationToken);
     var readyAtRunning = await client.GetAsync("/health/ready", cancellationToken);
     var readyAtRunningBody = await readyAtRunning.Content.ReadAsStringAsync(cancellationToken);
     await Assert.That(readyAtRunning.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(readyAtRunningBody);
-    // Ready, with the stage named; a component such as the role assignment may still report Degraded (200) while the
-    // fleet settles, which is not what this test is about.
+    // Ready, with the stage named.
     await Assert.That(readyAtRunningBody).DoesNotStartWith("Unhealthy").And.Contains(" Running |");
 
     await app.StopAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Completes when every standing role the <c>roles</c> health component reports (each managed role but the episodic
+  /// migrator) has been won by this instance, from the events of the workers that vote for them. Subscribed before the
+  /// host starts, so no win is missed.
+  /// </summary>
+  private static Task _standingRolesHeld(WebApplication app) {
+    var roles = app.Services.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles
+      .Where(role => !RoleAssignmentOptions.IsEpisodic(role));
+    var held = roles.ToDictionary(role => role, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+    void won(string role) {
+      if (held.TryGetValue(role, out var signal)) {
+        signal.TrySetResult();
+      }
+    }
+    if (app.Services.GetService<DutyHolderWorker>() is { } holder) {
+      holder.OnBecameHolder += won;
+    }
+    if (app.Services.GetService<PartitionAssignerWorker>() is { } assigner) {
+      assigner.OnBecameAssigner += _ => won(PartitionAssignerOptions.ROLE);
+    }
+    if (app.Services.GetService<PgCommitOrderStamperWorker>() is { } stamper) {
+      stamper.OnBecameLeader += () => won(CommitOrderStamperOptions.ROLE);
+    }
+    return Task.WhenAll(held.Values.Select(signal => signal.Task));
   }
 
   private WebApplication _buildApp(MigrateHold hold, bool strict) {
