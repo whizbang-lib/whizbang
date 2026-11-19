@@ -187,7 +187,7 @@ internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
       } catch (OperationCanceledException) when (stopToken.IsCancellationRequested) {
         return;
       } catch (Exception ex) {
-        // The loop must survive any sweep failure — a watchdog that dies on first
+        // The loop must survive any sweep failure: a watchdog that dies on first
         // error reproduces the very blind spot it exists to remove.
         LogSweepFailed(_logger, ex);
       }
