@@ -71,7 +71,7 @@ jobs:
       - name: Time every generator and analyzer against its threshold
         run: |
           mkdir -p build-cost
-          dotnet run -c Release --no-build --project benchmarks/Whizbang.BuildCost.Benchmarks -- --output build-cost/timing.md
+          dotnet run -c Release --no-build --framework net11.0 --project benchmarks/Whizbang.BuildCost.Benchmarks -- --output build-cost/timing.md
 
       - name: Upload the report
         if: always()
