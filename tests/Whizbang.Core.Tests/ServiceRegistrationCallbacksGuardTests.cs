@@ -20,7 +20,8 @@ namespace Whizbang.Core.Tests;
 /// run. Restoring clears first, because assigning accumulates.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/ServiceRegistrationCallbacks.cs</code-under-test>
-[NotInParallel("WhizbangBackgroundServiceTests")]
+// Sets the process-wide registration callback slots, which any test calling AddWhizbang runs: the class runs alone.
+[NotInParallel]
 public class ServiceRegistrationCallbacksGuardTests {
   /// <summary>Slots that are not one-per-assembly, with the reason.</summary>
   private static readonly Dictionary<string, string> _notPerAssembly = new(StringComparer.Ordinal) {
