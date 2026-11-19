@@ -326,8 +326,8 @@ jobs:
       # On a pull request the same run lists the uncovered new lines and new hand-written branches:
       # a new line counts as uncovered when no test ran it; a new hand-written decision (if, ?:, ??, ?.,
       # &&, ||, switch arms, when, catch, loops, is-patterns) counts as an uncovered branch when some
-      # outcome of it was never taken. Compiler-generated branches (await state machines, initializers)
-      # are excluded; the rule is in ai-docs/coverage-exclusions.md. The lists are posted on the PR in
+      # outcome of it was never taken. Compiler-generated branches (await state machines, initializers,
+      # runtime async's dispose and rethrow code) are excluded; the rule is in ai-docs/coverage-exclusions.md. The lists are posted on the PR in
       # one comment, and only the last step fails the job when either is not empty. The whole-library
       # row is gated on both halves: the job fails while any line anywhere in the library is never run,
       # or any hand-written decision outcome anywhere in the library is untested (members excluded by

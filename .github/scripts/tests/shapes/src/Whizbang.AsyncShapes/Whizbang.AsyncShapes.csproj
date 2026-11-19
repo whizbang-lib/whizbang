@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Named Whizbang.* so codecoverage.config's include list measures it. Compiled with runtime async, as the
+    repository's Directory.Build.targets compiles every net11.0 project, so the gate is tested against the
+    IL the library ships with.
+  -->
+  <PropertyGroup>
+    <Features>$(Features);runtime-async=on</Features>
+  </PropertyGroup>
+</Project>

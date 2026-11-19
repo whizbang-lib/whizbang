@@ -19,7 +19,9 @@
       reports a statement's conditions on its first line, so the whole statement is read, continuation
       lines included. Conditions on a statement with no decision construct (a bare await, an object
       initializer) are the compiler's: async state machines and initializer null checks that no test can
-      target. They are not counted. The rule and its reason are in ai-docs/coverage-exclusions.md, "What
+      target. They are not counted, and neither is the dispose and rethrow code runtime async writes after
+      an awaited loop (Limit-AsyncLoopEpilogue) or a never-run line holding only an unreachable `}`
+      (Test-UnreachableBraceLine). The rule and its reason are in ai-docs/coverage-exclusions.md, "What
       100% of branches means".
 
     A line the report does not know about (comments, braces, declarations) is not coverable and is not
@@ -223,12 +225,69 @@ function Read-CoberturaCoverage([string[]]$ReportPaths, [scriptblock]$ReadSource
       }
     }
   }
-  foreach ($entry in $coverage.Values) {
+  foreach ($path in @($coverage.Keys)) {
+    $entry = $coverage[$path]
     foreach ($n in @($entry.IfOutcomes.Keys)) {
       if ($entry.IfOutcomes[$n] -eq 3 -and $entry.Conditions[$n][0] -lt 2) { $entry.Conditions[$n] = @(2, 2) }
     }
+    if ($null -ne $ReadSource) {
+      $getSource = {
+        if (-not $sourceCache.ContainsKey($path)) {
+          $text = & $ReadSource $path
+          $sourceCache[$path] = if ($null -eq $text) { $null } else { [string[]]@($text) }
+        }
+        return $sourceCache[$path]
+      }.GetNewClosure()
+      Limit-AsyncLoopEpilogue $entry $getSource
+    }
   }
   return $coverage
+}
+
+<#
+  Counts only the loop's own two outcomes on a `while (await ...)` or `await foreach (...)` line whose
+  condition or collection holds no decision of its own, when the collector reports more jumps there.
+
+  Under runtime async (.NET 11, `runtime-async=on`) an `await foreach`, and an `await using` whose scope
+  ends with the loop, dispose and rethrow in code the compiler writes after the loop instead of in a
+  finally handler: test the resource for null, dispose it, test whether an exception is pending, and if
+  so test whether it is an Exception (it always is: C# wraps anything else) before rethrowing it. That
+  code has hidden sequence points, and the collector reports its jumps on the line before it, which is
+  the loop's condition, because a loop's condition is emitted after its body. The loop's own jump comes
+  first in IL order, so it is the first condition the collector lists; every later one is that epilogue.
+  Its outcomes are the compiler's: one can never be taken, and the others depend on whether some test
+  threw through the loop. The async state machine reported no condition on such a line at all.
+
+  Only a loop whose condition or collection is free of decisions (Test-HandWrittenDecision) qualifies,
+  so the first jump is known to be the loop's; with any other decision on the line, or without the
+  collector's per-condition detail, the line keeps every condition the reports give it.
+#>
+function Limit-AsyncLoopEpilogue([hashtable]$Entry, [scriptblock]$GetSource) {
+  $source = $null
+  foreach ($n in @($Entry.Conditions.Keys)) {
+    if ($null -eq $Entry.Totals -or -not $Entry.Totals.ContainsKey($n)) { continue }
+    $loops = @($Entry.Totals[$n].Keys | Where-Object { $_ -ge 4 -and $null -ne $Entry.JumpBest["${n}|$_"] })
+    if ($loops.Count -eq 0) { continue }
+    if ($null -eq $source) { $source = & $GetSource; if ($null -eq $source) { return } }
+    if (-not (Test-AsyncLoopHeader $source $n)) { continue }
+    $worst = $null
+    foreach ($t in $Entry.Totals[$n].Keys) {
+      $pair = if ($loops -contains $t) { @($Entry.JumpBest["${n}|$t"][0], 2) } else { @($Entry.Totals[$n][$t], $t) }
+      if ($null -eq $worst -or ($pair[1] - $pair[0]) -gt ($worst[1] - $worst[0])) { $worst = $pair }
+    }
+    $Entry.Conditions[$n] = $worst
+  }
+}
+
+<#
+  True when line $Line (1-based) starts a `while (await ...)` loop (or ends a do loop with one) or an
+  `await foreach (...)`, and nothing in the statement but the loop itself is a decision.
+#>
+function Test-AsyncLoopHeader([string[]]$Source, [int]$Line) {
+  if ($Line -gt $Source.Count) { return $false }
+  $code = (Get-StatementCode $Source $Line) -join ' '
+  if ($code -notmatch '^\s*(\}\s*)?(while\s*\(\s*await\b|await\s+foreach\s*\()') { return $false }
+  return -not (Test-HandWrittenDecision ($code -replace '^\s*(\}\s*)?(while|await\s+foreach)\b', ''))
 }
 
 <#
@@ -277,7 +336,9 @@ function Find-ClosingBraceLine([string[]]$Source, [int]$Line) {
   @{ Complete = lines some function every block of which ran touches; Incomplete = lines some function
   with a block that never ran touches; NotRun = lines a range touches some block of which never ran
   (covered="no" or "partial"); Starts = lines a range starts on; Unreached = lines a range starts on whose
-  next range in its function, a different statement, never ran }. The binary reports record each block's
+  next range in its function, a different statement, never ran; Braces = line -> start columns of the
+  one-character ranges on it (a closing brace's sequence point); Wide = lines any other range touches }.
+  The binary reports record each block's
   hit, and merging them is an exact union across test processes, which the per-line Cobertura summaries
   are not. A function lists its ranges in IL order, so the range after a statement's last one is the code
   it falls through to.
@@ -304,7 +365,7 @@ function Read-BlockCoverage([string]$XmlPath) {
           $functions.Add($current)
         }
         'range' {
-          $current.Ranges.Add(@([int]$reader.GetAttribute('source_id'), [int]$reader.GetAttribute('start_line'), [int]$reader.GetAttribute('end_line'), [string]$reader.GetAttribute('covered')))
+          $current.Ranges.Add(@([int]$reader.GetAttribute('source_id'), [int]$reader.GetAttribute('start_line'), [int]$reader.GetAttribute('end_line'), [string]$reader.GetAttribute('covered'), [int]$reader.GetAttribute('start_column'), [int]$reader.GetAttribute('end_column')))
         }
         'source_file' {
           $files[[int]$reader.GetAttribute('id')] = Get-RelativeSourcePath ([string]$reader.GetAttribute('path')) @()
@@ -326,13 +387,20 @@ function Add-ModuleBlocks([hashtable]$Blocks, $Functions, [hashtable]$Files) {
       if (-not $path) { continue }
       if (-not $Blocks.ContainsKey($path)) {
         $Blocks[$path] = @{}
-        foreach ($name in @('Complete', 'Incomplete', 'NotRun', 'Starts', 'Unreached')) { $Blocks[$path][$name] = [System.Collections.Generic.HashSet[int]]::new() }
+        foreach ($name in @('Complete', 'Incomplete', 'NotRun', 'Starts', 'Unreached', 'Wide')) { $Blocks[$path][$name] = [System.Collections.Generic.HashSet[int]]::new() }
+        $Blocks[$path].Braces = [System.Collections.Generic.Dictionary[int, System.Collections.Generic.List[int]]]::new()
       }
       $entry = $Blocks[$path]
       [void]$entry.Starts.Add($range[1])
       for ($line = $range[1]; $line -le $range[2]; $line++) {
         [void]$entry[$set].Add($line)
         if ($range[3] -ne 'yes') { [void]$entry.NotRun.Add($line) }
+      }
+      if ($range[1] -eq $range[2] -and $range[5] -eq $range[4] + 1) {
+        if (-not $entry.Braces.ContainsKey($range[1])) { $entry.Braces[$range[1]] = [System.Collections.Generic.List[int]]::new() }
+        $entry.Braces[$range[1]].Add($range[4])
+      } else {
+        for ($line = $range[1]; $line -le $range[2]; $line++) { [void]$entry.Wide.Add($line) }
       }
       if ($r + 1 -lt $function.Ranges.Count) {
         $next = $function.Ranges[$r + 1]
@@ -358,6 +426,9 @@ function Add-ModuleBlocks([hashtable]$Blocks, $Functions, [hashtable]$Files) {
 
   Any other line is left as the reports say: which of its outcomes is missing is unknowable without the
   IL, so nothing is claimed for it. Without $ReadSource only the first proof is used.
+
+  With $ReadSource it also removes every line that never ran and holds nothing but code no test can run
+  (Test-UnreachableBraceLine), and counts it among the lines it changed.
 #>
 function Merge-BlockCoverage([hashtable]$Coverage, [hashtable]$Blocks, [scriptblock]$ReadSource = $null) {
   $changed = 0
@@ -367,6 +438,21 @@ function Merge-BlockCoverage([hashtable]$Coverage, [hashtable]$Blocks, [scriptbl
     $entry = $Coverage[$path]
     $fileLines = $null
     $sourceRead = $false
+    if ($null -ne $ReadSource -and $proof.ContainsKey('Braces')) {
+      foreach ($n in @($entry.Hits.Keys)) {
+        if ($entry.Hits[$n] -ne 0 -or -not $proof.Braces.ContainsKey($n)) { continue }
+        if (-not $sourceRead) {
+          $read = & $ReadSource $path
+          $fileLines = if ($null -eq $read) { $null } else { [string[]]@($read) }
+          $sourceRead = $true
+        }
+        if ($null -ne $fileLines -and (Test-UnreachableBraceLine $proof $fileLines $n)) {
+          $entry.Hits.Remove($n)
+          $entry.Conditions.Remove($n)
+          $changed++
+        }
+      }
+    }
     foreach ($n in @($entry.Conditions.Keys)) {
       $c = $entry.Conditions[$n]
       if ($c[0] -ge $c[1]) { continue }
@@ -410,6 +496,61 @@ function Test-LineProvenByItsBlocks([hashtable]$Proof, [string[]]$Source, [int]$
   if (-not (Test-HandWrittenStatement $Source $Line)) { return $false }
   $code = (Get-StatementCode $Source $Line) -join ' '
   return $code -cnotmatch '\b(if|else|while|for|foreach|do|switch|case|when|catch|goto|break|continue|yield|await|using|lock|fixed|try|finally)\b'
+}
+
+<#
+  True when line $Line (1-based) holds no code but closing braces whose code can never run, so a report
+  that says it never ran describes the compiler, not a missing test. The block data must show only
+  one-character ranges on the line (Braces, and no Wide range), and each must be a `}` that is the line's
+  first code and closes a block whose last statement is a return, throw, break, continue, goto or yield
+  break: the end point of such a block is unreachable, so nothing placed there can run.
+
+  The compiler places code there when it rewrites a try statement around an await. Under runtime async
+  (.NET 11, `runtime-async=on`), a catch that awaits is lowered to a try whose handler only stores the
+  exception, followed by the handler's code, and the rewritten try's end carries the `}`'s sequence point.
+  The `catch (...)` clause's own sequence point, which shared the line and ran whenever the handler did,
+  is no longer there, so the line reads as never run although nothing on it could have. The async state
+  machine had the same unreachable block; its line also held the clause, so it ran.
+
+  A `}` closing a block that can end normally (an empty catch, a loop, a call) is reachable and stays
+  measured, and so does a line with any other code on it.
+#>
+function Test-UnreachableBraceLine([hashtable]$Proof, [string[]]$Source, [int]$Line) {
+  if ($Line -gt $Source.Count -or $Proof.Wide.Contains($Line) -or -not $Proof.Braces.ContainsKey($Line)) { return $false }
+  $raw = [string]$Source[$Line - 1]
+  foreach ($column in $Proof.Braces[$Line]) {
+    if ($column -lt 1 -or $column -gt $raw.Length -or $raw[$column - 1] -ne '}') { return $false }
+    if ((Get-CodeText $raw.Substring(0, $column - 1)).Trim() -ne '') { return $false }
+  }
+  return Test-EndsInJump $Source $Line
+}
+
+<#
+  True when the last statement before line $Line (1-based) is a jump statement (return, throw, break,
+  continue, goto or yield break) that starts a statement of its own, after code ending in ;, { or }, and
+  whose ; ends the last code line before $Line. Anything it cannot read with certainty (a multi-line
+  string or comment, a statement after else, a label or a condition without braces) is not a jump.
+#>
+function Test-EndsInJump([string[]]$Source, [int]$Line) {
+  $last = $Line - 1
+  while ($last -ge 1 -and (Get-CodeText $Source[$last - 1]).Trim() -eq '') { $last-- }
+  if ($last -lt 1 -or -not (Get-CodeText $Source[$last - 1]).TrimEnd().EndsWith(';')) { return $false }
+  for ($start = $last; $start -ge 1; $start--) {
+    $raw = [string]$Source[$start - 1]
+    if ($raw.Contains('"""') -or $raw.Contains('@"') -or $raw.Contains('*/')) { return $false }
+    $code = (Get-CodeText $raw).Trim()
+    if ($code -eq '') { continue }
+    if ($code -cmatch '^(return|throw|break|continue|goto|yield\s+break)\b') {
+      $before = $start - 1
+      while ($before -ge 1 -and (Get-CodeText $Source[$before - 1]).Trim() -eq '') { $before-- }
+      if ($before -ge 1 -and (Get-CodeText $Source[$before - 1]).TrimEnd() -notmatch '[;{}]$') { return $false }
+      $codes = Get-StatementCode $Source $start
+      return ($start + $codes.Count - 1) -eq $last -and $codes[$codes.Count - 1].TrimEnd().EndsWith(';')
+    }
+    # Another statement ends here: the jump, had there been one, would have ended before it.
+    if ($start -lt $last -and $code -match '[;{}]$') { return $false }
+  }
+  return $false
 }
 
 # The dotnet-coverage version CI installs; the same one reads the binary reports locally.
