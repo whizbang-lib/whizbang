@@ -42,7 +42,10 @@ jobs:
   postgres-tests:
     name: Run suite
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
-    timeout-minutes: 45
+    # A release-branch run tests net10.0 and net11.0, one module at a time (Get-TestModuleParallelism), so the
+    # largest leg (Dapper, about 22 minutes per framework) needs twice its develop time. A real hang is still caught
+    # by the 15-minute hang dump, not by this limit.
+    timeout-minutes: 75
 
     steps:
       - name: Checkout
