@@ -80,6 +80,11 @@
     through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 does
     (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
 
+.PARAMETER Framework
+    Runs only the test modules built for this target framework, one of those the build targets (a release build
+    targets net10.0 and net11.0). CI runs each framework of a release build as its own job (#2427). Empty (the
+    default) runs every framework the build targets.
+
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
     (postgres, rabbitmq, servicebus, mssql containers). Default: $true.
@@ -284,6 +289,7 @@ param(
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [ValidatePattern('^[1-9][0-9]*[smh]$', ErrorMessage = '-HangDumpTimeout "{0}" is not a whole number of seconds, minutes or hours, such as 10m.')]
     [string]$HangDumpTimeout = "",  # CI: hang dump after this long with no test activity (e.g. 10m); empty for none
+    [string]$Framework = "",  # Run only this target framework's modules (e.g. net10.0); empty for every framework the build targets
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
                               # (MTP --coverage, cobertura) inside the normal `dotnet test` run.
@@ -522,6 +528,13 @@ $script:TestFrameworks = @(((& dotnet msbuild (Join-Path $repoRoot 'Directory.Bu
 if ($script:TestFrameworks.Count -eq 0) {
     Write-Error "Could not read TargetFrameworks from Directory.Build.props (dotnet msbuild -getProperty)."
     exit 1
+}
+# -Framework narrows the run to one of them: CI runs each framework of a release build as its own job (#2427).
+if ($Framework) {
+    if ($Framework -notin $script:TestFrameworks) {
+        Exit-RefusedParameters "-Framework $Framework is not one this build targets ($($script:TestFrameworks -join ';'))."
+    }
+    $script:TestFrameworks = @($Framework)
 }
 # Matches bin/<config>/<framework> for any framework this build targets
 $script:FrameworkPattern = '(' + (($script:TestFrameworks | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
