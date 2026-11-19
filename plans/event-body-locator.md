@@ -2,7 +2,7 @@
 
 Part of [storage-reclamation.md](storage-reclamation.md). Builds on [storage-event-slimming.md](storage-event-slimming.md)
 (superseding types, WS-2) and [storage-stream-end-of-life.md](storage-stream-end-of-life.md) (archive store and
-read-through, WS-3). Absorbs #1975 (event-level archive). Release: 1.0. Tracking: #2431. Status: revised after owner review (tiers, 2026-11-19); two open questions.
+read-through, WS-3). Absorbs #1975 (event-level archive). Release: 1.0. Tracking: #2431. Status: approved after owner review (tiers and integrity alignment, 2026-11-19).
 
 ## Context
 
@@ -309,8 +309,8 @@ golden file or a version bump through the pair guard.
 | `Whizbang:EventStore:Superseding:LayeredMaxChain` | 8 | diffs on one base before a re-base |
 | `Whizbang:EventStore:Superseding:Types:<Type>:MarkerReplay` | `Deliver` | `Deliver` replays a marker as the event it points at, with the marker context; `Skip` passes over it |
 | `Whizbang:EventStore:Superseding:WholesaleWarning` | `true` | warn at startup when a type's diffs stay above `LayeredMaxDiffRatio`; also settable per type |
-| `Whizbang:EventStore:Tiers:WarmAfter` | to decide (open question 1) | age after which a body moves to the archive; needs an archive store |
-| `Whizbang:EventStore:Tiers:ColdAfter` | to decide (open question 1) | age after which a stream's prefix leaves the database; needs an archive store; must exceed `WarmAfter` |
+| `Whizbang:EventStore:Tiers:WarmAfter` | 30 days when an archive store is configured | age after which a body moves to the archive; needs an archive store |
+| `Whizbang:EventStore:Tiers:ColdAfter` | 365 days when an archive store is configured | age after which a stream's prefix leaves the database; needs an archive store; must exceed `WarmAfter` |
 
 Every key is bound, has a default, and appears on the configuration reference and the error reference pages.
 
@@ -323,10 +323,10 @@ Every key is bound, has a default, and appears on the configuration reference an
 4. **Existing data.** Convert the copies already queued (S1).
 5. **Stream-level archive.** Superseded by decision 7: the stream-level archive becomes the cold tier (S4).
 
-## Open questions
+## Decided after review (owner, 2026-11-19)
 
-1. **Default thresholds.** With an archive store configured, should warm and cold be on by default (for example
-   `WarmAfter` 30 days, `ColdAfter` 365 days), or off until an operator sets them?
-2. **After the archive's own retention.** Proposed: the lifecycle row and its carried digest stay as a tombstone, as
-   the approved cleanup and integrity plan already requires for a purge, so integrity never asks for a destroyed range
-   back. Confirm.
+1. **Default thresholds.** With an archive store configured, warm and cold are on by default: `WarmAfter` 30 days,
+   `ColdAfter` 365 days. The evidence deployment will set `ColdAfter` to 90 days in its own configuration (an adoption
+   step there, not a framework default).
+2. **After the archive's own retention.** The lifecycle row and its carried digest stay as a tombstone, as the approved
+   cleanup and integrity plan already requires for a purge (its 2.3), so integrity never asks for a destroyed range back.
