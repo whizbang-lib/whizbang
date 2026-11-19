@@ -29,6 +29,8 @@ namespace Whizbang.Core.Startup;
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/WhizbangWorkerRegistrationTests.cs</tests>
 public abstract class GatedHostedService : BackgroundService {
   private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly CancellationTokenSource _startCanceled = new();
+  private CancellationTokenRegistration _startRegistration;
 
   /// <summary>Creates the wrapper.</summary>
   /// <param name="service">The service to start at the start point.</param>
@@ -54,8 +56,26 @@ public abstract class GatedHostedService : BackgroundService {
   /// <returns>A task that completes at the start point, or is canceled with the token.</returns>
   protected abstract Task WaitToStartAsync(CancellationToken stoppingToken);
 
+  /// <summary>
+  /// Starts the wait for the start point. The start's token is linked here rather than handed to the base class, which
+  /// runs <see cref="ExecuteAsync"/> through <c>Task.Run</c> with it: a start canceled before the thread pool ran the
+  /// wait left the wrapper canceled without the wait ever running, and a host counts a canceled service as a failed one.
+  /// </summary>
+  /// <param name="cancellationToken">Canceled when the host's start is abandoned.</param>
+  /// <returns>A task that completes once the wait is running.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupStageGatedServiceTests.cs:AStartAlreadyCanceled_EndsTheWrapperWithoutAFaultOrACancellationAsync</tests>
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    _startRegistration = cancellationToken.Register(static state => ((CancellationTokenSource)state!).Cancel(), _startCanceled);
+    return base.StartAsync(CancellationToken.None);
+  }
+
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    using var abandoned = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _startCanceled.Token);
+    await _executeAsync(abandoned.Token).ConfigureAwait(false);
+  }
+
+  private async Task _executeAsync(CancellationToken stoppingToken) {
     try {
       await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
       // A worker that names its mechanism is started inside it, so its loop, and every task the loop starts, carries
@@ -74,6 +94,14 @@ public abstract class GatedHostedService : BackgroundService {
       // service as a failed one unless it is already stopping: it logs it at Error and, from .NET 11, rethrows it from
       // its stop. What happens to the service is settled in StopAsync.
     }
+  }
+
+  /// <inheritdoc />
+  public override void Dispose() {
+    _startRegistration.Dispose();
+    _startCanceled.Dispose();
+    base.Dispose();
+    GC.SuppressFinalize(this);
   }
 
   /// <inheritdoc />

@@ -2146,6 +2146,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A startup-gated hosted service whose start is canceled before its wait runs no longer ends canceled (#2416).** The
+  host's start token went to the base class, which runs the wait through `Task.Run` with it, so a start canceled
+  before the thread pool ran the wait left the service canceled without the wait ever running, and a host that is not
+  yet stopping counts that as a failed service. The service now links the start's token into the wait itself.
+
 - **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
   longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
   state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
