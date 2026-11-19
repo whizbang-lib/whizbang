@@ -116,36 +116,68 @@ public sealed class AzureServiceBusSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
 
   /// <inheritdoc />
+  /// <remarks>
+  /// Pausing stops the processor (#2406): a paused subscription takes no session and no message, so nothing is counted
+  /// as a delivery and another instance takes the session at once. It used to keep the processor running and abandon
+  /// each delivery it took, so a standing-down instance burned every message in a session it held toward the
+  /// dead-letter limit. The stop is started, not awaited: the processor's stop waits for the handlers in flight, and a
+  /// pause can be reached from one of them. A delivery that reaches the handler before the stop lands is handed back
+  /// with the unsettled Warning.
+  /// </remarks>
+  /// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Pause_SetsIsActiveFalseAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_PauseWhenPaused_DoesNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:SessionBatch_PausedForAStandDown_StopsTakingCheckpointDeliveriesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:NonSessionBatch_Paused_StopsItsProcessorAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:SessionBatch_PauseCannotStopTheProcessor_LogsAWarningAndStaysPausedAsync</tests>
   public Task PauseAsync() {
     if (!IsActive) {
       return Task.CompletedTask;
     }
 
     IsActive = false;
-
-    // IMPORTANT: Do NOT stop the processor - just set IsActive = false
-    // The transport's message handler checks IsActive and abandons messages when paused
-    // Stopping and restarting the processor causes message handler re-registration issues
-    _logger.LogInformation("Paused Service Bus subscription (handler will abandon messages)");
+    Paused?.Invoke();
+    _stopping = _stopReceivingAsync();
+    _logger.LogInformation("Paused Service Bus subscription: its processor stops taking sessions and messages until it is resumed");
     return Task.CompletedTask;
   }
 
+  /// <summary>Called when the subscription is paused: the transport takes it off the receive-liveness watch (#2406).</summary>
+  internal Action? Paused { get; set; }
+
+  /// <summary>Called when the subscription is resumed: the transport watches it again from a fresh window (#2406).</summary>
+  internal Action? Resumed { get; set; }
+
+  // The processor's stop in progress, started by the last pause; a resume waits for it before starting the processor.
+  private Task _stopping = Task.CompletedTask;
+
+  private async Task _stopReceivingAsync() {
+    try {
+      await (_processor?.StopProcessingAsync() ?? _sessionProcessor!.StopProcessingAsync()).ConfigureAwait(false);
+    } catch (Exception ex) {
+      _logger.LogWarning(ex,
+        "Paused Service Bus subscription could not stop its processor; it keeps receiving while paused, and each delivery "
+        + "it takes is handed back to the broker unsettled");
+    }
+  }
+
   /// <inheritdoc />
+  /// <remarks>Resuming starts the processor the pause stopped, once that stop has finished.</remarks>
+  /// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_ResumeWhenActive_DoesNotThrowAsync</tests>
-  public Task ResumeAsync() {
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:SessionBatch_ResumedAfterAPause_StartsItsProcessorAndHandlesDeliveriesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:NonSessionBatch_ResumedAfterAPause_StartsItsProcessorAsync</tests>
+  public async Task ResumeAsync() {
     if (IsActive) {
-      return Task.CompletedTask;
+      return;
     }
 
+    await _stopping.ConfigureAwait(false);
     IsActive = true;
-
-    // IMPORTANT: Do NOT restart the processor - just set IsActive = true
-    // The transport's message handler checks IsActive and processes messages when active
-    _logger.LogInformation("Resumed Service Bus subscription (handler will process messages)");
-    return Task.CompletedTask;
+    Resumed?.Invoke();
+    await (_processor?.StartProcessingAsync() ?? _sessionProcessor!.StartProcessingAsync()).ConfigureAwait(false);
+    _logger.LogInformation("Resumed Service Bus subscription: its processor takes sessions and messages again");
   }
 
   /// <inheritdoc />

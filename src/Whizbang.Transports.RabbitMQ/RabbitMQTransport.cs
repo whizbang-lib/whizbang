@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.RabbitMQ;
@@ -665,18 +666,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       return Task.CompletedTask; // Non-blocking — lets ConsumerDispatchConcurrency=1 dispatch next immediately
     };
 
-    var consumerTag = await channel.BasicConsumeAsync(
-      queue: queueName,
-      autoAck: false,
-      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
-      noLocal: false,
-      exclusive: false,
-      arguments: null,
-      consumer: consumer,
-      cancellationToken: cancellationToken
-    );
+    var consumerTag = await _consumeAsync(channel, queueName, consumer, cancellationToken);
 
-    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+    // A pause cancels this consumer and a resume starts another on the same channel (#2406).
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger) {
+      RestartConsuming = () => _consumeAsync(channel, queueName, consumer, CancellationToken.None),
+    };
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       _logger.LogDebug(
@@ -885,18 +880,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     consumer.ReceivedAsync += (_, args) =>
       _onMessageReceivedAsync(channel, args, handler, subscription, queueName, cancellationToken);
 
-    var consumerTag = await channel.BasicConsumeAsync(
-      queue: queueName,
-      autoAck: false,
-      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
-      noLocal: false,
-      exclusive: false,
-      arguments: null,
-      consumer: consumer,
-      cancellationToken: cancellationToken
-    );
+    var consumerTag = await _consumeAsync(channel, queueName, consumer, cancellationToken);
 
-    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+    // A pause cancels this consumer and a resume starts another on the same channel (#2406).
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger) {
+      RestartConsuming = () => _consumeAsync(channel, queueName, consumer, CancellationToken.None),
+    };
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       _logger.LogDebug(
@@ -937,6 +926,20 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       );
     }
   }
+
+  /// <summary>Starts <paramref name="consumer"/> on <paramref name="queueName"/> under a fresh consumer tag.</summary>
+  private static Task<string> _consumeAsync(
+      IChannel channel, string queueName, AsyncEventingBasicConsumer consumer, CancellationToken cancellationToken) =>
+    channel.BasicConsumeAsync(
+      queue: queueName,
+      autoAck: false,
+      consumerTag: $"{queueName}-{TrackedGuid.New().Value:N}",
+      noLocal: false,
+      exclusive: false,
+      arguments: null,
+      consumer: consumer,
+      cancellationToken: cancellationToken
+    );
 
   /// <summary>
   /// Nacks a message when the subscription is paused, requeueing for later delivery.
