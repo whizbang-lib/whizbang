@@ -253,7 +253,7 @@ public class BaseUpsertStrategyCoverageTests {
 /// <para>
 /// Two tests register a TTL for the widget model in the process-wide <see cref="PerspectiveTtlRegistry"/> and the
 /// teardown takes it away again, while the others need it absent, so the class's tests serialize on that one
-/// registration (<see cref="WIDGET_TTL_KEY"/>). No other class registers the widget model, so nothing else waits.
+/// registration (<see cref="WIDGET_TTL_KEY"/>). No other class registers the widget model; BaseUpsertStrategyProviderGuardTests upserts it, so it waits on the key too.
 /// </para>
 /// <para>
 /// Two tests swap the process-wide apply-hook registry, and every test here upserts through it, so the class also
