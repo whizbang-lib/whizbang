@@ -318,6 +318,36 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     await Assert.That(limited.Select(e => e.EventId)).IsEquivalentTo([second]).Because("the bound keeps the lowest sequences");
   }
 
+  /// <summary>
+  /// A redelivery by event id ships an event the stamper has not reached yet, and one written without a scope; both
+  /// arrive with the value missing rather than failing the read.
+  /// </summary>
+  [Test]
+  public async Task Select_EventIds_AnUnstampedEventWithNoScope_ArrivesWithNeitherAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    await using (var insert = conn.CreateCommand()) {
+      insert.CommandText = """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence)
+        VALUES (@event, @stream, @stream, 'TestAggregate', 'Contracts.Unscoped', NULL, 1, NULL);
+        INSERT INTO wh_event_body (event_id, event_data, metadata)
+        VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
+        """;
+      insert.Parameters.AddWithValue("event", eventId);
+      insert.Parameters.AddWithValue("stream", stream);
+      await insert.ExecuteNonQueryAsync();
+    }
+
+    var rows = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { EventIds = [eventId] });
+
+    await Assert.That(rows.Count).IsEqualTo(1);
+    await Assert.That(rows[0].CommitSequence.HasValue).IsFalse();
+    await Assert.That(rows[0].Scope).IsNull();
+  }
+
   [Test]
   public async Task Select_ByCommitSequence_WithoutEventTypes_IsRefusedAsync() {
     await using var ctx = CreateDbContext();

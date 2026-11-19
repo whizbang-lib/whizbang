@@ -97,9 +97,27 @@ public class OutboxDrainWorkerLifecycleFailureTests {
 
   // --- helpers ---
 
-  private static OutboxDrainWorker _buildWorker(FakeFailureChannel failure) {
+  /// <summary>A detached receptor interrupted by shutdown: it stops the worker's token, then throws as a canceled
+  /// receptor would.</summary>
+  private sealed class ShutdownDuringReceptorInvoker(CancellationTokenSource stopping) : IReceptorInvoker {
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+    public async ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      await stopping.CancelAsync();
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+  }
+
+  private sealed class CompletingReceptorInvoker : IReceptorInvoker {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) =>
+      ValueTask.CompletedTask;
+  }
+
+  private static OutboxDrainWorker _buildWorker(FakeFailureChannel failure, Action<IServiceCollection>? configure = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
+    configure?.Invoke(services);
     var sp = services.BuildServiceProvider();
     return new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -181,5 +199,34 @@ public class OutboxDrainWorkerLifecycleFailureTests {
       .Because("Full ex.ToString() preserves the exception type — required for Slice 2's fingerprint algorithm which reads the type from the first line.");
     await Assert.That(captured.Error).Contains("PreOutbox")
       .Because("The stage name must appear in the captured error so operators can distinguish Pre- vs Post-outbox lifecycle faults.");
+  }
+
+  /// <summary>
+  /// A detached stage interrupted by shutdown is not a failed message: it never finished being tried, so nothing is
+  /// routed to the failure channel, which would stamp <c>wh_outbox.error</c> and burn an attempt on a message nothing
+  /// rejected. The inline stage applies the same rule; this is the detached one.
+  /// </summary>
+  [Test]
+  public async Task InvokeOutboxLifecycleStage_DetachedInterruptedByShutdown_RoutesNoFailureAsync() {
+    var failure = new FakeFailureChannel();
+    using var stopping = new CancellationTokenSource();
+    var detached = new ShutdownDuringReceptorInvoker(stopping);
+    var worker = _buildWorker(failure, services => services.AddScoped<IReceptorInvoker>(_ => detached));
+    var work = _outboxWork((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
+
+    await worker.InvokeOutboxLifecycleStageAsync(
+      work,
+      work.Envelope,
+      new CompletingReceptorInvoker(),
+      LifecycleStage.PreOutboxDetached,
+      LifecycleStage.PreOutboxInline,
+      "PreOutbox",
+      stopping.Token);
+    await worker.DetachedWork.DrainAsync(CancellationToken.None);
+
+    await Assert.That(detached.Calls).IsEqualTo(1)
+      .Because("the detached stage ran, and shutdown interrupted it");
+    await Assert.That(failure.All.Count).IsEqualTo(0)
+      .Because("an interrupted stage is not a failure: the row stays leased for the next claim cycle");
   }
 }
