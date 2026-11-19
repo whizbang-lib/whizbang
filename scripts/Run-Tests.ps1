@@ -16,7 +16,9 @@
     to run concurrently, similar to what you see in VS Code Test Explorer.
 
 .PARAMETER MaxParallel
-    Maximum number of test projects to run in parallel (default: CPU core count)
+    Maximum number of test projects to run in parallel (default: CPU core count; 1 in an integration run that
+    tests more than one framework, as a release build does, since each framework's copy of a project shares the
+    same broker and database server)
 
 .PARAMETER ProjectFilter
     Filter to specific test projects using native .NET 10 --test-modules globbing (e.g., "Core", "EFCore.Postgres")
@@ -78,6 +80,11 @@
     Empty (the default) takes no dump. Every test project references Microsoft.Testing.Extensions.HangDump
     through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 and later do
     (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
+
+.PARAMETER Framework
+    Runs only the test modules built for this target framework, one of those the build targets (a release build
+    targets net10.0 and net11.0). CI runs each framework of a release build as its own job (#2427). Empty (the
+    default) runs every framework the build targets.
 
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
@@ -283,6 +290,7 @@ param(
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [ValidatePattern('^[1-9][0-9]*[smh]$', ErrorMessage = '-HangDumpTimeout "{0}" is not a whole number of seconds, minutes or hours, such as 10m.')]
     [string]$HangDumpTimeout = "",  # CI: hang dump after this long with no test activity (e.g. 10m); empty for none
+    [string]$Framework = "",  # Run only this target framework's modules (e.g. net10.0); empty for every framework the build targets
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
                               # (MTP --coverage, cobertura) inside the normal `dotnet test` run.
@@ -357,6 +365,8 @@ $testRunVerdictModule = Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1"
 Import-Module $testRunVerdictModule -Force
 # Each test module's results back beside its DLL (Testing Platform 2.5 writes them under the working directory)
 Import-Module (Join-Path $PSScriptRoot "lib" "ModuleTestResults.psm1") -Force
+# How many test modules run at once: one at a time for an integration run on several frameworks
+Import-Module (Join-Path $PSScriptRoot "lib" "TestModuleParallelism.psm1") -Force
 
 # Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
 $fastBuildArgs = @()
@@ -521,6 +531,13 @@ $script:TestFrameworks = @(((& dotnet msbuild (Join-Path $repoRoot 'Directory.Bu
 if ($script:TestFrameworks.Count -eq 0) {
     Write-Error "Could not read TargetFrameworks from Directory.Build.props (dotnet msbuild -getProperty)."
     exit 1
+}
+# -Framework narrows the run to one of them: CI runs each framework of a release build as its own job (#2427).
+if ($Framework) {
+    if ($Framework -notin $script:TestFrameworks) {
+        Exit-RefusedParameters "-Framework $Framework is not one this build targets ($($script:TestFrameworks -join ';'))."
+    }
+    $script:TestFrameworks = @($Framework)
 }
 # Matches bin/<config>/<framework> for any framework this build targets
 $script:FrameworkPattern = '(' + (($script:TestFrameworks | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
@@ -985,9 +1002,7 @@ $script:moduleResultsRoot = $null
 $script:testModulePaths = @()
 try {
     # Determine parallel level
-    if ($MaxParallel -eq 0) {
-        $MaxParallel = [Environment]::ProcessorCount
-    }
+    $MaxParallel = Get-TestModuleParallelism -Mode $Mode -Frameworks $script:TestFrameworks -Requested $MaxParallel -ProcessorCount ([Environment]::ProcessorCount)
 
     # Branded header (suppressed when called from Run-PR.ps1)
     if (-not $NoHeader) {

@@ -33,7 +33,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | File | Used by | Purpose |
 |---|---|---|
 | `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build, instrument the test-side copies for coverage while it uploads |
-| `reusable-test-*.yml` | CI | One suite each: unit, PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob |
+| `reusable-test-*.yml` | CI | One suite each: unit, component, PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, general integration. One leg per target framework the build names (`test-frameworks`): `Run suite (net10.0)` and `Run suite (net11.0)` on a release build, `Run suite` otherwise |
 | `reusable-quality-build.yml` | CI | Quality's first half, where the scanner runs (a PR, or main): SonarScanner begin and the analysis build, beside the suites; hands its analysis state to the second half |
 | `reusable-quality.yml` | CI | Quality's second half, once every suite has finished: the coverage merge and gates, SonarScanner end and the PR comment, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |

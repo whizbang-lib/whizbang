@@ -188,12 +188,13 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # The expected coverage count is DERIVED, never configured: every suite leg is a job named
-          # "Test · <suite> / Run suite" and uploads exactly one coverage-* artifact. All suites need only
+          # "Test · <suite> / Run suite", or "Test · <suite> / Run suite (<framework>)" for each framework of a
+          # release build (#2427), and uploads exactly one coverage-* artifact. All suites need only
           # Build, so once Build succeeds every leg exists in the jobs list (queued or not), and the
           # leg count is final. A hardcoded count hung this step forever after a reshard.
           # Ends on job STATE, not a poll budget: runner queueing can delay suites for most of an
           # hour, and the job-level timeout is the only backstop.
-          SUITE='(.name | test("^Test · .* / Run suite$"))'
+          SUITE='(.name | test("^Test · .* / Run suite( \\(net[0-9.]+\\))?$"))'
           # A SKIPPED reusable-workflow job reports under its PARENT name only ("Test · RabbitMQ"),
           # with no " / child" part, so SUITE cannot see it: match the bare parent too.
           SKIPPED_SUITE='(.conclusion == "skipped" and (.name | test("^Test · [^/]*$")))'
@@ -255,7 +256,7 @@ jobs:
               # listing lag, then fail loudly instead of hanging.
               GRACE=$((GRACE + 1))
               if [ "$GRACE" -gt 4 ]; then
-                echo "::error::$EXPECTED suite legs finished green but only $COUNT coverage-* artifacts exist. A suite leg stopped uploading coverage, or the suite job naming changed (legs must be named 'Test · <suite> / Run suite')."
+                echo "::error::$EXPECTED suite legs finished green but only $COUNT coverage-* artifacts exist. A suite leg stopped uploading coverage, or the suite job naming changed (legs must be named 'Test · <suite> / Run suite', with ' (<framework>)' on a release build)."
                 exit 1
               fi
             fi

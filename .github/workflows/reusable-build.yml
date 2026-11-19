@@ -40,6 +40,12 @@ on:
         required: false
         type: boolean
         default: true
+    outputs:
+      test-frameworks:
+        description: >-
+          The target frameworks the tests were built for, as a JSON array: ["net10.0","net11.0"] on a release build,
+          ["net11.0"] otherwise. Each suite runs one leg per framework (#2427).
+        value: ${{ jobs.build.outputs.test-frameworks }}
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -58,6 +64,8 @@ jobs:
     # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
     # runner (16 minutes observed); the artifact upload follows it.
     timeout-minutes: 50
+    outputs:
+      test-frameworks: ${{ steps.frameworks.outputs.test-frameworks }}
 
     steps:
       - name: Checkout
@@ -70,6 +78,19 @@ jobs:
 
       - name: Display .NET Info
         run: dotnet --info
+
+      # Directory.Build.props decides the frameworks from the branch (WhizbangReleaseBuild), as Run-Tests.ps1 reads
+      # them, so the suites split into the same frameworks this build compiles.
+      - name: Name the frameworks the tests target
+        id: frameworks
+        shell: pwsh
+        run: |
+          $frameworks = @(((dotnet msbuild Directory.Build.props -getProperty:TargetFrameworks) | Out-String).Trim() -split ';' |
+              ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          if ($frameworks.Count -eq 0) { throw 'Could not read TargetFrameworks from Directory.Build.props.' }
+          $json = ConvertTo-Json -Compress -InputObject $frameworks
+          Write-Host "Test frameworks: $json"
+          "test-frameworks=$json" >> $env:GITHUB_OUTPUT
 
       - name: Cache NuGet packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
