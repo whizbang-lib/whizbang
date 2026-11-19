@@ -195,6 +195,30 @@ public class NullableIsNotNullAnalyzerTests {
   }
 
   [Test]
+  public async Task IsNotNull_OverloadsOtherThanTheStructConstrainedOne_ReportNothingAsync() {
+    // The pinned TUnit declares no IsNotNull with one unconstrained type parameter, so the compilation declares the
+    // extension class itself: only the struct-constrained overload is the one the rule names.
+    var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), """
+      namespace TUnit.Assertions.Extensions {
+        public static class AssertionExtensions {
+          public static bool IsNotNull<TValue>(this TValue? value) where TValue : struct => value.HasValue;
+          public static bool IsNotNull<TValue>(this TValue? value, string because) where TValue : class => value is not null;
+          public static bool IsNotNull(this object? value, int attempt) => value is not null && attempt > 0;
+        }
+      }
+      namespace Subjects {
+        using TUnit.Assertions.Extensions;
+        public static class Subject {
+          public static bool Run(int? count, string? name) => count.IsNotNull() && name.IsNotNull("named") && name.IsNotNull(1);
+        }
+      }
+      """, referenceTUnit: false);
+
+    await Assert.That(diagnostics).Count().IsEqualTo(1)
+      .Because("the struct-constrained overload is reported; the class-constrained and the non-generic ones are not");
+  }
+
+  [Test]
   public async Task Compilation_WithoutTUnit_ReportsNothingAsync() {
     var diagnostics = await AnalyzerHarness.AnalyzeAsync(new NullableIsNotNullAnalyzer(), """
       public static class Subject {

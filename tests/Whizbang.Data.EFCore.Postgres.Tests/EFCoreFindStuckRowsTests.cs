@@ -121,7 +121,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
       VALUES (@msg, 'topic', @type, 'TestEnvelope', '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
-    ins.Parameters.Add(new NpgsqlParameter("stream", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId.HasValue ? streamId.Value : DBNull.Value });
+    ins.Parameters.Add(new NpgsqlParameter("stream", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)streamId ?? DBNull.Value });
     ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }

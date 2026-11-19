@@ -90,6 +90,21 @@ public class IntegritySealReadingSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A schema whose settings carry no origin generation (the row removed by hand, or never seeded) reads it as absent, so
+  /// the generation gauge reports nothing rather than a zero no setting stated.
+  /// </summary>
+  [Test]
+  public async Task WithNoGenerationSetting_TheGenerationIsAbsentAsync() {
+    await _executeAsync("DELETE FROM wh_settings WHERE setting_key = 'integrity_origin_generation'");
+
+    var reading = await _readAsync();
+
+    await Assert.That(reading.Reported).IsTrue();
+    await Assert.That(reading.OriginGeneration).IsNull()
+      .Because("no settings row states a generation, and zero would be a reading nobody took");
+  }
+
+  /// <summary>
   /// #2365: the reading also counts each lane's events above its frontier, reads this service's origin generation, and
   /// counts the stream buckets carrying a cut's digest.
   /// </summary>
