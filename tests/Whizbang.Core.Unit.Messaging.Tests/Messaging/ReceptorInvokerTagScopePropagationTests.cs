@@ -39,7 +39,9 @@ namespace Whizbang.Core.Tests.Messaging;
 /// - ScopeContextAccessor.CurrentContext (static AsyncLocal, flows through CreateAsyncScope)
 /// </para>
 /// </remarks>
-[NotInParallel("TagRegistry")]
+// Runs alone, not beside any other test: it registers into the process-wide tag registry and reads the static
+// scope accessor, and a test outside the TagRegistry group touching either left the hook uninvoked on CI.
+[NotInParallel]
 public class ReceptorInvokerTagScopePropagationTests {
 
   // Clearing the process-global tag registries removes the generated ones too; put them back for the tests after this.
