@@ -5,6 +5,7 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -46,6 +47,25 @@ public class MaintenanceWorkerIntegrityBacklogTests {
       return Throw is null ? Task.FromResult(Backlog) : Task.FromException<LedgerBacklogSnapshot>(Throw);
     }
 
+    public IntegritySealReading Seals { get; set; } = new() {
+      Reported = true,
+      Lanes = [new LaneSeal(Guid.Empty, 300, 12)],
+      SealRecheckCoverageRatio = 0.5,
+    };
+    public (TimeSpan Lookback, TimeSpan Every, DateTimeOffset Now)? SealReadArgs { get; private set; }
+
+    public Task<CutsAwaitingSeal> GetCutsAwaitingSealAsync(int cap, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new CutsAwaitingSeal {
+        Reported = true,
+        Tasks = new Dictionary<string, PendingRows>(StringComparer.Ordinal) { ["truncate"] = new(7, false) },
+      });
+
+    public Task<IntegritySealReading> GetIntegritySealReadingAsync(
+        TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) {
+      SealReadArgs = (lookback, recheckEvery, now);
+      return Task.FromResult(Seals);
+    }
+
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(Results);
 
@@ -60,21 +80,30 @@ public class MaintenanceWorkerIntegrityBacklogTests {
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
       BacklogCoordinator coordinator, DutyHolderWorker? duty = null, WhizbangRunPermit? permit = null,
-      bool withIntegrity = true, bool withMetrics = true) {
+      bool withIntegrity = true, bool withMetrics = true, TimeProvider? clock = null, MaintenanceMetrics? maintenance = null) {
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     if (withMetrics) {
       services.AddSingleton(metrics);
     }
+    if (maintenance is not null) {
+      services.AddSingleton(maintenance);
+    }
     if (withIntegrity) {
-      services.AddSingleton(Options.Create(new StreamIntegrityOptions { MaxRepairAttemptsPerBucket = 6 }));
+      services.AddSingleton(Options.Create(new StreamIntegrityOptions {
+        MaxRepairAttemptsPerBucket = 6,
+        SealRecheck = { Enabled = true, Lookback = TimeSpan.FromDays(20), RecheckEvery = TimeSpan.FromDays(3) },
+      }));
     }
     if (duty is not null) {
       services.AddSingleton(duty);
     }
     if (permit is not null) {
       services.AddSingleton(permit);
+    }
+    if (clock is not null) {
+      services.AddSingleton(clock);
     }
     var sp = services.BuildServiceProvider();
     var worker = new MaintenanceWorker(
@@ -195,5 +224,81 @@ public class MaintenanceWorkerIntegrityBacklogTests {
       .Where(s => Equals(s.Tags.GetValueOrDefault("how"), "forgotten")).Sum(s => s.Value);
     await Assert.That(closed).IsEqualTo(12L)
       .Because("the row cap removes buckets without healing them, and the open gauge falls by as many");
+  }
+
+  /// <summary>#2365: the seal gauges are read by the holder, as the backlog is, on its clock and the re-check's window.</summary>
+  [Test]
+  public async Task TheMaintainer_PublishesTheSealReading_OnItsClock_OverTheRecheckWindowAsync() {
+    var coordinator = new BacklogCoordinator();
+    var at = new DateTimeOffset(2026, 11, 17, 9, 0, 0, TimeSpan.Zero);
+    var (worker, metrics) = _build(coordinator, clock: new FakeTimeProvider(at));
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.SealReadArgs!.Value).IsEqualTo((TimeSpan.FromDays(20), TimeSpan.FromDays(3), at));
+    var frontier = ProbeMeterReader.ReadSeries(metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier");
+    await Assert.That(frontier.Single().Value).IsEqualTo(300L);
+    var enabled = ProbeMeterReader.ReadSeries(metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.recheck_enabled")
+      .ToDictionary(m => (string)m.Tags["check"]!, m => m.Value);
+    await Assert.That(enabled["seal_recheck"]).IsEqualTo(1L).Because("every tick publishes whether each check is on");
+    await Assert.That(enabled["full_history_compare"]).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task WithNoClockRegistered_TheSealReadingIsTakenOnTheSystemClockAsync() {
+    var coordinator = new BacklogCoordinator();
+    var (worker, metrics) = _build(coordinator);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    // The test reads no clock of its own: a reading was taken, at a real UTC instant, with nothing registered.
+    await Assert.That(coordinator.SealReadArgs!.Value.Now).IsNotEqualTo(default)
+      .Because("with no clock registered the worker falls back to the system clock rather than skipping the reading");
+    await Assert.That(coordinator.SealReadArgs!.Value.Now.Offset).IsEqualTo(TimeSpan.Zero);
+    await Assert.That(ProbeMeterReader.ReadSeries(metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier").Count)
+      .IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AnInstanceThatLosesItsTurn_OrFailsTheRead_WithdrawsTheSealReadingAsync() {
+    var coordinator = new BacklogCoordinator();
+    var permit = new WhizbangRunPermit();
+    var (worker, metrics) = _build(coordinator, permit: permit);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    await Assert.That(ProbeMeterReader.ReadSeries(metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier"))
+      .IsEmpty().Because("a lane's seal is reported by the holder alone");
+
+    var failing = new BacklogCoordinator();
+    var maintenance = new MaintenanceMetrics(
+      new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var (failingWorker, failingMetrics) = _build(failing, maintenance: maintenance);
+    await failingWorker.RunMaintenanceOnceAsync(CancellationToken.None);
+    failing.Throw = new InvalidOperationException("ledger unavailable");
+    await failingWorker.RunMaintenanceOnceAsync(CancellationToken.None);
+    await Assert.That(ProbeMeterReader.ReadSeries(failingMetrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.epoch_frontier"))
+      .IsEmpty().Because("a reading that can no longer be refreshed is stale");
+    await Assert.That(ProbeMeterReader.ReadSeries(maintenance.RowsAffected.Meter, "whizbang.maintenance.eligible_not_yet_deleted"))
+      .IsEmpty().Because("and so is the count of the cuts the seal holds");
+  }
+
+  /// <summary>#2365: the holder reads the streams the seal gate holds, and an instance that loses its turn withdraws them.</summary>
+  [Test]
+  public async Task TheMaintainer_PublishesTheCutsTheSealHolds_AndAnInstanceThatLosesItsTurnWithdrawsThemAsync() {
+    var coordinator = new BacklogCoordinator();
+    var permit = new WhizbangRunPermit();
+    var maintenance = new MaintenanceMetrics(
+      new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var (worker, _) = _build(coordinator, permit: permit, maintenance: maintenance);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    var held = ProbeMeterReader.ReadSeries(maintenance.RowsAffected.Meter, "whizbang.maintenance.eligible_not_yet_deleted");
+    await Assert.That(held.Single().Value).IsEqualTo(7L);
+
+    await permit.ChangeAsync(RunState.Paused, CancellationToken.None);
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    await Assert.That(ProbeMeterReader.ReadSeries(maintenance.RowsAffected.Meter, "whizbang.maintenance.eligible_not_yet_deleted"))
+      .IsEmpty();
   }
 }

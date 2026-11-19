@@ -222,6 +222,14 @@ public partial class RedeliveryAnswerCoverageTests {
     await Assert.That(other.AnsweredWindow).IsNull();
   }
 
+  [Test]
+  public async Task Composite_WithoutATraceLink_CarriesNeitherIdNorParentAsync() {
+    IIdentityPreservingComposite other = new BareComposite();
+
+    await Assert.That(other.TraceLink).IsEqualTo(default(Whizbang.Core.Observability.IntegrityTraceLink))
+      .Because("an origin that predates #2365 says nothing, and the repair starts its own trace");
+  }
+
   private sealed class BareComposite : IIdentityPreservingComposite {
     public IReadOnlyList<Guid> InnerEventIds => [];
     public IEnumerable<IMessage> InnerEvents => [];

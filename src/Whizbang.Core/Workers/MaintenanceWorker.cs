@@ -117,6 +117,8 @@ public sealed partial class MaintenanceWorker(
     try {
       var summary = await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
       integrityMetrics.UpdateLedgerGauges(summary);
+      // #2365: whether each opt-in check is on, so an alert can tell a check that is off from one that stopped.
+      integrityMetrics.UpdateChecksEnabled(integrity.SealRecheck.Enabled, integrity.FullHistoryCompare.Enabled);
       // #2261: derived from the seals just read, on every instance as sealed_through is.
       integrityMetrics.UpdateVerifiedPercent(integrity.VerifiedPercentGaugeEnabled
         ? Whizbang.Core.Observability.IntegrityCompletion.Verified(summary.Seals)
@@ -153,11 +155,20 @@ public sealed partial class MaintenanceWorker(
       var backlog = await coordinator.GetIntegrityLedgerBacklogAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
       integrityMetrics.UpdateLedgerBacklog(backlog);
       integrityMetrics.UpdateRepairProgress(await _readRepairProgressAsync(sp, coordinator, integrity, backlog, ct).ConfigureAwait(false));
+      // #2365: each lane's seal and the re-check's coverage, read by the holder as the backlog is.
+      var clock = sp.GetService<TimeProvider>() ?? TimeProvider.System;
+      integrityMetrics.UpdateSealReading(await coordinator.GetIntegritySealReadingAsync(
+        integrity.SealRecheck.Lookback, integrity.SealRecheck.RecheckEvery, clock.GetUtcNow(), ct).ConfigureAwait(false));
+      // #2365: the streams due for a cut that the seal gate holds, a bounded count per task.
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(
+        await coordinator.GetCutsAwaitingSealAsync(CUTS_AWAITING_SEAL_COUNT_CAP, ct).ConfigureAwait(false));
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
       integrityMetrics.UpdateLedgerBacklog(null);
       integrityMetrics.UpdateRepairProgress(null);
+      integrityMetrics.UpdateSealReading(null);
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogLedgerBacklogRefreshFailed(_logger, ex);
     }
   }
@@ -186,6 +197,9 @@ public sealed partial class MaintenanceWorker(
         : null,
     };
   }
+
+  /// <summary>#2365: the most rows one task's count of the cuts the seal holds reads; at the cap it reads as at least that.</summary>
+  private const int CUTS_AWAITING_SEAL_COUNT_CAP = 100_000;
 
   private static bool _tallies(Whizbang.Core.Messaging.StreamIntegrityOptions integrity) =>
     integrity.RepairProgressGaugeEnabled || integrity.BacklogEtaGaugeEnabled;
@@ -241,6 +255,8 @@ public sealed partial class MaintenanceWorker(
       var withdrawn = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
       withdrawn?.UpdateLedgerBacklog(null);
       withdrawn?.UpdateRepairProgress(null);
+      withdrawn?.UpdateSealReading(null);
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogSkippedNotMaintainer(_logger);
       return;
     }

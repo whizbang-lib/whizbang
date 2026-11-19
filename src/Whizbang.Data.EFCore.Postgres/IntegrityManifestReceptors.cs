@@ -136,6 +136,9 @@ public sealed partial class IntegrityManifestRequestReceptor(
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestIntegrityManifest message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    // #2365: the answer joins the asker's trace; every chunk carries this span back, with the ask's id.
+    using var span = IntegrityTracing.StartAnswer(IntegrityTracing.KIND_MANIFEST, message.RequesterService,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
     await _answerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
@@ -262,6 +265,10 @@ public sealed partial class IntegrityManifestRequestReceptor(
     var rewrite = message.KnownOriginGeneration is long knownGeneration
       ? await coordinator.GetIntegrityHistoryRewriteAsync(knownGeneration, cancellationToken).ConfigureAwait(false)
       : null;
+    // #2365: this origin's rules noted beside its generation, so the answer says why history moved since the asker's.
+    var rulesChangedAt = await coordinator.IntegrityNoteRulesAsync(pairGuard.ServiceFingerprint, originGeneration, cancellationToken)
+      .ConfigureAwait(false);
+    var historyMovedReason = IntegrityHistoryMoved.Reason(message.KnownOriginGeneration, originGeneration, rulesChangedAt);
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var originName = instanceProvider?.ServiceName ?? string.Empty;
     // All chunks of one manifest share the manifest stream (the origin id) as their session —
@@ -294,6 +301,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
           RewrittenSinceGeneration = rewrite?.SinceGeneration,
           RewrittenFrom = rewrite?.RewrittenFrom,
+          HistoryMovedReason = historyMovedReason,
           WindowCapped = windowCapped,
           WindowNumber = message.WindowNumber,
           Recheck = message.Recheck,
@@ -301,6 +309,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
           RequestedEventTypes = message.Level == ManifestLevel.Streams ? eventTypes : null,
           NothingSettledAbove = nothingSettledAbove,
           RuleFingerprint = rules,
+          RequestId = message.RequestId,
+          TraceParent = IntegrityTracing.CurrentTraceParent,
         },
         Hops = [
           Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -348,6 +358,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
         Recheck = message.Recheck,
         PairHalted = true,
         RuleFingerprint = rules,
+        RequestId = message.RequestId,
+        TraceParent = IntegrityTracing.CurrentTraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
@@ -442,6 +454,10 @@ public sealed partial class IntegrityManifestReceptor(
         new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;
     }
+    // #2365: the comparison joins the trace the origin's answer carried; a repair it requests runs under it.
+    using var span = IntegrityTracing.StartAudit(IntegrityTracing.KIND_MANIFEST, message.OriginServiceName,
+      new IntegrityTraceLink(message.RequestId, message.TraceParent));
+    IntegrityTracing.SetCount(span, IntegrityTracing.ATTR_STREAMS, message.Digests.Count);
     var compareTimer = System.Diagnostics.Stopwatch.StartNew();
     try {
       await _handleCoreAsync(message, cancellationToken).ConfigureAwait(false);
@@ -534,6 +550,8 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, carriedGeneration, rewrite, cancellationToken).ConfigureAwait(false);
       if (!coherent) {
         LogGenerationChanged(logger, message.OriginServiceName, carriedGeneration);
+        // #2365: the guard lowered the seal because the origin's history moved, for the reason its answer gives.
+        services.GetService<StreamIntegrityMetrics>()?.RecordSealLowered(IntegrityHistoryMoved.Counted(message.HistoryMovedReason));
         return;
       }
     }
@@ -736,6 +754,19 @@ public sealed partial class IntegrityManifestReceptor(
     var reportFlags = divergent.Count > 0
       ? await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false)
       : [];
+    // #2365: the deficits a redelivery answer had filled, short again: one turn of the resync loop each, counted once per
+    // answer by the ledger.
+    var shortAgainKeys = new List<IntegrityRepairLedger.DivergenceKey>();
+    for (var i = 0; i < divergent.Count; i++) {
+      if (divergent[i].IsDeficit) {
+        shortAgainKeys.Add(observations[i].Key);
+      }
+    }
+    if (shortAgainKeys.Count > 0) {
+      metrics?.RedeliveredThenReaped.Add(
+        await coordinator.IntegrityCountShortAfterAnswerAsync(message.OriginServiceId, shortAgainKeys, now, cancellationToken)
+          .ConfigureAwait(false));
+    }
     // Repair eligibility batches only the DEFICITS, in manifest order, with the budget enforced
     // INSIDE the batch — past the cap keys are not consulted, so no attempt budget is burned on
     // grants that would be discarded.
@@ -761,6 +792,12 @@ public sealed partial class IntegrityManifestReceptor(
         message.OriginServiceId, stampKeys,
         deficitIndexes.ConvertAll(i => IntegrityDigestMath.SingleMissingEventId(divergent[i].Origin, divergent[i].Mine)),
         cancellationToken).ConfigureAwait(false);
+      // #2365: and the trace of this comparison, so the drain's request starts in it. Nothing to record with no span.
+      if (IntegrityTracing.CurrentTraceParent is { } traceParent) {
+        await coordinator.IntegrityRecordTraceAsync(
+          message.OriginServiceId, stampKeys, new IntegrityTraceLink(message.RequestId, traceParent), cancellationToken)
+          .ConfigureAwait(false);
+      }
     }
     // #2115: a re-check's answer is a compare, never a repair request.
     var repairEligible = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0
@@ -1093,6 +1130,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         EventTypes = types,
@@ -1352,6 +1392,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         EventTypes = drillDown,
@@ -1451,6 +1494,9 @@ public sealed partial class IntegrityManifestReceptor(
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
+        // #2365: a follow-up ask carries the comparison's trace link, so its answer joins the same trace.
+        RequestId = TrackedGuid.New(),
+        TraceParent = IntegrityTracing.CurrentTraceParent,
         RequesterService = requester,
         Topic = topic,
         // The same ask the scheduled audit makes, from the new seal: the whole consumed surface, type level.
@@ -1523,6 +1569,10 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    // #2365: the request's span, a child of this comparison; the origin's answer and the repair join it.
+    var requestId = (Guid)TrackedGuid.New();
+    using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_INLINE, manifest.OriginServiceName, requestId);
+    var link = IntegrityTracing.LinkFrom(span, requestId);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1541,6 +1591,8 @@ public sealed partial class IntegrityManifestReceptor(
         StateOnly = true,
         AcceptsStreamSpanningBundles = true,
         RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([eventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
@@ -1580,6 +1632,10 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    // #2365: the request's span, a child of this comparison; the origin's answer and the repair join it.
+    var requestId = (Guid)TrackedGuid.New();
+    using var span = IntegrityTracing.StartRepairRequest(IntegrityTracing.KIND_INLINE, manifest.OriginServiceName, requestId);
+    var link = IntegrityTracing.LinkFrom(span, requestId);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -1598,6 +1654,8 @@ public sealed partial class IntegrityManifestReceptor(
         ToCommitSequence = toSequence,
         AcceptsStreamSpanningBundles = true,
         RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp([eventType]),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)

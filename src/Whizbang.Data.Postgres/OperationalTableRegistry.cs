@@ -112,6 +112,7 @@ public static class OperationalTableRegistry {
     _rolling("wh_instance_evictions", OperationalCategory.PairHistory, "own retention: instance_eviction_retention_hours (24)"),
     _rolling("wh_instance_exits", OperationalCategory.PairHistory, "own retention: instance_exit_retention_days (30)"),
     _state("wh_integrity_consumer_seals", "consumer services that report their seal (#2363)"),
+    _state("wh_integrity_cuts_awaiting_seal", "streams whose cut the seal gate holds now: removed when the cut answers otherwise (#2365)"),
     _state("wh_integrity_deliveries", "work in flight: removed when handled or dropped"),
     _state("wh_integrity_domain_claims", "domain owners"),
     _state("wh_integrity_drill_cursors", "origins and windows: one resume point each, taken once"),

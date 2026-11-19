@@ -2353,6 +2353,80 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
+  /// #2365: of the keyed deficit buckets a comparison found, counts those a redelivery answer filled since the last time
+  /// this counted them: rows answered (<c>answered_at</c>) and not marked unhealable, short again. Each answer counts once,
+  /// however many comparisons follow it. Default 0 = unsupported.
+  /// </summary>
+  /// <param name="originServiceId">The origin the keys belong to.</param>
+  /// <param name="keys">The deficit buckets the comparison found.</param>
+  /// <param name="now">The caller's clock, recorded as when each was counted.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The buckets short again after an answer that filled them.</returns>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:ShortAfterAnswer_CountsEachFilledBucketOncePerAnswer_AndNothingElseAsync</tests>
+  Task<int> IntegrityCountShortAfterAnswerAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// #2365: records a stream whose cut the seal gate holds (<paramref name="task"/> names the cut: <c>truncate</c> or
+  /// <c>archive</c>), or forgets it (null) once its cut answers otherwise, for <c>eligible_not_yet_deleted</c>. No-op =
+  /// unsupported.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="task">The cut the seal holds, or null to forget the stream.</param>
+  /// <param name="now">When the cut was held.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsAwaitingSealSqlTests.cs</tests>
+  Task RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2365: the streams the seal gate holds, per task, each counted up to <paramref name="cap"/>. Read by the maintainer
+  /// duty's holder. Default: not reported (no series).
+  /// </summary>
+  /// <param name="cap">The most rows one task's count reads.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The reading.</returns>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsAwaitingSealSqlTests.cs</tests>
+  Task<Observability.CutsAwaitingSeal> GetCutsAwaitingSealAsync(int cap, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.CutsAwaitingSeal.NotReported);
+
+  /// <summary>
+  /// #2365: notes this origin's rule fingerprint beside its current generation and answers the generation its rules last
+  /// changed at: when the fingerprint differs from the one noted before, the change is recorded at
+  /// <paramref name="currentGeneration"/>. An answer to an asker that knows an earlier generation says the history moved
+  /// by a rule change. Null when no change was ever noted, or unsupported.
+  /// </summary>
+  /// <param name="rulesFingerprint">This service's rule fingerprint.</param>
+  /// <param name="currentGeneration">The origin generation the answer carries.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The generation the rules last changed at, or null.</returns>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TwoServiceHistoryMovedReasonTests.cs</tests>
+  Task<long?> IntegrityNoteRulesAsync(string rulesFingerprint, long currentGeneration, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// #2365: records on the keyed ledger rows the trace of the comparison that recorded their deficit (its
+  /// <c>traceparent</c> and the manifest ask's id), so the paced repair drain starts its request in that trace and the
+  /// origin's answer and the repair join the audit that found the gap. A later comparison replaces it. No-op =
+  /// unsupported, and the drain's requests start traces of their own.
+  /// </summary>
+  /// <param name="originServiceId">The origin the keys belong to.</param>
+  /// <param name="keys">The deficit buckets this comparison recorded.</param>
+  /// <param name="trace">The comparison's trace link.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairAnswerSqlTests.cs:RecordTrace_TheClaimCarriesEachRowsTrace_AndALaterComparisonReplacesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityRecordTraceAsync_WithoutProviderSupport_IsANoOpAsync</tests>
+  Task IntegrityRecordTraceAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, Observability.IntegrityTraceLink trace,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
   /// Stamps the compared window ([from, until] origin commit sequences) onto the keyed ledger
   /// rows — discovery-time context the paced repair drain later dispatches with, so a repair
   /// asks for exactly the slice that disagreed without the in-flight manifest. No-op = unsupported.
@@ -2876,6 +2950,24 @@ public interface IWorkCoordinator {
   Task<Observability.LedgerBacklogSnapshot> GetIntegrityLedgerBacklogAsync(
     int maxRepairAttempts, CancellationToken cancellationToken = default) =>
     Task.FromResult(Observability.LedgerBacklogSnapshot.NotReported);
+
+  /// <summary>
+  /// Reads the seal gauges' reading (#2365): per lane, the sequence below which every digest epoch is sealed and the
+  /// seconds since that frontier last advanced, and the share of the epochs sealed within <paramref name="lookback"/>
+  /// the seal re-check covered within <paramref name="recheckEvery"/>. Read by the maintainer duty's holder. Defaults to
+  /// <see cref="Observability.IntegritySealReading.NotReported"/> for engines with no epochs: no series, never a zero.
+  /// </summary>
+  /// <param name="lookback"><c>SealRecheck:Lookback</c>.</param>
+  /// <param name="recheckEvery"><c>SealRecheck:RecheckEvery</c>.</param>
+  /// <param name="now">The reading's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The reading, or the not-reported reading.</returns>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySealReadingSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:GetIntegritySealReadingAsync_WithoutProviderSupport_ReportsNothingAsync</tests>
+  Task<Observability.IntegritySealReading> GetIntegritySealReadingAsync(
+    TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    Task.FromResult(Observability.IntegritySealReading.NotReported);
 
   /// <summary>
   /// Adds the ledger buckets one instance opened and closed to the service's shared per-minute tally (#2261), and prunes

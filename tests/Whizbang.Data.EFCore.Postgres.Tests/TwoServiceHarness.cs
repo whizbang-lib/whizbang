@@ -96,7 +96,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   public static async Task<TwoServiceHarness> CreateAsync(
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
       Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null,
-      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null) {
+      IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null, bool repairDrainEnabled = false,
+      StreamIntegrityMetrics? consumerMetrics = null) {
     var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
@@ -120,15 +121,17 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       RepairRequestBackoffSeconds = 0,
       MaxRepairAttemptsPerBucket = 1000,
       PublishReportEvents = true,
-      // The compare dispatches its repairs inline, so a cycle is one audit.
-      RepairDrainEnabled = false,
+      // The compare dispatches its repairs inline, so a cycle is one audit; with the drain on (the default in a real
+      // service), the audit records its deficits and RunConsumerDrainAsync sends them.
+      RepairDrainEnabled = repairDrainEnabled,
+      RepairDrainRatePerSecond = 1000,
     };
     h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null,
       rules: originRules);
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(h.OriginId, ORIGIN_NAME, DateTimeOffset.UnixEpoch, ORIGIN_REQUEST_TOPIC);
     h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
-      consumedEventTypes, consumerClock, consumerRules);
+      consumedEventTypes, consumerClock, consumerRules, consumerMetrics);
     h._originRequestReceptor = new IntegrityManifestRequestReceptor(
       h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
     h._originRedeliveryReceptor = new RedeliveryRequestReceptor(
@@ -317,6 +320,18 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   }
 
   /// <summary>
+  /// One pass of the consumer's paced repair drain (#2365), pumped until both sides are quiet: the deficits an audit
+  /// recorded are requested of the origin, and its answers applied.
+  /// </summary>
+  public async Task RunConsumerDrainAsync() {
+    var worker = new RepairDrainWorker(
+      _consumerProvider!.GetRequiredService<IServiceScopeFactory>(),
+      _consumerProvider!.GetRequiredService<IOptions<StreamIntegrityOptions>>(), NullLogger<RepairDrainWorker>.Instance);
+    await worker.DrainOnceAsync(CancellationToken.None);
+    await _pumpUntilQuietAsync();
+  }
+
+  /// <summary>
   /// The origin's checkpoint reaches the consumer: its highest stamped position, as the checkpoint announces it, received
   /// at the consumer's clock (the harness clock when the consumer runs on none).
   /// </summary>
@@ -329,6 +344,14 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     await new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, _json)
       .IntegrityRecordOriginCheckpointAsync(OriginId, ORIGIN_NAME, ORIGIN_REQUEST_TOPIC, _consumerClock?.GetUtcNow() ?? _clock, head);
   }
+
+  /// <summary>
+  /// The origin rewrites history a consumer verified (#2365): the rewrite is noted from position 0 and the generation
+  /// bumped, as a reclassification or a refold does.
+  /// </summary>
+  public Task RewriteOriginHistoryAsync() => ExecuteAsync(Origin, """
+    DO $$ BEGIN PERFORM _wh_note_origin_rewrite(0); PERFORM _wh_bump_origin_generation(); END $$
+    """);
 
   /// <summary>The origin's pair guard (#2362).</summary>
   public IntegrityPairGuard OriginGuard => _originProvider!.GetRequiredService<IntegrityPairGuard>();
@@ -418,6 +441,16 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     return new TwoServiceTally(repairs, reports, _redelivered.Count, _restored.Count);
   }
 
+  /// <summary>The redelivery requests the consumer has sent so far (#2365).</summary>
+  public List<RequestRedeliveryCommand> RedeliveryRequests() => [.. _consumerTransport.Published
+    .Where(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand", StringComparison.Ordinal) == true)
+    .Select(p => _payload<RequestRedeliveryCommand>(p.Envelope))];
+
+  /// <summary>The redelivery bundles the origin has sent so far (#2365).</summary>
+  public List<RedeliveryComposite> RedeliveryBundles() => [.. _originTransport.Published
+    .Where(p => p.EnvelopeType?.Contains("RedeliveryComposite", StringComparison.Ordinal) == true)
+    .Select(p => _payload<RedeliveryComposite>(p.Envelope))];
+
   /// <summary>The events redelivered so far, in order.</summary>
   public IReadOnlyList<Guid> Redelivered => _redelivered;
 
@@ -471,8 +504,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   private ServiceProvider _buildProvider(
       TwoServiceStore store, IntegrityWireTransport transport, IntegrityWireDispatcher dispatcher, string serviceName,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker,
-      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null, IRuleFingerprintSource? rules = null) {
+      IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? clock = null, IRuleFingerprintSource? rules = null,
+      StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     // #2362: each side's rules and its own pair guard, as the turnkey registration gives every service.
     services.AddSingleton(rules ?? CatalogRuleFingerprintSource.Empty);
     services.AddSingleton(sp => new IntegrityPairGuard(sp.GetRequiredService<IRuleFingerprintSource>(), Options.Create(options),

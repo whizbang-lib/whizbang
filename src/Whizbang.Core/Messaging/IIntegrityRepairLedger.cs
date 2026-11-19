@@ -40,9 +40,12 @@ public readonly record struct IntegrityReportObservation(
 /// <docs>proposals/paced-repair-drain</docs>
 /// <param name="MissingEventId">#2103: the one event the bucket is missing, when its comparison could name it (the
 /// origin held exactly one event more and both sides carried id lanes); null asks for the stream over the window.</param>
+/// <param name="TraceParent">#2365: the W3C <c>traceparent</c> of the comparison that recorded the row, so the drain's
+/// request starts in the audit's trace; null when the comparison ran with no span.</param>
+/// <param name="TraceRequestId">#2365: the id of the manifest ask whose answer recorded the row; null when it named none.</param>
 public readonly record struct IntegrityRepairDrainItem(
   Guid OriginServiceId, string? TenantScope, string EventType, Guid StreamId,
-  long? WindowFrom, long? WindowUntil, Guid? MissingEventId = null);
+  long? WindowFrom, long? WindowUntil, Guid? MissingEventId = null, string? TraceParent = null, Guid? TraceRequestId = null);
 
 /// <summary>
 /// What a manifest comparison needs to know before it adds deficit buckets to the paced repair

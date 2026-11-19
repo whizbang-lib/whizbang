@@ -166,6 +166,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetCutsAwaitingSealAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetCutsAwaitingSealAsync(cap: 10);
+
+    await Assert.That(result).IsSameReferenceAs(Whizbang.Core.Observability.CutsAwaitingSeal.NotReported)
+      .Because("a store that cannot read the seal gate publishes no series rather than a zero");
+  }
+
+  [Test]
   public async Task CountReceivedFromOriginAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -781,6 +791,26 @@ public class WorkCoordinatorDefaultsTests {
 
     await Assert.That(result.Reported).IsFalse()
       .Because("an engine with no ledger has no backlog to report, and a zero would read as a healed service");
+  }
+
+  [Test]
+  public async Task IntegrityRecordTraceAsync_WithoutProviderSupport_IsANoOpAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var task = coordinator.IntegrityRecordTraceAsync(Guid.Empty, [], default);
+
+    await Assert.That(task.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
+  public async Task GetIntegritySealReadingAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetIntegritySealReadingAsync(TimeSpan.FromDays(30), TimeSpan.FromDays(7), DateTimeOffset.UnixEpoch);
+
+    await Assert.That(result.Reported).IsFalse()
+      .Because("an engine with no epochs has no seal to report, and a zero frontier would read as nothing sealed");
+    await Assert.That(result.Lanes).IsEmpty();
   }
 
   [Test]

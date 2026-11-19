@@ -96,6 +96,11 @@ public sealed class MaintenanceMetrics {
       "whizbang.maintenance.pending_rows",
       _observePendingRows,
       description: "Rows a maintenance task would remove now; tagged by task, and capped=true when the count stopped at the cap (at least that many)");
+    // #2365: cleanup lag the seal gate holds back.
+    meter.CreateObservableGauge(
+      "whizbang.maintenance.eligible_not_yet_deleted",
+      _observeCutsAwaitingSeal,
+      description: "Streams due for a cut (task: truncate | archive) that the seal gate holds, this service's seal or a consumer's; counted up to a cap (capped=true: at least that many); reported by the maintainer duty's holder only");
     meter.CreateObservableGauge(
       "whizbang.ephemeral.history_walk_remaining",
       _observeHistoryWalkRemaining,
@@ -122,6 +127,27 @@ public sealed class MaintenanceMetrics {
   public void UpdatePendingReclamation(PendingReclamation reading) {
     ArgumentNullException.ThrowIfNull(reading);
     Volatile.Write(ref _pending, reading);
+  }
+
+  // The latest reading of the streams the seal gate holds (#2365), replaced whole by each one.
+  private CutsAwaitingSeal _cutsAwaitingSeal = CutsAwaitingSeal.NotReported;
+
+  /// <summary>
+  /// Replaces the reading of the streams due for a cut that the seal gate holds (#2365), for
+  /// <c>whizbang.maintenance.eligible_not_yet_deleted</c>; null withdraws it, so an instance without the maintainer duty
+  /// reports no series.
+  /// </summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MaintenanceMetricsEligibleTests.cs</tests>
+  public void UpdateCutsAwaitingSeal(CutsAwaitingSeal? reading) =>
+    Volatile.Write(ref _cutsAwaitingSeal, reading ?? CutsAwaitingSeal.NotReported);
+
+  private IEnumerable<Measurement<long>> _observeCutsAwaitingSeal() {
+    foreach (var (task, rows) in Volatile.Read(ref _cutsAwaitingSeal).Tasks) {
+      yield return new Measurement<long>(
+        rows.Rows, new KeyValuePair<string, object?>("task", task), new KeyValuePair<string, object?>("capped", rows.Capped));
+    }
   }
 
   private const string CATEGORY_TAG = "category";

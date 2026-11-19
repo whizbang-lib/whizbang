@@ -38,3 +38,20 @@ public sealed record PendingReclamation(
     new Dictionary<string, PendingRows>(StringComparer.Ordinal),
     new Dictionary<string, long>(StringComparer.Ordinal));
 }
+
+/// <summary>
+/// #2365: the streams due for a cut that the seal gate holds (this service's seal, or a consumer's when cuts wait for
+/// consumers), per task (<c>truncate</c> | <c>archive</c>), each counted up to a cap.
+/// </summary>
+/// <docs>resilience/stream-integrity#integrity-instruments</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/MaintenanceMetricsEligibleTests.cs</tests>
+public sealed record CutsAwaitingSeal {
+  /// <summary>No reading: the gauge reports no series.</summary>
+  public static CutsAwaitingSeal NotReported { get; } = new();
+
+  /// <summary>True when the reading was taken.</summary>
+  public bool Reported { get; init; }
+
+  /// <summary>Per task, the streams held, at most the cap.</summary>
+  public IReadOnlyDictionary<string, PendingRows> Tasks { get; init; } = new Dictionary<string, PendingRows>(StringComparer.Ordinal);
+}

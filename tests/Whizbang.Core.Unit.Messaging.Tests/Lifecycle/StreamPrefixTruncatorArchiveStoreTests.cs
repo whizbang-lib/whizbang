@@ -50,11 +50,18 @@ public class StreamPrefixTruncatorArchiveStoreTests {
 
   private sealed class CountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<(Guid Stream, long Through, bool Archive)> Truncates { get; } = [];
+    public List<(Guid Stream, string? Task)> AwaitingSeal { get; } = [];
+    public string Status { get; set; } = "truncated";
+
+    Task IWorkCoordinator.RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken) {
+      AwaitingSeal.Add((streamId, task));
+      return Task.CompletedTask;
+    }
 
     Task<StreamTruncateResult> IWorkCoordinator.TruncateStreamPrefixAsync(
         Guid streamId, long throughVersion, bool archive, CancellationToken cancellationToken) {
       Truncates.Add((streamId, throughVersion, archive));
-      return Task.FromResult(new StreamTruncateResult("truncated", 5));
+      return Task.FromResult(new StreamTruncateResult(Status, Status == "truncated" ? 5 : 0));
     }
   }
 
@@ -72,6 +79,49 @@ public class StreamPrefixTruncatorArchiveStoreTests {
 
   private static ArchiveWriteResult _archived(long events) => new(
     ArchiveStatus.ARCHIVED, events, null, new ArchiveLocator("postgres-table", "wh_event_archive", ArchiveCompression.None), 4);
+
+  /// <summary>#2365: every cut that happened carries its digest, and is counted by kind; a refused one is not.</summary>
+  [Test]
+  public async Task ACutThatHappened_IsCountedAsACarriedCompaction_ByKind_AndARefusalIsNotAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider()
+        .GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var services = new ServiceCollection().AddSingleton(metrics).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    var coordinator = new CountingCoordinator();
+
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services,
+      new RecordingStore(_archived(3))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services, archiveStore: null)
+      .TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), services,
+      new RecordingStore(new ArchiveWriteResult("blocked", 0, null, null, 4))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
+
+    var counted = Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadSeries(
+        metrics.RepairsUnhealable.Meter, "whizbang.stream_integrity.carried_compactions")
+      .Where(s => s.Tags.ContainsKey("kind")).ToDictionary(s => (string)s.Tags["kind"]!, s => s.Value);
+    await Assert.That(counted["archive"]).IsEqualTo(1L);
+    await Assert.That(counted["truncate"]).IsEqualTo(1L).Because("the refused archive cut nothing");
+  }
+
+  /// <summary>
+  /// #2365: a cut the seal gate holds records its stream as awaiting the seal, by task; a cut that answers otherwise
+  /// forgets it, so <c>eligible_not_yet_deleted</c> counts only streams the gate holds now.
+  /// </summary>
+  [Test]
+  public async Task ACutTheSealHolds_IsRecordedAsAwaitingIt_ByTask_AndAnyOtherAnswerForgetsItAsync() {
+    var coordinator = new CountingCoordinator { Status = "awaiting_seal" };
+
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices,
+      archiveStore: null).TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices,
+      new RecordingStore(new ArchiveWriteResult("awaiting_seal", 0, null, null, 4))).TruncateAsync(_stream, throughVersion: 9, Disposition.Archive);
+    coordinator.Status = "truncated";
+    await new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new CountingHook(), _noServices,
+      archiveStore: null).TruncateAsync(_stream, throughVersion: 9, Disposition.Delete);
+
+    await Assert.That(coordinator.AwaitingSeal).IsEquivalentTo(
+      (List<(Guid, string?)>)[(_stream, "truncate"), (_stream, "archive"), (_stream, null)]);
+  }
 
   [Test]
   public async Task ArchivingTruncate_WritesAPrefixBatchThroughTheStore_NotTheCoordinatorAsync() {

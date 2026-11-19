@@ -1531,6 +1531,120 @@ public partial class IntegrityManifestReceptorTests {
       .Because("and no divergence reports — deliberate change is not damage");
   }
 
+  private static async Task<List<string>> _sealsLoweredForAsync(string? reason) {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var lowered = new List<string>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.SealLowered.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      foreach (var tag in tags) {
+        if (tag.Key == "reason" && value > 0) {
+          lowered.Add((string)tag.Value!);
+        }
+      }
+    });
+    listener.Start();
+    var coordinator = new AuditCoordinator { SealGenerationCoherent = false };
+    var sp = _provider(coordinator, new CaptureTransport(), metrics: metrics);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(TrackedGuid.New().Value, 11, 21, 2)]) with {
+      OriginGeneration = 9,
+      HistoryMovedReason = reason,
+    });
+    listener.RecordObservableInstruments();
+    return lowered;
+  }
+
+  /// <summary>
+  /// #2365: the guard lowering the seal is counted by the reason the origin's answer gives for why its history moved, and
+  /// as unknown when an origin on an older release gives none.
+  /// </summary>
+  [Test]
+  [Arguments("rewrite", "rewrite")]
+  [Arguments("rule_change", "rule_change")]
+  [Arguments(null, "unknown")]
+  [Arguments("a-reason-from-a-newer-release", "unknown")]
+  public async Task ManifestReceptor_GenerationChanged_CountsTheSealLoweredByTheOriginsReasonAsync(string? reason, string counted) {
+    await Assert.That(await _sealsLoweredForAsync(reason)).IsEquivalentTo([counted]);
+  }
+
+  /// <summary>
+  /// #2365, owner decision (a): a comparison that finds deficits counts the buckets a redelivery had filled that are short
+  /// again (the ledger answers, once per answer).
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_DeficitsAfterAnAnswer_AreCountedAsRedeliveredThenReapedAsync() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    long counted = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.RedeliveredThenReaped.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref counted, value));
+    listener.Start();
+    var coordinator = new AuditCoordinator { ShortAfterAnswer = 2 };
+    var (s1, s2) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.ReceivedDigests = [];
+    var sp = _provider(coordinator, new CaptureTransport(), metrics: metrics);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(s1, 11, 21, 2), _digest(s2, 12, 22, 3)]));
+    listener.RecordObservableInstruments();
+
+    await Assert.That(coordinator.ShortAfterAnswerKeys.Select(k => k.StreamId).Order().ToList())
+      .IsEquivalentTo(new[] { s1, s2 }.Order().ToList()).Because("the comparison's deficits are asked about");
+    await Assert.That(counted).IsEqualTo(2L);
+  }
+
+  /// <summary>
+  /// #2365: an answer to an asker behind this origin's generation says why history moved: <c>rule_change</c> when the
+  /// eligibility rules changed after the generation the asker knows, <c>rewrite</c> otherwise; an ask that names no
+  /// generation is told nothing.
+  /// </summary>
+  [Test]
+  [Arguments(9L, 10L, "rule_change")]
+  [Arguments(10L, 10L, "rewrite")]
+  [Arguments(9L, null, "rewrite")]
+  [Arguments(12L, 10L, null)]
+  [Arguments(null, 10L, null)]
+  public async Task RequestReceptor_SaysWhyHistoryMoved_SinceTheGenerationTheAskerKnowsAsync(
+      long? known, long? rulesChangedAt, string? reason) {
+    var coordinator = new AuditCoordinator {
+      OriginGeneration = 12,
+      OwnDigests = [_digest(TrackedGuid.New().Value, 11, 21, 2)],
+      RulesChangedAtGeneration = rulesChangedAt,
+    };
+    var transport = new CaptureTransport();
+    var sp = _provider(coordinator, transport);
+    var receptor = new IntegrityManifestRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
+      RequesterService = "auditor-svc",
+      Topic = "inbox",
+      KnownOriginGeneration = known,
+    });
+
+    var manifest = _deserializeManifest(transport.Published.Single().Envelope);
+    await Assert.That(manifest.HistoryMovedReason).IsEqualTo(reason);
+    await Assert.That(coordinator.RulesNotedAtGeneration).IsEqualTo(12L)
+      .Because("the origin notes its rules beside the generation it answers with");
+  }
+
   [Test]
   public async Task ManifestReceptor_GenerationUnchanged_ComparesNormallyAsync() {
     var coordinator = new AuditCoordinator { SealGenerationCoherent = true };
@@ -3086,6 +3200,26 @@ public partial class IntegrityManifestReceptorTests {
       Task.FromResult(Seal);
     public long OriginGeneration { get; set; }
     public bool SealGenerationCoherent { get; set; } = true;
+
+    /// <summary>#2365: what the ledger answers for buckets short again after an answer, and the keys asked about.</summary>
+    public int ShortAfterAnswer { get; set; }
+    public List<IntegrityRepairLedger.DivergenceKey> ShortAfterAnswerKeys { get; } = [];
+
+    public Task<int> IntegrityCountShortAfterAnswerAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+        CancellationToken cancellationToken = default) {
+      ShortAfterAnswerKeys.AddRange(keys);
+      return Task.FromResult(ShortAfterAnswer);
+    }
+
+    /// <summary>#2365: the generation this origin's rules last changed at, and the generation it was noted beside.</summary>
+    public long? RulesChangedAtGeneration { get; set; }
+    public long? RulesNotedAtGeneration;
+
+    public Task<long?> IntegrityNoteRulesAsync(string rulesFingerprint, long currentGeneration, CancellationToken cancellationToken = default) {
+      RulesNotedAtGeneration = currentGeneration;
+      return Task.FromResult(RulesChangedAtGeneration);
+    }
     public long? GenerationGuardSeen;
 
     public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) {

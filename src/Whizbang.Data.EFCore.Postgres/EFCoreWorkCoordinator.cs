@@ -61,6 +61,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_LIMIT = "p_limit";
   private const string P_MAX = "p_max";
   private const string P_NOW = "p_now";
+  private const string P_LOOKBACK = "p_lookback";
   private const string P_ORIGIN = "p_origin";
   private const string P_ORIGIN_SERVICE_ID = "p_origin_service_id";
   private const string P_SETTLE = "p_settle";
@@ -1196,6 +1197,152 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task IntegrityRecordTraceAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      Whizbang.Core.Observability.IntegrityTraceLink trace, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    if (keys.Count == 0) {
+      return Task.CompletedTask;
+    }
+    return _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // One statement for the comparison's deficits, each row found by its primary key (491).
+      cmd.CommandText = $"""
+        UPDATE {schema}.wh_integrity_ledger l
+        SET trace_parent = @p_trace_parent, trace_request_id = @p_trace_request_id
+        FROM unnest(@p_tenants::text[], @p_types::text[], @p_streams::uuid[]) AS m(tenant_scope, event_type, stream_id)
+        WHERE l.origin_service_id = @p_origin AND l.tenant_scope = m.tenant_scope
+          AND l.event_type = m.event_type AND l.stream_id = m.stream_id
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = keys.Select(k => k.StreamId).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_trace_parent", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)trace.TraceParent ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_trace_request_id", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)trace.RequestId ?? DBNull.Value
+      });
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<int> IntegrityCountShortAfterAnswerAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    if (keys.Count == 0) {
+      return 0;
+    }
+    return await _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // 493: each row by its primary key; a row the answer of answered_at filled (not unhealable) and not yet counted
+      // since that answer is counted and stamped, so the comparisons that follow do not count it again.
+      cmd.CommandText = $"""
+        UPDATE {schema}.wh_integrity_ledger l
+        SET counted_short_at = @p_now
+        FROM unnest(@p_tenants::text[], @p_types::text[], @p_streams::uuid[]) AS m(tenant_scope, event_type, stream_id)
+        WHERE l.origin_service_id = @p_origin AND l.tenant_scope = m.tenant_scope
+          AND l.event_type = m.event_type AND l.stream_id = m.stream_id
+          AND l.answered_at IS NOT NULL AND l.unhealable_at IS NULL
+          AND (l.counted_short_at IS NULL OR l.counted_short_at < l.answered_at)
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TENANTS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.TenantScope ?? string.Empty).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = keys.Select(k => k.EventType).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAMS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = keys.Select(k => k.StreamId).ToArray()
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public Task RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<int>(async (cmd, schema) => {
+      // 494: one row per stream the seal holds, by primary key; any other answer removes it.
+      cmd.CommandText = task is null
+        ? $"DELETE FROM {schema}.wh_integrity_cuts_awaiting_seal WHERE stream_id = @p_stream"
+        : $"""
+          INSERT INTO {schema}.wh_integrity_cuts_awaiting_seal (stream_id, task, since) VALUES (@p_stream, @p_task, @p_now)
+          ON CONFLICT (stream_id) DO UPDATE SET task = EXCLUDED.task
+          """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream", streamId));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_task", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)task ?? DBNull.Value });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
+      return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<Whizbang.Core.Observability.CutsAwaitingSeal> GetCutsAwaitingSealAsync(int cap, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      // 494: per task, at most cap + 1 entries of idx_integrity_cuts_awaiting_seal_task.
+      cmd.CommandText = $"""
+        SELECT t.task, (SELECT COUNT(*) FROM (
+                          SELECT 1 FROM {schema}.wh_integrity_cuts_awaiting_seal c WHERE c.task = t.task
+                          LIMIT GREATEST(@p_cap, 1)::BIGINT + 1) x) AS held
+        FROM (VALUES ('truncate'), ('archive')) AS t(task)
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_cap", cap));
+      var tasks = new Dictionary<string, Whizbang.Core.Observability.PendingRows>(StringComparer.Ordinal);
+      var limit = Math.Max(cap, 1);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var held = reader.GetInt64(1);
+        if (held > 0) {
+          tasks[reader.GetString(0)] = new Whizbang.Core.Observability.PendingRows(Math.Min(held, limit), held > limit);
+        }
+      }
+      return new Whizbang.Core.Observability.CutsAwaitingSeal { Reported = true, Tasks = tasks };
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<long?> IntegrityNoteRulesAsync(string rulesFingerprint, long currentGeneration, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<long?>(async (cmd, schema) => {
+      // #2365: the fingerprint is replaced only when it changed; a change after an earlier note records the generation
+      // it was first answered at. The answer is the generation the rules last changed at, or null when never.
+      cmd.CommandText = $"""
+        WITH prev AS (
+          SELECT p.setting_value FROM {schema}.wh_settings p WHERE p.setting_key = 'integrity_rules_fingerprint'
+        ),
+        changed AS (
+          INSERT INTO {schema}.wh_settings AS s (setting_key, setting_value, value_type, description)
+          VALUES ('integrity_rules_fingerprint', @p_fingerprint, 'string',
+                  'The rule fingerprint this origin last answered with (#2365).')
+          ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value
+            WHERE s.setting_value IS DISTINCT FROM EXCLUDED.setting_value
+          RETURNING 1
+        ),
+        noted AS (
+          INSERT INTO {schema}.wh_settings AS s (setting_key, setting_value, value_type, description)
+          SELECT 'integrity_rules_changed_generation', @p_generation::text, 'string',
+                 'The origin generation this service''s rule fingerprint last changed at (#2365).'
+          WHERE EXISTS (SELECT 1 FROM changed) AND EXISTS (SELECT 1 FROM prev)
+          ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value
+          RETURNING s.setting_value
+        )
+        SELECT COALESCE(
+          (SELECT n.setting_value FROM noted n),
+          (SELECT g.setting_value FROM {schema}.wh_settings g WHERE g.setting_key = 'integrity_rules_changed_generation'))::BIGINT
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_fingerprint", rulesFingerprint));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_generation", currentGeneration));
+      var value = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return value is long changedAt ? changedAt : (long?)null;
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
       int limit, CancellationToken cancellationToken = default) {
@@ -1217,9 +1364,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
       cmd.Parameters.AddWithValue(P_LIMIT, limit);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-      // #2103: each claimed row's recorded missing event rides along, read by primary key from the row the claim stamped.
+      // #2103: each claimed row's recorded missing event rides along, read by primary key from the row the claim stamped;
+      // #2365: and the trace of the comparison that recorded it.
       cmd.CommandText = $"""
-        SELECT c.origin_service_id, c.tenant_scope, c.event_type, c.stream_id, c.window_from, c.window_until, l.missing_event_id
+        SELECT c.origin_service_id, c.tenant_scope, c.event_type, c.stream_id, c.window_from, c.window_until, l.missing_event_id,
+               l.trace_parent, l.trace_request_id
         FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit) c
         LEFT JOIN {schema}.wh_integrity_ledger l
           ON l.origin_service_id = c.origin_service_id AND l.tenant_scope = c.tenant_scope
@@ -1229,14 +1378,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var items = new List<IntegrityRepairDrainItem>(limit);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        items.Add(new IntegrityRepairDrainItem(
-          reader.GetGuid(0),
-          reader.GetString(1),
-          reader.GetString(2),
-          reader.GetGuid(3),
-          await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
-          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
-          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6)));
+        items.Add(await _readRepairDrainItemAsync(reader, cancellationToken).ConfigureAwait(false));
       }
       return items;
     } catch (OperationCanceledException) {
@@ -1248,6 +1390,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
   }
+
+  // One claimed repair-drain row: the key, the window, the recorded missing event and (#2365) the trace of the
+  // comparison that recorded it.
+  private static async Task<IntegrityRepairDrainItem> _readRepairDrainItemAsync(
+      System.Data.Common.DbDataReader reader, CancellationToken cancellationToken) =>
+    new(
+      reader.GetGuid(0),
+      reader.GetString(1),
+      reader.GetString(2),
+      reader.GetGuid(3),
+      await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
+      await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
+      await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6),
+      await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(7),
+      await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(8));
 
   /// <inheritdoc />
   /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 375) returns a row with a stamped window
@@ -2092,6 +2249,49 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
   }
 
+  /// <inheritdoc />
+  /// <remarks>A failure propagates: the maintenance tick withdraws the reading and logs it.</remarks>
+  public Task<Whizbang.Core.Observability.IntegritySealReading> GetIntegritySealReadingAsync(
+      TimeSpan lookback, TimeSpan recheckEvery, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"""
+        SELECT origin_service_id, sealed_through, age_seconds, open_window_events, open_window_capped, recheck_coverage,
+               origin_generation, carried_streams, carried_capped
+        FROM {BuildSchemaQualifiedName(schema, "wh_integrity_seal_reading")}(@p_lookback, @p_every, @p_now, @p_cap)
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, (long)lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)recheckEvery.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
+      // #2365: the most index entries one lane's open window, and the carried buckets, read; a count that reaches it is
+      // reported as at least that many (capped).
+      const int countCap = 100_000;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_cap", countCap));
+      var lanes = new List<Whizbang.Core.Observability.LaneSeal>();
+      double? coverage = null;
+      long? generation = null;
+      long carried = 0;
+      var carriedCapped = false;
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        coverage = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetDouble(5);
+        generation = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(6);
+        carried = reader.GetInt64(7);
+        carriedCapped = reader.GetBoolean(8);
+        if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false)) {
+          lanes.Add(new Whizbang.Core.Observability.LaneSeal(
+            reader.GetGuid(0), reader.GetInt64(1), reader.GetDouble(2), reader.GetInt64(3), reader.GetBoolean(4)));
+        }
+      }
+      return new Whizbang.Core.Observability.IntegritySealReading {
+        Reported = true,
+        Lanes = lanes,
+        SealRecheckCoverageRatio = coverage,
+        OriginGeneration = generation,
+        CarriedStreams = carried,
+        CarriedStreamsCapped = carriedCapped,
+      };
+    }, cancellationToken);
+
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
     cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, key.OriginServiceId);
     cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);
@@ -2868,7 +3068,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)request.SettleWindow.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxEpochs)));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)request.Lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, (long)request.Lookback.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)request.RecheckEvery.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_refold", request.Refold));
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -4869,7 +5069,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"FROM {BuildSchemaQualifiedName(schema, "wh_heal_stream_digests_slice")}(@p_settle::interval, @p_lookback::interval, @p_max)";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(long)request.SettleWindow.TotalSeconds} seconds"));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", $"{(long)request.Lookback.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, $"{(long)request.Lookback.TotalSeconds} seconds"));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxPerRun)));
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -4894,7 +5094,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"SELECT {BuildSchemaQualifiedName(schema, "wh_full_history_compare_start")}(@p_origin, @p_lookback::interval, @p_width, @p_seal)";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", $"{(long)lookback.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, $"{(long)lookback.TotalSeconds} seconds"));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_width", epochWidth));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_seal", seal));
       return (long)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;

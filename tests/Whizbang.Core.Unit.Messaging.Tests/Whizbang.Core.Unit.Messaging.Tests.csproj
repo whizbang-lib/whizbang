@@ -44,6 +44,7 @@
   <ItemGroup>
     <Compile Include="../Whizbang.Core.Tests/Helpers/*.cs" Link="Shared/Helpers/%(Filename)%(Extension)" />
     <Compile Include="../Whizbang.Core.Tests/Observability/MetricAssertionHelper.cs" Link="Shared/Observability/MetricAssertionHelper.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Observability/ProbeMeterReader.cs" Link="Shared/Observability/ProbeMeterReader.cs" />
     <Compile Include="../Whizbang.Core.Unit.Workers.Tests/Workers/NoOpWorkCoordinator.cs" Link="Shared/Workers/NoOpWorkCoordinator.cs" />
     <Compile Include="../Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RebuildEventDispatcherDouble.cs" Link="Shared/Perspectives/RebuildEventDispatcherDouble.cs" />
   </ItemGroup>

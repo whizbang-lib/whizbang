@@ -651,6 +651,59 @@ public sealed class StreamIntegrityMetrics {
       unit: "s",
       description: "Derived (#2261): repairable open buckets over the window's net close rate; no measurement while the backlog is flat or growing; reported by the maintainer duty's holder only");
 
+    // #2365: the rest of section 2.7. Each reports nothing until it has a reading, never a zero that reads as a value.
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.recheck_enabled",
+      () => _enabledMeasurements(_checksEnabled),
+      description: "1 when the opt-in check is turned on, 0 when off; tagged by check (seal_recheck | full_history_compare)");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.recheck_last_run_timestamp",
+      () => _lastRuns.Select(r => new Measurement<double>(r.Value, new KeyValuePair<string, object?>(CHECK_TAG, r.Key))),
+      unit: "s",
+      description: "Unix time the opt-in check last ran in this process; tagged by check. No series until it has run");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.recheck_coverage_ratio",
+      () => _seals.SealRecheckCoverageRatio is { } ratio
+        ? [new Measurement<double>(ratio, new KeyValuePair<string, object?>(CHECK_TAG, CHECK_SEAL_RECHECK))]
+        : (Measurement<double>[])[],
+      description: "Share of the epochs sealed within SealRecheck:Lookback that were re-checked within SealRecheck:RecheckEvery; tagged by check; reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.epoch_frontier",
+      () => _seals.Lanes.Select(l => new Measurement<long>(l.SealedThrough, _lane(l))),
+      description: "Per lane, the sequence below which every digest epoch is sealed (the empty origin_service_id is the local lane); reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.seal_age_seconds",
+      () => _seals.Lanes.Select(l => new Measurement<double>(l.AgeSeconds, _lane(l))),
+      unit: "s",
+      description: "Per lane, seconds since the epoch frontier last advanced; a value that keeps growing while events arrive means sealing has stopped; reported by the maintainer duty's holder only");
+
+    SealLowered = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.seal_lowered",
+      description: "Seals this service lowered for an origin; tagged by reason (rewrite | rule_change | unknown)");
+    SealLowered.Touch(REASON_TAG, [SEAL_LOWERED_REWRITE, SEAL_LOWERED_RULE_CHANGE, SEAL_LOWERED_UNKNOWN]);
+    RedeliveredThenReaped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.redelivered_then_reaped",
+      description: "Deficit buckets a redelivery answer filled that a later comparison found short again, once per answer: the resync loop. Target 0");
+    CarriedCompactions = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.carried_compactions",
+      description: "Cuts (a prefix truncate or an archive) that removed events and carried their digest; tagged by kind (truncate | archive)");
+    CarriedCompactions.Touch(KIND_TAG, [COMPACTION_TRUNCATE, COMPACTION_ARCHIVE]);
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.open_window_events",
+      () => _seals.Lanes.Where(l => l.OpenWindowEvents.HasValue).Select(l => new Measurement<long>(
+        l.OpenWindowEvents!.Value, _lane(l), new KeyValuePair<string, object?>(CAPPED_TAG, l.OpenWindowCapped))),
+      description: "Per lane, the events above the epoch frontier, waiting to be sealed, counted up to a cap (capped=true: at least that many); reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.origin_generation",
+      () => _seals.OriginGeneration is { } generation ? [new Measurement<long>(generation)] : (Measurement<long>[])[],
+      description: "This service's origin generation: it moves when the service rewrites history a consumer verified; reported by the maintainer duty's holder only");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.carried_streams",
+      () => _seals.CarriedStreams is { } carried
+        ? [new Measurement<long>(carried, new KeyValuePair<string, object?>(CAPPED_TAG, _seals.CarriedStreamsCapped))]
+        : (Measurement<long>[])[],
+      description: "Stream digest buckets that still carry the per-stream detail of a cut, counted up to a cap (capped=true: at least that many); falls as the resting period rolls the detail off; reported by the maintainer duty's holder only");
+
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     LedgerBucketsOpened.Touch(HOW_TAG, _openedHows);
     LedgerBucketsClosed.Touch(HOW_TAG, _closedHows);
@@ -821,6 +874,98 @@ public sealed class StreamIntegrityMetrics {
     _ = Interlocked.Add(ref _talliedOpened, opened);
     _ = Interlocked.Add(ref _talliedClosed, closed);
   }
+
+  private static Measurement<long>[] _enabledMeasurements(ChecksEnabled? enabled) {
+    if (enabled is null) {
+      return [];
+    }
+    return [_checkOn(enabled.SealRecheck, CHECK_SEAL_RECHECK), _checkOn(enabled.FullHistoryCompare, CHECK_FULL_HISTORY_COMPARE)];
+  }
+
+  private static Measurement<long> _checkOn(bool on, string check) =>
+    new(on ? 1 : 0, new KeyValuePair<string, object?>(CHECK_TAG, check));
+
+  private static KeyValuePair<string, object?> _lane(LaneSeal lane) =>
+    new("origin_service_id", lane.OriginServiceId.ToString());
+
+  /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin rewrote history this service had verified.</summary>
+  public const string SEAL_LOWERED_REWRITE = Whizbang.Core.Messaging.IntegrityHistoryMoved.REWRITE;
+
+  /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the eligibility rules changed.</summary>
+  public const string SEAL_LOWERED_RULE_CHANGE = Whizbang.Core.Messaging.IntegrityHistoryMoved.RULE_CHANGE;
+
+  /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin said no reason it knows (an older release).</summary>
+  public const string SEAL_LOWERED_UNKNOWN = Whizbang.Core.Messaging.IntegrityHistoryMoved.UNKNOWN;
+
+  /// <summary>
+  /// Deficit buckets a redelivery answer filled that a later comparison found short again (#2365, owner decision): one
+  /// turn of the resync loop, where what repair delivered is lost again, usually to this service's own cleanup. Counted
+  /// once per answer, from the ledger. Target 0. Untagged.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public PassiveCounter<long> RedeliveredThenReaped { get; }
+
+  /// <summary>
+  /// Seals this service lowered for an origin (#2365), tagged by <c>reason</c>: <c>rewrite</c> when the origin's history
+  /// generation moved, so history this service had verified was rewritten, and <c>rule_change</c> when the eligibility
+  /// rules changed. Each lowering means the next audits re-verify from the lowered seal.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public PassiveCounter<long> SealLowered { get; }
+
+  /// <summary>
+  /// Cuts that carried their digest (#2365): a prefix truncate or an archive that removed events, whose digest the bucket
+  /// keeps (#2363). Tagged by <c>kind</c> (<c>truncate</c> | <c>archive</c>).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public PassiveCounter<long> CarriedCompactions { get; }
+
+  /// <summary>Counts one lowered seal (#2365).</summary>
+  /// <param name="reason"><see cref="SEAL_LOWERED_REWRITE"/> or <see cref="SEAL_LOWERED_RULE_CHANGE"/>.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:SealLowered_AndCarriedCompactions_ExistAtZeroForEveryValue_AndCountByItAsync</tests>
+  public void RecordSealLowered(string reason) => SealLowered.Add(1, new KeyValuePair<string, object?>(REASON_TAG, reason));
+
+  /// <summary>Counts one cut that carried its digest (#2365).</summary>
+  /// <param name="archived">True for an archive, false for a truncate.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:SealLowered_AndCarriedCompactions_ExistAtZeroForEveryValue_AndCountByItAsync</tests>
+  public void RecordCarriedCompaction(bool archived) =>
+    CarriedCompactions.Add(1, new KeyValuePair<string, object?>(KIND_TAG, archived ? COMPACTION_ARCHIVE : COMPACTION_TRUNCATE));
+
+  private const string REASON_TAG = "reason";
+  private const string KIND_TAG = "kind";
+  private const string COMPACTION_TRUNCATE = "truncate";
+  private const string COMPACTION_ARCHIVE = "archive";
+  private const string CAPPED_TAG = "capped";
+
+  private volatile ChecksEnabled? _checksEnabled;
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _lastRuns = new(StringComparer.Ordinal);
+  private volatile IntegritySealReading _seals = IntegritySealReading.NotReported;
+
+  private sealed record ChecksEnabled(bool SealRecheck, bool FullHistoryCompare);
+
+  /// <summary>Publishes whether each opt-in check is turned on (#2365).</summary>
+  /// <param name="sealRecheck"><c>SealRecheck:Enabled</c>.</param>
+  /// <param name="fullHistoryCompare"><c>FullHistoryCompare:Enabled</c>.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:WhetherEachCheckIsOn_IsOneSeriesPerCheckAsync</tests>
+  public void UpdateChecksEnabled(bool sealRecheck, bool fullHistoryCompare) =>
+    _checksEnabled = new ChecksEnabled(sealRecheck, fullHistoryCompare);
+
+  /// <summary>Records that an opt-in check ran (#2365).</summary>
+  /// <param name="check"><see cref="CHECK_SEAL_RECHECK"/> or <see cref="CHECK_FULL_HISTORY_COMPARE"/>.</param>
+  /// <param name="at">When it ran.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:WhenACheckLastRan_IsItsUnixTime_PerCheckAsync</tests>
+  public void RecordCheckRan(string check, DateTimeOffset at) => _lastRuns[check] = at.ToUnixTimeSeconds();
+
+  /// <summary>
+  /// Publishes the seal reading (#2365): each lane's epoch frontier and its age, and the seal re-check's coverage; null
+  /// withdraws it, so an instance without the maintainer duty reports no series.
+  /// </summary>
+  /// <param name="reading">The reading; null withdraws it.</param>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityObservabilityMetricsTests.cs:ASealReading_IsTheFrontierAndAgePerLane_AndTheRecheckCoverageAsync</tests>
+  public void UpdateSealReading(IntegritySealReading? reading) => _seals = reading ?? IntegritySealReading.NotReported;
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;
 
@@ -1052,3 +1197,44 @@ public sealed record RepairProgressReading {
   /// flat or growing, when the backlog was not read, or switched off.</summary>
   public double? EtaSeconds { get; init; }
 }
+
+/// <summary>
+/// The seal reading (#2365): per lane, how far digest epochs are sealed and how long ago the frontier last moved, and the
+/// share of recently sealed epochs the seal re-check covered.
+/// </summary>
+/// <docs>resilience/stream-integrity#integrity-instruments</docs>
+public sealed record IntegritySealReading {
+  /// <summary>No reading: the gauges report no series.</summary>
+  public static IntegritySealReading NotReported { get; } = new();
+
+  /// <summary>True when the reading was taken.</summary>
+  public bool Reported { get; init; }
+
+  /// <summary>Each lane with a frontier.</summary>
+  public IReadOnlyList<LaneSeal> Lanes { get; init; } = [];
+
+  /// <summary>
+  /// The share of the epochs sealed within <c>SealRecheck:Lookback</c> that were re-checked within
+  /// <c>SealRecheck:RecheckEvery</c>; null when none was sealed within the lookback.
+  /// </summary>
+  public double? SealRecheckCoverageRatio { get; init; }
+
+  /// <summary>This service's origin generation; null when not read.</summary>
+  public long? OriginGeneration { get; init; }
+
+  /// <summary>Stream digest buckets carrying a cut's digest, counted up to a cap; null when not read.</summary>
+  public long? CarriedStreams { get; init; }
+
+  /// <summary>True when <see cref="CarriedStreams"/> stopped at its cap: there are at least that many.</summary>
+  public bool CarriedStreamsCapped { get; init; }
+}
+
+/// <summary>One lane's seal (#2365).</summary>
+/// <param name="OriginServiceId">The lane: the origin's id, or the empty id for the local lane.</param>
+/// <param name="SealedThrough">The sequence below which every epoch is sealed.</param>
+/// <param name="AgeSeconds">Seconds since the frontier last advanced.</param>
+/// <param name="OpenWindowEvents">Events of the lane above its frontier, counted up to a cap; null when not counted.</param>
+/// <param name="OpenWindowCapped">True when the count stopped at its cap.</param>
+/// <docs>resilience/stream-integrity#integrity-instruments</docs>
+public sealed record LaneSeal(
+  Guid OriginServiceId, long SealedThrough, double AgeSeconds, long? OpenWindowEvents = null, bool OpenWindowCapped = false);

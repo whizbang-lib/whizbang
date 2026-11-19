@@ -113,6 +113,20 @@ public sealed class RedeliveryPump(
   public bool OperatorRequested { get; init; }
 
   /// <summary>
+  /// #2365: the id of the request the bundles answer, echoed on each (<see cref="RedeliveryComposite.RequestId"/>); null
+  /// when the request named none.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the trace link each bundle carries (<see cref="RedeliveryComposite.TraceParent"/>), the origin's answer span;
+  /// the receiver's repair starts under it.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
+
+  /// <summary>
   /// How long each answering bundle lives at the broker (#2078): a redelivery answer is an integrity control message,
   /// and a stale one expires rather than accumulating on a stopped requester's subscription. Null (the default, used by
   /// non-integrity pumps such as the audit ledger rebuild) leaves the broker's own expiry.
@@ -311,7 +325,7 @@ public sealed class RedeliveryPump(
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
-      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested,
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId,
         _bundleStreamFor(batch.Constituents[0].Scope, originServiceId, topic, target),
         answeredWindow, _partialStreams(batch.Constituents, perStream, answeredWindow?.PartialStreamIds),
         answerContinues: answeredWindow is not null),
@@ -324,7 +338,7 @@ public sealed class RedeliveryPump(
   internal RedeliveryComposite LastOfAnswer(
       CompositeEnvelopePlan<RedeliveryEvent> plan, Guid originServiceId, RedeliveryAnswerWindow answeredWindow) {
     var planned = (RedeliveryComposite)plan.Composite;
-    return _buildComposite(plan.Constituents, originServiceId, OperatorRequested, planned.StreamId, answeredWindow,
+    return _buildComposite(plan.Constituents, originServiceId, planned.StreamId, answeredWindow,
       planned.AnsweredPartialStreamIds, answerContinues: false);
   }
 
@@ -366,8 +380,8 @@ public sealed class RedeliveryPump(
   /// and the stream each event is stored on, which the receiver files it under (#1798).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
-  private static RedeliveryComposite _buildComposite(
-      IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested, Guid? bundleStreamId,
+  private RedeliveryComposite _buildComposite(
+      IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, Guid? bundleStreamId,
       RedeliveryAnswerWindow? answeredWindow, List<Guid>? partialStreams, bool answerContinues) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
@@ -389,7 +403,9 @@ public sealed class RedeliveryPump(
       // inside their original commit-sequence window at the consumer.
       OriginServiceId = originServiceId,
       InnerCommitSequences = [.. chunk.Select(c => c.CommitSequence)],
-      OperatorRequested = operatorRequested,
+      OperatorRequested = OperatorRequested,
+      RequestId = RequestId,
+      TraceParent = TraceParent,
       // #2143: the window this answer covers, so the receiver marks only the buckets whose deficit it covered.
       AnswersWindow = answeredWindow is not null,
       AnsweredFromCommitSequence = answeredWindow?.FromCommitSequence,

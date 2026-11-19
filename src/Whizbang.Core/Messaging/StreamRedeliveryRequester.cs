@@ -152,6 +152,12 @@ public sealed partial class StreamRedeliveryRequester(
     var metrics = services.GetService<StreamIntegrityMetrics>();
     var requests = 0;
     foreach (var chunk in streams.Chunk(MAX_STREAMS_PER_REQUEST)) {
+      // #2365: an operator's request is a span of its own, under whatever the operator's call runs in.
+      var requestId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+      using var span = Observability.IntegrityTracing.StartRepairRequest(
+        Observability.IntegrityTracing.KIND_OPERATOR, request.OriginService, requestId);
+      Observability.IntegrityTracing.SetCount(span, Observability.IntegrityTracing.ATTR_STREAMS, chunk.Length);
+      var link = Observability.IntegrityTracing.LinkFrom(span, requestId);
       var command = new RequestRedeliveryCommand {
         TenantScope = request.TenantScope,
         EventTypes = request.EventTypes,
@@ -162,6 +168,8 @@ public sealed partial class StreamRedeliveryRequester(
         OperatorRequested = true,
         AcceptsStreamSpanningBundles = true,
         RuleFingerprint = IntegrityPairGuard.Resolve(services).Stamp(request.EventTypes),
+        RequestId = link.RequestId,
+        TraceParent = link.TraceParent,
       };
       await RedeliveryRequestDispatch.PublishAsync(
         transport, serializer, instanceProvider, command, request.OriginService,
