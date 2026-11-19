@@ -184,8 +184,8 @@ public record RebuildResult(
   /// ids. Each failure is also logged with its exception.
   /// </summary>
   /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildStreamsAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildInPlaceAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildStreamsAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildInPlaceAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
   public int StreamsFailed { get; init; }
 
 }

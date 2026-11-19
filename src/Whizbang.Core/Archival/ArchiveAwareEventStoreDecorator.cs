@@ -213,9 +213,9 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// of the hot ones; one the hot read returned keeps every archived event; one neither holds has no position and is
   /// compared by id, the bound the read always had for one. <see cref="Guid.Empty"/> is no bound.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnArchivedEvent_KeepsTheArchivedEventsThroughItsVersion_WhateverTheirIdsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAHotEvent_KeepsEveryArchivedEvent_WhateverTheirIdsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnEventNeitherStoreHolds_KeepsTheArchivedEventsAtOrBeforeItsIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnArchivedEvent_KeepsTheArchivedEventsThroughItsVersion_WhateverTheirIdsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAHotEvent_KeepsEveryArchivedEvent_WhateverTheirIdsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnEventNeitherStoreHolds_KeepsTheArchivedEventsAtOrBeforeItsIdAsync</tests>
   private static List<MessageEnvelope<T>> _throughUpper<T>(
       List<MessageEnvelope<T>> archived, List<MessageEnvelope<T>> live, Guid upToEventId) {
     if (upToEventId == Guid.Empty || live.Exists(e => e.MessageId.Value == upToEventId)) {

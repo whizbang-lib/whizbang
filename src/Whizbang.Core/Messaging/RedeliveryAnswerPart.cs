@@ -18,5 +18,5 @@ namespace Whizbang.Core.Messaging;
 /// Only such an answer can mark a type lane as one repair cannot change; an answer to a request for named streams says
 /// nothing about the type's other streams.</param>
 /// <docs>resilience/stream-integrity#a-whole-type-answer-is-judged-once-all-of-it-is-in</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpWindowTests.AnswerParts.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryPumpWindowTests.AnswerParts.cs</tests>
 public readonly record struct RedeliveryAnswerPart(Guid AnswerId, int BundleIndex, int? BundleCount, bool WholeType);
