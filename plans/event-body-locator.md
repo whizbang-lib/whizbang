@@ -77,6 +77,9 @@ projections, replay, rebuild and integrity never need to know where an event is 
 7. **Archiving is tiered so the database does not keep growing** (owner, 2026-11-19, on review of this plan). Warm: the
    envelope row stays and points at the archived body. Cold: past a second threshold the rows themselves leave the
    database and only the archive holds the events. See Tiers.
+8. **Everything here stays in step with the integrity engine** (owner, 2026-11-19). Cleanup, recovery and archiving
+   follow the shared, versioned rules of the cleanup and integrity architecture, and nothing cleaned or archived on
+   purpose is ever claimed as missing and restored. See Alignment with the integrity engine.
 
 ## The model
 
@@ -113,7 +116,8 @@ Every existing row starts as Inline, so introducing the locator rewrites nothing
   costs one row however long it is.
 - **The segment summary** keeps what the database must still answer without the archive: stream, first and last
   version, event count, first and last commit and origin positions, first and last timestamps, the range's digest
-  contribution and seal, and the archive objects that hold it.
+  contribution and seal, and the archive objects that hold it. It is the stream's lifecycle row with its floor and
+  carried digest, plus the archive references (Alignment with the integrity engine).
 - **Gates for cold** are stricter than for warm. A range goes cold only when every consumer's cursor and every rewind
   floor is above it (a snapshot exists above the floor, so a rebuild never needs to read below it), no hold is active,
   and nothing hot or warm points into it (a Layered base is re-based first; a Superseded marker and its target go cold
@@ -168,14 +172,43 @@ integrity answers and redelivery.
 Other services always receive a full event over the transport. The locator is storage only, so each service stays
 self-reliant.
 
-## Integrity
+## Alignment with the integrity engine
 
-The digest covers the logical event, not its storage. A locator change (Inline to Archived, to Layered, to Superseded,
-to Shared) never changes a digest, a seal or an origin generation: physical storage is timing, and the digest follows
-eligibility only (cleanup and integrity decision 2, 2026-11-15). Superseding keeps counting the key's slot (#2364).
-Shredding is the one origin-decided change and propagates as it is designed to. Moving a range to cold does not change
-a digest either: the segment summary carries the range's digest contribution and seal, so integrity answers for a cold
-range without fetching it.
+This plan exists inside the cleanup and integrity architecture ([cleanup-integrity-architecture.md](cleanup-integrity-architecture.md),
+approved 2026-11-15) and changes none of its rules. The requirement: nothing this plan stores differently, archives,
+moves to cold or destroys may ever look like a missing event to integrity, so integrity never reports it as a deficit and
+never redelivers or restores it. Each mechanism takes one of that plan's three shapes (its P4):
+
+| Mechanism | Shape | How integrity sees it | In the rule fingerprint |
+| --- | --- | --- | --- |
+| Locator change: Layered, Archived (warm), Superseded marker, Shared | not cleanup | the envelope is present, so the event is present; the digest is unchanged | no: storage is local, and each service may choose differently |
+| Superseding, every layout (A to E) | rule-shaped | the existing eligibility (key slot, #2364): the older copy is not eligible whether its row is kept, replaced or removed, so all five layouts fold to the same digest | the superseding rule already is; the layout is not |
+| Cold tier, and the archive's own retention destroying a cold range | cut-shaped | the cold floor is the stream's lifecycle floor and the range's digest is the carried digest in the lifecycle row (that plan's 2.3); no comparison, repair or redelivery below the floor | no: a cut is local to the service that made it |
+| Shredded | origin-decided | propagated by the origin, as designed | as designed |
+
+Consequences:
+
+- **Digest follows eligibility, never storage or timing.** A locator change, a move to warm or cold, and a physical delete
+  never change a digest, lower a seal or trigger re-verification.
+- **Consumer sovereignty holds.** A consumer may choose a different layout, a different warm or cold threshold, or no
+  archive at all, and the pair still compares equal, because none of those choices is in the fingerprint.
+- **The segment summary is the lifecycle row.** The cold tier reuses the lifecycle row's floor and carried digest
+  (`carried_lo/hi/count/ilo/ihi`) and adds only the archive object references. No second summary table; the row is
+  classified State in the table registry.
+- **A destroyed range keeps its tombstone.** When the archive's retention destroys a cold range, the lifecycle row and its
+  carried digest stay, exactly as a purge keeps a tombstone today, so integrity can never ask for it back.
+- **Recovery respects the locator.** Redelivery and repair treat an envelope with any locator as present. They never
+  write below a cold floor, never turn a Superseded, Layered or Archived row back into Inline, and reading through to the
+  archive is a read, never a repair.
+- **Rule changes go through the pair guard.** A slice that changes the eligibility predicate (the SQL constant or the
+  rule semantics) bumps the rule-semantics version, so the fingerprint changes and the pair guard halts mixed-version
+  pairs until both sides match. A slice that changes storage only must leave the rule-semantics golden file untouched,
+  and the existing build guard fails it if it does not.
+- **Proof is the #2342 matrix.** Each slice adds its rows to the cross-mechanism matrix before its code (RED first):
+  every locator, layout and tier on the origin side crossed with every one on the consumer side, asserting equal
+  digests, no deficit and no redelivery request; a positive control in which a genuinely missing event next to a warm,
+  superseded or cold range is still found and repaired; and a mixed-rule-version pair that halts instead of repairing.
+  The matrix's digest-follows-eligibility invariant stays the acceptance test.
 
 ## Deletion and references
 
@@ -186,7 +219,9 @@ per event makes that natural.
 
 ## Slices
 
-Each slice is one red/green increment and one pull request unless noted.
+Each slice is one red/green increment and one pull request unless noted. Every slice also carries its integrity
+alignment (Alignment with the integrity engine): its #2342 matrix rows RED first, and either an unchanged rule-semantics
+golden file or a version bump through the pair guard.
 
 ### Prerequisites (bug fixes, before slice 1)
 
@@ -248,8 +283,8 @@ Each slice is one red/green increment and one pull request unless noted.
 
 - **Warm and cold thresholds.** `WarmAfter` moves bodies to the archive (S3's Archived locator); `ColdAfter` moves a
   stream's prefix out of the database into one segment summary. Both settable globally and per stream type.
-- **Segment summary.** One row per stream, extended and merged each cycle; carries versions, counts, positions,
-  timestamps, digest contribution, seal and archive object references.
+- **Segment summary.** The stream's lifecycle row: the cold floor is its floor and the cold range's digest is its
+  carried digest, extended each cycle; it adds versions, positions, timestamps and archive object references.
 - **Gates.** Every cursor and rewind floor above the range, no hold, nothing hot or warm pointing into it; pointers are
   re-based or moved with the range first.
 - **Read path.** Below the cold floor, reads fetch the segment's objects and serve the events in order.
@@ -292,5 +327,6 @@ Every key is bound, has a default, and appears on the configuration reference an
 
 1. **Default thresholds.** With an archive store configured, should warm and cold be on by default (for example
    `WarmAfter` 30 days, `ColdAfter` 365 days), or off until an operator sets them?
-2. **After the archive's own retention.** When an archived range reaches the archive's retention end and is destroyed,
-   does the segment summary stay (the stream still answers "versions 1 to N existed and were destroyed"), or go too?
+2. **After the archive's own retention.** Proposed: the lifecycle row and its carried digest stay as a tombstone, as
+   the approved cleanup and integrity plan already requires for a purge, so integrity never asks for a destroyed range
+   back. Confirm.
