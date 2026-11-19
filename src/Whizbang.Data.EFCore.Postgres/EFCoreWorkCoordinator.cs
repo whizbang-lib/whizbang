@@ -61,6 +61,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_LIMIT = "p_limit";
   private const string P_MAX = "p_max";
   private const string P_NOW = "p_now";
+  private const string P_LOOKBACK = "p_lookback";
   private const string P_ORIGIN = "p_origin";
   private const string P_ORIGIN_SERVICE_ID = "p_origin_service_id";
   private const string P_SETTLE = "p_settle";
@@ -1377,17 +1378,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var items = new List<IntegrityRepairDrainItem>(limit);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        items.Add(new IntegrityRepairDrainItem(
-          reader.GetGuid(0),
-          reader.GetString(1),
-          reader.GetString(2),
-          reader.GetGuid(3),
-          await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
-          await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
-          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6),
-          // #2365: the trace of the comparison that recorded the row.
-          await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(7),
-          await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(8)));
+        items.Add(await _readRepairDrainItemAsync(reader, cancellationToken).ConfigureAwait(false));
       }
       return items;
     } catch (OperationCanceledException) {
@@ -1399,6 +1390,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
   }
+
+  // One claimed repair-drain row: the key, the window, the recorded missing event and (#2365) the trace of the
+  // comparison that recorded it.
+  private static async Task<IntegrityRepairDrainItem> _readRepairDrainItemAsync(
+      System.Data.Common.DbDataReader reader, CancellationToken cancellationToken) =>
+    new(
+      reader.GetGuid(0),
+      reader.GetString(1),
+      reader.GetString(2),
+      reader.GetGuid(3),
+      await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(4),
+      await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5),
+      await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(6),
+      await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(7),
+      await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(8));
 
   /// <inheritdoc />
   /// <remarks>The claim (<c>wh_integrity_claim_ledger_recheck</c>, migration 375) returns a row with a stamped window
@@ -2253,7 +2259,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
                origin_generation, carried_streams, carried_capped
         FROM {BuildSchemaQualifiedName(schema, "wh_integrity_seal_reading")}(@p_lookback, @p_every, @p_now, @p_cap)
         """;
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, (long)lookback.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)recheckEvery.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_NOW, now));
       // #2365: the most index entries one lane's open window, and the carried buckets, read; a count that reaches it is
@@ -3062,7 +3068,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)request.SettleWindow.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxEpochs)));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", (long)request.Lookback.TotalSeconds));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, (long)request.Lookback.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_every", (long)request.RecheckEvery.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_refold", request.Refold));
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -5063,7 +5069,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"FROM {BuildSchemaQualifiedName(schema, "wh_heal_stream_digests_slice")}(@p_settle::interval, @p_lookback::interval, @p_max)";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(long)request.SettleWindow.TotalSeconds} seconds"));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", $"{(long)request.Lookback.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, $"{(long)request.Lookback.TotalSeconds} seconds"));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, request.MaxPerRun)));
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -5088,7 +5094,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"SELECT {BuildSchemaQualifiedName(schema, "wh_full_history_compare_start")}(@p_origin, @p_lookback::interval, @p_width, @p_seal)";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin", originServiceId));
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_lookback", $"{(long)lookback.TotalSeconds} seconds"));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LOOKBACK, $"{(long)lookback.TotalSeconds} seconds"));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_width", epochWidth));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_seal", seal));
       return (long)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;

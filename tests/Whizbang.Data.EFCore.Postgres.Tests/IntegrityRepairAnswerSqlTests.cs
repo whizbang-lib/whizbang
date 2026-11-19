@@ -318,6 +318,24 @@ public class IntegrityRepairAnswerSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RecordTrace_AComparisonOutsideAnyTrace_ClearsTheEarlierTraceAsync() {
+    var coordinator = _coordinator();
+    var origin = TrackedGuid.New().Value;
+    var key = _key(origin, TrackedGuid.New().Value);
+    await _reportAsync(coordinator, key, deficit: 1, at: _t0);
+    var traced = new IntegrityTraceLink(TrackedGuid.New().Value, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+
+    await ((IWorkCoordinator)coordinator).IntegrityRecordTraceAsync(origin, [key], traced);
+    await ((IWorkCoordinator)coordinator).IntegrityRecordTraceAsync(origin, [key], default);
+    var claimed = await coordinator.IntegrityClaimRepairDrainAsync([origin], _t0.AddSeconds(1), _backoff, maxAttempts: 8, limit: 10);
+
+    var row = claimed.Single(c => c.StreamId == key.StreamId);
+    await Assert.That(row.TraceParent).IsNull()
+      .Because("the latest comparison ran outside any trace, so the repair starts its own rather than joining a stale one");
+    await Assert.That(row.TraceRequestId.HasValue).IsFalse();
+  }
+
+  [Test]
   public async Task RecordTrace_NothingToRecord_IsHarmlessAsync() {
     await ((IWorkCoordinator)_coordinator()).IntegrityRecordTraceAsync(
       TrackedGuid.New().Value, [], new IntegrityTraceLink(null, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));

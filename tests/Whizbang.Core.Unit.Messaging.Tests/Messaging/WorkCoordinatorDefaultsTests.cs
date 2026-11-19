@@ -166,6 +166,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetCutsAwaitingSealAsync_WithoutProviderSupport_ReportsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetCutsAwaitingSealAsync(cap: 10);
+
+    await Assert.That(result).IsSameReferenceAs(Whizbang.Core.Observability.CutsAwaitingSeal.NotReported)
+      .Because("a store that cannot read the seal gate publishes no series rather than a zero");
+  }
+
+  [Test]
   public async Task CountReceivedFromOriginAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
